@@ -2167,25 +2167,34 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     report.progress =
         vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(), .completed = timeline.completedFrame(), .presented = d->presented_watermark };
 
-    // WHAT IS RESIDENT, PER KIND: the accounting half of GPU residency (see ResidencyLedger). The kinds this
-    // device retains are composed HERE, where all three tables are reachable - a table answers only for itself,
-    // and the ledger is the one place a host has to learn. Absent numbers stay absent: the stream store does not
-    // count bytes and the image cache keeps no build history, so those rows say nothing about them instead of
-    // reporting a zero nobody measured.
+    // WHAT IS RESIDENT, PER KIND: the accounting half of GPU residency (see ResidencyLedger). Every kind the
+    // vocabulary names is composed HERE, where the tables are reachable - a table answers only for itself, and the
+    // ledger is the one place a host has to learn. A row's EXISTENCE is the promise that this backend accounts for
+    // that kind; absent numbers stay absent: the stream store does not count bytes and the program table keeps no
+    // byte count, so those rows say nothing about them instead of reporting a zero nobody measured.
     if (d->assembly != nullptr && d->images != nullptr) {
         vn::graphics::ResidencyLedger ledger;
         const StreamUploads&          uploads = d->assembly->uploads();
-        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Geometry,
                                                 .live    = static_cast<std::uint32_t>(uploads.live()),
                                                 .built   = uploads.uploads(),
                                                 .retired = uploads.retired(),
                                                 .refused = uploads.refusals() });
-        ledger.note(vn::graphics::ResidencyRow{ .kind  = vn::graphics::ResidencyKind::Images,
+        ledger.note(vn::graphics::ResidencyRow{ .kind  = vn::graphics::ResidencyKind::Textures,
                                                 .live  = static_cast<std::uint32_t>(d->images->count()),
                                                 .bytes = d->images->bytes() });
         if (d->storage != nullptr) {
             ledger.note(d->storage->materialResidency());
         }
+        else {
+            // No arena: nothing of that kind is resident, which is an answer rather than an omission.
+            ledger.note(vn::graphics::ResidencyRow{ .kind = vn::graphics::ResidencyKind::Materials });
+        }
+        const CompiledPrograms& halves = d->assembly->halves();
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Programs,
+                                                .live    = static_cast<std::uint32_t>(halves.halves()),
+                                                .built   = halves.builds(),
+                                                .refused = halves.refused() });
         report.retention->residency = std::move(ledger);
     }
     return report;

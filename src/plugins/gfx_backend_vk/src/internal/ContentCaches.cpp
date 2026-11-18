@@ -1344,7 +1344,7 @@ struct ContentCaches::Impl {
             }
         }
         // The instance streams are streams too: a command that read one paid for its bytes and fills a row of the same
-        // ledger (see ResidencyKind::Streams), so a host release that drops one is visible there like any other.
+        // ledger (see ResidencyKind::Geometry), so a host release that drops one is visible there like any other.
         for (const auto& [buffer, entry] : instance_streams) {
             (void)buffer;
             if (entry.buffer != VK_NULL_HANDLE) {

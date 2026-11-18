@@ -284,7 +284,7 @@ TEST(VkResidencyTest, TheSecondFrameOfTheSameContentBuildsNothing)
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
 
     // THE FIRST FRAME PAYS FOR EVERYTHING: one vertex stream + one index stream, one pipeline (both modules arrive
-    // under one program revision, so the ledger's `halves` are the pipelines).
+    // under one program revision, so the ledger's `programs` row is the pipelines).
     const FrameReport first = backend->frameReport();
     ASSERT_TRUE(first.counters.has_value());
     ASSERT_TRUE(first.retention.has_value());
@@ -298,15 +298,15 @@ TEST(VkResidencyTest, TheSecondFrameOfTheSameContentBuildsNothing)
     const std::uint64_t pipelines_after_first = device->contentPipelines();
     ASSERT_GT(pipelines_after_first, 0U) << "the first frame had to compile a pipeline";
 
-    const std::optional<ResidencyRow> streams = rowOf(first, ResidencyKind::Streams);
-    ASSERT_TRUE(streams.has_value()) << "residency is an answered question once a frame has run";
-    EXPECT_EQ(streams->live, 2U) << "the vertex and index streams are resident";
-    ASSERT_TRUE(streams->bytes.has_value()) << "a buffer's bytes are known";
-    EXPECT_GT(*streams->bytes, 0U);
+    const std::optional<ResidencyRow> geometry = rowOf(first, ResidencyKind::Geometry);
+    ASSERT_TRUE(geometry.has_value()) << "residency is an answered question once a frame has run";
+    EXPECT_EQ(geometry->live, 2U) << "the vertex and index streams are resident";
+    ASSERT_TRUE(geometry->bytes.has_value()) << "a buffer's bytes are known";
+    EXPECT_GT(*geometry->bytes, 0U);
 
-    const std::optional<ResidencyRow> halves = rowOf(first, ResidencyKind::Halves);
-    ASSERT_TRUE(halves.has_value());
-    EXPECT_EQ(halves->live, static_cast<std::uint32_t>(pipelines_after_first));
+    const std::optional<ResidencyRow> programs = rowOf(first, ResidencyKind::Programs);
+    ASSERT_TRUE(programs.has_value());
+    EXPECT_EQ(programs->live, static_cast<std::uint32_t>(pipelines_after_first));
 
     // THE STEADY STATE: the same value again uploads nothing, copies nothing and compiles nothing.
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
@@ -402,7 +402,7 @@ TEST(VkResidencyTest, ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItA
     const intrusive_ptr<RenderTarget>   target   = makeTarget();
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
 
-    const std::optional<ResidencyRow> before = rowOf(backend->frameReport(), ResidencyKind::Streams);
+    const std::optional<ResidencyRow> before = rowOf(backend->frameReport(), ResidencyKind::Geometry);
     ASSERT_TRUE(before.has_value());
     ASSERT_EQ(before->live, 2U);
 
@@ -410,7 +410,7 @@ TEST(VkResidencyTest, ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItA
 
     // RESIDENCY DROPS IMMEDIATELY: this device's queue is idle between frames, so a release is a destruction.
     const FrameReport released = backend->frameReport();
-    const std::optional<ResidencyRow> after = rowOf(released, ResidencyKind::Streams);
+    const std::optional<ResidencyRow> after = rowOf(released, ResidencyKind::Geometry);
     ASSERT_TRUE(after.has_value());
     EXPECT_EQ(after->live, 0U) << "a released geometry holds no streams";
     EXPECT_EQ(after->bytes.value_or(1U), 0U) << "its bytes left with it";
@@ -460,7 +460,7 @@ TEST(VkResidencyTest, AReleaseIsHandedOverParkedAndDestroyedAfterTheFramesThatCo
     ASSERT_TRUE(backend->releaseContent(content.geometry.get()));
 
     // THE CACHE FORGOT IT, AND THE OBJECTS ARE PARKED RATHER THAN DESTROYED.
-    const std::optional<ResidencyRow> after = rowOf(backend->frameReport(), ResidencyKind::Streams);
+    const std::optional<ResidencyRow> after = rowOf(backend->frameReport(), ResidencyKind::Geometry);
     ASSERT_TRUE(after.has_value());
     EXPECT_EQ(after->live, 0U) << "a released geometry holds no streams";
     const vn::backend_vk::Device::RetirementNumbers parked = device->retirementNumbers();
@@ -501,23 +501,23 @@ TEST(VkResidencyTest, ReleasingAProgramLowersTheCompiledHalvesAndKeepsTheStreams
     const intrusive_ptr<RenderTarget>   target   = makeTarget();
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
 
-    const std::optional<ResidencyRow> halves_before = rowOf(backend->frameReport(), ResidencyKind::Halves);
-    ASSERT_TRUE(halves_before.has_value());
-    const std::uint32_t pipelines = halves_before->live;
+    const std::optional<ResidencyRow> programs_before = rowOf(backend->frameReport(), ResidencyKind::Programs);
+    ASSERT_TRUE(programs_before.has_value());
+    const std::uint32_t pipelines = programs_before->live;
     ASSERT_GT(pipelines, 0U);
     const std::uint64_t pipelines_created = device->contentPipelines();
 
     ASSERT_TRUE(backend->releaseContent(content.program.get()));
 
-    const std::optional<ResidencyRow> halves_after = rowOf(backend->frameReport(), ResidencyKind::Halves);
-    ASSERT_TRUE(halves_after.has_value());
-    EXPECT_EQ(halves_after->live, 0U) << "a released program takes its pipelines with it";
-    EXPECT_EQ(halves_after->retired.value_or(0U), pipelines);
+    const std::optional<ResidencyRow> programs_after = rowOf(backend->frameReport(), ResidencyKind::Programs);
+    ASSERT_TRUE(programs_after.has_value());
+    EXPECT_EQ(programs_after->live, 0U) << "a released program takes its pipelines with it";
+    EXPECT_EQ(programs_after->retired.value_or(0U), pipelines);
 
     // THE STREAMS STAY: a program release says nothing about geometry.
-    const std::optional<ResidencyRow> streams = rowOf(backend->frameReport(), ResidencyKind::Streams);
-    ASSERT_TRUE(streams.has_value());
-    EXPECT_EQ(streams->live, 2U);
+    const std::optional<ResidencyRow> geometry = rowOf(backend->frameReport(), ResidencyKind::Geometry);
+    ASSERT_TRUE(geometry.has_value());
+    EXPECT_EQ(geometry->live, 2U);
 
     // THE NEXT FRAME COMPILES AGAIN - and uploads nothing, because the streams never left.
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
@@ -560,18 +560,18 @@ TEST(VkResidencyTest, ReleasingATextureLowersTheImageResidency)
     EXPECT_EQ(first.uploads->texture_uploads, 1U);
     EXPECT_GT(first.uploads->texture_bytes, 0U);
 
-    const std::optional<ResidencyRow> images_before = rowOf(first, ResidencyKind::Images);
-    ASSERT_TRUE(images_before.has_value());
-    ASSERT_EQ(images_before->live, 1U);
-    ASSERT_GT(images_before->bytes.value_or(0U), 0U);
+    const std::optional<ResidencyRow> textures_before = rowOf(first, ResidencyKind::Textures);
+    ASSERT_TRUE(textures_before.has_value());
+    ASSERT_EQ(textures_before->live, 1U);
+    ASSERT_GT(textures_before->bytes.value_or(0U), 0U);
 
     ASSERT_TRUE(backend->releaseContent(texture.get()));
 
-    const std::optional<ResidencyRow> images_after = rowOf(backend->frameReport(), ResidencyKind::Images);
-    ASSERT_TRUE(images_after.has_value());
-    EXPECT_EQ(images_after->live, 0U) << "a released texture holds no image";
-    EXPECT_EQ(images_after->bytes.value_or(1U), 0U);
-    EXPECT_EQ(images_after->retired.value_or(0U), 1U);
+    const std::optional<ResidencyRow> textures_after = rowOf(backend->frameReport(), ResidencyKind::Textures);
+    ASSERT_TRUE(textures_after.has_value());
+    EXPECT_EQ(textures_after->live, 0U) << "a released texture holds no image";
+    EXPECT_EQ(textures_after->bytes.value_or(1U), 0U);
+    EXPECT_EQ(textures_after->retired.value_or(0U), 1U);
 
     // THE NEXT FRAME UPLOADS IT AGAIN, and still samples the right texel.
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(sampled, material))), PresentOutcome::Skipped);
@@ -643,14 +643,14 @@ TEST(VkResidencyTest, ReleasingOneBufferLowersOnlyTheStreamsThatReadIt)
     const intrusive_ptr<RenderTarget>   target   = makeTarget();
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
 
-    const std::optional<ResidencyRow> before = rowOf(backend->frameReport(), ResidencyKind::Streams);
+    const std::optional<ResidencyRow> before = rowOf(backend->frameReport(), ResidencyKind::Geometry);
     ASSERT_TRUE(before.has_value());
     ASSERT_EQ(before->live, 2U);
 
     // THE VERTEX BUFFER ONLY: the index stream reads a different buffer and must stay.
     ASSERT_TRUE(backend->releaseContent(*content.positions));
 
-    const std::optional<ResidencyRow> after = rowOf(backend->frameReport(), ResidencyKind::Streams);
+    const std::optional<ResidencyRow> after = rowOf(backend->frameReport(), ResidencyKind::Geometry);
     ASSERT_TRUE(after.has_value());
     EXPECT_EQ(after->live, 1U) << "the index stream was not named by the release";
     EXPECT_LT(after->bytes.value_or(0U), *before->bytes);
@@ -688,17 +688,26 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     EXPECT_EQ(fresh.progress->submitted, 0U);
     EXPECT_EQ(fresh.progress->completed, 0U);
 
-    // RESIDENCY IS ANSWERED AND EMPTY: the three kinds this backend retains are reported, at zero.
-    const std::optional<ResidencyRow> streams = rowOf(fresh, ResidencyKind::Streams);
-    ASSERT_TRUE(streams.has_value());
-    EXPECT_EQ(streams->live, 0U);
-    EXPECT_EQ(streams->bytes.value_or(1U), 0U);
-    const std::optional<ResidencyRow> images = rowOf(fresh, ResidencyKind::Images);
-    ASSERT_TRUE(images.has_value());
-    EXPECT_EQ(images->live, 0U);
-    const std::optional<ResidencyRow> halves = rowOf(fresh, ResidencyKind::Halves);
-    ASSERT_TRUE(halves.has_value());
-    EXPECT_EQ(halves->live, 0U);
+    // RESIDENCY IS ANSWERED AND EMPTY: EVERY kind the vocabulary names is reported, at zero - `Materials` is the
+    // one this backend accounts for while retaining nothing across frames (see Device::noteResidency), which is a
+    // measurement rather than an omission.
+    ASSERT_TRUE(fresh.retention.has_value());
+    ASSERT_TRUE(fresh.retention->residency.has_value());
+    EXPECT_EQ(fresh.retention->residency->rows().size(), vn::graphics::kResidencyKindCount)
+        << "the row's existence is the promise; a host writes one loop over the rows";
+    const std::optional<ResidencyRow> geometry = rowOf(fresh, ResidencyKind::Geometry);
+    ASSERT_TRUE(geometry.has_value());
+    EXPECT_EQ(geometry->live, 0U);
+    EXPECT_EQ(geometry->bytes.value_or(1U), 0U);
+    const std::optional<ResidencyRow> textures = rowOf(fresh, ResidencyKind::Textures);
+    ASSERT_TRUE(textures.has_value());
+    EXPECT_EQ(textures->live, 0U);
+    const std::optional<ResidencyRow> programs = rowOf(fresh, ResidencyKind::Programs);
+    ASSERT_TRUE(programs.has_value());
+    EXPECT_EQ(programs->live, 0U);
+    const std::optional<ResidencyRow> materials = rowOf(fresh, ResidencyKind::Materials);
+    ASSERT_TRUE(materials.has_value()) << "this device writes material values into each frame's own scratch";
+    EXPECT_EQ(materials->live, 0U);
 
     // A MATERIAL IS CONTENT WITH NOTHING RESIDENT: accepted, and nothing is claimed as released.
     const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));

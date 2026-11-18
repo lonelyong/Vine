@@ -15,19 +15,21 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @details
  * - One value per KIND, not per object: a row answers "how much of this sort is resident", which is what a
- *   HUD, a gate or a host trimming its content can act on. The kinds are the ones this framework's backends
- *   actually retain (see `.ai/decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`).
- * - A kind is a NAME for the accounting, not an identity for the resource: two backends may create different
- *   GPU objects for one stream and still report the same kind.
+ *   HUD, a gate or a host trimming its content can act on.
+ * - THE NAMES ARE THE HOST'S CONTENT MODEL, not a backend's object model: `Geometry` / `Textures` / `Materials` /
+ *   `Programs` are the four things a host holds and releases (`releaseContent`), so a host reads its own
+ *   vocabulary back instead of translating a backend's "streams" and "halves".
+ * - EVERY BACKEND NOTES EVERY KIND: the row's EXISTENCE is the promise (this backend accounts for this kind),
+ *   while a number inside it may stay absent (`bytes` unset, say). A backend that retains nothing of a kind
+ *   reports `live = 0`, which is a measurement rather than a missing answer.
  */
 enum class ResidencyKind : std::uint8_t
 {
-    Streams,        // Vertex / index / instance streams (keyed by buffer + that buffer's revision + the slice).
-    Images,         // Uploaded textures.
-    MaterialBlocks, // Per-material uniform blocks (the material arena's mapped region).
-    Halves,         // Compiled pipelines (program + layout + variant + topology + target shape).
-    Sets,           // Descriptor sets bound by content draws.
-    Count,          // Not a kind: the number of kinds, so a table can be sized without a literal.
+    Geometry,  // Vertex / index / instance streams.
+    Textures,  // Uploaded textures.
+    Materials, // Per-material uniform blocks (what a material arena keeps resident).
+    Programs,  // Compiled pipelines (program + layout + variant + topology + target shape).
+    Count,     // Not a kind: the number of kinds, so a table can be sized without a literal.
 };
 
 /**
@@ -49,8 +51,8 @@ inline constexpr std::size_t kResidencyKindCount = static_cast<std::size_t>(Resi
  */
 struct ResidencyRow
 {
-    ResidencyKind                 kind{ ResidencyKind::Streams }; // Which kind this row describes.
-    std::uint32_t                 live{ 0 };                      // Entries resident now.
+    ResidencyKind                 kind{ ResidencyKind::Geometry }; // Which kind this row describes.
+    std::uint32_t                 live{ 0 };                       // Entries resident now.
     std::optional<std::uint64_t>  bytes;                          // GPU bytes those entries occupy, when counted.
     std::optional<std::uint64_t>  built;                          // Cumulative: how many were built (upload/compile).
     std::optional<std::uint64_t>  retired;                        // Cumulative: how many were let go.
@@ -128,7 +130,7 @@ class VN_GRAPHICS_API ResidencyLedger {
      * @brief Gets the stable name of a kind, for a log line or a HUD label.
      *
      * @param kind The kind to name.
-     * @return A null-terminated name that outlives the call ("streams", "images", ...).
+     * @return A null-terminated name that outlives the call ("geometry", "textures", ...).
      */
     [[nodiscard]] static const char* nameOf(ResidencyKind kind) noexcept;
 

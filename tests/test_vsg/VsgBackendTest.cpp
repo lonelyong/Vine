@@ -556,6 +556,11 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     EXPECT_EQ(report.retention->device_waits, backend->deviceWaits()) << "the counter the host reads is the one the backend counted";
     EXPECT_EQ(report.retention->device_waits, 0U) << "the frame path never idles the device";
 
+    // EVERY KIND IS REPORTED, whichever backend fills which: the row's existence is the promise (this backend
+    // accounts for this kind) while a number inside it may stay absent, so a host writes one loop over `rows()`.
+    ASSERT_TRUE(report.retention->residency.has_value());
+    EXPECT_EQ(report.retention->residency->rows().size(), vn::graphics::kResidencyKindCount);
+
     // The frame clock, as a host can see it: SUBMITTED is not COMPLETED, and the difference is what is
     // still in flight. The proof of completion is this backend's own (the command slot was recycled), so
     // the host reads the session's watermarks rather than assuming a lag.

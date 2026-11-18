@@ -236,5 +236,6 @@ After every step, run: `check_ai_docs.py --strict`, `check_design_docs.py`, `che
   precondition was a host's need, not a backend count (`graphics-architecture.md` 2.15 states the admission test, and
   option D above is the same conclusion from the other side). What a census of the kinds shows: `Streams` / `Images` are
   filled by both backends, `Halves` by vk only, `MaterialBlocks` by vsg only, and `Sets` by nobody (one reference in the
-  tree, its own name table). The taxonomy's neutrality is `../backlog/graphics.md` T43; the placement of the two tables
+  tree, its own name table). The taxonomy's neutrality landed on 2026-11-18 (`BC-26`: `ResidencyKind` now speaks the
+  host's four content words, `Sets` is deleted, and every backend notes every kind); the placement of the two tables
   above is T30, and each still has one consumer, which is `ADR-2026-11-16`'s own test for staying plugin-private.

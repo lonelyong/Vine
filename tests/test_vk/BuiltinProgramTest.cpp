@@ -208,7 +208,7 @@ constexpr int kTargetSize = 64;
         return 0U;
     }
     for (const ResidencyRow& row : report.retention->residency->rows()) {
-        if (row.kind == ResidencyKind::Streams) {
+        if (row.kind == ResidencyKind::Geometry) {
             return row.live;
         }
     }

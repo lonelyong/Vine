@@ -182,6 +182,11 @@ removing an unregistered pass and removing an already removed pass are the same 
       the base default, which reads as an honest "no" while meaning "did not answer" - the distinction `ResidencyRow` states
       as "absent is not zero"; and a TYPE cannot be defaulted at all, so promoting one locks it into the ABI where a field
       would have stayed additive.
+    * **Applied to residency (`BC-26`)**: `ResidencyKind` speaks the host's content model - `Streams` → `Geometry`,
+      `Images` → `Textures`, `MaterialBlocks` → `Materials`, `Halves` → `Programs` - and `Sets` is DELETED because it had no
+      producer (one reference in the tree, its own name table). No deprecated aliases, for the reason `BC-17`…`BC-21`
+      give. Every backend notes every kind, so a row's existence is the promise, a number inside it may stay absent, and a
+      host writes one loop over `rows()` instead of asking which backend answered.
     Boundary: this decides what may be PUBLIC, not what a backend may HAVE. A mechanism both backends use is a fact about the
     backends, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a second CONSUMER is
     what moves a mechanism there, which is a different trigger from "a second backend exists".

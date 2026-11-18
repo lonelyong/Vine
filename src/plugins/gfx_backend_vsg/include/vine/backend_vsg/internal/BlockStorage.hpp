@@ -255,7 +255,7 @@ class BlockStorage {
      *   far, `retired` the slots the pin sweep returned, `refused` the notes this arena had to turn away. A slot is
      *   returned by @ref retireUnpinnedMaterials - the only thing that lowers `live`.
      *
-     * @return The row for `ResidencyKind::MaterialBlocks`.
+     * @return The row for `ResidencyKind::Materials`.
      */
     [[nodiscard]] vn::graphics::ResidencyRow materialResidency() const noexcept;
 

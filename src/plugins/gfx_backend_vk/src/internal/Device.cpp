@@ -928,23 +928,32 @@ struct Device::Impl {
         return false;
     }
 
-    /** @brief Notes this backend's three residency kinds into @p ledger (see frameReport). */
+    /**
+     * @brief Notes every residency kind into @p ledger (see frameReport).
+     *
+     * @details
+     * - EVERY KIND, ALWAYS: a row's existence is how a host learns this backend accounts for that kind, so a kind
+     *   this device retains nothing of is reported as `live = 0` rather than left out.
+     * - `Materials` is that kind here: material values are written into each frame's own scratch (see
+     *   FrameScratch), so nothing survives a frame and zero is the measurement.
+     */
     void noteResidency(vn::graphics::ResidencyLedger& ledger) const
     {
         const ContentCaches::Numbers numbers = caches.numbers();
         const ContentCaches::Progress& content_numbers = numbers.content;
         const ContentImages::Progress& image_numbers   = numbers.images;
-        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Geometry,
                                                 .live    = content_numbers.streams_live,
                                                 .bytes   = content_numbers.stream_bytes_live,
                                                 .built   = content_numbers.stream_builds,
                                                 .retired = content_numbers.stream_releases });
-        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Images,
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Textures,
                                                 .live    = image_numbers.live,
                                                 .bytes   = image_numbers.live_bytes,
                                                 .built   = image_numbers.builds,
                                                 .retired = image_numbers.releases });
-        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Halves,
+        ledger.note(vn::graphics::ResidencyRow{ .kind = vn::graphics::ResidencyKind::Materials });
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Programs,
                                                 .live    = content_numbers.pipelines_live,
                                                 .built   = content_numbers.pipeline_builds,
                                                 .retired = content_numbers.pipeline_releases });

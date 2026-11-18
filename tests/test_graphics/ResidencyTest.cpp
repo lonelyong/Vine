@@ -30,10 +30,10 @@ TEST(ResidencyLedgerTest, AnEmptyLedgerSaysNothingRatherThanZero)
 TEST(ResidencyLedgerTest, AKindThatDoesNotCountBytesKeepsTheTotalSilent)
 {
     ResidencyLedger ledger;
-    // The stream store counts entries and churn but not bytes (see VsgBackend::frameReport); the image cache
-    // counts bytes. Adding them would produce a number nobody measured.
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Streams, .live = 7U, .built = 7U, .retired = 0U, .refused = 0U });
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Images, .live = 2U, .bytes = 4096U });
+    // A geometry row counts entries and churn but not bytes; a texture row counts bytes. Adding them would
+    // produce a number nobody measured.
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Geometry, .live = 7U, .built = 7U, .retired = 0U, .refused = 0U });
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 2U, .bytes = 4096U });
 
     const vn::graphics::ResidencyTotals totals = ledger.totals();
     EXPECT_EQ(totals.live, 9U);
@@ -44,8 +44,8 @@ TEST(ResidencyLedgerTest, AKindThatDoesNotCountBytesKeepsTheTotalSilent)
 TEST(ResidencyLedgerTest, ATotalIsGivenOnlyWhenEveryRowReportedItsBytes)
 {
     ResidencyLedger ledger;
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Images, .live = 2U, .bytes = 4096U });
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::MaterialBlocks, .live = 3U, .bytes = 1536U });
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 2U, .bytes = 4096U });
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Materials, .live = 3U, .bytes = 1536U });
 
     const vn::graphics::ResidencyTotals totals = ledger.totals();
     ASSERT_TRUE(totals.bytes.has_value());
@@ -57,11 +57,11 @@ TEST(ResidencyLedgerTest, ATotalIsGivenOnlyWhenEveryRowReportedItsBytes)
 TEST(ResidencyLedgerTest, ABytesReadingThatDropsIsWhatMakesItUsableAsATrimSignal)
 {
     ResidencyLedger ledger;
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Images, .live = 3U, .bytes = 9000U });
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 3U, .bytes = 9000U });
     ASSERT_EQ(*ledger.totals().bytes, 9000U);
 
     // The same kind, one entry released: the row is REPLACED, not accumulated (one fact, one row).
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Images, .live = 2U, .bytes = 6000U });
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 2U, .bytes = 6000U });
     EXPECT_EQ(ledger.rows().size(), 1U);
     EXPECT_EQ(*ledger.totals().bytes, 6000U) << "the ledger reports what is resident now, not a running total";
 }
@@ -86,7 +86,7 @@ TEST(ResidencyLedgerTest, EveryKindHasItsOwnStableName)
 TEST(ResidencyLedgerTest, ResetForgetsTheRowsAndKeepsTheObject)
 {
     ResidencyLedger ledger;
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Streams, .live = 4U });
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Geometry, .live = 4U });
     ASSERT_EQ(ledger.rows().size(), 1U);
 
     ledger.reset();

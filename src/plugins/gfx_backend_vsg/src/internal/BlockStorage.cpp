@@ -336,7 +336,7 @@ vn::graphics::ResidencyRow BlockStorage::materialResidency() const noexcept
     // The arena answers every number itself (see MaterialArena): slots holding a live material, the region's
     // mapped size, the slots allocated so far, the slots the pin sweep returned and the notes it had to turn away.
     vn::graphics::ResidencyRow row;
-    row.kind    = vn::graphics::ResidencyKind::MaterialBlocks;
+    row.kind    = vn::graphics::ResidencyKind::Materials;
     row.live    = static_cast<std::uint32_t>(d->arena.live());
     row.bytes   = d->arena.capacityBytes();
     row.built   = d->arena.allocations();

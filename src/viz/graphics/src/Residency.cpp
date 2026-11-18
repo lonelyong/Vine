@@ -60,11 +60,10 @@ ResidencyTotals ResidencyLedger::totals() const noexcept
 const char* ResidencyLedger::nameOf(ResidencyKind kind) noexcept
 {
     switch (kind) {
-    case ResidencyKind::Streams: return "streams";
-    case ResidencyKind::Images: return "images";
-    case ResidencyKind::MaterialBlocks: return "material blocks";
-    case ResidencyKind::Halves: return "compiled halves";
-    case ResidencyKind::Sets: return "descriptor sets";
+    case ResidencyKind::Geometry: return "geometry";
+    case ResidencyKind::Textures: return "textures";
+    case ResidencyKind::Materials: return "materials";
+    case ResidencyKind::Programs: return "programs";
     case ResidencyKind::Count: return "count";
     }
     return "unknown";

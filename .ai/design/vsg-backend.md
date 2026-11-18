@@ -235,7 +235,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 | F17 | Custom attributes | from location 3 on, forwarded as `vn_Attribute{location}`. |
 | F18 | Block storage | one mapped buffer: the view / draw / material regions; a ring per frame; zero writes in the steady state. |
 | F19 | Descriptors | one set, 3 dynamic uniform bindings (0 view / 1 draw / 2 material). |
-| F20 | The material arena | `copies` slots per material; a full arena answers `Refused`; growing replaces the material region only. A slot's lifetime is a pin: it stays while a live material row declares that identity, and after the last row leaves the frame head's `retireUnpinned` frees it at once (`BlockStorage::retireUnpinnedMaterials`) — no park, because the copy rotation is the window; the `retired` count sits on the `ResidencyKind::MaterialBlocks` row. |
+| F20 | The material arena | `copies` slots per material; a full arena answers `Refused`; growing replaces the material region only. A slot's lifetime is a pin: it stays while a live material row declares that identity, and after the last row leaves the frame head's `retireUnpinned` frees it at once (`BlockStorage::retireUnpinnedMaterials`) — no park, because the copy rotation is the window; the `retired` count sits on the `ResidencyKind::Materials` row. |
 
 ### 3.5 Textures, shaders, evidence
 

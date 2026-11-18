@@ -1950,3 +1950,24 @@
   walk of the SCENE graph. T6 restated accordingly.
 - **Evidence**: `test_graphics` 621, `test_vk` 174, `test_vsg` 572, `test_gui` 332; `content_seam` + `vk_exposure`
   green; ten gates green. No behaviour changed and no case renamed.
+
+## 2026-11-18 the residency ledger speaks the host's words (`BC-26`)
+
+- **What**: `ResidencyKind` is now the host's content model - `Geometry` / `Textures` / `Materials` / `Programs` -
+  replacing `Streams` / `Images` / `MaterialBlocks` / `Halves`; `Sets` is deleted (no producer: one reference in the
+  tree, its own name table). No aliases. Both backends now note ALL four kinds: vk reports `Materials` at `live = 0`
+  (material values go into each frame's own scratch), vsg reports `Programs` from
+  `ContentAssembly::halves()` (`halves()` / `builds()` / `refused()`), and vsg notes a zero `Materials` row when it
+  has no arena. `nameOf()` answers the new words.
+- **Why**: the ledger is the one part of the old T30 question that IS public, and it was promising a taxonomy no
+  backend implemented whole - `Halves` was vk-only, `MaterialBlocks` vsg-only, `Sets` nobody, so `rows()` was 3 rows
+  with a backend-dependent composition and a host could not write one loop over it. The criterion that decided it is
+  `graphics-architecture.md` 2.15 (public = the host must decide on it). T30 itself is now only the placement of
+  `PinnedResources` / `ResidencyClaims`, each still with one backend consumer.
+- **Rejected**: keeping `Streams` / `Images` (a host translates its own content types into backend plumbing);
+  keeping `Sets` "for symmetry" (`G8`: zero producers, zero readers); filling vsg's `Programs` from
+  `ContentStore::programEntries()` (those are table ROWS, a superset of compiled halves).
+- **Evidence**: `test_graphics` 621, `test_vk` 174, `test_vsg` 572, `test_gui` 332; `content_seam` + `vk_exposure`
+  green; eleven gates green (incl. `check_translations`). New assertions: `VkResidencyTest` fresh-device expects
+  `rows().size() == kResidencyKindCount` and a zero `Materials` row; `VsgBackendTest`'s frame-report case expects the
+  same count.
