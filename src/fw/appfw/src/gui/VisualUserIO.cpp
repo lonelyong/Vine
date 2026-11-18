@@ -125,7 +125,7 @@ struct VisualUserIO::Impl {
     ///
     /// Read and written on the application thread only: the write happens inside
     /// the marshalled UI call that shows the prompt, and the read inside
-    /// repromptError(). It is shared rather than a plain member so a posted UI call
+    /// reprompt(). It is shared rather than a plain member so a posted UI call
     /// can write it without capturing this object, which may be gone by the time
     /// the call runs (every other posted call in this file is written the same
     /// way).
@@ -199,10 +199,13 @@ struct VisualUserIO::Impl {
     void onLineEntered(const String& text);
     void onEscape();
     void parseAndComplete(PendingRead kind, const String& text);
-    void repromptError(const String& message);
-    /// Re-shows the current prompt with the text the user typed still in the input line, so a refusal does not make them
-    /// type the whole thing again.
-    void repromptPathError(const String& message, const String& text);
+
+    /// Shows why an answer was refused and asks again.
+    ///
+    /// @param message Refusal text.
+    /// @param text    What the user typed, put back into the input line; empty clears it - a single value
+    ///                starts over, while a read of several paths keeps the entries that were fine.
+    void reprompt(const String& message, const String& text);
 
     /**
      * @brief Appends a command outcome to the console on the application thread.
@@ -463,7 +466,7 @@ void VisualUserIO::Impl::showPrompt(const ReadUi& ui)
     }
 
     // The prompt is recorded inside the marshalled call, so the member it lives in is only ever touched on
-    // the application thread (repromptError() reads it there when the user enters something invalid).
+    // the application thread (reprompt() reads it there when the user enters something invalid).
     auto* panel = console;
     auto  state = prompt_state;
     onConsolePanel(panel, [state, ui](ConsolePanel* target) {
@@ -713,7 +716,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             complete(kind, &Impl::int_result, value);
         }
         else {
-            repromptError(vn::appfw::translate("appfw", "Enter an integer"));
+            reprompt(vn::appfw::translate("appfw", "Enter an integer"), {});
         }
         break;
     }
@@ -726,7 +729,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             complete(kind, &Impl::double_result, value);
         }
         else {
-            repromptError(vn::appfw::translate("appfw", "Enter a number"));
+            reprompt(vn::appfw::translate("appfw", "Enter a number"), {});
         }
         break;
     }
@@ -750,7 +753,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
                 break;
             }
         }
-        repromptError(vn::appfw::translate("appfw", "Enter a point as x,y,z"));
+        reprompt(vn::appfw::translate("appfw", "Enter a point as x,y,z"), {});
         break;
     }
 
@@ -761,7 +764,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             complete(kind, &Impl::path_result, check.path);
         }
         else {
-            repromptPathError(check.message, text);
+            reprompt(check.message, text);
         }
         break;
     }
@@ -773,7 +776,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             complete(kind, &Impl::paths_result, check.paths);
         }
         else {
-            repromptPathError(check.message, text);
+            reprompt(check.message, text);
         }
         break;
     }
@@ -785,7 +788,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             complete(kind, &Impl::path_result, check.path);
         }
         else {
-            repromptPathError(check.message, text);
+            reprompt(check.message, text);
         }
         break;
     }
@@ -797,7 +800,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             complete(kind, &Impl::paths_result, check.paths);
         }
         else {
-            repromptPathError(check.message, text);
+            reprompt(check.message, text);
         }
         break;
     }
@@ -806,7 +809,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
     }
 }
 
-void VisualUserIO::Impl::repromptPathError(const String& message, const String& text)
+void VisualUserIO::Impl::reprompt(const String& message, const String& text)
 {
     if (!console) {
         return;
@@ -816,23 +819,7 @@ void VisualUserIO::Impl::repromptPathError(const String& message, const String& 
     const String prompt = prompt_state->current;
     onConsolePanel(panel, [message, prompt, text](ConsolePanel* target) {
         target->append(ConsoleMessageType::Error, message);
-        // The rejected text goes back into the input line: with several paths in one line, clearing it would make the
-        // user retype the ones that were fine.
         target->beginInput(prompt, text);
-    });
-}
-
-void VisualUserIO::Impl::repromptError(const String& message)
-{
-    if (!console) {
-        return;
-    }
-
-    auto*        panel  = console;
-    const String prompt = prompt_state->current;
-    onConsolePanel(panel, [message, prompt](ConsolePanel* target) {
-        target->append(ConsoleMessageType::Error, message);
-        target->beginInput(prompt);
     });
 }
 
