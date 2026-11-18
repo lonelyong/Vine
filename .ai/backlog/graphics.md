@@ -75,9 +75,19 @@ Everything else is in §2, each waiting for its own trigger.
 
 ### 2.6 API shape and naming
 
-Nothing open: `T40` (a `FrameContext` for the per-frame hook) landed 2026-11-18 ahead of its trigger
+`T40` (a `FrameContext` for the per-frame hook) landed 2026-11-18 ahead of its trigger
 (`../decisions/ADR-2026-11-18-the-frame-carries-its-context.md`) and `T41` (the diagnostics handle's name) landed the
-same day. The section stays as the home of the next API-shape item.
+same day.
+
+| # | Item | What | Trigger | Source |
+|---|---|---|---|---|
+| T42 | The per-frame worker must BE the content object | `PassChain::addOverlay(role, content, desc)` discovers
+`FrameUpdate` on the content by cast, so only a content object can repaint itself: a host that wants a CONTROLLER to
+refill content it does not own has to subclass the scene and inherit the hook. Additive fix when wanted:
+`setOverlayUpdater(role, raw_ptr<FrameUpdate>)`, which states the worker instead of discovering it | a host appears with a
+controller separated from the content it repaints. **Not built at 2026-11-18**: both in-tree consumers (`AxisGizmo`,
+`FpsOverlay`) repaint themselves, so the separation has no witness (`G8`) | `../research/graphics-2026-11-18-review-5.md`
+§2.1, `FrameUpdate.hpp`, `PassChain::addOverlay` |
 
 ## 3. The first command of the next session
 
