@@ -1,47 +1,52 @@
-# 场景收集 memo 的视图键漏掉 view 基与 up，可能返回另一视图的 billboard
+# The collection memo key omits the view basis and up, so it can return another view's billboard
 
-- **状态**：待修复；常规 `Camera` 用法下不易命中（投影与视图同源），`CollectView` 直接构造时可达。
-- **发现日期**：2026-11-02
-- **模块**：`src/viz/graphics`
-- **涉及**：`Scene::collectRenderCommands(const CollectView&, std::uint32_t)` 的 memo 判定（`src/viz/graphics/src/Scene.cpp:700-710`）、
-  `CollectView`（`sdk/vine/graphics/CollectView.hpp`）、`AutoTransform::localToWorldForView`（`src/viz/graphics/src/AutoTransform.cpp:278-321`）
+- **Status**: Open; hard to hit with ordinary `Camera` use (the projection and the view come from one source), but reachable when a `CollectView` is constructed directly.
+- **Found**: 2026-11-02
+- **Module**: `src/viz/graphics`
+- **Files**: the memo decision in `Scene::collectRenderCommands(const CollectView&, std::uint32_t)`
+  (`src/viz/graphics/src/Scene.cpp:700-710`), `CollectView` (`sdk/vine/graphics/CollectView.hpp`),
+  `AutoTransform::localToWorldForView` (`src/viz/graphics/src/AutoTransform.cpp:278-321`)
 
-> **EN**: Open finding: the collection memo key is built from `projection * view`, `eye` and `layer_mask`, but view-dependent nodes read the decomposed `view` and `up`, so two `CollectView` values with the same product but different factors - or the same view with a different `up` - hit each other's memo and return the other view's billboard transform, with no self-correction. The key must cover every input the result depends on (`G4`, `G11`, `G12`); reachable by constructing `CollectView` directly.
+## Symptom and impact
 
-## 现象与影响
+The memo key of the collection result is built from `projection * view`, `eye` and `layer_mask` (plus the viewport when
+needed), but view-dependent nodes read the **decomposed** `view` and `up`:
 
-收集结果的 memo 键由 `projection * view`、`eye`、`layer_mask`（必要时加 viewport）组成，但视图相关节点读的是
-**分解后的** `view` 与 `up`：
+- `RotateToScreen` uses `screenRotation(view.view * parent_world)` (`AutoTransform.cpp:292`);
+- `RotateToCamera` uses `view.up` to derive the local up (`AutoTransform.cpp:300`).
 
-- `RotateToScreen` 用 `screenRotation(view.view * parent_world)`（`AutoTransform.cpp:292`）；
-- `RotateToCamera` 用 `view.up` 求局部 up（`AutoTransform.cpp:300`）。
+Neither is a function of `projection * view`: there are combinations where `P1*V1 == P2*V2` while `V1 != V2` (different
+decompositions of one product matrix), and there are `CollectView` values with the same `view` and a different `up`. The
+memo hits in those cases and returns the billboard transform computed for the previous view: the billboard faces the wrong
+way, the scale factor of a screen-space scale is wrong, and nothing corrects it later.
 
-两者都不是 `projection * view` 的函数：存在 `P1*V1 == P2*V2` 而 `V1 != V2` 的组合（同一合成矩阵的不同分解），
-也存在 `view` 相同、`up` 不同的 `CollectView`。此时 memo 命中，返回的是上一视图算出来的 billboard 变换：
-billboard 朝向错误、屏幕空间缩放的缩放因子错误，且不会自我纠正。
+## Root cause
 
-## 根因
+The memo key covers only a subset of "the inputs the collection reads", and the subset was chosen on the assumption that a
+`Camera` usually produces them. `CollectView` is a public struct that lets the caller supply `projection` / `view` / `eye` /
+`up` separately, and no part of the contract requires them to come from one camera object.
 
-memo 的键只覆盖了“收集用到的输入”的一个子集，而且是按“通常由 `Camera` 生成”这个假设挑的；`CollectView` 是公开结构，
-它允许调用者分别提供 `projection` / `view` / `eye` / `up`，契约里没有任何一条要求它们必须来自同一个相机对象。
+## Suggested fix
 
-## 修改建议
+1. Make the key cover **the inputs actually read**: at least compare the independent `view` and `up`, and go through
+   `Node::localToWorldForView` for every other view-dependent item (the viewport is already handled) so that everything it
+   reads goes into the key.
+2. The safer shape is to make the view-dependent inputs a small set the node itself declares (the `ViewDependence` levels
+   already exist), and let the memo compare whichever items the highest declared level implies - then a new view-dependent
+   node cannot quietly omit an item again.
+3. Write into the header that `CollectView`'s `projection` / `view` / `eye` / `up` must be consistent with each other,
+   otherwise the memo's reuse premise does not hold; where that cannot be guaranteed, fall back to "a scene with
+   view-dependent nodes is not reused across views".
 
-1. 键覆盖**实际读取的输入**：至少把独立的 `view` 与 `up` 纳入比较；其余视图相关项（viewport 已处理）逐一核对
-   `Node::localToWorldForView` 的实现，凡是读了的都进键。
-2. 更稳妥的做法是把"视图相关项"做成节点自己声明的小集合（现在已有 `ViewDependence` 档位），memo 按其中出现过的
-   最高档位决定比较哪几项——这样新增一个视图相关节点时不至于再漏一次。
-3. 头文件里写明：`CollectView` 的 `projection` / `view` / `eye` / `up` 必须彼此一致，否则 memo 的复用前提不成立；
-   若无法保证，就退化为“含视图相关节点的场景不跨视图复用”。
+## Verification plan
 
-## 验证建议
+- Unit test: build two `CollectView` values whose `projection * view` is identical while `view` differs (shift the
+  corresponding terms of `projection` and `view` to compensate), in a scene with one `RotateToScreen` billboard; when both
+  collections hit the memo, assert that the second billboard's world matrix matches a standalone walk (it fails today).
+- The `RotateToCamera` version with one `view` and different `up` follows the same shape.
 
-- 单测：构造两次 `CollectView`，使 `projection * view` 完全相同而 `view` 不同（如把 `projection` 与 `view`
-  相应项移位补偿），场景含一个 `RotateToScreen` billboard；两次收集都命中 memo 时，断言第二次的 billboard 世界
-  矩阵与单独走查的结果一致（当前会失败）。
-- 同一 `view`、不同 `up` 的 `RotateToCamera` 版本同理。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G4**（“memo 键 = 结果的全部输入”是隐含契约，却没写清也没实现全）、**G11**（错在画面里而不是错误里，
-定位只能靠读 memo 代码）、**G12**（视图相关性的声明与它的缓存键不在同一处表达）。
+The finding touches **G4** ("the memo key is all of the result's inputs" is an implicit contract that is neither written
+down nor implemented fully), **G11** (the error shows up in the picture and not as an error, so locating it means reading
+the memo code) and **G12** (the view dependence is declared in one place while its cache key lives in another).

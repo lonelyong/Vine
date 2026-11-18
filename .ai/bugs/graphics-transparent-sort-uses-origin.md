@@ -1,57 +1,71 @@
-# 透明排序用世界矩阵原点当代表点，大网格/偏移几何排错
+# Transparent sorting uses the world-matrix origin as the point that stands for the object, so large or offset geometry sorts wrongly
 
-- **状态**：已修复（2026-11-13）。顺序键现在是 `detail::SortKey`（`DrawListBake.hpp`）：代表点 = 世界盒中心（无盒退回矩阵原点），深度 = 量化相机空间深度。
-- **发现日期**：2026-11-02
-- **模块**：`src/viz/graphics`
-- **涉及**：`detail::sortCollected` / `detail::makeSortKey`（`src/viz/graphics/src/DrawListBake.{hpp,cpp}`）
+- **Status**: Fixed (2026-11-13). The order key is now `detail::SortKey` (`DrawListBake.hpp`): the representative point is the world box centre (the matrix origin when there is no box) and the depth is a quantised camera-space depth.
+- **Found**: 2026-11-02
+- **Module**: `src/viz/graphics`
+- **Files**: `detail::sortCollected` / `detail::makeSortKey` (`src/viz/graphics/src/DrawListBake.{hpp,cpp}`)
 
-> **EN**: Fixed (2026-11-13): the sort key used the node's local origin in world space, which for meshes whose vertices are far from the origin can lie off the object, so transparent objects were blended in the wrong order. `detail::SortKey` now uses the world box centre (falling back to the matrix origin when there is no box), quantised camera-space depth instead of euclidean distance, and a total order ending in row index, so `std::sort` needs no stability; the approximation stays object-level.
+## Symptom and impact
 
-## 现象与影响
+Opaque batches sort near to far and transparent batches far to near, and the order key was
+`(model_matrix * (0,0,0) - eye).length2()` (`Scene.cpp:746`) - the position of the **node's local origin** in world space.
 
-不透明批次按"近到远"、透明批次按"远到近"排序，顺序键是 `(model_matrix * (0,0,0) - eye).length2()`
-（`Scene.cpp:746`）——即**节点局部原点**在世界空间的位置。
+For meshes whose local vertices are far from the origin (CAD parts, models that bake world coordinates straight into the
+vertices, importer data that keeps the source coordinates) that point may not lie on the object at all, or may lie on its
+far side: two transparent objects then sort by the wrong near/far relation and blend wrongly (foreground covered by
+background). Near-to-far in the opaque batch is only an early-Z efficiency question and does not change the picture;
+transparent order is a correctness question.
 
-对于局部顶点远离原点的网格（CAD 件、把世界坐标直接烘进顶点的模型、导入器保留的原始坐标），这个点可能根本不在物体上，
-也可能在物体另一侧：两个透明物体因此按错误的远近关系排序，混合结果错（前景被后景覆盖）。不透明批次的前→后只是
-early-Z 效率问题，不改变画面；透明批次是正确性问题。
+Using the view distance instead of a camera-space depth is a secondary symptom of the same root cause: at the edge of the
+field of view it compares differently from the rasterised depth order.
 
-另外，用视线距离而不是相机空间深度，在视野边缘也会给出与光栅化顺序不一致的比较，属于同一根因的次要表现。
+## Root cause
 
-## 根因
+Sorting needs "where is this object", and the only thing at hand was a matrix; the implementation took the zero-cost answer,
+the matrix origin, instead of the geometric extent it already knew (`subtreeBounds` / `localBounds` are computed on the
+collection path and reused through `BoundsCache`).
 
-排序需要“这个物体在哪”，而手边只有一个矩阵；实现取了矩阵原点这个零成本的答案，没有用已知的几何范围
-（`subtreeBounds` / `localBounds` 已经在收集路径里被算过并被 `BoundsCache` 复用）。
+## Suggested fix
 
-## 修改建议
+1. Change the order key to the squared distance from the eye to the **world-space bounding box** representative point:
+   prefer the centre of `BoundsCache::worldBound(node, node_world)` (this frame already computes it, so the traversal cost
+   does not grow), and fall back to the matrix origin when it is unavailable.
+2. Use a camera-space depth (the z after the `view` transform) instead of the euclidean distance, so the order agrees with
+   the rasterised depth; the two disagree about "who is in front" at the edge of the field of view.
+3. State and record that this is an **object-level approximation**: it does not settle self-intersection, non-convex
+   shapes or several layers around one centre. Content that needs a stronger order uses `Node::setDrawOrder` (already
+   supported), splits its geometry, or gets its own pass for independently sorted transparency (see backlog).
+4. After changing the key, look at sort stability and cost together: compute the representative point inside the existing
+   per-command loop, and do not introduce a new allocation per frame.
 
-1. 顺序键改为**世界空间包围盒代表点**到眼睛的距离平方：优先用 `BoundsCache::worldBound(node, node_world)` 的中心
-   （本帧已经在算，不增加遍历成本）；取不到时退回矩阵原点。
-2. 用相机空间深度（`view` 变换后的 z）而不是欧氏距离，让顺序与光栅化深度一致；两者对“谁在前”的判定在视野边缘不同。
-3. 明确并记录这是一条**对象级近似**：它不解决自相交、非凸、同中心多层的顺序。需要更强顺序的内容走
-   `Node::setDrawOrder`（已支持）、拆分几何，或另开一个排序独立透明的 pass（见 backlog）。
-4. 改键之后同步看排序稳定性和性能：代表点计算放进已有的每命令循环里，不要引入每帧新增分配。
+## Verification plan
 
-## 验证建议
+- Unit test: two transparent quads whose geometry sits far from the origin (for example all vertices in `x∈[100,101]`),
+  with the camera looking at a front/back relation along y; assert that the command order matches their real box distances
+  (it fails today, because the order follows the origin).
+- Unit test: two transparent objects with the same centre and different sizes, verifying that the order after taking the
+  box centre is the expected one.
+- Visual regression: a `PrimitiveDrawTest`-style pixel case with two overlapping transparent faces, where the blend result
+  matches the far-to-near order.
 
-- 单测：两个透明四边形，几何数据放在远离原点的局部坐标（例如顶点都在 `x∈[100,101]`），相机看到的是 y 方向前后关系；
-  断言命令顺序与它们的实际包围盒远近一致（当前会按原点排序而失败）。
-- 单测：同一中心点、一大一小的两个透明物体，验证代表点取盒中心后的顺序符合预期。
-- 视觉回归：`PrimitiveDrawTest` 式的像素用例，两个重叠透明面，颜色混合结果符合后→前顺序。
+## Design constraints
 
-## 设计约束
+The finding touches **G4** ("what the order key is" is not stated at the interface, so a caller cannot predict it),
+**G11** (the error only shows in pixels and is hard to trace back to the order key) and **G10** (a zero-cost
+approximation replaced correctness and nobody wrote the cost down).
 
-该问题涉及 **G4**（“顺序键是什么”没有在接口层说清，调用者无法预测）、**G11**（错误只体现在像素上，且难以定位到排序键）
-与 **G10**（用零成本的近似换掉了正确性，却没人写出这笔代价）。
+## Fix (2026-11-13, F11)
 
-## 修复（2026-11-13，F11）
-
-- **代表点**：世界盒中心（行里已经有 `world_box`，fold 算过一次），只有无盒的行才退回命令自己的矩阵原点。
-- **深度**：相机空间深度（`view * point` 的 -z）而不是欧氏距离，并按 `SortKey::kDepthStep`（1/4096 世界单位）量化，
-  使排序与光栅化深度一致、且跨机器可复现。
-- **全序**：键依次是 drawOrder → 层（最小层号）→ 不透明/透明 → 量化深度 → 行/图元索引（`tie`）。`tie` 使任意置换
-  排序结果相同，`sortCollected` 因此用 `std::sort` 而不依赖稳定性（`R17` / `T9`）。
-- **测试**：`SelectTest.TheSortKeyIsATotalOrder`、`SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth`、
-  `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin`（节点原点被故意放在最远点）、
-  `SelectTest.ACommandWithNoBoxFallsBackToItsOrigin`。像素级回归由现有 `test_vsg` 通过。
-- **边界没变**：仍是对象级近似（见“设计约束”与 `graphics-scene.md` N10）。
+- **Representative point**: the world box centre (the row already carries `world_box`, computed once by the fold), and only
+  a row without a box falls back to the command's own matrix origin.
+- **Depth**: camera-space depth (the -z of `view * point`) instead of the euclidean distance, quantised by
+  `SortKey::kDepthStep` (1/4096 world units), so the order agrees with the rasterised depth and is reproducible across
+  machines.
+- **Total order**: the key is drawOrder, then layer (the smallest layer number), then opaque/transparent, then the
+  quantised depth, then the row/primitive index (`tie`). `tie` makes every permutation sort identically, so
+  `sortCollected` uses `std::sort` and needs no stability (`R17` / `T9`).
+- **Tests**: `SelectTest.TheSortKeyIsATotalOrder`, `SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth`,
+  `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin` (the node origin is deliberately placed at the farthest point) and
+  `SelectTest.ACommandWithNoBoxFallsBackToItsOrigin`. The pixel-level regression passes through the existing `test_vsg`.
+- **The boundary is unchanged**: still an object-level approximation (see "Design constraints" and
+  `graphics-scene.md` N10).

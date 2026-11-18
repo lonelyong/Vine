@@ -1,54 +1,58 @@
-# SharedTask 唤醒等待者时 resume 已释放的帧（use-after-free）（历史登记）
+# SharedTask resumes a released frame while waking its waiters (use-after-free) (Historical record)
 
-**日期**：2026-09-17 ／ **状态**：已修复 ／ **涉及**：`src/base/async/sdk/vine/async/SharedTask.hpp`、
+**Date**: 2026-09-17 / **Status**: Fixed / **Files**: `src/base/async/sdk/vine/async/SharedTask.hpp`,
 `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed (historical, 2026-09-17): `detail::runShared()` swapped the whole waiter list out before resuming each handle, so a waiter destroyed inside a sibling's resume could not deregister and the loop resumed a freed coroutine frame (ASan heap-use-after-free, SIGSEGV without sanitizers). It now dequeues one waiter per lock exactly like `resumeWaitersOneByOne` - the module's own stated rule that a completion must never hold handles across a resume.
+## Symptom
 
-## 现象
+When a `SharedTask` completes with more than one waiter and the first waiter to be resumed destroys another waiter **inside
+its own resume**, the process crashes in the resume loop of `detail::runShared()`:
 
-`SharedTask` 完成时，如果它的等待者多于一个，并且第一个被唤醒的等待者在**它的 resume 过程里**销毁了另一个
-等待者，进程就会在 `detail::runShared()` 的 resume 循环里崩掉：
+- -O1 + ASan: `heap-use-after-free`, the read in `h.resume()` of `runShared`, the free in
+  `~WhenChild() -> composeChild()`'s `Task::Awaiter::destroy()`.
+- -O2 without a sanitizer: most runs SIGSEGV outright (exit 139).
+- Minimal reproduction: one `SharedTask` with two waiters inside `whenAny`, with the source task suspending for 30 ms
+  first - the winner of `whenAny` destroys the still-suspended loser when it completes, which is exactly the scenario the
+  module documentation describes.
 
-- -O1 + ASan：`heap-use-after-free`，读发生在 `runShared` 的 `h.resume()`，释放发生在
-  `~WhenChild() → composeChild() 的 Task::Awaiter::destroy()`。
-- 无 sanitizer 的 -O2 构建：多数运行直接 SIGSEGV（exit 139）。
-- 最小复现：一个 `SharedTask`，两个 waiter 都在 `whenAny` 里，源任务先挂起 30 ms——
-  `whenAny` 的赢家完成时会销毁仍挂起的落败者，正是模块文档里写明的场景。
+## Root cause
 
-## 根因
-
-`runShared()` 收尾时把整张等待者链表**整体换出**再逐个 resume：
+At the end of `runShared()`, the whole waiter list was **swapped out** before the handles were resumed one by one:
 
 ```cpp
 to_resume.swap(state->waiters);
 for (auto h : to_resume) h.resume();
 ```
 
-被换出去的 handle 已经不在共享链表里，兄弟等待者被销毁时无法自我注销（`~SharedTaskAwaiter` 的 `std::erase`
-作用在一张空表上），循环于是继续 resume 一个已经释放的协程帧。
+A handle that has been swapped out is no longer in the shared list, so a sibling waiter cannot deregister itself when it is
+destroyed (`~SharedTaskAwaiter`'s `std::erase` operates on an empty list), and the loop goes on to resume a coroutine frame
+that has already been released.
 
-这违反了模块自己明文规定的规则：**一个完成唤醒多个等待者时，每轮锁内只出队一个，绝不跨 resume 持有 handle**
-（`AsyncEvent::set`、`TaskCompletionSource::resumeWaitersOneByOne`、`AsyncSemaphore::release`、
-`AsyncReaderWriterLock::resume`、`AsyncQueue::close`、`TimerService::run` 都遵守）。
+This violated the module's own written rule: **when one completion wakes several waiters, dequeue one per lock and never
+hold a handle across a resume** (`AsyncEvent::set`, `TaskCompletionSource::resumeWaitersOneByOne`, `AsyncSemaphore::release`,
+`AsyncReaderWriterLock::resume`, `AsyncQueue::close` and `TimerService::run` all follow it).
 
-## 修复
+## Fix
 
-`runShared()` 改成与 `resumeWaitersOneByOne` 同形的循环：每轮加锁出队一个（队列空即结束，`completed`
-在第一次 resume 前发布），锁外 resume。
+`runShared()` became a loop with the same shape as `resumeWaitersOneByOne`: dequeue one waiter per lock (finishing when the
+queue is empty, with `completed` published before the first resume) and resume outside the lock.
 
-## 验证
+## Verification
 
-- 新增回归用例 `AsyncDefectRegressionTest.SharedTaskResumesWaitersOneAtATime`（135 条中的一条）。
-- 变异反证：`git checkout -- SharedTask.hpp` 重建后，该用例 **10/10 段错误**；恢复修复后 **0/10 失败**。
-- 对照：同样的场景换成 `TaskCompletionSource` / `AsyncEvent`（同为"一次完成、多个等待者"）本来就通过，
-  证明根因只在 `runShared` 的批量换出。
-- 让这类缺陷变确定的手法（可复用）：等待者协程帧做厚到走独立 mmap（帧内 256 KiB padding + 防优化 asm 屏障），
-  并在 `Task::result()` 之后留一小段 settle —— 过期 resume 发生在 `Task::result()` 返回**之后**，进程先退出就看不到了。
-  实测：不加固 19/20 命中，加固后 20/20。
+- New regression case `AsyncDefectRegressionTest.SharedTaskResumesWaitersOneAtATime` (one of 135).
+- Mutation proof: after `git checkout -- SharedTask.hpp` and a rebuild the case segfaults **10 times out of 10**; with the
+  fix restored it fails **0 times out of 10**.
+- Control: the same scenario built on `TaskCompletionSource` / `AsyncEvent` (also one completion and several waiters)
+  already passed, which shows the root cause was specific to the batch swap in `runShared`.
+- A reusable technique for making this class of defect deterministic: make the waiter's coroutine frame thick enough to get
+  its own mmap (256 KiB of padding inside the frame plus an asm barrier against optimisation) and leave a short settle after
+  `Task::result()` - the stale resume happens **after** `Task::result()` returns, and a process that exits earlier never
+  sees it. Measured: 19/20 hits without the hardening, 20/20 with it.
 
-## 教训
+## Lessons
 
-- 并发容器里"先换出再遍历"看起来更简单，但它**丢掉了被销毁等待者的自我注销机会**；这在本模块是硬性禁忌。
-- 现有用例 `SharedTaskTest.WaiterDestroyedBeforeCompletion` 的注释写的就是这条不变式，但场景里只有 1 个
-  等待者 ⇒ 不变式要有"≥2 个等待者 + 赢家销毁落败者"的用例才算被钉住。
+- "Swap out, then iterate" looks simpler in a concurrent container, but it **throws away the destroyed waiter's chance to
+  deregister itself**; in this module that is a hard prohibition.
+- The comment on the existing case `SharedTaskTest.WaiterDestroyedBeforeCompletion` states exactly this invariant, but the
+  scenario had only one waiter, so the invariant is only pinned by a case with **two or more waiters where the winner
+  destroys the loser**.
