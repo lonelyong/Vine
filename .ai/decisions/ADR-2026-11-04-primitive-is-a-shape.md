@@ -1,50 +1,48 @@
-# ADR-2026-11-04：参数化几何是建模类型（`Primitive` 子类），算法属于曲面
+# ADR-2026-11-04: parametric geometry is a modelling type (a `Primitive` subclass), and algorithms belong to the surfaces
 
-> **状态**：已采纳
-> **日期**：2026-11-04
-> **影响范围**：`src/base/geometry`、`src/base/brep`、`src/robotics/io`、`tests/test_brep`、`tests/test_robotics_io`、`tests/test_proximity`、`tests/test_graphics` <!-- drift-ok -->
+> **Status**: Accepted
+> **Date**: 2026-11-04
+> **Scope**: `src/base/geometry`, `src/base/brep`, `src/robotics/io`, `tests/test_brep`, `tests/test_robotics_io`, `tests/test_proximity`, `tests/test_graphics` <!-- drift-ok -->
 
-> **EN**: Kept the five parametric solids as modelling types (`Primitive : Shape` subclasses living together in `Primitive.hpp`, `shape_type_` passed through the constructor chain) and kept geometry algorithms out of `Primitive`: the solids answer only `bounds()` / `isValid()` / `hasVolume()`, while ray-box is `Aabb::intersectWith(Ray)` and ray-cylinder/cone belong to the surfaces. Rejected anonymous value types held by `std::variant` with `as<T>()`, one header per subclass, virtual query members on `Primitive` and letting `geometry` depend on OCCT.
+## Background
 
-## 背景
+The five parametric solids (`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`) were subclasses of `Primitive` with their dimensions in private fields. Another road was tried earlier that day: turn them into value types without identity, hold them in `Primitive` with `std::variant`, and have consumers use `std::visit` / `as<T>()`.
 
-五种参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）原本是 `Primitive` 的子类，尺寸是子类私有字段。当日先试过另一条路：把它们变成无身份的值类型，`Primitive` 用 `std::variant` 持有，消费点用 `std::visit` / `as<T>()`。
+On review both roads have costs, and the criterion is "do these shapes provide algorithms of their own":
 
-评估后两条路各有代价，而判断依据是"这些形状到底提不提供算法"：
+- a `Box`'s ray intersection **is** `Aabb::intersectWith(Ray)`; it has no algorithm of its own;
+- `Cone` / `Cylinder` intersection is essentially a **surface** algorithm (ray-cylinder, ray-cone) and belongs to the future `CylindricalSurface` / `ConicalSurface`;
+- what the modelling side really needs is identity, name and revision, which only `Shape` provides.
 
-- `Box` 的射线求交**就是** `Aabb::intersectWith(Ray)`，它没有自己的算法；
-- `Cone` / `Cylinder` 的求交本质是**曲面**算法（射线–圆柱面、射线–圆锥面），属于将来的 `CylindricalSurface` / `ConicalSurface`；
-- 建模侧真正需要的是身份、名字与 revision，这些只有 `Shape` 提供。
+At the same time OCCT's long-term duty was narrowed to **STEP parsing and tessellation**, with analytic construction (`BRepPrimAPI`) as a transitional bridge.
 
-同时 OCCT 的长期职责被收窄为 **STEP 解析与三角化**，解析式构造（`BRepPrimAPI`）只是过渡桥。
+## Decision
 
-## 决定
+1. Parametric geometry **stays on the modelling side**: `Primitive : Shape` is an abstract base class (protected constructor, takes a `ShapeType`), and `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` are its subclasses.
+2. The five subclasses live **together with the base class in `Primitive.hpp`**: one header, which avoids the include burden of five files and lets the DLL exports happen implicitly with `Primitive.cpp`.
+3. `shape_type_` is handed to the base class through the constructor chain, **no longer written by hand in every constructor**.
+4. Geometry algorithms **do not enter** `Primitive`: a solid answers only `bounds()` / `isValid()` / `hasVolume()`; intersection and distance belong to the geometry value types (`Aabb::intersectWith(Ray)`) and the surfaces (`SphericalSurface` and so on, see `geometry-kinds.md`).
+5. The `std::variant` holding and `as<T>()` are removed: consumers return to "dispatch on `ShapeType` and validate the `obj_cast`".
 
-1. 参数化几何**留在建模侧**：`Primitive : Shape` 是抽象基类（受保护构造、接受 `ShapeType`），`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 是它的子类。
-2. 五个子类与基类**同住 `Primitive.hpp`**：一个头文件，避免五个文件带来的 include 负担，也让 DLL 的导出随 `Primitive.cpp` 一起隐式完成。
-3. `shape_type_` 由子类通过构造链交给基类，**不再由每个构造函数手写**。
-4. 几何算法**不进** `Primitive`：实体只回答 `bounds()` / `isValid()` / `hasVolume()`；求交与距离属于几何值类型（`Aabb::intersectWith(Ray)`）与曲面（`SphericalSurface` 等，见 `geometry-kinds.md`）。
-5. 取消 `std::variant` 持有与 `as<T>()`：消费点回到"按 `ShapeType` 分派 + 校验 `obj_cast`"。
+## Rationale
 
-## 理由
+- `G1`, `G12`: the five are modelling parameters, not algorithm carriers; putting them on the "value" side would leave `Solid` without a meaning and give a radius or an edge length two homes, one on the solid and one on the surface.
+- `G5`, `G7`: the five parameter records live in one header with the base class, and a consumer of a new shape is exposed at compile time by the `switch`.
+- `G11`: the tag comes from the constructor chain, one class of error fewer than "written once per constructor".
+- `G8`: no algorithm is introduced early for the convenience of "value-isation"; a surface algorithm lands only when it has a consumer.
 
-- `G1`、`G12`：`Box` 这五个是建模参数，不是算法载体；放进"值"一侧会让 `Solid` 的含义落空，并让半径/边长在实体与曲面之间出现两个家。
-- `G5`、`G7`：五个参数记录住在一个头里，与基类同文件；新增形状的消费点在编译期被 `switch` 暴露。
-- `G11`：标签由构造链确定，比"每个构造函数各写一次"少一类错。
-- `G8`：不为"值化"的便利提前引入算法，曲面算法只在有消费者时落地。
+## Rejected options
 
-## 已否决选项
-
-| 选项 | 否决理由 |
+| Option | Why not |
 |---|---|
-| 无身份值类型 + `Primitive` 用 `std::variant` 持有 | `Box` / `Cone` 不提供自己的算法，"值"换不到东西；半径/边长在实体与曲面之间出现两个家；建模需要的身份、名字与 revision 仍要另一套类型（`G1`） |
-| 五个子类各占一个头文件 | 同一个基类上的五个参数记录，拆开后每个消费者都要多 include 四份用不到的定义，且 DLL 导出需要"记得在某个 TU include"的约定（`G7`） |
-| 在 `Primitive` 上开放虚查询（`intersectWith` / `distance`） | 算法面挂在建模类型上，消费者要记住该查谁；也与"算法属于曲面"的分层冲突（`G8`） |
-| 让 `geometry` 依赖 OCCT 直接构造解析实体 | 后端词汇进核心模块（`G2`），无后端构建将失去契约 |
+| Value types without identity, held in `Primitive` by `std::variant` | `Box` / `Cone` provide no algorithm of their own, so "value" buys nothing; a radius or edge length would live both on the solid and on the surface; the identity, name and revision that modelling needs still require another type (`G1`) |
+| One header per subclass | Five parameter records on one base class; splitting them makes every consumer include four definitions it does not use, and the DLL exports would need a "remember to include it in some TU" convention (`G7`) |
+| Open virtual queries (`intersectWith` / `distance`) on `Primitive` | The algorithm surface would hang off the modelling type and consumers would have to remember whom to ask; it also conflicts with the layering "algorithms belong to surfaces" (`G8`) |
+| Let `geometry` depend on OCCT and build analytic solids directly | Backend vocabulary enters the core module (`G2`), and a backend-less build would lose the contract |
 
-## 后果
+## Consequences
 
-- `Box` 等重新带 vptr 与引用计数，复制不是逐字节拷贝；`GeometryKindsTest` 不再断言它们的 `sizeof`。
-- `tests/test_brep` 的 `aPrimitiveOutsideTheFiveProducesNoSolid` 恢复（子类可以谎报 `ShapeType`，消费方必须校验 cast）。
-- `tests/test_graphics/MeshShapeTest.cpp`、`tests/test_robotics_io/*`、`tests/test_proximity` 的 include 改为 `Primitive.hpp`（五个分开的头已删除）。
-- 现行设计记录在 `.ai/design/geometry-parametric.md`。
+- `Box` and the others carry a vptr and a reference count again, so copying is not byte-wise; `GeometryKindsTest` no longer asserts their `sizeof`.
+- `aPrimitiveOutsideTheFiveProducesNoSolid` in `tests/test_brep` is restored (a subclass can lie about its `ShapeType`, so the consumer must validate the cast).
+- The includes in `tests/test_graphics/MeshShapeTest.cpp`, `tests/test_robotics_io/*` and `tests/test_proximity` became `Primitive.hpp` (the five separate headers are deleted).
+- The current design is recorded in `.ai/design/geometry-parametric.md`.

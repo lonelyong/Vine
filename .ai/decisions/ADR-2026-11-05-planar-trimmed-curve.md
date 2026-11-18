@@ -1,40 +1,38 @@
-# ADR-2026-11-05：平面裁剪视图取代圆专用的 `ArcCurve`
+# ADR-2026-11-05: a planar trimmed view replaces the circle-only `ArcCurve`
 
-- 状态：已采纳
-- 日期：2026-11-05
-- 取代：`ADR-2026-11-05-planar-arc-is-a-value-type.md`
-- 相关：`../design/geometry-planar.md` 2.8 / 2.10 / D6、`ADR-2026-11-05-curve-derivative-capability.md`
+- Status: Accepted
+- Date: 2026-11-05
+- Supersedes: `ADR-2026-11-05-planar-arc-is-a-value-type.md`
+- Related: `../design/geometry-planar.md` 2.8 / 2.10 / D6, `ADR-2026-11-05-curve-derivative-capability.md`
 
-> **EN**: Chose B, superseding `ADR-2026-11-05-planar-arc-is-a-value-type`: the generic `TrimmedCurve<T>` (a `shared_ptr<const Curve<T>>` plus two parameter bounds, built by `trimCurve()`) replaces the circle-only `ArcCurve`, which is deleted with its test file; the tight box a trimmed circle loses is returned to its owner as `CircleCurve::bounds(first, last)`, per `G13`. Rejected keeping both shapes and a by-value template basis (a runtime handle would stay unavailable).
+## Background
 
-## 背景
+`ArcCurve` was "a circle by value plus an angle interval": zero allocation and a tight box, but only a circle could be trimmed. The earlier ADR stated its trigger explicitly - as soon as a non-circular basis needs trimming (elliptical arcs, trimmed splines, truncated imported profiles), introduce the general `TrimmedCurve` and **delete** `ArcCurve` rather than keeping both. That trigger is now met by the design itself: once the capability protocol (`maxDerivativeOrder()` / `derivativeAt()`) landed, a type-erased trimmed view can forward any order faithfully, so the premise "the basis must be a concrete type" is gone.
 
-`ArcCurve` 是“圆按值 + 角度区间”：零分配、盒是紧盒，但只能裁剪圆。原 ADR 明确写了触发条件——一旦要裁剪非圆基曲线（椭圆弧、样条修剪、导入轮廓截断），就引入通用 `TrimmedCurve` 并**删除** `ArcCurve`，不与之并存。这条触发条件现在由设计本身满足：能力协议（`maxDerivativeOrder()` / `derivativeAt()`）落地后，类型擦除的裁剪视图可以如实转发任意阶导，不再需要“基曲线必须是具体类型”这个前提。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 保留 `ArcCurve`，另加通用视图 | 圆的片段保持零分配与紧盒 | 两个类型回答同一个概念（“一条曲线的一段”），闭合 / 周期 / 反向 / 越界四条规则各写一遍并会漂移 |
-| B 通用 `TrimmedCurve<T>` 持 `shared_ptr<const Curve<T>>`，删除 `ArcCurve` | 与 3D 同名同形；任何基曲线；一份规则 | 每次构造一次堆分配（R2 的第二类例外）；片段紧盒不再由裁剪视图回答 |
-| C 通用 `TrimmedCurve<C>` 按值持基曲线 | 零分配，且基曲线有 `bounds()` 时可转发 | 仍是模板参数，运行期句柄不可用；同一概念在 2D（按值）与 3D（句柄）形状不同 |
+| A. Keep `ArcCurve` and add a general view beside it | A piece of a circle keeps zero allocation and a tight box | Two types answer one concept ("a piece of a curve"), and the four rules of closure / periodicity / reversal / out-of-domain are written twice and drift |
+| B. A general `TrimmedCurve<T>` holding a `shared_ptr<const Curve<T>>`, with `ArcCurve` deleted | The same name and shape as 3D; any basis curve; one set of rules | One heap allocation per construction (R2's second class of exception); the piece's tight box is no longer answered by the trimmed view |
+| C. A general `TrimmedCurve<C>` holding the basis by value | Zero allocation, and it can forward when the basis has `bounds()` | Still a template parameter, so a runtime handle is unavailable; the same concept has different shapes in 2D (by value) and 3D (a handle) |
 
-## 决定
+## Decision
 
-采用 **B**：`TrimmedCurve<T>` 存 `std::shared_ptr<const Curve<T>>` 加两个参数界，`trimCurve(basis, first, last)` 工厂从具体类型造句柄；`ArcCurve` 与其测试文件**删除**。
+Chose **B**: `TrimmedCurve<T>` stores a `std::shared_ptr<const Curve<T>>` plus two parameter bounds, the `trimCurve(basis, first, last)` factory builds the handle from a concrete type, and `ArcCurve` is **deleted together with its test file**.
 
-丢失的能力按 `G13` 放回它该在的地方：一段圆的紧盒是圆的支撑函数在区间上的结果，所以它是 `CircleCurve::bounds(first_parameter, last_parameter)`，不是裁剪视图的成员——擦除后的视图问不出支撑函数，硬留在视图上只能返回松盒。
+The capability that is lost goes back where it belongs, per `G13`: the tight box of a piece of a circle is the circle's support function over the interval, so it is `CircleCurve::bounds(first_parameter, last_parameter)` and not a member of the trimmed view - an erased view cannot ask for a support function, and keeping it there could only return a loose box.
 
-判据：`G1`（一个概念一个表达）、`G6`（2D 与 3D 的裁剪同名同形）、`G9`（新基曲线不必新类型）、`G10`（一次分配换掉一整套重复规则；角度区间在圆上仍可用 `bounds(first, last)` 精确回答）。
+Criteria: `G1` (one concept, one expression), `G6` (2D and 3D trimming share a name and a shape), `G9` (a new basis needs no new type), `G10` (one allocation replaces a whole set of duplicated rules; an angle interval on a circle is still answered exactly by `bounds(first, last)`).
 
-## 后果
+## Consequences
 
-- 好的：椭圆弧、样条修剪、轮廓截断都能用同一个类型；闭合 / 周期 / 反向 / 越界四条规则只有一份实现与一套测试；`OffsetCurve` 可以直接偏置一个片段。
-- 坏的 / 代价：`TrimmedCurve` 成为 R2 的第二类例外（持有动态内存、深拷贝语义），构造一次分配；片段紧盒只对圆可用；`ArcCurve` 的公开面被删除（模块内唯一消费者是测试，无 ABI 负担）。
-- 迁移：`ArcCurve(circle, a, b)` → `trimCurve(circle, a, b)`；`arc.bounds()` → `circle.bounds(a, b)`；`arc.circle` → 基曲线句柄或原 `CircleCurve` 值。
+- Good: elliptical arcs, trimmed splines and truncated profiles all use one type; the four rules of closure / periodicity / reversal / out-of-domain have one implementation and one set of tests; `OffsetCurve` can offset a piece directly.
+- Bad / cost: `TrimmedCurve` becomes R2's second class of exception (it holds dynamic memory and has deep-copy semantics) and allocates once per construction; the piece's tight box is available only for circles; `ArcCurve`'s public surface is deleted (its only consumer in the module was the test, so there is no ABI burden).
+- Migration: `ArcCurve(circle, a, b)` -> `trimCurve(circle, a, b)`; `arc.bounds()` -> `circle.bounds(a, b)`; `arc.circle` -> the basis handle or the original `CircleCurve` value.
 
-## 证据
+## Evidence
 
-- `src/base/geom/sdk/vine/geom/planar/TrimmedCurve.hpp`、`CircleCurve.hpp` 的 `bounds(first, last)`。
-- `tests/test_geom_planar/TrimmedCurveTest.cpp`：走圆、整圈闭合、越界不闭合、区间内反向、反向区间无效、退化基曲线、域外转发、经 `Curve<float>&` 分派、裁剪 Bezier、能力转发（圆 3 / 偏置 2）、空句柄、裁剪套裁剪。
-- `tests/test_geom_planar/BoundsTest.cpp`：一段圆的紧盒与反向区间同盒。
+- `TrimmedCurve.hpp` and `bounds(first, last)` in `CircleCurve.hpp`, both under `src/base/geom/sdk/vine/geom/planar/`.
+- `tests/test_geom_planar/TrimmedCurveTest.cpp`: walking a circle, a whole turn being closed, out-of-domain not closed, reversal inside the interval, an invalid reversed interval, a degenerate basis, domain forwarding, dispatch through `Curve<float>&`, trimming a Bezier, capability forwarding (3 for a circle, 2 for an offset), an empty handle, and a trim of a trim.
+- `tests/test_geom_planar/BoundsTest.cpp`: the tight box of a piece of a circle, and a reversed interval giving the same box.

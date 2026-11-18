@@ -1,46 +1,44 @@
-# ADR-2026-11-04：几何类型的精度是保留的双选项，两种精度都显式实例化
+# ADR-2026-11-04: a geometry type's precision stays a two-option parameter, and both precisions are explicitly instantiated
 
-> **状态**：已采纳
-> **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry`（全部值类型与曲线曲面族的 `T`）、`src/base/geometry/src/Instantiations.cpp`（新增）、`LineCurve.cpp` / `Obb.cpp` / `Plane.cpp` 的显式实例化、`.ai/design/geometry-primitives.md` 2.8 <!-- drift-ok -->
+> **Status**: Accepted
+> **Date**: 2026-11-04
+> **Scope**: `src/base/geometry/sdk/vine/geometry` (every value type and the `T` of the curve and surface families), `src/base/geometry/src/Instantiations.cpp` (new), the explicit instantiations in `LineCurve.cpp` / `Obb.cpp` / `Plane.cpp`, `.ai/design/geometry-primitives.md` 2.8 <!-- drift-ok -->
 
-> **EN**: Kept the `T` precision parameter on every geometry value type, shipping both `float` and `double` explicitly instantiated and exported (pure-header types listed in `src/base/geometry/src/Instantiations.cpp`, types with a `.cpp` in their own translation unit), with no `extern template` so inlining stays in the caller. Rejected pinning the family to `double` (closes the door on real-time/GPU consumers), publishing only `double`, instantiating only the three types that happened to need it, and a Bullet-style global precision `#define`.
+## Background
 
-## 背景
+Every geometry value type is parameterised by `math::FP T` (`Aabb<T>`, `Ray<T>`, `Plane<T>`, `Curve<T>`, `Surface<T>`, ...). The real consumers (`graphics`, `meshio`, `robotics`, `brep`) use only `double`, which raised two questions:
 
-几何值类型全部以 `math::FP T` 参数化（`Aabb<T>`、`Ray<T>`、`Plane<T>`、`Curve<T>`、`Surface<T>` …）。实际消费者（`graphics`、`meshio`、`robotics`、`brep`）只用 `double`，于是出现两个问题：
+1. the template parameter looked like "a degree of freedom with zero consumers", and it was nearly removed, with `float` treated as a promise to be narrowed;
+2. only `LineCurve` / `Obb` / `Plane` were explicitly instantiated, because some of their members are defined in a `.cpp`; every other header-only type had **no symbol in the library at all** - each consumer instantiated its own copy, and nobody could say what the library "provides".
 
-1. 模板参数看起来是"零消费者的自由度"，一度准备去掉，并把 `float` 视为应该收窄的承诺；
-2. 只有 `LineCurve` / `Obb` / `Plane` 因为部分成员定义在 `.cpp` 才被显式实例化，其余纯头文件类型**库里没有任何符号**——每个消费者各自实例化一份，谁也不确定库里到底"提供"了什么。
+## Decision
 
-## 决定
+1. **Keep `T`.** Geometry value types stay parameterised by precision.
+2. **Both precisions ship with the library**: `float` and `double` are each explicitly instantiated once and exported, and the `*f` / `*d` aliases are kept.
+3. **The instantiations are gathered and complete**: the list for header-only types lives in `src/base/geometry/src/Instantiations.cpp` (two lines per type); `LineCurve` / `Obb` / `Plane`, which have a `src/` implementation, keep instantiating in their own `.cpp`, because an explicit instantiation can only instantiate the member definitions visible in that translation unit. <!-- drift-ok -->
+4. **No `extern template`**: inlining still happens in the caller, and the exported symbol is only the fallback for when it cannot.
 
-1. **保留 `T`**。几何值类型继续以精度参数化。
-2. **两种精度都随库发布**：`float` 与 `double` 各显式实例化一次并导出，`*f` / `*d` 别名都保留。
-3. **实例化集中且完整**：纯头文件类型的实例化清单放在 `src/base/geometry/src/Instantiations.cpp`（每个类型两行）；有 `src/` 实现的 `LineCurve` / `Obb` / `Plane` 继续在自己的 `.cpp` 里实例化，因为显式实例化只能实例化该翻译单元看得见的成员定义。 <!-- drift-ok -->
-4. **不加 `extern template`**：内联仍发生在调用方，导出符号只是"不能内联时的兜底"。
+## Rationale
 
-## 理由
+- **Precision is an industry variable, not an implementation detail** (`G9`, `G8`). `float` geometry is the right answer in real-time and games (Unity and PhysX are float-only, Bullet uses `btScalar` with `BT_USE_DOUBLE_PRECISION` as a switch), in mobile and AR/VR (some GPUs have no double hardware), in GPU and hardware ray tracing (BVHs and compute are all float32) and in point clouds and LiDAR (PCD and PLY are float32, and a hundred million points is the difference between fitting in memory and not); `double` is mandatory in CAD/CAM, metrology and motion planning. The framework cannot pick a side for future customers, and a parameterised scalar is the cheapest way not to - which is also what Eigen, GLM, CGAL and PCL do (this repository already depends on Eigen).
+- **What is not instantiated generates no code**: the intrinsic cost of `T` is zero; the real cost is the API surface and the documentation, which "`*d` / `*f` aliases plus one policy page" answers (`G4`).
+- **Shipping both precisions** is what makes "double precision" a fact rather than a claim (`G4`): a consumer need not know where the member definitions live and need not instantiate anything; a missing symbol becomes a link error instead of each side silently generating its own copy.
+- **A gathered list** turns "which geometry types does the library provide" into a reviewable list and turns that translation unit into a compile-time check that every type can be instantiated (`G11`).
+- **No `extern template`** (`G10`): the measured gain on the picking loop (`geometry-ray.md` 2.7: 7.09 -> 5.99 ns for a hit, 3.96 -> 2.71 ns for parallel rejection) comes from inlining the short queries into the caller, and `dllimport` would erase it. Exporting is the fallback, not the replacement.
 
-- **精度是行业变量，不是实现细节**（`G9`、`G8`）。`float` 几何在实时/游戏（Unity、PhysX 只有 float，Bullet 用 `btScalar` + `BT_USE_DOUBLE_PRECISION` 切换）、移动/AR-VR（部分 GPU 无 double 硬件）、GPU 与硬件光追（BVH、compute 全是 float32）、点云/LiDAR（PCD/PLY 就是 float32，一亿点是"能否进内存"的差别）里是正解；`double` 在 CAD/CAM、测量、运动规划里是必须。框架阶段不能替未来的客户选边，而参数化标量恰好是"不选边"的最便宜写法——这也是 Eigen / GLM / CGAL / PCL 的共同做法（本仓已依赖 Eigen）。
-- **不实例化就不生成代码**：`T` 的本体成本为 0；真正的成本是 API 表面与文档，那由"`*d` / `*f` 别名 + 一份策略文档"解决（`G4`）。
-- **两种精度都发布**才让"双精度"成为事实而不是口头承诺（`G4`）：消费者不需要知道成员定义在哪、也不需要自己实例化；缺失时链接失败而不是静默各自生成一份。
-- **集中清单**使"库里到底提供了哪些几何类型"变成一份可审查的清单，同时把这一个 TU 变成"每个类型都能实例化"的编译期检查（`G11`）。
-- **不加 `extern template`**（`G10`）：拾取循环的实测收益（`geometry-ray.md` 2.7：命中 7.09 → 5.99 ns，平行剔除 3.96 → 2.71 ns）来自把短查询内联进调用方；`dllimport` 会让这条收益消失。导出是兜底，不是替代。
+## Rejected options
 
-## 已否决选项
-
-| 选项 | 否决理由 |
+| Option | Why not |
 |---|---|
-| 全族固定 `double`、去掉模板 | 等于宣布"这个框架只服务精密几何"，把实时/移动/GPU/点云这些行业挡在门外；而模板未实例化时代价为零（`G9`） |
-| 只发布 `double`，删掉 `*f` 别名与 float 实例化 | 把"支持 float"从事实降成"你自己去实例化"：每个消费者各生成一份实现，ABI 与行为都不确定（`G4`） |
-| 只实例化有 `.cpp` 的那三个类型（今天的样子） | 纯头文件的类型在库里没有任何符号，"库提供了什么"取决于谁编译过（`G11`） |
-| 加 `extern template` 让消费者完全依赖 DLL | 会打死短查询的内联，把实测收益退回去（`G10`） |
-| 用一个 `#define` 切换全局精度（Bullet 式） | 一份二进制只能有一种精度，且切换会改变所有已编译目标的布局；两个实例化共存更便宜 |
+| Pin the family to `double` and drop the template | Declares that "this framework serves precise geometry only" and shuts out real-time, mobile, GPU and point-cloud work, while an uninstantiated template costs nothing (`G9`) |
+| Ship only `double` and delete the `*f` aliases and the float instantiation | Downgrades "float is supported" from a fact to "instantiate it yourself": each consumer generates its own implementation, and neither the ABI nor the behaviour is defined (`G4`) |
+| Instantiate only the three types with a `.cpp` (today's shape) | A header-only type has no symbol in the library, so "what the library provides" depends on who compiled it (`G11`) |
+| Add `extern template` and make consumers depend on the DLL alone | It kills the inlining of the short queries and gives back the measured gain (`G10`) |
+| Switch the global precision with one `#define` (the Bullet shape) | One binary can hold only one precision, and switching changes the layout of every compiled target; two instantiations coexisting is cheaper |
 
-## 后果
+## Consequences
 
-- `vnGeometry` 的符号表包含每个几何类型的 `float` 与 `double` 实例（用 `dumpbin /exports` 可验证，例如 `?$EllipseCurve@M@…` 与 `?$EllipseCurve@N@…`）。
-- 含 `std::vector` / `std::shared_ptr` 成员的四个类型（`TrimmedCurve`、`OffsetCurve`、`BezierCurve`、`BSplineCurve`）在导出处会有 `C4251`（STL 成员无 dll-interface）。这是导出 STL 成员的既有局限，已在 `Instantiations.cpp` 里局部屏蔽并注明，不是缺陷。
-- 新增一种几何类型的固定成本：`Instantiations.cpp` 里两行（若它有 `.cpp` 实现，则在自己的 `.cpp` 里两行）。
-- 精度策略是显式的：解析几何的官方 API 是 `double`，`float` 同样是受支持的实例；跨精度不混算（`Aabb::intersectWith` 的 `requires is_same_v<T, U>` 就是这条的机械表达）。
+- The symbol table of `vnGeometry` contains the `float` and `double` instances of every geometry type (verifiable with `dumpbin /exports`, e.g. `?$EllipseCurve@M@...` and `?$EllipseCurve@N@...`).
+- The four types with `std::vector` / `std::shared_ptr` members (`TrimmedCurve`, `OffsetCurve`, `BezierCurve`, `BSplineCurve`) produce `C4251` at their exports (an STL member without a dll-interface). That is the existing limitation of exporting STL members; it is disabled locally in `Instantiations.cpp` with a note, and it is not a defect.
+- The fixed cost of a new geometry type: two lines in `Instantiations.cpp` (or two lines in its own `.cpp` when it has an implementation).
+- The precision policy is explicit: the official API of analytic geometry is `double`, and `float` is an equally supported instance; precisions are never mixed (`requires is_same_v<T, U>` in `Aabb::intersectWith` is the mechanical form of that rule).

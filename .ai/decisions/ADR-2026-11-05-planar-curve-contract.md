@@ -1,57 +1,41 @@
-# ADR-2026-11-05：平面曲线契约独立于空间曲线契约
+# ADR-2026-11-05: the planar curve contract is independent of the spatial curve contract
 
-- 状态：已采纳
-- 日期：2026-11-05
-- 相关：`../design/geometry-planar.md`、`../design/geometry-kinds.md`
+- Status: Accepted
+- Date: 2026-11-05
+- Related: `../design/geometry-planar.md`, `../design/geometry-kinds.md`
 
-> **EN**: Chose A: `geom::planar::Curve<T>` is a second contract with the same eleven facts spelled out in 2D terms, not a `Curve<PointT>` shared generic and not an inheritance of the 3D interface with the plane embedded at `z = 0`; what is genuinely shared lives in the vocabulary layer (`math::Continuity`, `math::FP`). The honest cost is that a fact added on one side does not appear on the other, and the documented reopening trigger is an algorithm that must serve both dimensions, which should become a free function template instead.
+## Background
 
-## 背景
+`geom::spatial::Curve<T>` is already an eleven-item evaluation interface (`geometry-kinds.md` 2.7): `evaluate` / `derivative` / `secondDerivative`, the two ends of the parameter domain, `isClosed` / `isPeriodic` / `period`, `continuity`, `isValid` and `reversedParameter`. When `geom/planar` landed, a structural question had to be answered: are these eleven facts **declared again** for the plane, or do the 2D and 3D types share one interface?
 
-`geom::spatial::Curve<T>` 已经是十一项求值接口（`geometry-kinds.md` 2.7）：`evaluate` / `derivative` /
-`secondDerivative`、参数域两端、`isClosed` / `isPeriodic` / `period`、`continuity`、`isValid`、
-`reversedParameter`。`geom/planar` 落地时需要回答一个结构问题：这十一条事实在平面里是**再声明一遍**，
-还是让 2D 类型与 3D 共用一份接口？
+There are two common ways to share: make the point type a template parameter (`Curve<PointT>`), or let `geom::planar::Curve<T>` inherit `geom::spatial::Curve<T>` and treat the plane as the subspace `z = 0`. The first is "one contract, two dimensions"; the second is "one kind of object, two dimensions".
 
-共用有两种常见写法：把点类型提成模板参数（`Curve<PointT>`），或让 `geom::planar::Curve<T>` 继承
-`geom::spatial::Curve<T>` 并把平面看作 `z = 0` 的子空间。前者是“同一份契约、两种维度”，后者是“同一种对象、
-两种维度”。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 独立声明 `geom::planar::Curve<T>`（十一项同名同义，`Point2` / `Vector2`） | 两个概念各有定义与归属；2D 类型不带 z、不带法向；3D 代码不可能误收平面曲线 | 契约文字有两份，一侧新增事实时另一侧可能漂移 |
-| B 一份 `Curve<PointT>` 泛型契约，两模块共用 | 契约只有一份 | 3D 每个消费点都要模板化；2D 类型被迫满足只有 3D 才需要的约束（例如将来的法向、框架）；接口出现“2D 不可用”的成员 |
-| C `geom::planar::Curve<T>` 继承 `geom::spatial::Curve<T>`，平面嵌入 `z = 0` | 复用实现与算法签名 | 平面曲线被赋予一个恒等法向与一条恒为零的维度；3D 算法会把平面曲线当空间曲线消费；每次求值多一维 |
-| D 在 3D 侧用 variant / 适配器包装平面曲线 | 不新增契约 | 每次求值多一层调用与分支；平面曲线仍要自己存点，包装不减少任何代码 |
+| A. Declare `geom::planar::Curve<T>` independently (the same eleven items with the same meanings, over `Point2` / `Vector2`) | Each concept has its own definition and owner; the 2D type carries no z and no normal; 3D code cannot accidentally accept a planar curve | The contract text exists twice, and a fact added on one side can drift from the other |
+| B. One generic `Curve<PointT>` contract shared by both modules | The contract exists once | Every 3D consumer becomes a template; the 2D type is forced to satisfy constraints only 3D needs (a normal, a frame, later); the interface gains members that are "unavailable in 2D" |
+| C. `geom::planar::Curve<T>` inherits `geom::spatial::Curve<T>` with the plane embedded at `z = 0` | Implementation and algorithm signatures are reused | A planar curve is given an identity normal and a constant-zero dimension; 3D algorithms consume a planar curve as a spatial one; every evaluation carries one more coordinate |
+| D. Wrap planar curves in a variant or adapter on the 3D side | No new contract | Every evaluation costs one more call and branch; the planar curve still stores its own point, so the wrapper removes no code |
 
-## 决定
+## Decision
 
-采用 A：`geom::planar::Curve<T>` 是**第二份契约**，与 3D 契约逐项同义但互不继承。
+Chose A: `geom::planar::Curve<T>` is a **second contract**, item-for-item synonymous with the 3D one and inheriting nothing from it.
 
-判据是 `G1`（概念清晰、抽象自然）与 `G5`（内聚而低耦合）：
-“平面曲线”和“空间曲线”的边界不是同一个类型族的两个特化，而是两个各有消费方、各有几何事实的概念。
-共用契约只能靠“给 2D 类型加一个它没有的字段”（C）或“让 3D 代码为维度付模板代价”（B）实现，
-两种做法都把复杂度转移给了不需要它的一侧（`G7`）。
+The criteria are `G1` (concepts clear, abstractions natural) and `G5` (cohesive and loosely coupled): the boundary between "planar curve" and "spatial curve" is not two specialisations of one type family but two concepts, each with its own consumers and its own geometry facts. Sharing the contract can only be done by "adding a field the 2D type does not have" (C) or by "making 3D code pay a template cost for the dimension" (B), and both move the complexity to the side that does not need it (`G7`).
 
-共享的部分收在词汇层，而不是类型层：`math::Continuity`、`math::FP`、以及将来的求根设施在 `math` 里只有一份定义，
-`geom_global.hpp` 只做名字重导出。维度无关的事实因此天然一致，维度相关的事实留在各自的类型上。
+What is genuinely shared is collected in the vocabulary layer rather than the type layer: `math::Continuity`, `math::FP` and the future root-finding machinery have one definition in `math`, and `geom_global.hpp` only re-exports names. Dimension-independent facts are therefore consistent by construction, and dimension-dependent facts stay on their own types.
 
-## 后果
+## Consequences
 
-- 好的：`geom/spatial` 不知道 `geom/planar` 存在，两个模块可以各自演进；平面类型的大小与 `Point2 + 标量` 齐平，没有 vptr 之外的多态成本；
-  3D 的族级算法（最近点、求交、三角化）在编译期就拒绝平面曲线。
-- 坏的 / 代价：契约文字有两份；一侧新增一项事实时，另一侧不会自动获得（`G6` 的显式让步）。
-  今天的十一项在两侧同名同义，没有已知分歧；`Curve.hpp` 的文档注释把这条写成了“同一份契约、少一个维度”，
-  以便改动时两边一起读。
-- 触发条件（什么时候重开）：出现一个必须同时对 2D 与 3D 曲线编写的算法，且它只依赖 `evaluate` / `derivative` /
-  参数域 / `isValid`。那时正确做法是先把这个算法的依赖抽成独立于两个接口的自由函数模板（与
-  `closestPointOnCurve()` 同一形态），而不是合并接口。
+- Good: `geom/spatial` does not know `geom/planar` exists, so the two modules evolve on their own; a planar type's size matches `Point2` plus a scalar, with no polymorphism cost beyond the vptr; 3D family algorithms (closest point, intersection, tessellation) reject planar curves at compile time.
+- Bad / cost: the contract text exists twice; a fact added on one side is not automatically gained on the other (an explicit concession to `G6`). The eleven items are synonymous on both sides today with no known divergence, and the comment in `Curve.hpp` states this as "the same contract with one dimension less", so that a change is read on both sides together.
+- Trigger (when to reopen): an algorithm appears that must be written for both the 2D and the 3D curve and depends only on `evaluate` / `derivative` / the parameter domain / `isValid`. The right move then is to extract that algorithm's dependencies into a free function template independent of both interfaces (the shape of `closestPointOnCurve()`), not to merge the interfaces.
 
-## 证据
+## Evidence
 
-- `src/base/geom/sdk/vine/geom/planar/Curve.hpp` 与 `src/base/geom/sdk/vine/geom/spatial/Curve.hpp`：十一项签名逐项对应，只把 `Point3` / `Vector3` 换成 `Point2` / `Vector2`。
-- `src/base/geom/sdk/vine/geom/geom_global.hpp`：`Continuity` 由 `math` 重导出，不是第二份枚举；两个命名空间共用一个模块 global。
-- `src/base/geom/sdk/vine/geom/planar/CircleCurve.hpp`：平面圆是 `center` + `radius`，没有 3D 的 `ConicCurve` 框架。
-- `tests/test_geom_planar/CurveBasicsTest.cpp`：`AnswersThroughTheBaseInterface` 通过 `Curve<double>&` 与 `unique_ptr<const Curve<double>>` 验证多态路径可用，且不需要 3D。
+- `src/base/geom/sdk/vine/geom/planar/Curve.hpp` and `src/base/geom/sdk/vine/geom/spatial/Curve.hpp`: the eleven signatures correspond item by item, replacing only `Point3` / `Vector3` with `Point2` / `Vector2`.
+- `src/base/geom/sdk/vine/geom/geom_global.hpp`: `Continuity` is re-exported from `math` and is not a second enum; the two namespaces share one module global.
+- `src/base/geom/sdk/vine/geom/planar/CircleCurve.hpp`: a planar circle is `center` plus `radius`, without 3D's `ConicCurve` frame.
+- `tests/test_geom_planar/CurveBasicsTest.cpp`: `AnswersThroughTheBaseInterface` verifies through `Curve<double>&` and `unique_ptr<const Curve<double>>` that the polymorphic path works without 3D.

@@ -1,56 +1,43 @@
-# ADR-2026-11-04：`isValid()` 放进 `Curve<T>` / `Surface<T>` 接口
+# ADR-2026-11-04: `isValid()` joins the `Curve<T>` / `Surface<T>` interfaces
 
-> **状态**：已采纳
-> **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.7 / 2.10 / C12 / §9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`、`Plane.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
+> **Status**: Accepted
+> **Date**: 2026-11-04
+> **Related**: `../design/geometry-kinds.md` 2.7 / 2.10 / C12 / section 9; `src/base/geometry/sdk/vine/geometry/Curve.hpp`, `Surface.hpp`, `Plane.hpp`; `tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
-> **EN**: Added `[[nodiscard]] virtual bool isValid() const = 0` to `Curve<T>` and `Surface<T>`, so the single validity gate stated in the design doc can be asked through the interface, the same way `Shape::isValid()` already can, instead of only via `dynamic_cast`. Rejected a free function with `dynamic_cast` (a closed set inside an algorithm), a concept-only constraint (runtime polymorphism is the main path) and leaving each type to answer on its own; `Plane` gains a real invalid state (zero normal).
+## Background
 
-## 背景
+Every concrete type in the geometry families **already** had an `isValid()`: a line looks at its direction, a conic at its frame, a spline at its weights and knots, both kinds of trim at the basis handle and the interval, the three rotational surfaces at the axis and the radius, the two spline surfaces at the net and the multiplicities. It is also the single criterion the design page states (`geometry-kinds.md` C12: "`isValid()` is the only decision entry").
 
-几何族里每个具体类型**早就**有一个 `isValid()`：直线看方向、圆锥曲线看框架、样条看权重与节点、
-两种裁剪看基句柄与区间、三个旋转面看轴与半径、两个样条曲面看网与重数。它也是设计文档里写明的唯一判据
-（`geometry-kinds.md` C12：「`isValid()` 是唯一的判定入口」）。
+The problem was that the question **could not be asked**: `isValid()` was not a member of `Curve<T>` / `Surface<T>`, so a caller holding a `const Surface<double>&` had to know the concrete type first, or `dynamic_cast`, or assume the input is usable and evaluate directly. `Shape` / `BrepShape` / `Primitive` in the same repository had long taken the other road - `Shape::isValid()` is virtual. The geometry families were the exception to that family convention (`G6`).
 
-问题是这个问题**问不出来**：`isValid()` 不是 `Curve<T>` / `Surface<T>` 的成员，所以拿到
-`const Surface<double>&` 的调用方要么先知道具体类型，要么 `dynamic_cast`，要么假定输入可用直接求值。
-同一个仓库里的 `Shape` / `BrepShape` / `Primitive` 早就走的是另一条路——`Shape::isValid()` 是虚函数。
-即几何族是这条家族惯例里的例外（`G6`）。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 在 `Curve<T>` / `Surface<T>` 上加 `virtual bool isValid() const = 0` | 一个问题一个答案，`const Curve<T>&` 就能问；与 `Shape` / `Primitive` 同一问法；族级算法与契约扫查可在一处守卫 | 接口变宽（曲线 10→11、曲面 13→14 项）；每个实现多一个虚表槽；外部实现者必须实现它（仓库内没有） |
-| B. 自由函数 `bool isValid(const Curve<T>&)` + `dynamic_cast` | 不动接口 | 只有认识全部具体类型的自由函数能写，新增一种曲线就要改那个函数——把封闭集合写进了算法（`G9`） |
-| C. concept 约束（`requires { t.isValid(); }`） | 编译期检查、零运行期代价 | 只对模板开放，`const Curve<T>&` 这种运行期多态路径仍然问不到；而几何族的主体正是运行期多态（`Primitive::Parameters` 用 variant，几何求值用 vtable） |
-| D. 维持现状：各类型自己的 `isValid()`，接口不表 | 不动接口 | 「唯一判据」在一半的调用点不可用，实际会退化成「假定输入可用」，与 C12 的承诺矛盾（`G4`） |
+| A. Add `virtual bool isValid() const = 0` to `Curve<T>` / `Surface<T>` | One answer per question, askable through `const Curve<T>&`; the same question as `Shape` / `Primitive`; family algorithms and contract sweeps can guard in one place | The interface widens (curves 10 -> 11, surfaces 13 -> 14 items); one more vtable slot per implementation; an outside implementer has to provide it (there is none in the repository) |
+| B. A free function `bool isValid(const Curve<T>&)` with `dynamic_cast` | The interface is untouched | Only a free function that knows every concrete type can be written, and a new curve means editing that function - the closed set is written into an algorithm (`G9`) |
+| C. A concept constraint (`requires { t.isValid(); }`) | Compile-time checking, zero runtime cost | Only open to templates, so the runtime polymorphic path of `const Curve<T>&` still cannot ask; and runtime polymorphism is the main body of the geometry families (`Primitive::Parameters` uses a variant and evaluation uses a vtable) |
+| D. Keep the status quo: each type has its own `isValid()`, the interface says nothing | The interface is untouched | "The single criterion" is unavailable at half the call sites and in practice degrades to "assume the input is usable", contradicting the promise of C12 (`G4`) |
 
-## 决定
+## Decision
 
-采用 A。
+Chose A.
 
-- `Curve<T>` / `Surface<T>` 各加一项纯虚 `[[nodiscard]] virtual bool isValid() const = 0;`，与 `isCN()` 相邻，
-  注释写明两件事：它是**状态**的答案（与参数无关），以及它为假的查询返回退化值是为了「把错误保持为错误答案而不是未定义行为」。
-- 十五个实现原本就有这个方法，只是加 `override`；`Plane` 是唯一没有的，因为平面此前被认为没有无效状态。
-  现在它有：零法向没有垂直方向、也没有面内轴，参数化会悄悄退回世界轴——`Plane::isValid()` 因此是
-  `normal.length() > EPS`，与圆锥曲线对退化框架的规则一致（P6）。
-- `OffsetCurve` 的实现已经存在，`secondDerivative` 仍是纯虚，所以类型依旧抽象（`ADR-2026-11-04-curve-third-derivative.md` 不受影响）。
+- `Curve<T>` / `Surface<T>` each gain one pure virtual `[[nodiscard]] virtual bool isValid() const = 0;`, next to `isCN()`, with a comment stating two things: it is the answer about **state** (independent of the parameters), and a false answer makes queries return degenerate values in order to "keep the error an error instead of undefined behaviour".
+- The fifteen implementations already had the method and only gained `override`; `Plane` was the only one without it, because a plane had been considered to have no invalid state. It has one now: a zero normal has no perpendicular direction and no in-plane axis, so the parameterisation would quietly fall back to the world axes - `Plane::isValid()` is therefore `normal.length() > EPS`, consistent with the conic curves' rule about a degenerate frame (P6).
+- `OffsetCurve` already has the implementation, and `secondDerivative` is still pure, so the type stays abstract (`ADR-2026-11-04-curve-third-derivative.md` is unaffected).
 
-## 后果
+## Consequences
 
-- 好的：`expectCurveInvariants` / `expectSurfaceInvariants` 现在先断言 `isValid()`，族级算法可以在一处守卫；
-  「为什么 `isValid()` 在接口上」不再需要解释，因为它就是 `Shape` 的同一问法（`G6`、`G12`）。
-- 好的：`Plane` 的零法向从「静默退回世界轴」变成「`isValid()` 为假」，与族内其他类型的退化规则统一。
-- 坏的 / 代价：接口变宽，曲面的虚表从 13 槽变 14 槽；外部实现者必须补这一个方法。仓库内唯一的实现者集合是
-  本模块自己，`test_geometry` 的 84 例与全仓库构建都在这次改动后通过。
-- 触发条件（什么时候重开）：出现**不需要**有效性判据的几何族实现者（例如纯函数式、只由构造保证合法的适配器）
-  时，再考虑把它降成非虚的 `bool isValid() const { return true; }` 默认实现。
+- Good: `expectCurveInvariants` / `expectSurfaceInvariants` now assert `isValid()` first, and family algorithms can guard in one place; "why is `isValid()` on the interface" no longer needs an explanation, because it is the same question `Shape` asks (`G6`, `G12`).
+- Good: `Plane`'s zero normal goes from "quietly fall back to the world axes" to "`isValid()` is false", unified with the degenerate rule of the other types in the family.
+- Bad / cost: the interface widens and the surface vtable goes from 13 to 14 slots; an outside implementer has to add this one method. The only implementers in the repository are this module, and the 84 cases of `test_geometry` and the whole-repository build pass after the change.
+- Trigger (when to reopen): a geometry-family implementer that **does not need** a validity criterion appears (for example a purely functional adapter that is legal by construction) - then consider demoting it to a non-virtual default `bool isValid() const { return true; }`.
 
-## 证据
+## Evidence
 
-- `src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`：新增的纯虚函数与 `@details`。 <!-- drift-ok -->
-- `src/base/geometry/sdk/vine/geometry/Plane.hpp`：唯一新写的实现，`normal.length() > EPS`。 <!-- drift-ok -->
-- `tests/test_geometry/GeometryKindsTest.cpp`：两行 `static_assert`（接口上可问、返回 `bool`）、 <!-- drift-ok -->
-  `validityIsAskableThroughTheInterface`（五次经接口提问）、族级扫查里的 `EXPECT_TRUE(curve.isValid())`。
-- `src/base/models/sdk/vine/models/Shape.hpp`：`virtual bool isValid() const;`——同一问法的先例。
+- `src/base/geometry/sdk/vine/geometry/Curve.hpp`, `Surface.hpp`: the new pure virtual function and its `@details`. <!-- drift-ok -->
+- `src/base/geometry/sdk/vine/geometry/Plane.hpp`: the only newly written implementation, `normal.length() > EPS`. <!-- drift-ok -->
+- `tests/test_geometry/GeometryKindsTest.cpp`: two `static_assert` lines (askable through the interface, returns `bool`), <!-- drift-ok -->
+  `validityIsAskableThroughTheInterface` (five questions asked through the interface), and `EXPECT_TRUE(curve.isValid())` in the family sweep.
+- `src/base/models/sdk/vine/models/Shape.hpp`: `virtual bool isValid() const;` - the precedent for the same question.

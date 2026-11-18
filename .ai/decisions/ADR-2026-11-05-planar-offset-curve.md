@@ -1,55 +1,41 @@
-# ADR-2026-11-05：平面偏置用具体类型的模板，不给 `Curve<T>` 加三阶导数
+# ADR-2026-11-05: the planar offset is a template on the concrete type, and `Curve<T>` gains no third derivative
 
-- 状态：已取代（被 `ADR-2026-11-05-planar-offset-holds-handle.md` 取代：能力协议落地后，偏置改为持有基曲线句柄）
-- 日期：2026-11-05
-- 相关：`../design/geometry-planar.md`、`ADR-2026-11-04-curve-third-derivative.md`
+- Status: Superseded (by `ADR-2026-11-05-planar-offset-holds-handle.md`: once the capability protocol landed, the offset holds a basis handle)
+- Date: 2026-11-05
+- Related: `../design/geometry-planar.md`, `ADR-2026-11-04-curve-third-derivative.md`
 
-> **EN**: Record of a decision since replaced: the planar offset was `OffsetCurve<C>` templated on the concrete basis type held by value, with the third derivative as a non-virtual member of each concrete type, rather than adding `thirdDerivative()` to the contract or approximating with central differences. Superseded by `ADR-2026-11-05-planar-offset-holds-handle`, which holds a handle once the capability protocol exists.
+## Background
 
-## 背景
+The second derivative of the offset curve `O = C + d * N` contains the basis curve's third derivative: `N` is the unit normal, and its second derivative expands to include `C'''`. The spatial conclusion was "do not add a third derivative to `Curve<T>`", so `geom::spatial::OffsetCurve` implements only the point and the first derivative, `secondDerivative` is still pure, and the type stays unconstructible.
 
-偏置曲线 `O = C + d * N` 的二阶导里含基曲线的三阶导：`N` 是单位法向，它的二阶导展开后有 `C'''`。
-空间侧的结论是“不给 `Curve<T>` 加三阶导数”，因此 `geom::spatial::OffsetCurve` 只实现了点与一阶导、二阶导仍为纯虚，
-类型保持不可构造。
+The planar side reached the same decision point: copy that conclusion (the offset reaches only the first derivative, or is not done at all) or write it differently so the offset is complete.
 
-平面侧到了决定这一步的时候：要么照抄那个结论（偏置只能到一阶导、或干脆不做），要么换一种写法让偏置完整。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 给 `Curve<T>` 加第 12 项纯虚 `thirdDerivative()` | 偏置可以直接持 `Curve<T>` 句柄；与 3D 同名 | 契约从十一项变十二项，两个模块的契约不再逐项同义；每个曲线类型被迫实现一个只有偏置在用的导数 |
-| B 偏置是**具体基曲线类型**的模板，三阶导作为具体类型的非虚成员 | 契约仍是十一项；三阶导只加在能闭式回答的类型上；偏置按值持有基曲线，零分配、无类型擦除 | 三阶导变成八份重复实现（每型一个成员）；偏置不能持 `Curve<T>&` 句柄 |
-| C 基曲线用 `shared_ptr<const Curve<T>>`，二阶导用一阶导的中心差分近似 | 偏置能持任意曲线 | `secondDerivative()` 从此是近似值；R2 多一条例外；近似步长的选择进入公共语义 |
-| D 不做偏置 | 零成本 | 2D 轮廓/刀补这条最常见的平面需求写不出来 |
+| A. Add a twelfth pure virtual `thirdDerivative()` to `Curve<T>` | The offset can hold a `Curve<T>` handle directly; the same name as 3D | The contract grows from eleven to twelve items and the two modules' contracts are no longer item-for-item synonymous; every curve type is forced to implement a derivative only the offset uses |
+| B. The offset is a template on the **concrete basis type**, with the third derivative a non-virtual member of that type | The contract stays at eleven items; the third derivative is added only to types that can answer it in closed form; the offset holds the basis by value, with zero allocation and no type erasure | The third derivative becomes eight duplicated implementations (one member per type); the offset cannot hold a `Curve<T>&` handle |
+| C. The basis is a `shared_ptr<const Curve<T>>` and the second derivative is a central difference of the first | The offset can hold any curve | `secondDerivative()` is approximate from then on; R2 gains one more exception; the choice of step enters the public semantics |
+| D. Do no offset | Zero cost | The most common planar need - a 2D profile or cutter compensation - cannot be written |
 
-## 决定
+## Decision
 
-采用 B。
+Chose B.
 
-判据：`G4`、`G10`、`G6`。契约是模块的核心资产（`geometry-planar.md` 2.1：与 3D 逐项同义的十一项）——
-为了让一个派生类型能算一阶以上的导数去改它，等于让所有曲线类型、以及所有依赖“契约只到二阶”的算法一起付账；
-而选项 C 把“二阶导是精确值”这条语义悄悄换成了近似，这比少一个类型严重得多。
+Criteria: `G4`, `G10`, `G6`. The contract is the module's core asset (`geometry-planar.md` 2.1: eleven items synonymous with 3D) - changing it so that one derived type can compute derivatives above the first makes every curve type, and every algorithm that relies on "the contract stops at the second order", pay with it; and option C quietly turns "the second derivative is exact" into an approximation, which is far worse than one type too few.
 
-把三阶导放在具体类型上，还顺带满足了另一条既有判据：值类型本来就有非虚的便宜入口
-（`pointAt()`、`bounds()`），三阶导只是其中一员；`Curve<T>` 的十一项不变，任何新曲线类型**不必**实现它，
-只是不能被偏置使用。代价是八份小实现，每份一行（直线的零向量、圆的 `r(sin, -cos)`、椭圆的 `a·sin·X - b·cos·Y`、
-双曲线的 `P'`、抛物线的零向量、圆弧转发、Bezier 的三阶差商、BSpline 的基函数三阶导）。
+Putting the third derivative on the concrete types also satisfies another existing criterion: value types already have cheap non-virtual entries (`pointAt()`, `bounds()`), and the third derivative is one of them; `Curve<T>`'s eleven items are unchanged, and a new curve type **need not** implement it - it simply cannot be used by an offset. The cost is eight small implementations, one line each (the zero vector for a line, `r(sin, -cos)` for a circle, `a*sin*X - b*cos*Y` for an ellipse, `P'` for a hyperbola, the zero vector for a parabola, a forward for an arc, the third difference for a Bezier, the third derivative of the basis functions for a BSpline).
 
-## 后果
+## Consequences
 
-- 好的：`OffsetCurve<C>` 三个数值回答都是精确的；按值持有基曲线，没有堆分配；平面契约与 3D 仍逐项同义；
-  `test_geom_planar` 可以用“二阶导 vs 一阶导的中心差分”逐点验证它。
-- 坏的 / 代价：偏置的基曲线在编译期确定，`ClosestPoint` 之类的族级算法接受它，但“运行期决定偏移哪条曲线”要调用方自己做分派；
-  三阶导在八个类型上各写一遍，新类型不会自动获得它。
-- 触发条件（什么时候重开）：出现需要“对 `Curve<T>&` 做偏置”的消费者（运行期选择的曲线、异构列表里的偏置）。
-  那时再看 A 与一个类型擦除的偏置包装哪个更便宜；今天没有这样的消费者。
+- Good: the three numbers an `OffsetCurve<C>` answers are exact; the basis is held by value with no heap allocation; the planar contract stays item-for-item synonymous with 3D; `test_geom_planar` can verify it point by point against a central difference of the first derivative.
+- Bad / cost: the offset's basis is fixed at compile time, family algorithms such as `ClosestPoint` accept it, but "decide at runtime which curve to offset" forces the caller to dispatch; the third derivative is written once per type across eight types, and a new type does not gain it automatically.
+- Trigger (when to reopen): a consumer that needs "offset a `Curve<T>&`" appears (a curve chosen at runtime, an offset inside a heterogeneous list). Then compare A against a type-erased offset wrapper; there is no such consumer today.
 
-## 证据
+## Evidence
 
-- `src/base/geom/sdk/vine/geom/planar/OffsetCurve.hpp`：模板形态、按值持有、三阶导的使用点。
-- 八个类型的 `thirdDerivative()`：`LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` /
-  `ArcCurve` / `BezierCurve` / `BSplineCurve`。
-- `tests/test_geom_planar/OffsetCurveTest.cpp`：直线平行偏移、逆时针圆向内收缩、椭圆/Bezier 的二阶导与差分一致、
-  反向基曲线需取反距离、零距离即基曲线、尖点不产生 NaN。
-- 空间侧的既有决定：`ADR-2026-11-04-curve-third-derivative.md`（它管的是 3D，本 ADR 不推翻它）。
+- `src/base/geom/sdk/vine/geom/planar/OffsetCurve.hpp`: the template shape, the by-value basis and the place the third derivative is used.
+- `thirdDerivative()` on the eight types: `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `ArcCurve` / `BezierCurve` / `BSplineCurve`.
+- `tests/test_geom_planar/OffsetCurveTest.cpp`: a parallel offset of a line, a counter-clockwise circle shrinking inwards, the second derivative of an ellipse and a Bezier agreeing with the difference, a reversed basis requiring a negated distance, a zero distance giving the basis itself, and a cusp producing no NaN.
+- The existing spatial decision: `ADR-2026-11-04-curve-third-derivative.md` (it governs 3D, and this ADR does not overturn it).

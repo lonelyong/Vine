@@ -1,43 +1,41 @@
-# ADR-2026-11-04：曲面也是求值接口
+# ADR-2026-11-04: surfaces are an evaluation interface too
 
-> **状态**：已采纳
-> **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry/Surface.hpp`、`ElementarySurface.hpp`、`BoundedSurface.hpp`、`Plane.hpp`、`SphericalSurface.hpp`、六个占位曲面头、`tests/test_geometry` <!-- drift-ok -->
+> **Status**: Accepted
+> **Date**: 2026-11-04
+> **Scope**: `src/base/geometry/sdk/vine/geometry/Surface.hpp`, `ElementarySurface.hpp`, `BoundedSurface.hpp`, `Plane.hpp`, `SphericalSurface.hpp`, the six placeholder surface headers, `tests/test_geometry` <!-- drift-ok -->
 
-> **EN**: Turned `Surface<T>` into the same kind of evaluation interface as `Curve<T>` (virtual destructor plus thirteen pure virtuals: `evaluate`, `derivativeU/V`, four parameter bounds, closure/periodicity per direction, `continuity`), demoted `ElementarySurface<T>` / `BoundedSurface<T>` to empty tags, and implemented it for `Plane<T>` (deriving its in-plane axes) and `SphericalSurface<T>`. Supersedes item 6 of `ADR-2026-11-04-curve-evaluation-interface`; no `normalAt()`, `bounds()` or second derivatives in the interface.
+## Background
 
-## 背景
+Item 6 of `ADR-2026-11-04-curve-evaluation-interface.md` left the surface family an empty tag, on the ground that "no consumer requires an unknown surface to be evaluable". Half a day later the same requirement appeared on the surface side: face traversal, sampling and the prerequisites of intersection all need "evaluation plus the parameter domain and periodicity in two directions", and the curve interface had already proved the shape of that contract.
 
-`ADR-2026-11-04-curve-evaluation-interface.md` 第 6 条把曲面族留成空标签，理由是"没有消费者要求未知曲面也能求值"。半天后同一个需求在曲面侧出现：面遍历、采样与求交的前置都需要"求值 + 两个方向的参数域与周期"，而曲线接口已经证明这组契约的形状。
+## Decision
 
-## 决定
+1. `Surface` becomes the **template interface** `Surface<T>`: virtual destructor plus thirteen pure virtuals - `evaluate(u, v)`, the two first derivatives `derivativeU/V`, the four parameter bounds `first/lastUParameter` / `first/lastVParameter`, closure and periodicity per direction (`isUClosed/isVClosed/isUPeriodic/isVPeriodic/uPeriod/vPeriod`), `continuity()`; plus the non-virtual `isCN(n)` and `kDimension`.
+2. `ElementarySurface<T>` / `BoundedSurface<T>` are demoted to classification tags: no state and no virtual functions.
+3. `Plane<T>` implements the interface: the two in-plane axes are derived from `normal` every time (the projection of the world axis least parallel to the normal), with no third vector stored - a plane is copied during ray intersection.
+4. `SphericalSurface<T>` implements the interface: `u` is the azimuth (`[0, 2pi]`, closed and periodic) and `v` the polar angle (`[0, pi]`, with poles at both ends, neither closed nor periodic).
+5. The six placeholder surfaces are templated as `XxxSurface<T>` and inherit the tags; they remain unconstructible.
+6. The interface does **not** carry `normalAt()` / `bounds()` / second derivatives / the reversal and transform families.
 
-1. `Surface` 改为**模板接口** `Surface<T>`：虚析构 + 十三项纯虚 —— 求值 `evaluate(u, v)`、两个一阶导 `derivativeU/V`、四个参数界 `first/lastUParameter` / `first/lastVParameter`、两个方向的闭合与周期 `isUClosed/isVClosed/isUPeriodic/isVPeriodic/uPeriod/vPeriod`、`continuity()`；外加非虚 `isCN(n)` 与 `kDimension`。
-2. `ElementarySurface<T>` / `BoundedSurface<T>` 降为分类标签：不加状态、不加虚函数。
-3. `Plane<T>` 实现接口：两个面内轴由 `normal` 每次推导（世界轴里与法向最不平行的那个的投影），不存第三个向量 —— 平面在射线求交里被复制。
-4. `SphericalSurface<T>` 实现接口：`u` 是方位角（`[0, 2π]`，闭合且周期），`v` 是极角（`[0, π]`，两端是极点，不闭合不周期）。
-5. 六个占位曲面模板化为 `XxxSurface<T>` 并继承标签，仍不可构造。
-6. 接口**不**放 `normalAt()` / `bounds()` / 二阶导数 / 反向与变换族。
+## Rationale
 
-## 理由
+- `G4`, `G9`: the thirteen items are the minimal complete set for a parameterised surface and correspond one to one with `Curve<T>` (one parameter becomes two); a new surface is thirteen functions.
+- `G6`: the naming and grouping of `Curve<T>` are copied verbatim (`first/last` -> `first/lastU`), so one lesson covers both.
+- `G1`: the interface carries only facts that must always have an answer and only one answer; the normal's orientation, the unboundedness of a bounding box and the derivative order all need a convention, so they stay with the concrete type.
+- `G10`: `Plane` / `SphericalSurface` pay one vptr for the interface and not one member more.
 
-- `G4`、`G9`：十三项是"参数化曲面"的最小完备集，与 `Curve<T>` 一一对应（一个参数变两个）；新增一种曲面只是实现十三项。
-- `G6`：`Curve<T>` 的命名与分组被逐字照搬（`first/last` → `first/lastU`），学一套就够。
-- `G1`：接口里只放"必然能回答且只有一个答案"的事实；法向的朝向、包围盒的无界性、曲率的阶数都需要约定，留在具体类型。
-- `G10`：`Plane` / `SphericalSurface` 因为接口只多一个 vptr，不多一个成员。
+## Rejected options
 
-## 已否决选项
-
-| 选项 | 否决理由 |
+| Option | Why not |
 |---|---|
-| 曲面继续保持空标签 | 标签答不了"未知曲面求值 + 两个方向的参数域与周期"，面遍历/采样只能各自写一套分派（`G7`） |
-| 把四个参数界打包成一次调用（OCCT 的 `Bounds(U1,U2,V1,V2)`） | 打包是 C++98 的 out 参数风格；四个虚函数与 `Curve<T>` 的 `first/last` 完全对齐（`G6`） |
-| 接口里放 `normalAt(u, v)` | 它是 `dU × dV` 归一化的一行，而且必须选朝向约定；放进接口等于把约定当契约（`G4`） |
-| `Plane` 存面内框架向量（像 `ConicCurve`） | 平面在射线求交里被复制且大小有断言；推导比存储便宜（`G10`） |
-| 保留非模板 `Surface` 标签、另立一套曲面接口 | 两个 `Surface` 就是两个家，`is_base_of` 会分出两棵树（`G1`） |
+| Keep surfaces as empty tags | A tag cannot answer "evaluate an unknown surface plus the parameter domain and periodicity in two directions", so face traversal and sampling would each write their own dispatch (`G7`) |
+| Pack the four parameter bounds into one call (OCCT's `Bounds(U1,U2,V1,V2)`) | Packing is the C++98 out-parameter style; four virtual functions line up exactly with `Curve<T>`'s `first/last` (`G6`) |
+| Put `normalAt(u, v)` into the interface | It is one normalised `dU x dV` line and it has to choose an orientation convention; putting it on the interface turns a convention into a contract (`G4`) |
+| Have `Plane` store in-plane frame vectors (like `ConicCurve`) | A plane is copied during ray intersection and its size is asserted; deriving is cheaper than storing (`G10`) |
+| Keep a non-template `Surface` tag and start a separate surface interface | Two `Surface`s are two homes, and `is_base_of` would split into two trees (`G1`) |
 
-## 后果
+## Consequences
 
-- **破坏性**：`Surface` / `ElementarySurface` / `BoundedSurface` 都是模板了，必须写 `<T>`；仓库内唯一消费点是 `tests/test_geometry`。 <!-- drift-ok -->
-- `Plane` / `SphericalSurface` 各多一个 vptr，不再是 trivially copyable；`sizeof` 断言补上 `sizeof(void*)`。
-- 曲面与曲线从此同一个形状，现行设计记录在 `.ai/design/geometry-kinds.md` 2.1 / 2.2 / 2.10。
+- **Breaking**: `Surface` / `ElementarySurface` / `BoundedSurface` are templates now and need `<T>`; the only consumer in the repository is `tests/test_geometry`. <!-- drift-ok -->
+- `Plane` / `SphericalSurface` each gain a vptr and are no longer trivially copyable; the `sizeof` assertions gain `sizeof(void*)`.
+- Surfaces and curves now have the same shape, and the current design is recorded in `.ai/design/geometry-kinds.md` 2.1 / 2.2 / 2.10.
