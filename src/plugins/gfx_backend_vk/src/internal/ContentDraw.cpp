@@ -73,9 +73,9 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
  * @param model  The drawable's world transform.
  * @return The range's bytes.
  */
-[[nodiscard]] detail::ContentPushConstants pushConstantsOf(const vn::graphics::CameraSnapshot& camera, const vn::math::Mat4d& model) noexcept
+[[nodiscard]] detail::PushRangeConstants pushConstantsOf(const vn::graphics::CameraSnapshot& camera, const vn::math::Mat4d& model) noexcept
 {
-    detail::ContentPushConstants push{};
+    detail::PushRangeConstants push{};
     copyMatrix(foldToDeviceClip(camera.projection), push.projection);
     copyMatrix(camera.view * model, push.model_view);
     return push;
@@ -346,7 +346,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
                                              4U,
                                              offsets);
 
-        const detail::ContentPushConstants push = pushConstantsOf(draw.view.camera, command.model_matrix);
+        const detail::PushRangeConstants push = pushConstantsOf(draw.view.camera, command.model_matrix);
         caches.table().vkCmdPushConstants(commands,
                                         caches.contentPipelineLayout(),
                                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

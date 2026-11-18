@@ -37,6 +37,13 @@ VN_ENABLE_ENUM_FLAGS(RenderApi)
 
 /** @brief Converts render API flags to a combined display string.
  *
+ * @details
+ * - PUBLIC ON PURPOSE: a host names the API it picked in its own UI (the app shell's backend list prints these
+ *   flags), so this is host vocabulary rather than registry bookkeeping (`G4`: a name the host can call, saying
+ *   exactly what it returns).
+ * - The spelling is one word per flag in declaration order, so two backends that answer the same flags print the
+ *   same line.
+ *
  * @param api Render API flags.
  * @return Lower-case list joined with " | ", e.g. "vulkan | opengl3"; "unknown" when no flag is set.
  */

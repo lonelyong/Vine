@@ -59,8 +59,7 @@ cost is one more layer of pure values in the adapter (which is the shape it alre
 | Plugin support | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / the entry points |
 | Plugin shell | `src/plugins/gfx_backend_vsg/src/shell/` | the plugin registration, `RenderBackendFactory` |
 
-The internal types use **two** namespaces, and **a directory is not a namespace**: `core::` is this backend's own portable half (plus the SDK's shared vocabulary made
-visible by a using-directive), `api::` is the device enumeration and the two sessions (`WindowSession` / `OffscreenSession` and their Options, `ProbedDevice` /
+The internal types use **two** namespaces, and **a directory is not a namespace**: `core::` is this backend's own portable half (plus the SDK's shared vocabulary, nominated for lookup by a using-directive: it widens *unqualified and qualified* lookup inside `core`, not ADL, and its measured surface is 31 names - see the directive's note and audit `A3-06`, corrected), `api::` is the device enumeration and the two sessions (`WindowSession` / `OffscreenSession` and their Options, `ProbedDevice` /
 `ProbeResult`, plus two device probe functions); everything else — the `VsgBackend` facade, `VsgExecutor`, `TargetObjects` / `TargetTable`, content recording — lives at
 the root of `vn::backend_vsg`, and the adapter code under `include/.../support/` and `src/support/` is in `detail::`. None of it is public; the public contract is only
 the five SDK types in §4.1.

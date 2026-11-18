@@ -22,6 +22,7 @@
 #include <string>
 #include <utility>
 
+#include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/appfw/gui/Viewer.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
@@ -34,6 +35,7 @@
 #include <vine/window/KeyCode.hpp>
 #include <vine/window/MouseButton.hpp>
 
+#include "BackendChoice.hpp"
 #include "GuiText.hpp"
 
 VN_APPFWGUI_NS_BEGIN
@@ -433,24 +435,40 @@ void SurfaceWindow::armRecreateHatch()
     }
 }
 
-void SurfaceWindow::useDefaultBackend()
+String SurfaceWindow::useDefaultBackend()
 {
-    // The default is a FALLBACK, not a decision: it is taken whenever the engine has no backend of its own, so
-    // (a) a host that sets its own through engine()->setDevice() is never overridden, and (b) a backend registered
-    // AFTER an attempt (a plugin loaded late, a host that installs one later) is still picked up by the next
-    // attach instead of being locked out by a decision made too early.
+    // A FALLBACK, NOT A DECISION: this runs only when the engine has no backend of its own, so (a) a host that set
+    // one through engine()->setDevice() is never overridden, and (b) a backend registered AFTER an attempt (a plugin
+    // loaded late, a host that installs one later) is still picked up by the next attach instead of being locked out
+    // by a decision made too early.
     if (d->engine->device() != nullptr) {
-        return;
-    }
-
-    const auto entries = vn::graphics::RenderBackendRegistry::instance().entries();
-    if (!entries.empty()) {
-        d->engine->setDevice(entries.front().factory->create());
+        return {};
     }
 
     // A default orbit manipulator (bound to the view's camera and scene) is
     // provided lazily by the SceneView on first input / fit; the view forwards
     // window input events to it, so nothing is wired here.
+
+    // WHICH BACKEND IS NOT THE REGISTRY'S DECISION. This used to take entries().front(): that vector is ordered by
+    // NAME, so the renderer was picked by the alphabet ("vk" before "vsg") and a plugin named "aa" would have switched
+    // every window without a single line changing (G4 - a default a reader cannot find is not a contract). The
+    // application states its backend (RenderControl::setDefaultBackendName); chooseBackend owns the rule for "stated
+    // none", and every refusal names what IS registered so the host can get it right from the message.
+    const auto& registry = vn::graphics::RenderBackendRegistry::instance();
+    const auto  entries  = registry.entries();
+    const BackendChoice choice = chooseBackend(entries, RenderControl::defaultBackendName());
+    if (!choice.refusal.empty()) {
+        return choice.refusal;
+    }
+
+    if (vn::intrusive_ptr<vn::graphics::RenderBackend> backend = registry.create(choice.name); backend != nullptr) {
+        d->engine->setDevice(std::move(backend));
+        return {};
+    }
+
+    // The registry answered this name a moment ago and does not now (a plugin unloaded in between): say that instead
+    // of reporting the backend as absent, which would be a different defect.
+    return String(u8"the render backend \"") + choice.name + u8"\" could not be created";
 }
 
 void SurfaceWindow::setContinuousRendering(bool on, int interval_ms)
@@ -705,13 +723,13 @@ bool SurfaceWindow::init()
     // has a view with a pipeline it can inspect (and the pass is what the backend will draw when it does come up).
     d->viewer->takeArea();
 
-    // No backend yet? Take the first registered one; a host that wants its own sets it before this.
-    useDefaultBackend();
-
-    if (d->engine->device() == nullptr) {
-        // Nothing to attach to at all: no render backend plugin is registered. Waiting will not change that, so
-        // say it once instead of staying Pending forever.
-        failAttach(u8"no render backend is registered");
+    // No backend yet? Attach the one the application named (or the only registered one); a host that wants its own
+    // sets it on the engine before this.
+    if (const String why = useDefaultBackend(); !why.empty()) {
+        // Nothing to attach to at all, and waiting will not change that, so say it once instead of staying Pending
+        // forever. The reason is the host's answer to "why is my render area empty?" - and it names what it is about
+        // (a backend the application named that is not registered, or several registered and none named).
+        failAttach(why);
         return false;
     }
 

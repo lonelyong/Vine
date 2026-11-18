@@ -48,6 +48,17 @@ struct AppShellDock {
 AppShellDock buildAppShellDock(gui::MainWindow* wnd);
 
 /**
+ * @brief Names the render backend this application runs its render surfaces on.
+ *
+ * The registry lists what is installed and never decides which one is used: "the first entry" is ordered by the
+ * backend's NAME, so a plugin would switch the renderer by being named earlier. The application states its choice
+ * here, and `VN_RENDER_BACKEND` overrides it (that is how the same build runs on the vsg reference backend).
+ *
+ * Call it during startup, before any document opens: a document's view attaches when it is shown.
+ */
+void chooseRenderBackend();
+
+/**
  * @brief Opens the document named by the command line, if one was asked for.
  *
  * `Vine --open <type-id>` starts with that document shown. It goes through the SAME path the user's own command goes

@@ -51,8 +51,11 @@ enables such as `depthBiasEnable`, so an enable must be fixed together with the 
 2.9 **Capabilities are two questions, readback has one "which image"**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
 the old bit-set spelling (`Capabilities::Feature` / `supports` / `bit`) is kept as inline forwarders, the limit fields become `Capabilities::limits.*`
 (source-level, BC-11). Both readback verbs `readColorBuffer` / `readDepthBuffer` take one `ImageRef` — the same vocabulary as a pass input's "which image";
-the old `(target, attachment)` spelling is kept for one release and forwards (BC-16). Why: `G4` ("what is supported" and "how much at most" are two
-answers) and `G6` (one "which image" does not get two spellings).
+the old `(target, attachment)` spelling is kept for one release and forwards (BC-16),
+and so is the old answer shape (`bool` + `ReadbackResult*`): the answer is now the return value,
+`ReadbackOutcome` (its `result` is the four-state `ReadbackResult`), and the two-answer shims are
+`[[deprecated]]` for one release. Why: `G4` (one question, one answer) and `G6` (one "which image" does not get
+two spellings).
 
 ## 3. Features
 
@@ -64,7 +67,7 @@ answers) and `G6` (one "which image" does not get two spellings).
 | F2 | Depth attachment | `attachDepth(D16/D24/D32/D32F)`. |
 | F3 | Shared depth | `setDepthPromotion(false)` + `shareDepth(DepthView)`; the lender draws first, the borrower LOADs. |
 | F4 | Validity | At least one own attachment + a positive size; borrowed depth does not count as its own. |
-| F5 | Readback | `readColorBuffer` / `readDepthBuffer`, both take one `ImageRef` (it names "which image"); the old `(target, index)` spelling is kept for one release and forwards. |
+| F5 | Readback | `readColorBuffer` / `readDepthBuffer`, both take one `ImageRef` (it names "which image") and return `ReadbackOutcome` (the answer is the return value; `result` carries `Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`). The old `(target, index)` spelling and the old `bool` + `ReadbackResult*` shape are deprecated shims for one release (BC-16). |
 
 ### 3.2 MSAA
 

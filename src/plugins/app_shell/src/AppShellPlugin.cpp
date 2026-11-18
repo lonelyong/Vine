@@ -37,6 +37,11 @@ vn::async::Task<void> AppShellPlugin::load(PluginLoadContext* context)
     }
 
     // 这一拍的三段各自报一次相位：进度按相位跳（每个相位内不再动），所以每一段开始前把“在干什么”说清楚。
+
+    // WHICH BACKEND comes first: `postLoad` opens the document named on the command line, and a document's view
+    // attaches as soon as it is shown - so the application's choice has to be made before any window exists.
+    chooseRenderBackend();
+
     reportPhase(vn::appfw::translate("app_shell", "Preparing the ribbon"));
     buildAppShellRibbon(wnd);
 

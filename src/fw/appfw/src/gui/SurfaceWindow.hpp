@@ -229,8 +229,17 @@ class SurfaceWindow : public QWindow {
     /** @brief Arms the platform-window recreation test hatch (VN_RECREATE_SURFACE_MS), once per session. */
     void armRecreateHatch();
 
-    /** @brief Picks the first registered render backend unless the host attached one. Idempotent. */
-    void useDefaultBackend();
+    /** @brief Attaches the backend the application named, or the only registered one; nothing when the engine has one.
+     *
+     * @details
+     * - Idempotent, and never overrides a device the host installed on the engine.
+     * - Which backend is taken is `chooseBackend`'s rule (BackendChoice.hpp), never the registry's name order: a
+     *   stated name wins, one registered backend needs no name, and several without a name is a refusal that names
+     *   them instead of a guess.
+     *
+     * @return Why no backend could be attached; empty when the engine has one after the call.
+     */
+    String useDefaultBackend();
 
     /** @brief Publishes a lifecycle transition (silent when the state is unchanged). */
     void setState(SurfaceState next);

@@ -24,6 +24,26 @@ struct RenderControl::Impl : public ControlData {
     QWidget* container     = nullptr;
 };
 
+namespace
+{
+
+/// The backend name the application stated (see RenderControl::setDefaultBackendName). Process-wide, like the registry it is
+/// read against: every surface in the process attaches to the same backend, and the host writes this once, at startup,
+/// before anything has attached.
+String s_default_backend_name;
+
+} // namespace
+
+String RenderControl::defaultBackendName()
+{
+    return s_default_backend_name;
+}
+
+void RenderControl::setDefaultBackendName(const String& name)
+{
+    s_default_backend_name = name;
+}
+
 RenderControl::RenderControl()
   : Control(new Impl(), new QWidget())
 {

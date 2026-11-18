@@ -17,10 +17,9 @@
 // The namespace mirrors the include path one for one (`vine/backend_vsg/` -> `vn::backend_vsg`), so `vn::backend_vsg`
 // and the library's `::vsg` never read as the same thing.
 //
-// The mechanisms both backends use live in libGraphics (`sdk/vine/graphics/`) and include no vsg header;
-// this backend's files name them `core::X`, so a namespace alias points at them - one alias, and every
-// existing spelling keeps resolving. A namespace alias cannot be extended, which is exactly the point:
-// the mechanisms have ONE definition, in the library.
+// The mechanisms both backends use live in libGraphics (`sdk/vine/graphics/`) and include no vsg header; this
+// backend's files name them `core::X`, so `core` nominates the SDK namespace for lookup. What that nomination
+// supplies, and what it costs, is written at the directive itself (see below).
 namespace VN_ROOT_NS
 {
 namespace graphics
@@ -32,6 +31,25 @@ namespace backend_vsg
 // frame tables, the arenas), and the using-directive is what lets `core::DeviceClock` name the SDK's
 // shared vocabulary while `core::Observe` resolves in here. The SDK's namespace stays free of one
 // particular backend's internals.
+//
+// WHAT IT DOES AND DOES NOT DO (audit A3-06, corrected). A using-directive adds the nominated names to
+// UNQUALIFIED lookup here, and to QUALIFIED lookup inside `core` (`core::DeviceClock` works,
+// [namespace.qual]). It does NOT add `vn::graphics` to the associated namespaces of a `core::X` argument,
+// so ADL is unaffected ([basic.lookup.argdep]) - the audit's "ADL also considers vn::graphics" is not what
+// the standard says.
+// The real cost is that a NEW SDK name becomes visible unqualified here without a line changing in this
+// plugin. Measured 2026-11-18 (remove the directive, build `gfx_backend_vsg`, read the compiler's errors):
+// the surface it supplies is 31 names - DrawKind / LoadOp / StoreOp / DynamicState / ImageLayout /
+// LoadOpVariantKey / PipelineKey / PipelineKeyHash / TargetShape / VertexLayoutKey / FrameToken /
+// FrameTimeline / RetirementQueue / DeviceClock / DepthFacts / DepthPlan / TargetAction / TargetDecision /
+// TargetDesc / TargetInstance / depthPlan / planTarget / ReadbackAnswer / ReadbackFormat / ReadbackKind /
+// ReadbackRequest / colorReadbackOf / depthReadbackOf / decodeDepth / readbackOf / Diagnostics.
+// Closing the set to exactly these names would need them at PARSE time: a using-DECLARATION requires its
+// target to exist when it is written, so either five SDK headers would have to be included in this global
+// header, or a vocabulary header would have to be included by all 36 `core` files. Accepted as-is: `core`
+// defines no name that competes with an SDK one (the compiler would report the ambiguity), and every one of
+// the 31 is an SDK concept `core` actually builds on. Trigger to revisit: `core` gains a name that collides
+// with an SDK name, or the unqualified SDK surface grows beyond the list above.
 namespace core
 {
 using namespace ::VN_ROOT_NS::graphics;

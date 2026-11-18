@@ -334,6 +334,9 @@ struct InstanceSlot {
     std::uint64_t   material_revision{ 0 }; // Material revision (drives the in-place refresh).
 };
 
+namespace detail
+{
+
 /** @brief One line of the key audit: a key, and what it is allowed to be built from. */
 struct KeyAuditEntry {
     const char* key{ nullptr };     // Key type's name.
@@ -343,9 +346,16 @@ struct KeyAuditEntry {
 /** @brief Gets the key audit table (see the file note for what it is for).
  *
  * @details
- * - A test pins the table's contents: adding a field to a key without deciding its layer fails there,
- *   which is where the question "is this identity or data?" gets asked.
+ * - A WITNESS, NOT A HOST API: the one caller outside this module is the seam test that pins the table's contents,
+ *   so the table lives in `detail` beside the keys it audits (`G8`: no host consumer, and nothing a host could do
+ *   with it that `PipelineKey`'s own equality does not already answer).
+ * - Adding a field to a key without deciding its layer fails that test, which is where the question "is this
+ *   identity or data?" gets asked.
+ *
+ * @return The table, borrowed for the program's lifetime.
  */
 [[nodiscard]] VN_GRAPHICS_API std::span<const KeyAuditEntry> keyAuditTable() noexcept;
+
+} // namespace detail
 
 VN_GRAPHICS_NS_END

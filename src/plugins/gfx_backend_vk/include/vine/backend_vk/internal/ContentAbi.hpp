@@ -90,12 +90,15 @@ inline constexpr vn::graphics::Sampler kShadowSampler{
  *   the view/draw pair, spelled for the range the built-in stages declare.
  * - IT LIVES HERE, WITH THE ABI: the caches size the pipeline layout from it and the recorder fills it, so the two
  *   cannot disagree about how wide the range is.
+ * - THE NAME IS THE SDK'S: the range was called `ContentPush` before B17 renamed it `PushRange`, and this block is
+ *   that range's layout. `PushConstants` was not used because `::vsg::PushConstants` names a different thing in the
+ *   same TUs (`G1`: one concept, one word).
  */
-struct ContentPushConstants {
+struct PushRangeConstants {
     std::array<float, 16> projection{}; // View -> clip, column-major, in the device's clip convention.
     std::array<float, 16> model_view{}; // World -> view, column-major (the pass' view times the drawable's model).
 };
-static_assert(sizeof(ContentPushConstants) == 128U, "the content push range is two mat4");
+static_assert(sizeof(PushRangeConstants) == 128U, "the push range is two mat4");
 
 /**
  * @brief Rounds @p value up to the next multiple of @p alignment.

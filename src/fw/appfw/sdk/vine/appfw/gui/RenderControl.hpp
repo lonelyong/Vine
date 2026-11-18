@@ -42,9 +42,10 @@ class Viewer;
  * primary view holding the camera, content scene and orbit manipulator) and the
  * Viewer that owns the area's request - lives in the private
  * SurfaceWindow (src/gui/SurfaceWindow.hpp), together with the attach rules, the
- * deferred resize path and the translation of Qt events into view input. Unless
- * a backend was attached via engine()->setDevice(), the first backend registered
- * in RenderBackendRegistry is used by default.
+ * deferred resize path and the translation of Qt events into view input. A backend attached
+ * via engine()->setDevice() is the one used; otherwise the attach takes the backend the
+ * application named (setDefaultBackendName), or the ONLY registered one, and refuses
+ * with a reason when several are registered and none was named - it never guesses one.
  *
  * CONSTRUCTION ONLY COMPOSES. The control builds its engine, its view and its viewer and installs the diagnostics
  * route; it does not pick a backend and does not attach. The first attach happens on the first turn of the event loop
@@ -105,6 +106,40 @@ class VN_APPFW_API RenderControl : public Control {
      * @return The engine, or nullptr when creation failed.
      */
     vn::graphics::RenderEngine* engine() const;
+
+    /** @brief Gets the backend name an attach brings up when its engine has no device of its own.
+     *
+     * @details
+     * - PROCESS-WIDE, not per control: a view creates its own control (one document, one surface), so "this
+     *   application renders with X" has to be one statement instead of one per window - which is why this pair is
+     *   static and why every attach reads it.
+     * - Empty means "nothing was named": an attach then takes the ONLY registered backend and refuses, naming the
+     *   candidates, when several are registered. Which backend comes up is therefore never decided by the order the
+     *   registry's names happen to sort in.
+     *
+     * @return The backend name the application stated; empty when it stated none.
+     */
+    static String defaultBackendName();
+
+    /** @brief Names the render backend every attach brings up, unless its engine was given a device.
+     *
+     * @details
+     * - THE APPLICATION DECIDES, ONCE: a host states the backend it runs on here instead of relying on which plugin
+     *   is first in `RenderBackendRegistry` (that entry is chosen by the backend's NAME, so adding a plugin would
+     *   switch the renderer without a line of the host changing).
+     * - The attach then creates that backend BY NAME (`RenderBackendRegistry::create`), so a name that is not
+     *   registered fails the attach with a reason naming it and listing what is registered - a misspelt name is
+     *   reported, never turned into another renderer.
+     * - The engine's own device always wins (see `RenderEngine::setDevice`): this is the default an attach falls back
+     *   to, not an override of a host that installed one.
+     *
+     * @warning
+     * - Not synchronized: call it on the application thread before the first attach (host startup is that point), not
+     *   while another thread is attaching.
+     *
+     * @param name Registered backend name, e.g. "vk"; empty to state none again.
+     */
+    static void setDefaultBackendName(const String& name);
 
     /** @brief Chooses where the engine half of each frame runs (see vn::graphics::FrameThreading).
      *
@@ -222,9 +257,10 @@ class VN_APPFW_API RenderControl : public Control {
      * waiting for the event-loop fallback. This is the entry point promised by the SDK order
      * (construct -> engine()->setDevice() -> init()): idempotent while the session is bound to the live surface,
      * and the retry when an earlier call landed before the native window had been laid out (which reports false
-     * rather than guessing a delay). With no backend set through engine()->setDevice(), the first registered render
-     * backend (RenderBackendRegistry) is used by default - and only as a fallback: a backend registered later is
-     * still picked up by the next attach.
+     * rather than guessing a delay). With no backend set through engine()->setDevice(), the attach brings up the one
+     * the application named (setDefaultBackendName), or the only registered backend, and fails with a reason
+     * when several are registered and none was named - it never picks one by the registry's name order. That, too, is
+     * a fallback: a backend registered later is still picked up by the next attach.
      *
      * A session that is already established maintains itself: when Qt later destroys and recreates the native
      * platform window, the control re-announces the new handle to the backend on its own (the backend moves,

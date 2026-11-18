@@ -1,5 +1,6 @@
 #include "AppShellUi.hpp"
 
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -19,6 +20,7 @@
 #include <vine/appfw/gui/GuiApplication.hpp>
 #include <vine/appfw/gui/Icon.hpp>
 #include <vine/appfw/gui/MainWindow.hpp>
+#include <vine/appfw/gui/RenderControl.hpp>
 #include <vine/appfw/gui/RibbonAction.hpp>
 #include <vine/appfw/gui/RibbonBar.hpp>
 #include <vine/appfw/gui/RibbonButton.hpp>
@@ -181,6 +183,18 @@ AppShellDock buildAppShellDock(gui::MainWindow* wnd)
 
     result.console_panel = console_panel;
     return result;
+}
+
+void chooseRenderBackend()
+{
+    // THE APPLICATION NAMES ITS BACKEND. The registry answers what is installed; asking it for "the first one" would
+    // pick by the ALPHABET, so a newly installed plugin could switch every window's renderer without a line changing
+    // here (G4). This also makes the vsg reference backend reachable in a normal build: `VN_RENDER_BACKEND=vsg`.
+    String name(u8"vk");
+    if (const char* chosen = std::getenv("VN_RENDER_BACKEND"); chosen != nullptr && *chosen != '\0') {
+        name = String::fromUtf8(chosen);
+    }
+    vn::appfw::gui::RenderControl::setDefaultBackendName(name);
 }
 
 void openDocumentFromCommandLine(gui::MainWindow* wnd)

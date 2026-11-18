@@ -37,6 +37,9 @@ ReadbackAnswer readbackOf(const ReadbackState& state, const ReadbackRequest& req
     return ReadbackAnswer{ true, ReadbackRefusal::None };
 }
 
+namespace detail
+{
+
 std::string_view refusalName(ReadbackRefusal refusal) noexcept
 {
     switch (refusal) {
@@ -46,6 +49,19 @@ std::string_view refusalName(ReadbackRefusal refusal) noexcept
     case ReadbackRefusal::NotCaptured: return "not-captured";
     }
     return "none";
+}
+
+} // namespace detail
+
+ReadbackResult readbackResultOf(ReadbackRefusal refusal) noexcept
+{
+    switch (refusal) {
+    case ReadbackRefusal::None: return ReadbackResult::Ok;
+    case ReadbackRefusal::UnknownAttachment: return ReadbackResult::Invalid;
+    case ReadbackRefusal::UnreadableFormat: return ReadbackResult::Unsupported;
+    case ReadbackRefusal::NotCaptured: return ReadbackResult::NotReady;
+    }
+    return ReadbackResult::Failed; // an unmapped case is a failure to look at, never "Ok"
 }
 
 bool ReadbackFormat::operator==(const ReadbackFormat& other) const noexcept

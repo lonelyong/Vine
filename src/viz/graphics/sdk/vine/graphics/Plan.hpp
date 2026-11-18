@@ -220,17 +220,25 @@ struct VN_GRAPHICS_API Plan {
  */
 [[nodiscard]] VN_GRAPHICS_API std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> external_outputs = {});
 
+namespace detail
+{
+
 /**
  * @brief Spells a plan problem's code as the stable token a report and a log line carry.
  *
  * @details
- * - One spelling per code ("duplicate-pass-name", not "duplicate"), greppable and asserted by a test, so
- *   a host that logs the code and a human reading the log agree about which failure it was.
+ * - A seam for the ENGINE's sentence, not a host API: the two callers are the engine paths that compose a refusal
+ *   message (`SessionShape`, `PassChain`) and the test that pins one spelling per code, so it lives in `detail`
+ *   beside `validatePlan` (`G2`: only the layer that writes the sentence needs the token).
+ * - One spelling per code ("duplicate-pass-name", not "duplicate"), greppable and asserted by a test, so a host
+ *   that logs the code and a human reading the log agree about which failure it was.
  *
  * @param code Code to spell.
  *
  * @return The token, e.g. "unknown-input".
  */
 [[nodiscard]] VN_GRAPHICS_API String planCodeText(PlanProblemCode code);
+
+} // namespace detail
 
 VN_GRAPHICS_NS_END

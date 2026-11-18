@@ -111,6 +111,9 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     return hash;
 }
 
+namespace detail
+{
+
 std::span<const KeyAuditEntry> keyAuditTable() noexcept
 {
     // The audit, as data. Each line answers "what may enter this key?" - and the answer for anything
@@ -140,5 +143,7 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
     };
     return kAudit;
 }
+
+} // namespace detail
 
 VN_GRAPHICS_NS_END

@@ -2570,29 +2570,23 @@ bool VsgBackend::releaseStreamBuffer(const void* buffer)
     return true;
 }
 
-bool VsgBackend::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
+vn::graphics::ReadbackOutcome VsgBackend::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels)
 {
-    // A refusal says WHY on both channels: the machine answer in @p why and one sentence on the diagnostics
+    // A refusal says WHY on both channels: the answer's `result` and one sentence on the diagnostics
     // route - once per episode, because this call is synchronous and a caller polling a target that is not
     // ready yet must not be flooded. A target this backend holds keeps its own episode (its entry's); the
     // ones it cannot even resolve share one per entry point.
     const auto refuse = [&](HostReadbackRefusal refusal, vn::graphics::ReportOnce& episode) {
-        if (why != nullptr) {
-            *why = readbackResultOf(refusal);
-        }
         if (episode.shouldReport()) {
             const vn::graphics::RenderDiagnostic diagnostic = readbackRefusalDiagnostic(refusal, "readColorBuffer()");
             reportDiagnostic(diagnostic);
         }
-        return false;
+        return vn::graphics::ReadbackOutcome{ readbackResultOf(refusal) };
     };
 
     if (image.kind() != vn::graphics::ImageRef::Kind::Color) {
         // The wrong verb for this image: a caller bug, answered without a device stop.
-        if (why != nullptr) {
-            *why = vn::graphics::ReadbackResult::Invalid;
-        }
-        return false;
+        return vn::graphics::ReadbackOutcome{ vn::graphics::ReadbackResult::Invalid };
     }
     const vn::graphics::RenderTarget* target     = image.target();
     const int                         attachment = image.attachment();
@@ -2654,31 +2648,22 @@ bool VsgBackend::readColorBuffer(const vn::graphics::ImageRef& image, std::vecto
         return refuse(refusal, entry->readback_report);
     }
     entry->readback_report.rearm(); // a readback that works ends the episode
-    if (why != nullptr) {
-        *why = vn::graphics::ReadbackResult::Ok;
-    }
-    return true;
+    return vn::graphics::ReadbackOutcome{ vn::graphics::ReadbackResult::Ok };
 }
 
-bool VsgBackend::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why)
+vn::graphics::ReadbackOutcome VsgBackend::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths)
 {
     const auto refuse = [&](HostReadbackRefusal refusal, vn::graphics::ReportOnce& episode) {
-        if (why != nullptr) {
-            *why = readbackResultOf(refusal);
-        }
         if (episode.shouldReport()) {
             const vn::graphics::RenderDiagnostic diagnostic = readbackRefusalDiagnostic(refusal, "readDepthBuffer()");
             reportDiagnostic(diagnostic);
         }
-        return false;
+        return vn::graphics::ReadbackOutcome{ readbackResultOf(refusal) };
     };
 
     if (image.kind() != vn::graphics::ImageRef::Kind::Depth) {
         // The wrong verb for this image: a caller bug, answered without a device stop.
-        if (why != nullptr) {
-            *why = vn::graphics::ReadbackResult::Invalid;
-        }
-        return false;
+        return vn::graphics::ReadbackOutcome{ vn::graphics::ReadbackResult::Invalid };
     }
     const vn::graphics::RenderTarget* target = image.target();
 
@@ -2728,10 +2713,7 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::ImageRef& image, std::vecto
         return refuse(refusal, entry->readback_report);
     }
     entry->readback_report.rearm();
-    if (why != nullptr) {
-        *why = vn::graphics::ReadbackResult::Ok;
-    }
-    return true;
+    return vn::graphics::ReadbackOutcome{ vn::graphics::ReadbackResult::Ok };
 }
 
 bool VsgBackend::initialized() const noexcept

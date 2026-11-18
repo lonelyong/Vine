@@ -707,6 +707,33 @@ TEST(RenderControlTest, ReportsFailedWhenNoRenderBackendIsRegistered)
     EXPECT_TRUE(host.control()->failureReason().empty()) << "会话起来了，旧判决就该清掉";
 }
 
+// The application named a backend that is not registered ⇒ Failed, and the reason names it. The attach does NOT fall
+// back to whatever is installed: a misspelt name would otherwise switch the renderer in silence (see
+// BackendChoiceTest for the rule itself, which needs neither a window nor a registry).
+TEST(RenderControlTest, AStatedBackendThatIsNotRegisteredFailsTheAttachAndNamesIt)
+{
+    // The name is process-wide (a host states it once), so the case puts back whatever it found: the app shell sets
+    // "vk" when a sandbox case loads it, and a later case must not inherit this one's typo.
+    const vn::String previous = RenderControl::defaultBackendName();
+    struct RestoreName {
+        vn::String previous;
+        ~RestoreName()
+        {
+            RenderControl::setDefaultBackendName(previous);
+        }
+    } restore{ previous };
+
+    RenderControl::setDefaultBackendName(u8"no_such_backend");
+
+    HostedControl host(/* with_backend */ false);
+    host.show();
+
+    EXPECT_FALSE(pumpUntil([&] { return host.control()->init(); }, 300));
+    EXPECT_EQ(host.control()->state(), RenderControl::SurfaceState::Failed);
+    const vn::String reason = host.control()->failureReason();
+    EXPECT_NE(reason.find(u8"no_such_backend"), vn::String::npos) << "理由要点出那个名字，宿主才知道自己写错了什么";
+}
+
 // 没有会话就没有帧：attach 之前的 fitToScreen() / renderFrame() 不得把表面推到 Presenting —— Presenting 就是
 // "有帧在面里"那一格，也是控件把渲染区域显示出来的依据（没有会话还显示，等于给宿主留一个空洞）。
 TEST(RenderControlTest, AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen)

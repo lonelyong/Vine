@@ -56,7 +56,7 @@ When neither is called, the first-turn `QTimer::singleShot(0)` fallback attaches
 ### 2.4 The attach sequence
 
 1. **Make sure the surface has something to present first**: if the view has no chain, build a default chain from `ViewerOptions` and adopt it, then declare it on the `RenderArea`; if the host already declared its own pass, this step does nothing.
-2. **Fill in the default backend**: `useDefaultBackend()` takes the registry's first entry only when the engine has no backend, so a backend registered later is still picked up by the next attach.
+2. **Fill in the default backend**: `useDefaultBackend()` asks `chooseBackend` (`BackendChoice.hpp`) which backend to bring up, and does so only when the engine has no backend, so a backend registered later is still picked up by the next attach. The rule is: the name the application stated, otherwise the ONLY registered backend, otherwise a refusal that names the candidates. It never takes the first entry - `entries()` is ordered by name, so that was a choice made by the alphabet (F6).
 3. **No backend** ⇒ `failAttach("no render backend is registered")` and the state becomes `Failed`.
 4. **Empty handle or degenerate size** ⇒ one log line, stay `Pending`, and wait for show / resize / the next `activate()`; the control arms no timer.
 5. **Wait for a frame first**: `engine->waitForFrame()` — the verbs below change the session the engine thread is recording into (target, swapchain, device), so the attach has to happen between frames (`.ai/design/graphics-threading.md` §2.12). In inline mode this is a no-op; when threaded it usually waits for the engine's own previous frame, at the cost of one "already done" check.
@@ -81,6 +81,7 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 | F3 | Native window recreation | the new handle is re-announced and the session survives | landed |
 | F4 | Failure and retry | a refusal ⇒ false + `Pending`; no backend ⇒ `Failed`; the host may retry | landed |
 | F5 | Platform fallback | X11/WSLg attach while unshown; Wayland shows first, then attaches | landed (unverified on Windows) |
+| F6 | The application names its backend | `RenderControl::setDefaultBackendName`; the attach creates that name, or refuses and names the candidates | landed |
 
 ### 3.1.1 F1 Construction only assembles; attaching has an entry
 
@@ -125,6 +126,14 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 - **Acceptance** (T5): `scripts/xwinmap.py` reads `map_state` at startup; the Windows criterion is in the backlog.
 - **Caveat** (N5): the `map_state` field offset is 92, not 100; the Windows HWND + client rect has still not been measured.
 
+### 3.1.6 F6 The application names its backend
+
+- **Behaviour**: a host states one name (`RenderControl::setDefaultBackendName`) and every attach that finds its engine without a device creates THAT backend by name (`RenderBackendRegistry::create`). No name stated: the attach takes the only registered backend. Several registered and none named: the attach fails and the reason lists them. A stated name that is not registered: the attach fails and the reason names it and what IS registered.
+- **Constraints** (C6): the engine's own device always wins; the registry's name order is never a decision; a stated name is never replaced by another registered backend.
+- **Requirements** (R6): the choice is process-wide (a view creates its own control, so a per-control setting could not serve "this application runs on X") and made before the first attach; every refusal is actionable from its message alone.
+- **Acceptance** (T6): `BackendChoiceTest` (the rule, with neither a registry nor a window) and `AStatedBackendThatIsNotRegisteredFailsTheAttachAndNamesIt` (the reason reaches the host).
+- **Caveat** (N6): `VN_RENDER_BACKEND` is the app shell's override, not appfw's - the framework reads no environment variable of its own.
+
 ## 4. Public Interface
 
 ### 4.1 `RenderControl`
@@ -139,6 +148,7 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 | `renderFrame()` / `fitToScreen()` | renders one frame synchronously / frames the content | pushes no `Presenting` before the attach |
 | `requestFrame()` | requests a frame: draws in the same turn when shown, coalesced, nothing when not on screen | the default shape after a state change |
 | `setContinuousRendering(on, interval_ms)` | continuous frames | on demand by default |
+| `defaultBackendName()` / `setDefaultBackendName(name)` | static, process-wide; read by every attach whose engine has no device | empty = "no name stated"; unsynchronized, call it at startup (F6) |
 
 ## 5. Constraints, Requirements and Invariants
 
@@ -151,6 +161,7 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 | C3 | A rebuild replaces the surface, not the session; the host does not call `init()` again. |
 | C4 | The control arms no retry timer; a failure is observable. |
 | C5 | Attaching does not require visibility; presenting requires the window to be on screen. |
+| C6 | The engine's device always wins; the registry's name order never decides which backend attaches; a stated name is never replaced by another backend. |
 
 ### 5.2 Requirements (R#)
 
@@ -161,6 +172,7 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 | R3 | During a rebuild the state drops to `Pending` and returns to `Presenting` after the first frame. |
 | R4 | A refusal or failure must be observable; a backend registered later is picked up by the next attach. |
 | R5 | When the platform disagrees, fall back to "show first, then attach". |
+| R6 | The backend choice is process-wide and stated before the first attach; a refusal says what is registered and how to choose. |
 
 ### 5.3 Invariants (N#)
 
@@ -201,6 +213,8 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 | D4 | Painting a background behind the `QWindow` as a placeholder | What an unpresented native window reveals depends on the platform and the compositor. | — |
 | D5 | A 100 ms × N attach retry ladder, or settle frames | The first attach is the host's `init()`; after that, window events drive it. | — |
 | D6 | A separate `Attached` state | It never persists through a synchronous attach, and no reader distinguishes it from `Pending`. | — |
+| D7 | Taking the registry's first entry as the default backend | `entries()` is ordered by NAME, so the renderer was chosen by the alphabet and a plugin changed it silently (`G4`). | — |
+| D8 | A per-control backend name | A view creates its own control, so "this application runs on X" is one process-wide statement - a static pair on `RenderControl`, not a property each view would have to repeat (F6). | — |
 
 ## 8. Tests and Acceptance
 
@@ -211,13 +225,15 @@ When threaded, the answer arrives one frame late, so it reads "the last frame th
 | T3 | the session survives a native window rebuild | `FollowsARecreatedSurfaceWithoutTheHost` |
 | T4 | a refusal ⇒ false + `Pending`; no backend ⇒ `Failed`; retryable | `RefusedAttachReportsFalseAndWaitsForTheHost`, `HostCanRetryAfterTheBackendRefused`, `ReportsFailedWhenNoRenderBackendIsRegistered` |
 | T5 | `init()` right after embedding, without waiting for the layout | `HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles` |
+| T6 | the stated backend is the one created; several registered without a name is a refusal, not a guess | `BackendChoiceTest`, `AStatedBackendThatIsNotRegisteredFailsTheAttachAndNamesIt` |
 
 ## 9. Status and Evolution
 
 ### 9.1 Current status
 
-F1–F5 are in place (attaching to an unshown window on Windows is still unmeasured).
+F1–F6 are in place (attaching to an unshown window on Windows is still unmeasured).
 The attach is synchronous, the state machine has three states, and the container is hidden until the first frame.
+The backend is the one the application names (`RenderControl::setDefaultBackendName`); the registry only answers what is installed.
 
 ### 9.2 Known gaps / backlog
 
@@ -235,7 +251,9 @@ There is no `isAttaching()`, no `AttachScope` and no settle frame.
 
 - `src/fw/appfw/sdk/vine/appfw/gui/RenderControl.hpp`
 - `src/fw/appfw/src/gui/SurfaceWindow.{hpp,cpp}`
+- `src/fw/appfw/src/gui/BackendChoice.hpp`
 - `tests/test_gui/RenderControlTest.cpp`
+- `tests/test_gui/BackendChoiceTest.cpp`
 
 ### 10.2 Documents and ADRs
 

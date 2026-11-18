@@ -1601,7 +1601,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     VkPushConstantRange         push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     push.offset     = 0U;
-    push.size       = sizeof(detail::ContentPushConstants);
+    push.size       = sizeof(detail::PushRangeConstants);
 
     VkPipelineLayoutCreateInfo pipeline_info{};
     pipeline_info.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

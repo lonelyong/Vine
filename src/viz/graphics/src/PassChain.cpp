@@ -300,7 +300,7 @@ bool PassChain::apply()
         for (const PlanProblem& problem : result.problems) {
             diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::PassProtocolViolation,
-                                String(u8"chain pass refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail);
+                                String(u8"chain pass refused [") + detail::planCodeText(problem.code) + String(u8"]: ") + problem.detail);
         }
         return false;
     }

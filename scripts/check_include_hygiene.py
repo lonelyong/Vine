@@ -25,6 +25,11 @@ dependency the compiler cannot see). The property is about DEPENDENCY, not about
 `vsg/` include under `graphics/` would tie every backend, present and future, to vsg (see
 graphics_module_findings).
 
+A third rule pins the SEAM - what the two backends share from the SDK - by the property that makes it
+a seam (both backends need it), not by a path set: the eight mechanism headers must each be reachable
+from both backends, and the set of SDK headers both backends include directly is recorded, so a header
+entering or leaving that set is a decision this check asks for. See SEAM_HEADERS.
+
 In a .cpp the FIRST include is the file's own header (the rule says so), so it is
 not part of the group order — but the group ORDER is only checked in headers:
 
@@ -142,6 +147,130 @@ def group_of(quote, header):
 GRAPHICS_MODULE_ANCHORS = ("src/viz/graphics/sdk/vine/graphics", "src/viz/graphics/src")
 
 
+# ---- the seam: what BOTH backends share from the SDK -------------------------------
+# The seam was once a `backend/` directory with a SEAM_HEADERS list; the ADR deleted the directory and
+# the list never existed, so for a while nothing asserted the set at all (audit A3-04). A list of paths
+# cannot protect anything - the property is "both backends need it", not "it lives here" - so this
+# check records the property's RESULT and fails when it changes:
+#
+#   * the eight mechanism headers both backends need, each reachable from both (directly, or through
+#     another seam header: `FrameTimeline.hpp` reaches vk through `DeviceClock.hpp`);
+#   * the SDK headers both backends include DIRECTLY. That set is the shared surface: when it changes,
+#     the change is a decision (a new mechanism joins the seam, or a backend starts using the model
+#     API), so the check asks for SEAM_SHARED_HEADERS to be updated in the same commit.
+#
+# What this check does NOT decide: whether one of the shared headers is a mechanism or part of the
+# public model surface. That is a design judgment; the list is where it gets recorded, and the
+# docstring of `graphics-backends.md` §5 (and `graphics-architecture.md` §2.9) is where it is argued.
+SEAM_HEADERS = frozenset((
+    "DeviceClock.hpp",
+    "DiagnosticDraft.hpp",
+    "DrawState.hpp",
+    "FrameGate.hpp",
+    "FrameTimeline.hpp",
+    "Readback.hpp",
+    "RetirementQueue.hpp",
+    "TargetPlan.hpp",
+))
+# Measured 2026-11-18: the 25 SDK headers a vk TU and a vsg TU both include directly. A change here is
+# not automatically wrong - it is a decision about the seam or about the model surface.
+SEAM_SHARED_HEADERS = frozenset((
+    "BuiltinShaders.hpp",
+    "DepthRange.hpp",
+    "DeviceClock.hpp",
+    "DiagnosticDraft.hpp",
+    "Diagnostics.hpp",
+    "DrawAbi.hpp",
+    "DrawState.hpp",
+    "FrameGate.hpp",
+    "FrameStats.hpp",
+    "Geometry.hpp",
+    "LightAbi.hpp",
+    "MaterialAbi.hpp",
+    "Readback.hpp",
+    "RenderBackend.hpp",
+    "RenderBackendRegistry.hpp",
+    "RenderState.hpp",
+    "RenderTarget.hpp",
+    "ReportOnce.hpp",
+    "RetirementQueue.hpp",
+    "Sampler.hpp",
+    "ShaderAbi.hpp",
+    "ShaderProgram.hpp",
+    "StateResolution.hpp",
+    "TargetPlan.hpp",
+    "Texture.hpp",
+))
+SDK_GRAPHICS_ROOT = "src/viz/graphics/sdk/vine/graphics"
+BACKEND_ROOTS = ("src/plugins/gfx_backend_vk", "src/plugins/gfx_backend_vsg")
+GRAPHICS_INCLUDE = re.compile(r'^#include\s*[<"]vine/graphics/([^>"]+)[>"]')
+
+
+def graphics_includes_of(root):
+    """Return the SDK graphics headers one backend's sources include directly."""
+    names = set()
+    for path in pathlib.Path(root).rglob("*"):
+        if path.suffix not in (".hpp", ".cpp"):
+            continue
+        for line in path.read_text(encoding="utf-8", errors="ignore").split("\n"):
+            match = GRAPHICS_INCLUDE.match(line)
+            if match:
+                names.add(match.group(1))
+    return names
+
+
+def seam_findings():
+    """Return the findings that keep the seam's declared set honest (see SEAM_HEADERS)."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    sdk = root / SDK_GRAPHICS_ROOT
+    if not sdk.is_dir():
+        return [f"{SDK_GRAPHICS_ROOT}: the SDK root is gone - the seam rule would silently cover nothing"]
+    missing_roots = [backend for backend in BACKEND_ROOTS if not (root / backend).is_dir()]
+    if missing_roots:
+        return [f"{backend}: the backend root is gone - the seam rule would silently cover nothing"
+                for backend in missing_roots]
+
+    direct = {backend: graphics_includes_of(root / backend) for backend in BACKEND_ROOTS}
+    vk_direct, vsg_direct = (direct[backend] for backend in BACKEND_ROOTS)
+
+    def with_one_hop(names):
+        """The direct includes plus what those SDK headers include (the seam is one hop deep)."""
+        reached = set(names)
+        for name in names:
+            header = sdk / name
+            if not header.is_file():
+                continue
+            for line in header.read_text(encoding="utf-8", errors="ignore").split("\n"):
+                match = GRAPHICS_INCLUDE.match(line)
+                if match:
+                    reached.add(match.group(1))
+        return reached
+
+    reached = {BACKEND_ROOTS[0]: with_one_hop(vk_direct), BACKEND_ROOTS[1]: with_one_hop(vsg_direct)}
+    findings = []
+    for name in sorted(SEAM_HEADERS):
+        if not (sdk / name).is_file():
+            findings.append(f"{SDK_GRAPHICS_ROOT}/{name}: the seam list names a header that is gone")
+            continue
+        for backend in BACKEND_ROOTS:
+            if name not in reached[backend]:
+                findings.append(
+                    f"{name}: the seam list says both backends need it, but {backend} neither includes it"
+                    " nor includes a seam header that does")
+
+    shared = vk_direct & vsg_direct
+    for name in sorted(shared - SEAM_SHARED_HEADERS):
+        findings.append(
+            f"{name}: both backends now include it directly, so it is part of the seam's shared surface -"
+            " decide whether it is a mechanism (add to SEAM_HEADERS) or model surface, then add it to"
+            " SEAM_SHARED_HEADERS")
+    for name in sorted(SEAM_SHARED_HEADERS - shared):
+        findings.append(
+            f"{name}: SEAM_SHARED_HEADERS says both backends include it directly, but that is no longer"
+            " true - update the list (and SEAM_HEADERS if it was a mechanism)")
+    return findings
+
+
 def graphics_module_file_set_findings():
     """Return a finding when either graphics root is gone, so the rule above cannot silently scan nothing."""
     root = pathlib.Path(__file__).resolve().parent.parent
@@ -211,6 +340,9 @@ def main():
             print(f"{path}:{number}: {message}")
             total += 1
     for message in graphics_module_file_set_findings():
+        print(message)
+        total += 1
+    for message in seam_findings():
         print(message)
         total += 1
     print(f"--- {total} include-hygiene finding(s) in {len(files)} file(s)")

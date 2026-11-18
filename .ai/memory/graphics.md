@@ -1642,3 +1642,31 @@
   `Vine --open demo` 0 errors (session up + Pending -> Presenting).
 - **Trap**: when batch-editing tests, check every oldString of `multi_replace` character by character (several "successes" actually hit another site);
   a new `.cpp` (`FrameUpdate.cpp`) needs a `build/` reconfigure. `clang++-23` occasionally had a parser bus error, a rerun passes.
+
+## 2026-11-18 B7: the application names its render backend
+
+- **Defect**: `SurfaceWindow::useDefaultBackend()` took `RenderBackendRegistry::entries().front()`. That vector is
+  ordered by NAME, so the renderer was picked by the alphabet (`vk` < `vsg`); a plugin named `aa` would have switched
+  every window silently. The backend guide claimed "按名创建可显式选 `vsg`" while no host named one - the demo could
+  not run on vsg from a normal build at all.
+- **The rule (new private header)**: `src/fw/appfw/src/gui/BackendChoice.hpp`, header-only `chooseBackend(entries,
+  named) -> BackendChoice{name, refusal}`: stated name that is registered → it; stated but unknown → refusal naming it
+  and what is registered (a typo must not pick another renderer); no name + exactly one → it; none → "no render backend
+  is registered"; no name + several → refusal listing them and `RenderControl::setDefaultBackendName()`.
+- **The application's one statement**: `RenderControl::defaultBackendName()` / `setDefaultBackendName(name)` - **static
+  members** of `RenderControl`, not free functions: the repo's process-wide settings live on their owning class
+  (`Application::current()`, `MainWindow::current()`, `PluginManager::setSkipList`), and the only reader here is the
+  attach of a control (state = `s_default_backend_name` in `RenderControl.cpp`).
+  `SurfaceWindow::useDefaultBackend()` now returns the refusal, and `init()` hands it to `failAttach`.
+- **The host**: `app_shell` calls `chooseRenderBackend()` at the top of `AppShellPlugin::load()` - `vk`, overridden by
+  `VN_RENDER_BACKEND`. `VN_RENDER_BACKEND=vsg ./Vine --open demo` is how the reference backend is exercised now.
+- **Evidence**: `test_gui` **332** green (`RenderControlTest` 26, `BackendChoiceTest` 5); `test_appfw`, `test_graphics`
+  green. Demo on vk: session up 86 ms, `Pending -> Presenting` 300 ms, 0 `[error]`, 3 `[warning]` (B8's). Same build with
+  `VN_RENDER_BACKEND=vsg`: 68 ms / 276 ms, 0 `[error]`. With `VN_RENDER_BACKEND=no_such_backend`:
+  `Failed after 3 ms: the render backend "no_such_backend" is not registered (registered: vk, vsg)` - 4 attempts then it
+  stops (the startup path retries a bounded number of times).
+- **Trap**: do not test the rule by registering stub factories in `test_gui` - the registry has no `unregisterFactory`,
+  so the stubs would be permanent and `ReportsFailedWhenNoRenderBackendIsRegistered` would skip forever. The rule is a
+  pure function for exactly that reason; the end-to-end case names an UNREGISTERED backend instead.
+- **Docs**: `docs/guides/graphics-backends.md` §1 (which rule decides), `docs/guides/render-views.md` §2 comment,
+  `.ai/design/appfw-render-surface.md` F6 / C6 / R6 / T6 / D7-D8, backlog T39 retired (B3 had already landed it).

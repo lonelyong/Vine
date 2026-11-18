@@ -3439,18 +3439,9 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
     return impl->session->frameReport();
 }
 
-bool Device::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
+vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels)
 {
-    const auto fail = [why](const ReadbackResult reason) {
-        if (why != nullptr) {
-            *why = reason;
-        }
-        return false;
-    };
-
-    if (why != nullptr) {
-        *why = ReadbackResult::Ok;
-    }
+    const auto fail = [](const ReadbackResult reason) { return vn::graphics::ReadbackOutcome{ reason }; };
 
     if (image.kind() != vn::graphics::ImageRef::Kind::Color) {
         return fail(ReadbackResult::Invalid); // the wrong verb for this image
@@ -3621,21 +3612,12 @@ bool Device::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<st
     // out stale pixel counts (the SDK's rule, see RenderBackend::readColorBuffer).
     outPixels.resize(static_cast<std::size_t>(bytes));
     std::memcpy(outPixels.data(), copied.data(), static_cast<std::size_t>(bytes));
-    return true;
+    return vn::graphics::ReadbackOutcome{ ReadbackResult::Ok };
 }
 
-bool Device::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, ReadbackResult* why)
+vn::graphics::ReadbackOutcome Device::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths)
 {
-    const auto fail = [why](const ReadbackResult reason) {
-        if (why != nullptr) {
-            *why = reason;
-        }
-        return false;
-    };
-
-    if (why != nullptr) {
-        *why = ReadbackResult::Ok;
-    }
+    const auto fail = [](const ReadbackResult reason) { return vn::graphics::ReadbackOutcome{ reason }; };
 
     if (image.kind() != vn::graphics::ImageRef::Kind::Depth) {
         return fail(ReadbackResult::Invalid); // the wrong verb for this image
@@ -3808,7 +3790,7 @@ bool Device::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<fl
         return fail(ReadbackResult::Failed);
     }
     outDepths = std::move(values);
-    return true;
+    return vn::graphics::ReadbackOutcome{ ReadbackResult::Ok };
 }
 
 Handles Device::handles() const noexcept

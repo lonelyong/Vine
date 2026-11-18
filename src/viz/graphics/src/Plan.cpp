@@ -144,6 +144,9 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
     return problems;
 }
 
+namespace detail
+{
+
 String planCodeText(PlanProblemCode code)
 {
     switch (code) {
@@ -157,6 +160,8 @@ String planCodeText(PlanProblemCode code)
     }
     return String(u8"unknown");
 }
+
+} // namespace detail
 
 String Plan::describe() const
 {

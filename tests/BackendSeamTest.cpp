@@ -319,7 +319,7 @@ TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
 
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 {
-    const auto audit = vn::graphics::keyAuditTable();
+    const auto audit = vn::graphics::detail::keyAuditTable();
     ASSERT_EQ(audit.size(), 7u);
 
     const std::vector<std::string> expected_keys{
@@ -394,10 +394,10 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
         << "capturing more changes nothing: the format table is what says so";
     EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
 
-    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
-    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
-    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::None), "none");
+    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
+    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
+    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
+    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::None), "none");
 }
 
 TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)

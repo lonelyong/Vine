@@ -27,6 +27,7 @@
 #include "PlanTestSupport.hpp"
 
 using namespace vn::graphics;
+using vn::graphics::detail::planCodeText;
 using vn::intrusive_ptr;
 using vn::raw_ptr;
 using vn::String;

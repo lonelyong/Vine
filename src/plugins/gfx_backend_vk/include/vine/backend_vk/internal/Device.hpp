@@ -273,10 +273,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @param image      Image to read: a bound `Kind::Color` image (borrowed, may not be null); a depth image is
      *                   refused as Invalid.
      * @param outPixels  Receives `width * height * 4` bytes on success (untouched on every refusal).
-     * @param why        Receives why the read did not happen (Ok when it did), or null to ignore.
-     * @return true when the pixels were read.
+     * @return The answer; `Ok` when the pixels were read.
      */
-    bool readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
+    vn::graphics::ReadbackOutcome readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels) override;
 
     using vn::graphics::RenderDevice::readColorBuffer;
 
@@ -300,10 +299,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @param image     Image to read: a bound `Kind::Depth` image (borrowed; null or a colour image is refused as Invalid).
      * @param outDepths Receives `width * height` depths on success.
-     * @param why       Receives why the read did not happen (Ok when it did), or null to ignore.
-     * @return true when the depths were read.
+     * @return The answer; `Ok` when the depths were read.
      */
-    bool readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why = nullptr) override;
+    vn::graphics::ReadbackOutcome readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths) override;
 
     using vn::graphics::RenderDevice::readDepthBuffer;
 

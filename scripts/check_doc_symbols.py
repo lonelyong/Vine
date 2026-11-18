@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""Checks that the backend guide only names units that exist, and names every unit.
+"""Checks that the living graphics documents only name units that exist, and that the backend guide
+names every unit.
 
-The repository keeps one living document for the render backends
+The repository keeps two living documents that name units: the backend guide
 (``docs/guides/graphics-backends.md``: the contract, the intentional differences, the support matrix
-and the vsg unit map), and it rots in one direction: a unit is
-renamed or deleted and the sentence that named it survives. That is not compile-checked, and it
-is not visible in review, so it accumulates until a reader follows a pointer that leads nowhere
-(``drawScreenTexture`` outlived the function by two weeks; ``renderOffscreenTarget`` and
-``window_layers`` described a model that had been replaced).
+and the vsg unit map) and the module guide (``docs/guides/graphics.md``: the SDK's concepts, the frame
+and the authoring rules). Both rot in one direction: a unit is renamed or deleted and the sentence
+that named it survives. That is not compile-checked, and it is not visible in review, so it
+accumulates until a reader follows a pointer that leads nowhere (``drawScreenTexture`` outlived the
+function by two weeks; ``renderOffscreenTarget`` and ``window_layers`` described a model that had been
+replaced).
 
 Only the two claims a script can decide EXACTLY are gated:
 
-  1. A ``Foo.hpp`` / ``Foo.cpp`` the doc names must exist. Prose can be wrong in ways a regex
-     cannot judge (a sentence may name a symbol that is deliberately absent, or a foreign type),
-     so only UNIT files are checked — a renamed or deleted unit is exactly the drift that hurts a
-     reader following the module map.
-  2. Every unit under ``src/`` and ``include/vine/backend_vsg/`` must be named somewhere in the doc.
-     The map is part of what that document is for; a unit nobody documented is a hole.
+  1. A ``Foo.hpp`` / ``Foo.cpp`` a living document names must exist. Prose can be wrong in ways a regex
+     cannot judge (a sentence may name a symbol that is deliberately absent, or a foreign type), so
+     only UNIT files are checked - a renamed or deleted unit is exactly the drift that hurts a reader
+     following the module map. This applies to EVERY document in ``DOCS``.
+  2. Every unit under ``src/`` and ``include/vine/backend_vsg/`` must be named by the document whose
+     job is the unit map (``COVERAGE_DOCS``). The map is part of what that document is for; a unit
+     nobody documented is a hole. A second document naming the unit must not paper over that hole,
+     so the coverage rule reads the map document alone, not the union of all documents.
 
 What is skipped, on purpose:
   * fenced code blocks (``\\`\\`\\``` ...) — a snippet is not a claim about the module's files;
@@ -40,6 +44,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "src" / "plugins" / "gfx_backend_vsg"
 DOCS = [
+    ROOT / "docs" / "guides" / "graphics-backends.md",
+    ROOT / "docs" / "guides" / "graphics.md",
+]
+# The document whose job is the vsg unit map: rule 2 reads this one alone, so a second document cannot
+# make an undocumented unit look documented.
+COVERAGE_DOCS = [
     ROOT / "docs" / "guides" / "graphics-backends.md",
 ]
 # Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
@@ -112,9 +122,9 @@ def check_doc(path: Path, unit_names: set[str], known: set[str], text: str) -> l
     return findings
 
 
-def print_doc_texts() -> str:
-    """Concatenation of the living docs, for the coverage rule."""
-    return "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in DOCS)
+def print_doc_texts(docs: list[Path]) -> str:
+    """Concatenation of the given docs, for the coverage rule."""
+    return "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in docs)
 
 
 def main() -> int:
@@ -134,7 +144,7 @@ def main() -> int:
         findings.extend(check_doc(doc, unit_names, known, doc.read_text(encoding="utf-8", errors="replace")))
 
     # Rule 2: the map has to cover the tree — a unit nobody documented is a hole in it.
-    all_text = print_doc_texts()
+    all_text = print_doc_texts(COVERAGE_DOCS)
     for unit in sorted(unit_names):
         if re.search(rf"\b{re.escape(Path(unit).stem)}\b", all_text) is None:
             findings.append(f"{unit}: no living document names this unit")

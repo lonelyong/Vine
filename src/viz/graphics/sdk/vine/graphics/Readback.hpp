@@ -31,6 +31,9 @@
  *   - `UnknownAttachment` - the request names something the target does not have.
  * - "Not yet" and "never" are different answers, and a phase that reports the wrong one sends its reader
  *   looking for a bug in the wrong place.
+ * - TWO LEVELS, ONE ANSWER EACH: `ReadbackRefusal` is the seam's finer category (which attachment, which format,
+ *   whether a copy was handed out); `ReadbackResult` is what a host acts on, returned inside `ReadbackOutcome`, and
+ *   `readbackResultOf()` is the single projection between the two. A host never sees `ReadbackRefusal`.
  * - WHAT IS DELIBERATELY NOT HERE: a "nothing has been laid out yet" category. A target of no size
  *   cannot exist - `create` refuses a zero extent, and before a target exists at all the LIFECYCLE plan
  *   answers `Repair(SizeUnknown)` for it (`planTarget`, which is where the surface's size authority and
@@ -63,6 +66,63 @@ enum class ReadbackRefusal : std::uint8_t
     UnreadableFormat,  // This backend cannot read that attachment's format, ever.
     NotCaptured,       // No copy of that attachment has been handed out for recording (yet).
 };
+
+/** @brief What the HOST makes of a readback: the answer the device verbs return.
+ *
+ * @details
+ * - This is the host-facing vocabulary and the only one a caller switches on: five cases, each one a different thing
+ *   to DO. `Unsupported` gates a feature off, `NotReady` retries after a frame, `Invalid` is a caller bug, `Failed`
+ *   is reported.
+ * - `ReadbackRefusal` above is the seam's finer view of the same facts (which attachment, which format, whether a
+ *   copy was handed out); it maps onto this enum through `readbackResultOf()` and never crosses to a host.
+ * - The result travels in the RETURN VALUE (`ReadbackOutcome`), not in an out-parameter beside a bool: one question,
+ *   one answer.
+ */
+enum class ReadbackResult : std::uint8_t
+{
+    Ok,          // The pixels / depths were read.
+    Unsupported, // This device cannot read this back: no readback support, or a format / usage it does not decode.
+    NotReady,    // There is nothing to read yet: unknown target, no built attachments, no usable size.
+    Invalid,     // The request itself was wrong (no target, attachment index out of range).
+    Failed,      // The copy was attempted and failed (no usable device, submission error).
+};
+
+/** @brief One readback answer: did it happen, and when not, which host case explains it.
+ *
+ * @details
+ * - The payload (pixels / depths) is an out-parameter of the device verb; THIS is the answer. Keeping them apart is
+ *   what lets a caller write `if (device->readColorBuffer(image, pixels))` for the common case and
+ *   `outcome.result` for the classification.
+ * - The bool conversion is implicit on purpose: every call site in this repository reads the answer in a boolean
+ *   context (`if`, `ASSERT_TRUE`), and an explicit conversion would have re-spelled all of them without making one
+ *   of them clearer. The category is one member access away.
+ */
+struct ReadbackOutcome {
+    ReadbackResult result{ ReadbackResult::Failed }; // The host's answer.
+
+    /// True when the read happened.
+    [[nodiscard]] constexpr bool ok() const noexcept { return result == ReadbackResult::Ok; }
+
+    /**
+     * @brief Answers the readback in a boolean context (see the note above on why this is implicit).
+     *
+     * @return true when the read happened.
+     */
+    constexpr operator bool() const noexcept { return ok(); }
+};
+
+/** @brief Projects a seam refusal onto the host's answer (the ONE mapping).
+ *
+ * @details
+ * - `UnknownAttachment` is `Invalid` (the request names something that is not there); `UnreadableFormat` is
+ *   `Unsupported` (this device never will); `NotCaptured` is `NotReady` (a later frame can serve it).
+ * - A backend that classifies with `readbackOf()` reports through this function, so the same seam fact cannot be
+ *   told to a host as different answers by different code paths.
+ *
+ * @param refusal The seam's category.
+ * @return The host's answer.
+ */
+[[nodiscard]] VN_GRAPHICS_API ReadbackResult readbackResultOf(ReadbackRefusal refusal) noexcept;
 
 /** @brief What is asked for. */
 struct ReadbackRequest {
@@ -106,12 +166,22 @@ struct VN_GRAPHICS_API ReadbackFormat {
  */
 [[nodiscard]] VN_GRAPHICS_API ReadbackAnswer readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept;
 
+namespace detail
+{
+
 /** @brief Gets a stable, machine-friendly name for @p refusal (for messages and test output).
+ *
+ * @details
+ * - The machine answer a host acts on is `ReadbackResult`; this name exists for the seam's own messages and for
+ *   the test that pins the spelling of each category, so it lives in `detail` (`G8`, `G1`: one vocabulary for the
+ *   host, one for the seam).
  *
  * @param refusal The category.
  * @return The name; never null.
  */
 [[nodiscard]] VN_GRAPHICS_API std::string_view refusalName(ReadbackRefusal refusal) noexcept;
+
+} // namespace detail
 
 /** @brief Gets how a colour format is read back.
  *

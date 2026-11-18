@@ -84,7 +84,7 @@ engine.setDevice(backend);
 公开拼写，两者由测试钉住一致。
 
 **折叠出来的只是"内容作者写的那份"**：一条命令画出来是什么状态，还要加上**画它的那条 pass** 说的
-（depth 策略 + 光栅化覆盖）—— 两者由**一个函数**合并，`resolveRenderState(cmd.authoredState,
+（depth 策略 + 光栅化覆盖）—— 两者由**一个函数**合并，`resolveRenderState(cmd.authored_state,
 pass.stateOverrides(), cmd.topology)`（`StateResolution.hpp`），它按项回答"最终值 + 这一项是谁给的"（`StateOrigin`）；
 第三个参数是**数据的拓扑**（命令所属的 `Primitive`），pass 只能覆盖它，`StateNode` 不能。
 优先级一句话：**pass 的光栅化覆盖赢过内容，内容的 depth 赢过 pass 的 depth 策略**（pass 给的是"没写过
@@ -1073,7 +1073,7 @@ outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clea
 - **与 pass 的顺序无关**：谁先谁后是配方的事（`PassDesc::order` / `PassStage`），这个值不会把内容搬到别的 pass 里。
 - **要不要关深度看目的**：想"永远压在上面"就给那条 pass `DepthMode::Disabled`（或给几何一点偏移）；想"被挡住就不该看见"
   就让它照常测深度。**共面**的两件东西若开着深度，后画的那件会被深度拒绝（同深度 `LESS` 不成立）—— 那时量到的是深度，不是画序。
-- 自己驱动收集 / 后处理命令表时，`RenderCommand::drawOrder` 就是这个命令的档。
+- 自己驱动收集 / 后处理命令表时，`RenderCommand::draw_order` 就是这个命令的档。
 - 默认 0 ⇒ 不声明就与老画面逐位相同；判据是 `test_graphics` 的 `DrawOrderTest` 四条（外键 / 越过透明批次 / 继承 / 叶子声明）
   加真设备像素用例 `SdkPixelTest.ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop`。
 

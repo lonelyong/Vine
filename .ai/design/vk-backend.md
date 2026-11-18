@@ -441,8 +441,9 @@ and every cache has a witness a test can read.**
 ### 3.1.11 F11 Readback
 
 - **Behaviour**: `ReadbackStaging` is one per call and **carries its own command pool and fence** (`C7`: readback borrows no session's frame machinery); a colour
-  readback requires the target attachment to be `R8G8B8A8_UNORM`, and a depth readback turns D32 into a float array; the result is the four-state
-  `ReadbackResult` (`NotReady` / `Unsupported` / `Invalid` / `Failed`, classified by the caller). Readback takes the body gate EXCLUSIVE (the device's "between frames")
+  readback requires the target attachment to be `R8G8B8A8_UNORM`, and a depth readback turns D32 into a float array; the answer is the
+  four-state `ReadbackResult` (`NotReady` / `Unsupported` / `Invalid` / `Failed`) returned as `ReadbackOutcome` (the deprecated
+  `bool` + out-parameter shim forwards to it, BC-16). Readback takes the body gate EXCLUSIVE (the device's "between frames")
   and **counts one** `deviceWaits()`; a refusal answerable before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format, borrowed depth) does
   not stop the device; a read called back from inside a frame body answers `Failed` (`FrameBodyDepth`, never waiting for itself).
 - **Constraints**: `C1`, `R3`, `R28`.
@@ -744,8 +745,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   conditions written in the ADR (device time under half the wall clock, an artefact shape that must overlap the GPU, or a second backend needing the same semantics).
 - **Audit F9 / F10**: `vkCmdPipelineBarrier2` and dynamic rendering, waiting for the API 1.3 target.
 - **Backlog `T35` (becoming the default backend)**'s gate (`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`): `releaseRenderTarget` really frees the
-  attachments, `readDepthBuffer` and the device-loss report are landed; **still missing** are Win32 hardware evidence (Windows does not ship before it), a measured
-  Wayland fallback, `releasePass`' explicit no-op with a reason, and a vk user page under `docs/guides/`.
+  attachments, `readDepthBuffer` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
+  `docs/guides/graphics-backends.md`; **still missing** are Win32 hardware evidence (Windows does not ship before it), a measured Wayland fallback, and a
+  performance reading the gate accepts.
 - **Backlog `T12` / `T13`**: reading pixels from a Windows window, and the Wayland fallback.
 
 ### 9.3 Compatibility / migration

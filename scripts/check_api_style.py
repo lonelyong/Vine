@@ -20,6 +20,14 @@ THE FOUR RULES (all pure text, all cheap):
      declaration is two answers to one question.
   D. A `XxxBuilder` produces a value: it must have `build()` returning by value.
 
+DEPRECATED SHIMS ARE NOT NEW API. A declaration carrying `[[deprecated` is a
+compatibility shim the compiler itself marks for removal; flagging it would force
+every caller to migrate in the same commit as the API change, which is the
+opposite of what the marker is for. Rules B and C therefore skip such
+declarations (the two a shim can trip); A and D judge a TYPE, whose deprecation
+is a different decision. The shim still has to be deleted one release later - the
+departure is the batch that removes it, not a line in BASELINE.
+
 BASELINE. Today's tree has known findings (they are the audit's P2 / P27 / P30).
 They are listed here so the gate is GREEN today and RED on the next violation —
 which is the whole point: the batch that fixes them removes its line.
@@ -60,7 +68,6 @@ BASELINE = {
     ("VisualUserIO.hpp", "getPoint3dAsync", "B"),
     ("VisualUserIO.hpp", "getFileAsync", "B"),
     ("VisualUserIO.hpp", "getFilesAsync", "B"),
-    ("RenderDevice.hpp", "ReadbackResult", "C"),   # P27: bool + out-param; becomes Result in P27's batch
 }
 
 
@@ -79,6 +86,14 @@ def body_of(text: str, start: int) -> str:
             if depth == 0:
                 return text[open_at : index + 1]
     return text[open_at:]
+
+
+DEPRECATED_MARKER = "[[deprecated"
+
+
+def deprecated_at(text: str, position: int) -> bool:
+    """Whether the declaration at @p position is a deprecated shim (see the module docstring)."""
+    return any(DEPRECATED_MARKER in line for line in text[:position].splitlines()[-3:])
 
 
 def scan(path: Path) -> list[tuple[str, str, int, str]]:
@@ -102,10 +117,14 @@ def scan(path: Path) -> list[tuple[str, str, int, str]]:
                 findings.append((path.name, name, line, "D"))
 
     for match in GETTER_RE.finditer(text):
+        if deprecated_at(text, match.start()):
+            continue
         line = text.count("\n", 0, match.start()) + 1
         findings.append((path.name, match.group(1), line, "B"))
 
     for match in BOOL_OUT_RE.finditer(text):
+        if deprecated_at(text, match.start()):
+            continue
         line = text.count("\n", 0, match.start()) + 1
         findings.append((path.name, match.group(1), line, "C"))
 

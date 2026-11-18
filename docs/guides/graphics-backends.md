@@ -18,7 +18,9 @@
 
 * 两个后端都实现 `vn::graphics::RenderBackend`，宿主经 `RenderBackendRegistry::create(name, desc)` 按名创建，
   编译期不依赖任何后端。
-* **今天宿主默认跑哪个是名字序决定的**：承载窗口的宿主取注册表 `entries()` 的第一个（按名字排），所以是 `vk`。
+* **哪个后端跑由应用点名，不由名字序**：宿主启动时点名（`RenderControl::setDefaultBackendName`，Vine 写的是
+  `vk`），`VN_RENDER_BACKEND=vsg ./Vine --open demo` 用同一份构建跑参考后端。应用没点名时只接受**唯一注册**的那一个；
+  多个已注册又没点名，attach 直接失败并在理由里列出全部注册名——**绝不按名字序取第一个**（那是名字的偶然，不是决定）。
   这是回退行为，不是切换门的结论（切不切见下一条）；两个后端都随包安装，按名创建可显式选 `vsg`。
 * **切换门**（ADR-2026-11-14）：`releaseRenderTarget` / `readDepthBuffer` / 设备丢失报告 / `releasePass` 契约都已落地，
   `docs/guides` 的后端页也就是本页；**仍缺** Win32 实机证据与 Wayland 回退实测——在那之前 Windows 不上线。
@@ -63,6 +65,7 @@
 | 渲染通道 | 自建 `VkRenderPass` 变体（全 CLEAR / 深度 LOAD / 全 LOAD）+ MRT/MSAA resolve | vsg 的 render pass 机制 | 同一种 `RenderPassCompatibility` 进入两边管线键 |
 | 窗口 | `createSurfaceTarget` 一格一次（第二次答 `WindowOccupied` 并**报一次**具名诊断），`nullptr` 请求设备自己的窗口 | 同一契约；窗口尺寸与格式的答案问平台 | 窗口目标由设备发放，设备/引擎不是任何一块窗口 |
 | 深度读回 | 纯深度格式（D16/D32/D32F，MSAA 读 resolve 图）；D24 与借用深度答 `Unsupported` | 同分类 | 格式表在 SDK（`core::depthReadbackOf`），两边共用 |
+| 目标拒绝的精度 | 构建时给出 `vk.target.size_unknown` / `vk.target.borrow_extent_mismatch` | 同一条件在构建时只答 `vsg.target.build_failed`；尺寸不匹配到 resize 阶段才拒绝 | 契约只要求"拒绝 + 一个 code"，粒度不是契约；要统一就给 vsg 补两条 code |
 
 ## 4. 支持矩阵（唯一一份）
 
@@ -98,9 +101,11 @@
   插件 `shell/` 零 `Vk*`（V4）、帧路径不 include `support/`（E1）；vsg 的内容记账半边（`ContentFacts` /
   `ProgramHalves` / `PushRange` / `ContentSources` / `ContentStore`）不出现 `::vsg::`，由
   `scripts/check_vsg_content_seam.cmake` 在 ctest `content_seam` 里断言。
-* **接缝的文件集本身今天没有门禁**，这是 [ADR-2026-11-16-no-backend-half](../../.ai/decisions/ADR-2026-11-16-no-backend-half.md)
-  的有意选择：门禁改成**按性质**（上面三条），文件清单靠上表与评审。加一个新头不会让任何检查变红——
-  接缝的定义仍是"两个后端都用"，那是人判断的。
+* **接缝的清单由 `scripts/check_include_hygiene.py` 按性质钉住**：`SEAM_HEADERS` 的八个机制头必须两边都
+  能到达（`FrameTimeline` 经 vk 的 `DeviceClock` 到达），而"两个后端都直接 include 的 SDK 头"这一集合
+  整体记在 `SEAM_SHARED_HEADERS` 里——一个头第一次被两边同时 include、或不再被两边 include，门禁都会变红，
+  要求在同一提交里说明它是机制还是模型面。它不是旧 ADR 删掉的"目录文件集"：集合来自依赖事实，清单只
+  记录那个事实；"是不是机制"仍由人判断（见 [ADR-2026-11-16-no-backend-half](../../.ai/decisions/ADR-2026-11-16-no-backend-half.md)）。
 * **加一个后端要动哪几处**是一张表，不是形容词：见
   [`graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §2.11。
 * 同角色类型在两个后端的名字对照见同一页 §2.12（`Content*` 命名法）。

@@ -196,7 +196,9 @@ int main(int argc, char** argv)
     auto* control = new vn::appfw::gui::RenderControl();
     layout->addWidget(control->impl<QWidget>());
 
-    // ② 配置（放在 new 之后的同步代码里，赶在 attach 之前）：设备不装就用注册表里第一个（插件加载后是 "vsg"）
+    // ② 配置（放在 new 之后的同步代码里，赶在 attach 之前）：设备不装就用应用点名的那个后端（Vine 是 "vk"，见
+    //    RenderControl::setDefaultBackendName；VN_RENDER_BACKEND 覆盖）。应用没点名时只有在**唯一注册**时才自动用上，
+    //    多个已注册则 attach 报出名字清单——控件不按名字序替你挑。
     auto scene = vn::intrusive_ptr<vn::graphics::Scene>(new vn::graphics::Scene());
     control->view()->setScene(scene);          // 内容（相机是视图自带的）
 
