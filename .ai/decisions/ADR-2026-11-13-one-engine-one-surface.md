@@ -1,79 +1,76 @@
-# ADR-2026-11-13：一个引擎驱动一个表面 —— 否决"一引擎多 Surface"（graphics-next F8）
+# ADR-2026-11-13: one engine drives one surface - "one engine, many surfaces" rejected (graphics-next F8)
 
-> **状态**：已采纳
-> **日期**：2026-11-13
-> **影响范围**：`.ai/design/graphics-frame-pipeline.md`（F8 / §3.8 / R21 / R27 / R37 / T29 / K10 / §7 / §9.3）、
-> `.ai/design/graphics-architecture.md`（F19 / D2 / §2.8 名词纪律）、`.ai/backlog/graphics.md`。**无代码改动**。
+> **Status**: Accepted
+> **Date**: 2026-11-13
+> **Scope**: `.ai/design/graphics-frame-pipeline.md` (F8 / §3.8 / R21 / R27 / R37 / T29 / K10 / §7 / §9.3),
+> `.ai/design/graphics-architecture.md` (F19 / D2 / §2.8 noun discipline), `.ai/backlog/graphics.md`. **No code changes**.
 
-> **EN**: Confirmed one `RenderEngine` drives one `RenderSurface`, and multi-window means one `RenderDevice` serving several engines (each window its own engine, area and `Viewer`); the F8 requirement from graphics-next, `R37`, `T29`, `K10` and its step 4 are deleted and `SurfaceId` leaves the id table. Implementing multi-surface was costed at 900-1400 lines across 14-20 files with no consumer, and existing code already refused a second area, so the document and `createSurface()` now say the same thing.
+## Background
 
-## 背景
+- F8 / `R21` / `R27` / `R37` / `T29` / `K10` of graphics-next require "one Session drives several Surfaces":
+  `Target = Surface{SurfaceId}`, a frame request carries a `SurfaceId`, the criterion is "one Session presents correctly to two Surfaces",
+  and implementing it with a second engine thread is explicitly forbidden (`K10`).
+- In the same repository, §7 **D2 of `graphics-architecture.md` had long rejected** "one frame across several windows"; yet §3.5 F19 says "one engine may serve
+  several windows" - the two sentences contradict each other.
+- The code stands with D2: `RenderEngine::createSurface()` refuses a second area (`area_refused_`, one report per episode),
+  `announceAreaSize()` only accepts its own area, a frame has one `frame.target`, `RenderSurface`'s rule is "one area, one picture",
+  and `RenderControl` / `SurfaceWindow` build one engine per window.
+- The user document `docs/guides/render-views.md` §7 already says "one engine per window, one device may serve several engines", and marks
+  "one frame across several windows" as "registered, not doing".
+- A per-file costing was done on 2026-11-13: implementing F8 costs about **900-1400 lines across 14-20 files** (SDK shape ~300-450, engine internals
+  ~150-250, vsg backend ~250-400, appfw ~150-300, tests ~150-250), and it would rewrite the single-value semantics of `FrameResult` / `PresentRecord` -
+  the latter having just landed in F12 (the same day).
 
-- graphics-next 的 F8 / `R21` / `R27` / `R37` / `T29` / `K10` 要求"一个 Session 驱动多个 Surface"：
-  `Target = Surface{SurfaceId}`、帧请求带 `SurfaceId`，判据是"一个 Session 两个 Surface 都正确 present"，
-  且明确禁止用第二条引擎线程实现（`K10`）。
-- 同一仓库的 `graphics-architecture.md` §7 **D2 早已否决**"一帧跨多窗口"；而 §3.5 F19 却写着"一个引擎可服务
-  多个窗口"——两句话互相矛盾。
-- 代码站在 D2 这边：`RenderEngine::createSurface()` 拒绝第二个区（`area_refused_`，每次 episode 报一条），
-  `announceAreaSize()` 只认自己那个区，一帧只有一个 `frame.target`，`RenderSurface` 的规则是"一区一幅画"，
-  且 `RenderControl` / `SurfaceWindow` 每个窗口造一个引擎。
-- 用户文档 `docs/guides/render-views.md` §7 已按"每窗口一个引擎、一个设备可服务多个引擎"写，并把
-  "一帧跨多窗口"标为"登记不做"。
-- 2026-11-13 做了逐文件的代价评估：实现 F8 约 **900–1400 行、14–20 个文件**（SDK 形状 ~300–450、引擎内部
-  ~150–250、vsg 后端 ~250–400、appfw ~150–300、测试 ~150–250），并要重写 `FrameResult` / `PresentRecord` 的
-  单值语义——后者刚在 F12（同日）落地。
+## Decision
 
-## 决定
+1. **One `RenderEngine` drives one `RenderSurface`** (the status quo, unchanged).
+2. **Several windows = one `RenderDevice` serving several engines**: one engine, one area and one `Viewer` per window (the status quo).
+3. Delete F8, `R37`, `T29`, `K10` and "step 4" of §9.3 from graphics-next; rewrite `R21` / `R27` as "one engine, one surface";
+   remove `SurfaceId` from the §2.5 id table.
+4. Correct F19 of `graphics-architecture.md`, and record its D2 as this ADR's predecessor.
+5. `FrameResult.present` / `PresentRecord` keep their **single value**: one frame, one surface.
 
-1. **一个 `RenderEngine` 驱动一个 `RenderSurface`**（现状，不变）。
-2. **多窗口 = 一个 `RenderDevice` 服务多个引擎**：每窗口一个引擎、一个区、一个 `Viewer`（现状）。
-3. 从 graphics-next 删除 F8、`R37`、`T29`、`K10` 与 §9.3 的"步 4"；`R21` / `R27` 按"一引擎一表面"改写；
-   `SurfaceId` 从 §2.5 的 id 表移除。
-4. 修正 `graphics-architecture.md` F19，并把那里的 D2 记为本 ADR 的前身。
-5. `FrameResult.present` / `PresentRecord` 保持**单值**：一帧一个表面。
+## Rationale
 
-## 理由
+- `G8`: the repository has no real host that needs "the same plan presented in two windows with different viewports". Two windows are two engines today and work fine;
+  pre-building a surface set, `SurfaceId` and per-surface results without a consumer is manufacturing the complexity first.
+- `G5`: a surface set is a new mechanism and needs a home (`detail::`), or `RenderEngine` (1484 lines) keeps growing, directly against
+  §2.8 of `graphics-architecture.md`, which declares that composition root.
+- `G4` / `G10`: several surfaces per frame would turn `FrameResult.present`, `PresentRecord`, the failure semantics (one surface `Lost` is not the whole frame
+  `Lost`) and the transient default size (which surface does it follow) all into per-surface values; F12 landed the single value the same day, so doing it again is rework.
+- `G2`: one frame across surfaces = N acquires / presents inside one `executeFrame`, while the backend executor has one window (`d->driving`);
+  that is new semantics in the execution layer, not a move.
 
-- `G8`：仓库里没有"同一计划要在两个窗口以不同视口呈现"的真实宿主。两个窗口今天就是两个引擎，工作正常；
-  没有消费者就预建 surface 集合、`SurfaceId` 与 per-surface 结果，是把复杂性先造出来。
-- `G5`：surface 集合是新机制，必须有家（`detail::`），否则 `RenderEngine`（1484 行）继续变胖，直接违背
-  `graphics-architecture.md` §2.8 的组合根声明。
-- `G4` / `G10`：一帧多表面会把 `FrameResult.present`、`PresentRecord`、失败语义（一个表面 `Lost` 不等于整帧
-  `Lost`）与 transient 默认尺寸（跟随哪个表面）全部改成 per-surface；F12 同日刚落成单值，再做一次是返工。
-- `G2`：一帧跨表面 = 一次 `executeFrame` 内 N 次 acquire/present，而后端执行器只有一个 window（`d->driving`）；
-  这是执行层的新语义，不是搬运。
+## Rejected options
 
-## 否决的选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 按 F8 实现"一引擎多 Surface" | 无消费者（`G8`）；公开结果形状刚改过再改一次（`G10`）；appfw 所有权（窗口拥有引擎）要重写；失败语义全新。 |
-| 只做引擎/SDK 半边（F8a）、appfw 不动 | `T29` 要求"一个 Session 两个 Surface 都正确 present"，没有 appfw 形态就没有真实调用点，等于预建能力（`G8`）。 |
-| 保留 F19 的说法、不改代码 | 文档与代码相反、也与 D2 相反——读者会按不存在的形状写宿主。 |
-| 用两个 Session 共享设备实现多窗口 | `I6`：只有一条引擎线程碰设备；两个 Session 各自有引擎线程就是两条（审计 X4 已指出）。 |
+| Implement "one engine, many Surfaces" as F8 says | No consumer (`G8`); the public result shape was just changed and would change again (`G10`); appfw's ownership (the window owns the engine) would be rewritten; the failure semantics would be brand new. |
+| Do only the engine / SDK half (F8a), leave appfw alone | `T29` requires "one Session presents correctly to two Surfaces", and without the appfw shape there is no real call site, which is pre-building a capability (`G8`). |
+| Keep F19's wording and change no code | Documentation contradicting the code, and D2 as well - a reader would write a host against a shape that does not exist. |
+| Implement several windows with two Sessions sharing a device | `I6`: only one engine thread touches the device; two Sessions each with an engine thread means two (audit X4 already pointed this out). |
 
-## 后果
+## Consequences
 
-- **放弃**多窗口共享 pass 表 / 计划 / 编译的收益：每窗口一份引擎状态（plan、slots、发布表）。
-  **仍共享**设备级资源：两个引擎共用一个 `RenderDevice`，管线缓存与显存按设备算。
-- 文档回到一致：F19、D2、`docs/guides/render-views.md` §7 与 `createSurface()` 的契约说的是同一件事。
-- `FrameResult` / `PresentRecord` 的单值语义有了书面依据（一帧一表面）。
-- 代价写在明处：**每窗口一份编译与驻留账**（`docs/guides/render-views.md` §7 已记录同一事实）。
+- **Given up**: the benefit of several windows sharing the pass table / plan / compilation; each window has its own engine state (plan, slots, publish table).
+  **Still shared**: device-level resources - two engines share one `RenderDevice`, and the pipeline cache and video memory are counted per device.
+- The documentation is consistent again: F19, D2, §7 of `docs/guides/render-views.md` and the contract of `createSurface()` now say the same thing.
+- The single-value semantics of `FrameResult` / `PresentRecord` have a written basis (one frame, one surface).
+- The cost is stated plainly: **one compilation and residency account per window** (§7 of `docs/guides/render-views.md` already records the same fact).
 
-## 触发条件（何时重开）
+## Trigger conditions (when to reopen)
 
-命中任一条，按**新 ADR** 重开，不改本 ADR：
+Hitting any one of them reopens the question in a **new ADR**, without changing this one:
 
-1. 真实宿主需要"同一计划（同一组 pass / 同一条链）在两个窗口以不同视口呈现"，且实测多引擎的重复编译 / 显存
-   开销成为瓶颈；
-2. 第二个后端落地，使"设备 = Session"成为必要（与 backlog `T15` / `T22` 同触发）。
+1. A real host needs "the same plan (the same set of passes / the same chain) presented in two windows with different viewports", and the measured duplication of
+   compilation / video memory across several engines has become a bottleneck;
+2. A second backend lands and makes "device = Session" necessary (the same trigger as backlog `T15` / `T22`).
 
-## 参考
+## References
 
-- `.ai/design/graphics-frame-pipeline.md` F8 / §3.8 / `R21` / `R27` / `R37` / `T29` / `K10`（本 ADR 删除或改写）
-- `.ai/design/graphics-architecture.md` §3.5 F19、§7 D2
-- `docs/guides/render-views.md` §7（现役多窗口立场）
-- `src/viz/graphics/src/RenderEngine.cpp`：`createSurface()`、`announceAreaSize()`、`buildContentHalf()` 的
-  `frame.target`
-- `tests/test_graphics/RenderSurfaceTest.cpp`（第二区被拒）、 <!-- drift-ok -->
-  `tests/test_graphics/HeadlessBackendTest.cpp`（`OneDeviceServesSeveralAreasWithoutCrossingThem`）
+- `.ai/design/graphics-frame-pipeline.md` F8 / §3.8 / `R21` / `R27` / `R37` / `T29` / `K10` (deleted or rewritten by this ADR)
+- `.ai/design/graphics-architecture.md` §3.5 F19, §7 D2
+- `docs/guides/render-views.md` §7 (the standing multi-window position)
+- `src/viz/graphics/src/RenderEngine.cpp`: `createSurface()`, `announceAreaSize()`, and `frame.target` in `buildContentHalf()`
+- `tests/test_graphics/RenderSurfaceTest.cpp` (the second area is refused), <!-- drift-ok -->
+  `tests/test_graphics/HeadlessBackendTest.cpp` (`OneDeviceServesSeveralAreasWithoutCrossingThem`)

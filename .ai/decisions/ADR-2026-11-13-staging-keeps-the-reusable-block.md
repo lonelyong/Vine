@@ -1,58 +1,57 @@
-# ADR-2026-11-13：上传暂存保留可复用块，一次性的大块仍然还给设备
+# ADR-2026-11-13: upload staging keeps a reusable block and still gives a one-off large one back to the device
 
-> **状态**：已采纳
-> **日期**：2026-11-13
-> **取代**：[ADR-2026-11-10-upload-staging-is-not-retained.md](ADR-2026-11-10-upload-staging-is-not-retained.md)（只改一条：不再“全部不保留”）
-> **影响范围**：`src/plugins/gfx_backend_vsg/{include,src}/internal/TransferStaging.*`、
-> `src/viz/graphics/sdk/vine/graphics/FrameStats.hpp`（同批的 `FrameUploads`）、
-> `tests/test_vsg/UploadScratchTest.cpp`、`.ai/design/{graphics-content-lifecycle,vsg-backend}.md`
+> **Status**: Accepted
+> **Date**: 2026-11-13
+> **Supersedes**: [ADR-2026-11-10-upload-staging-is-not-retained.md](ADR-2026-11-10-upload-staging-is-not-retained.md)
+> (changing one clause only: no longer "retain nothing")
+> **Scope**: `src/plugins/gfx_backend_vsg/{include,src}/internal/TransferStaging.*`,
+> `src/viz/graphics/sdk/vine/graphics/FrameStats.hpp` (the `FrameUploads` of the same batch),
+> `tests/test_vsg/UploadScratchTest.cpp`, `.ai/design/{graphics-content-lifecycle,vsg-backend}.md`
 
-> **EN**: Superseded one clause of `ADR-2026-11-10-upload-staging-is-not-retained`: `StagingTask::releaseStaging()` now releases only blocks larger than the task's own `minimumStagingBufferSize` (vsg default 16 MiB) and keeps the smaller ones for reuse, so a host that uploads every frame allocates nothing in steady state while a one-off large upload still gives its block back. The fence evidence rule, the no-waiting rule and the frame-boundary trigger are unchanged; rejected releasing everything, keeping everything, and a host-side knob.
+## Background
 
-## 背景
+The conclusion of ADR-2026-11-10 was "release everything as soon as staging is done": a staging block is the source of one `vkCmdCopyBuffer`, and it is
+dead weight the moment the copy's fence completes. That brought the 704 MB body model's 1,228 MB residency down to zero, with zero waiting and zero idle.
 
-ADR-2026-11-10 的结论是“暂存一完成就全放”：一块 staging 是一个 `vkCmdCopyBuffer` 的源，拷贝的 fence 一
-完成它就是死重。704 MB 车身的 1,228 MB 常驻因此归零，且零等待、零 idle。
+The **cost** of that rule was written down at the time: a host that uploads every frame reallocates a staging block of at least 16 MB every frame. The repository never had such a host
+(an in-frame upload happens only when a revision changes), so the cost was never incurred. T26 decided to pay it in advance: **keep the ones below the limit, release only the large ones**.
 
-那条规则的**代价**当时就写下了：每帧都上传的宿主会在每帧重新分配一块最小 16 MB 的暂存。仓库里一直没有这样的宿主
-（帧内上传只在 revision 变化时发生），所以代价没有兑现。T26 决定把这笔代价先付掉：**保留下限大小、只放大的**。
+## Decision
 
-## 决定
+1. `StagingTask::releaseStaging()` releases only blocks with **`staging->size > minimumStagingBufferSize`**; blocks equal to or below that
+   limit stay. The limit is read from the task's own `minimumStagingBufferSize` (vsg's `TransferTask`, 16 MiB by default), not
+   hard-coded as a constant.
+2. The rest of the evidence rule is unchanged: the block's own `fence->status()` is still the only condition; an unfinished copy is left to the next frame; zero waiting, zero idle, zero park.
+3. The result: a host that uploads every frame does **zero allocation** in steady state (vsg's `transferData()` reuses the kept block directly); a one-off large upload (loading a model)
+   still gives the large block back - the 1,228 MB class of problem does not come back.
 
-1. `StagingTask::releaseStaging()` 只释放 **`staging->size > minimumStagingBufferSize`** 的块；等于或小于该
-   下限的块留着。下限读的是任务自己的 `minimumStagingBufferSize`（vsg 的 `TransferTask`，默认 16 MiB），不是
-   硬编码常量。
-2. 其余证据规则不变：块自己的 `fence->status()` 仍是唯一条件；没完成的拷贝留给下一帧；零等待、零 idle、零 park。
-3. 结果：每帧上传的宿主在稳态**零分配**（保留的块被 vsg 的 `transferData()` 直接复用）；一次性大上传（模型载入）
-   仍会把大块还掉——1,228 MB 那类问题不回潮。
+## Rationale
 
-## 理由
+- `G10`: the cost of "one 16 MB allocation per frame" is not the same order as "resident memory", but it is the only one a one-line rule can remove. Keeping
+  a reusable block makes both curves look good: zero allocation in steady state, no residency at the peak.
+- `G4`: the condition is **the block's size**, not "is there still data to copy" - the latter looks cheaper, but `_transferData()` returns early when there is nothing to copy
+  without clearing the map, so the condition would be true forever and the sweep would freeze (the trap from ADR-2026-11-10, still present).
+- `G8`: no entry point is opened for "how much the host wants to keep"; this is part of the reclaim rule, not a policy.
 
-- `G10`：一个“每帧一次 16 MB 分配”的代价，与“内存常驻”不是同一量级，但它是唯一能靠一行规则消掉的。保留
-  可复用块让两条曲线都好看：稳态零分配，峰值不常驻。
-- `G4`：条件按**块的大小**而不是“是否还有待拷数据”——后者看着更便宜，但 `_transferData()` 会在没有待拷时提前
-  返回而不清 map，条件会永久为真、sweep 冻结（ADR-2026-11-10 的坑，仍在）。
-- `G8`：仍然没有为“宿主想保留多少”开任何入口；这是回收规则的一部分，不是策略。
+## Rejected options
 
-## 否决的选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 维持“全部释放” | 每帧上传的宿主每帧一次 16 MB 分配；一次一行规则就能消掉，且不影响大块回收。 |
-| 保留所有块、不做大小判断 | 大上传（模型载入）的块会常驻 —— 正是 ADR-2026-11-10 要解决的问题。 |
-| 用“这个 `DataToCopy` 还有没有待拷数据”作为跳过条件 | `_transferData()` 提前返回时不清 map，条件永真 ⇒ sweep 冻结，整份载入暂存常驻。 |
-| 让宿主配置保留量 | 没有消费者（`G8`）；回收规则不应变成另一个旋钮。 |
+| Keep "release everything" | A host that uploads every frame pays one 16 MB allocation per frame; a one-line rule removes it without affecting the release of large blocks. |
+| Keep every block, no size test | The blocks of a large upload (loading a model) would stay resident - exactly the problem ADR-2026-11-10 solved. |
+| Use "does this `DataToCopy` still have data to copy" as the skip condition | `_transferData()` returns early without clearing the map, so the condition is always true ⇒ the sweep freezes and the whole load's staging stays resident. |
+| Let the host configure how much is kept | No consumer (`G8`); the reclaim rule should not become another knob. |
 
-## 后果
+## Consequences
 
-- **内存**：小上传之后 `uploadStagingBytes()` 停在下限的倍数（每个被用过的 frame slot 一块，至多 `slots × 16 MiB`），
-  不再归零；大上传之后回落到这个下限。
-- **性能**：每帧上传的宿主稳态零分配（原先每帧一次 malloc + map）。一次性载入的行为不变。
-- **证据**：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` 改为断言“存活的块都是可复用
-  尺寸的倍数，且大于下限的一次性块会被还掉”；T26 的用例在同一次提交里。
-- **API**：无（`StagingTask` 仍是内部类型；`minimumStagingBufferSize` 仍是 vsg 的）。
+- **Memory**: after small uploads `uploadStagingBytes()` stops at a multiple of the limit (one block per frame slot that has been used, at most `slots × 16 MiB`),
+  instead of dropping to zero; after a large upload it falls back to that limit.
+- **Performance**: a host that uploads every frame does zero allocation in steady state (previously one malloc + map per frame). The behaviour of a one-off load is unchanged.
+- **Evidence**: `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` now asserts "the live blocks are all multiples of a reusable
+  size, and a one-off block larger than the limit is given back"; the T26 case is in the same commit.
+- **API**: none (`StagingTask` is still an internal type; `minimumStagingBufferSize` is still vsg's).
 
-## 触发条件（何时再改）
+## Trigger conditions (when to change it again)
 
-出现“稳态下保留的块仍然占住不可接受的显存/主机内存”的真实宿主：届时按新 ADR 再定是否需要可配置的上限，而不是
-改回“全部释放”。
+A real host appears where "the blocks kept in steady state still hold an unacceptable amount of video memory / host memory": then a new ADR decides whether a
+configurable ceiling is needed, rather than going back to "release everything".

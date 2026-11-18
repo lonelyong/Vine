@@ -1,37 +1,38 @@
-# ADR-2026-11-13：内容记账半边留在后端插件里，不预先提成 SDK 库
+# ADR-2026-11-13: the content bookkeeping half stays in the backend plugin instead of being promoted to an SDK library early
 
-> **状态**：已采纳
-> **日期**：2026-11-13
-> **影响范围**：`.ai/backlog/graphics.md`（删除“内容层提成共享库”条目）、`.ai/design/vsg-backend.md` §2.7
+> **Status**: Accepted
+> **Date**: 2026-11-13
+> **Scope**: `.ai/backlog/graphics.md` (deletes the "promote the content layer into a shared library" entry), `.ai/design/vsg-backend.md` §2.7
 
-> **EN**: Kept the vsg-independent content bookkeeping half inside `gfx_backend_vsg` instead of promoting it to an SDK library ahead of a consumer, and deleted the backlog entry; `scripts/check_vsg_content_seam.cmake` remains the boundary's evidence. When a second backend actually appears, the step is to move or copy that half, not to add a `target_link_libraries` line. Rejected promoting now, splitting the target without exporting, and dropping the seam guard.
+## Background
 
-## 背景
+Half of what is inside `src/plugins/gfx_backend_vsg` is **bookkeeping unrelated to vsg** (fact tables, halves, keys, sources, sweeping), guarded by
+`scripts/check_vsg_content_seam.cmake` (10 TUs may not mention `::vsg::`). The backlog used to carry "promote it into a shared SDK library",
+triggered by a second backend appearing.
 
-`src/plugins/gfx_backend_vsg` 里有一半内容是**与 vsg 无关的记账**（事实表、半边、键、来源、清扫），由
-`scripts/check_vsg_content_seam.cmake` 守着（10 个 TU 不许出现 `::vsg::`）。backlog 曾挂着一条“提成 SDK 共享库”，
-触发条件是第二个后端出现。
+## Decision
 
-## 决定
+- Do not promote it. This half **stays inside `gfx_backend_vsg`**, and the seam guard and the design document (`vsg-backend.md` §2.7) stay as they are.
+- Delete the backlog entry; when a second backend really appears, **move it across or copy it across** along the seam's boundary - that is when its real shape becomes known.
 
-- 不提成库。这半边**继续留在 `gfx_backend_vsg` 里**，seam 守卫与设计文档（`vsg-backend.md` §2.7）保持不变。
-- 删除 backlog 条目；第二个后端真正出现时，按 seam 的边界把它**移过去或复制过去**，那时才知道它的真实形状。
+## Rationale
 
-## 理由
+- `G8`: zero consumers today. Raising a plugin's internal bookkeeping to an SDK library means the install surface, the ABI and the version constraints all pay
+  for a backend that does not exist.
+- `G1` / `G7`: the seam is already drawn correctly (it is a checkable rule), and promoting changes only the **packaging location**, not the design or the reusability;
+  packaging must not precede the consumer.
+- A recorded fact: if the promotion is really wanted later, the cost is 10 TUs (about 3.5k lines) + a new target + installed headers; there is no difficulty that
+  would vanish by waiting.
 
-- `G8`：今天零消费者。把一个插件内部的记账抬成 SDK 库，意味着安装面、ABI、版本约束都要为一个不存在的后端付账。
-- `G1` / `G7`：seam 已经画对（一条可检查的规则），提库只改**打包位置**，不改设计与可复用性；打包不该先于消费者。
-- 记录过的事实：将来真要提库，成本是 10 个 TU（约 3.5k 行）+ 新 target + 安装头；没有凭空消失的难点。
+## Rejected options
 
-## 否决的选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 现在就提成 `vnContent` 库 | 没有第二个后端（`G8`）；ABI/安装面先于消费者。 |
-| 提成库但不导出（仅 target 拆分） | 只多了构建边与目录，复用性不变，反而让“它在插件里”的事实更难读。 |
-| 保持在插件里但去掉 seam 守卫 | 守卫是这半边能被复用的唯一证据；去掉等于失去边界。 |
+| Promote it into a `vnContent` library now | There is no second backend (`G8`); the ABI / install surface would precede the consumer. |
+| Promote it without exporting (target split only) | It only adds a build edge and a directory, reusability is unchanged, and the fact that "it lives in the plugin" becomes harder to read. |
+| Keep it in the plugin but drop the seam guard | The guard is the only evidence that this half is reusable; dropping it means losing the boundary. |
 
-## 后果
+## Consequences
 
-- 第二个后端出现时，第一步是**移动**这半边（或复制并删掉原处），不是改一个 `target_link_libraries`。
-- backlog 不再跟踪这条；`vsg-backend.md` §2.7 的 seam 规则仍是它的家。
+- When a second backend appears, the first step is to **move** this half (or copy it and delete the original), not to change one `target_link_libraries`.
+- The backlog no longer tracks this; the seam rule in §2.7 of `vsg-backend.md` remains its home.
