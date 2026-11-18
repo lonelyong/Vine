@@ -233,6 +233,7 @@ The `Task` awaiter, `TaskFinalAwaiter`, `WhenChild::FinalAwaiter`, `WhenAnyChild
 | D4 | `SyncWait.hpp` / `syncWait()` | a duplicate of `Task::result()`; the mechanism moved into `Task.hpp` and one name remains. <!-- drift-ok --> | — |
 | D5 | `appfw::async::sleep()` | a duplicate of `vn::async::sleepFor()` with no caller. | — |
 | D6 | turning `try_lock`/`try_acquire` into camelCase | they mirror `std::mutex`/`std::counting_semaphore`, and the rename would be a breaking change. | — |
+| D7 | a `set_stopped` cancellation result channel (a three-state `Task` result) | it would make cancellation not-an-error, but `Task<T>`'s result, every combinator, `result()` and the cancellation cases all change, while the layers above already classify `TaskCancelledException` as "cancelled"; the local tightening of `withTimeout` is the change to make instead, and `CancelPolicy` already expresses it. | — |
 
 ## 8. Tests and Acceptance
 
@@ -253,7 +254,7 @@ Tasks, combinators, primitives and schedulers are in place; the cancellation pol
 
 ### 9.2 Known Gaps and Backlog
 
-- frame allocation is not done and is owed to the backlog; the criterion is in backlog §3.
+- Frame allocation is not done; the criterion it waits for is in `../backlog/async.md`.
 
 ### 9.3 Compatibility and Migration
 
@@ -277,4 +278,8 @@ There is no `appfw::async::sleep()`; use `vn::async::sleepFor()`. New code follo
 ### 10.3 External Sources
 
 - the corresponding semantics of cppcoro / folly / P2300 (see §2.5).
+- the systems C2 was decided against: Trio's nursery and Kotlin's `coroutineScope` (cancel the siblings, then wait for
+  all of them), Rust's `tokio::select!` (drop is cancellation, nothing is waited for) against `join!`, C#
+  `Task.WhenAll` (a separate `Canceled` state, exceptions aggregated), and P2300 / asio (`set_stopped` plus a
+  completion-condition parameter).
 - the standard's undefined cases around `std::stop_token` / `std::stop_callback`.
