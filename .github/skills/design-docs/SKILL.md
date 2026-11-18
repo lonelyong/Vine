@@ -26,9 +26,9 @@ is in `.ai/research/docs-2026-11-17-english-migration.md`.
 * **One file, one language.** New files (design pages, ADRs, backlog, memory) are English.
 * A Chinese file that needs a substantial change is **converted whole** in that commit; a one-line
   fact fix leaves it Chinese and it stays on the migration list.
-* **ADRs are append-only**: keep the original, append a dated correction or an English `> **EN**: …`
-  summary. A **bug postmortem is converted whole** to English in one commit (git holds the original);
-  an open finding is English from the start.
+* **Records are converted**: an ADR or bug postmortem is converted whole to English in one commit (git
+  holds the original), and a later correction is appended and dated. An open finding is English from the
+  start.
 * Prose uses the code spelling; `.ai/memory/glossary.md` is the single mapping (retired spellings
   and false friends included).
 * The template below states the **English** chapter names. `scripts/check_design_docs.py` accepts

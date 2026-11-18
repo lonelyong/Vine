@@ -86,11 +86,11 @@ converted in batches (`ADR-2026-11-17-documentation-language`, plan in
   than about a third of the file; convert the whole file in that commit instead of leaving it half
   translated. A one-line fact fix leaves a Chinese file Chinese and it stays on the migration list —
   correctness first.
-* **ADRs are append-only; bug postmortems are converted.** An ADR's original text is the record: append a
-  dated correction or an English `> **EN**: …` summary, never translate it in place. A bug postmortem is
-  converted whole to English in one commit (git holds the original) and drops its then-redundant
-  `> **EN**:` line; an open finding is written in English from the start. The boundary is
-  `ADR-2026-11-17-documentation-language`, amendment of 2026-11-18.
+* **Records are converted, and a correction is appended.** An ADR or a bug postmortem is converted whole to
+  English in one commit (git holds the original) and drops its then-redundant `> **EN**:` line; a later correction
+  is appended and dated, never folded into the converted text. The conversion preserves every stable ID, `G#`
+  citation, link target and measured number - the before/after census is the check. An open finding is written in
+  English from the start. The boundary is `ADR-2026-11-17-documentation-language`, amendments of 2026-11-18.
 * **Identifiers are never translated.** Prose uses the code spelling (`FrameGate`, `residency`,
   `frame driver`); `.ai/memory/glossary.md` is the one mapping between a concept's English spelling
   and the words the Chinese pages use, and it lists the retired spellings and the false friends.

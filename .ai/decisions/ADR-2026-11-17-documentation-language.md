@@ -1,7 +1,7 @@
 # ADR-2026-11-17: English is the documentation language
 
-- Status: **Accepted** (2026-11-17), **amended 2026-11-18** (decision 4: bug postmortems are
-  converted, ADRs stay append-only - see the amendment at the end); execution is batched, plan in
+- Status: **Accepted** (2026-11-17), **amended 2026-11-18 twice** (bug postmortems converted; then ADRs
+  too - see the two amendments at the end); execution is batched, plan in
   [`../research/docs-2026-11-17-english-migration.md`](../research/docs-2026-11-17-english-migration.md).
 - Date: 2026-11-17
 - Scope: `.ai/**` prose and `.github/**` documentation. **Not** `docs/guides/**` (product documentation
@@ -102,3 +102,24 @@ From 2026-11-18:
 
 Every other decision in this ADR stands. The acceptance rules do not change: no new claims, ID and
 link census unchanged, whole file per commit.
+
+## Amendment (2026-11-18, second): ADRs are converted too
+
+The first amendment kept ADRs append-only because their wording is the evidence. The owner decided
+otherwise the same day: an ADR corpus where one half is readable only in Chinese splits the search
+and the readership exactly as the decision's Background describes, and git already holds every
+original. So the rule narrows once more and lands on the shape the bug postmortems already have:
+
+1. **An ADR is converted whole to English**, one batch per area, whole file per commit. Git holds the
+   Chinese original (the repository's archive rule) and the `> **EN**: …` summary line is removed in
+   the same commit, because the body now says what it said.
+2. **What is preserved is the record, not the language**: every stable ID (`F#` / `C#` / `R#` / `N#` /
+   `P#` / `D#` / `T#` / `K#`), every `G#` citation, every link target, every measured number, every
+   date and every rejected option survives the conversion; the before/after ID and link census is the
+   check, not the reviewer's memory.
+3. **New ADRs are English**, and a correction is still appended and dated.
+4. The amendment of 2026-11-18 (first) stands for bug postmortems; its "ADRs stay append-only"
+   clause is superseded by this one.
+
+Every other decision in this ADR stands, including the acceptance rules: no new claims, unchanged ID
+and link census, whole file per commit.
