@@ -25,7 +25,7 @@
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
 #include <vine/backend_vk/internal/ResidencyClaims.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
 #include <vine/graphics/DrawState.hpp>
@@ -582,7 +582,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param draws    The pass' drawing calls (borrowed for the call).
      * @param held     The cache lock (see @ref Lock).
      */
-    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawDescription> draws, const Lock& held);
+    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawCall> draws, const Lock& held);
 
     /**
      * @brief Resolves one drawing call's texture bindings into @p plan, recording every upload that is missing on
@@ -663,7 +663,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      *                          and a key another driver is building is copied instead of waited for.
      * @return true when the command can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::RenderCommand&                     command,
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawItem&                     command,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::ShaderProgramDescription*          default_program,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
@@ -694,7 +694,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param held              The cache lock (see @ref Lock).
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawDescription&                  draw,
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawCall&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,

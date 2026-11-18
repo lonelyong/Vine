@@ -25,7 +25,7 @@ using vn::math::Mat4d;
  *   primitive's own, else the geometry's default, else the nearest StateNode's), so a backend never has to
  *   look at the scene graph to shade.
  */
-struct VN_GRAPHICS_API RenderCommand {
+struct VN_GRAPHICS_API DrawItem {
     /** Leaf geometry to render. */
     GeometryPtr geometry;
 
@@ -72,8 +72,8 @@ struct VN_GRAPHICS_API RenderCommand {
     /** Which of the geometry's primitives this command draws (its index, see Geometry::primitive). */
     std::uint32_t primitive_index{ 0 };
 
-    /** Material to use (an asset, or an instance over one - see MaterialBase). */
-    MaterialBasePtr material;
+    /** Material to use (an asset, or an instance over one - see MaterialValues). */
+    MaterialValuesPtr material;
 
     /**
      * @brief The material's values at the revision this frame crosses with, or null when nobody published them.
@@ -137,7 +137,7 @@ struct VN_GRAPHICS_API RenderCommand {
      *   opacity < 1, because its alpha cuts fragments out instead of fading the surface (C4) - a masked leaf that
      *   moved to the transparent queue would stop occluding itself; everything else is transparent exactly when
      *   the effective opacity is below 1.
-     * - `Scene::collectRenderCommands` is the only producer and sorts on this, so the two cannot disagree - and
+     * - `Scene::collectDrawItems` is the only producer and sorts on this, so the two cannot disagree - and
      *   the epsilon lives here, once, instead of at every producer.
      *
      * @return true when this draw belongs in the transparent queue.
@@ -198,7 +198,7 @@ struct VN_GRAPHICS_API RenderCommand {
     std::uint32_t instance_count{ 0 };
 
     /** @brief Default constructor. */
-    RenderCommand() = default;
+    DrawItem() = default;
 
     /** @brief Constructs a render command.
      *
@@ -207,7 +207,7 @@ struct VN_GRAPHICS_API RenderCommand {
      * @param model         World-space model matrix.
      * @param primitive_index Which of @p g's primitives this command draws.
      */
-    RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model, std::uint32_t primitive_index = 0);
+    DrawItem(intrusive_ptr<Geometry> g, MaterialValuesPtr m, const Mat4d& model, std::uint32_t primitive_index = 0);
 
     /** @brief Gets the primitive this command draws (null when the geometry no longer has it).
      *

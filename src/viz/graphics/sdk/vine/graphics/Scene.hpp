@@ -16,7 +16,7 @@
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"
-#include "RenderCommand.hpp"
+#include "DrawItem.hpp"
 #include "SceneSnapshotRef.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -31,7 +31,7 @@ using vn::geom::spatial::Aabbd;
 
 class Camera;
 class LightRig;
-struct RenderCommand;
+struct DrawItem;
 
 /**
  * @brief What one Scene::publish() call answered.
@@ -99,7 +99,7 @@ struct VN_GRAPHICS_API ScenePublishResult {
  *   memo, the content epoch and the publication - lives in one `detail::ScenePublisher` this class delegates to,
  *   so the editing API never carries the lifetime rules of caches and snapshots it does not own.
  * - NOT A FRAME SOURCE. A frame draws a PUBLICATION (see publish() and RenderEngine::bindSnapshot), never the live
- *   tree: `collectRenderCommands` below answers a caller that HOLDS the content (a query on the content thread), and
+ *   tree: `collectDrawItems` below answers a caller that HOLDS the content (a query on the content thread), and
  *   the frame machinery reaches the same rows through the publication instead (a `DrawListSource` that reads an
  *   immutable snapshot). That is why this class implements no source interface - handing a frame a live scene is the
  *   one way an edit could reach a frame that is already being recorded.
@@ -179,7 +179,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @note
      * - The reverse move is not undone: a root attached to another tree AFTER this call (Group::addChild) is
      *   no longer a root, so the scene draws nothing - collection and bounding box answer empty without
-     *   serving the list memoised while the node was still a root (see collectRenderCommands).
+     *   serving the list memoised while the node was still a root (see collectDrawItems).
      *
      * @param root Root node to render; null empties the scene.
      */
@@ -202,7 +202,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *
      * @details
      * - The scene keeps a reference. Passes rendering this scene light their content with the scene's
-     *   lights (a drawing call announces them as values: DrawDescription::light_values).
+     *   lights (a drawing call announces them as values: DrawCall::light_values).
      *
      * @param light Light to add.
      */
@@ -259,7 +259,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *   announces nothing on the graph, see Light::revision) and a list edit moves the identities - so a `setColor`
      *   reaches the next `describe` exactly like it reached the live vector before, without a rebuild when it did
      *   not happen.
-     * - The value is what a drawing call announces (`DrawDescription::light_values`); it is NOT a publication, and a
+     * - The value is what a drawing call announces (`DrawCall::light_values`); it is NOT a publication, and a
      *   frame that was already described keeps the set it was lit with.
      *
      * @return The shared set (never null; empty when the scene has no lights).
@@ -272,7 +272,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * - Hidden content contributes nothing at any depth: an invisible node prunes its whole subtree from the
      *   union, the same rule the collection and ray walks apply. Empty when the scene itself is hidden, has
      *   no root, the root is hidden, or the root is no longer a root (see setRoot).
-     * - @p layer_mask selects like the collection does (see collectRenderCommands): a drawn node whose
+     * - @p layer_mask selects like the collection does (see collectDrawItems): a drawn node whose
      *   resolved layers do not intersect the mask contributes nothing; a node that re-declares its layers
      *   counts under its own declaration (containers are structure); kAllLayers (the default) measures
      *   everything visible. The per-node query (Node::boundingBox) stays purely geometric - this is the
@@ -314,8 +314,8 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *                   contains a node that declared ViewDependence::ViewAndViewport.
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>>
-    collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers, const Viewport* viewport = nullptr) const;
+    std::shared_ptr<const std::vector<DrawItem>>
+    collectDrawItems(raw_ptr<const Camera> camera, std::uint32_t layer_mask = kAllLayers, const Viewport* viewport = nullptr) const;
 
     /** @brief Collects the commands for one explicit view (the primary entry point).
      *
@@ -329,7 +329,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @param view The view this picture is collected for.
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const View& view) const;
+    std::shared_ptr<const std::vector<DrawItem>> collectDrawItems(const View& view) const;
 
     /**
      * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.

@@ -39,7 +39,7 @@
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameStats.hpp>
 #include <vine/graphics/Geometry.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/PrepareReport.hpp>
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -57,7 +57,7 @@ using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::ImageSource;
 using vn::graphics::PassDraw;
@@ -361,9 +361,9 @@ struct ContentTotals {
  *   per-session state (see `.ai/design/graphics-sessions.md`).
  * - WHAT IT DOES NOT OWN: the Vulkan device and queue, the memory pool, the content caches, the targets, the clock and
  *   the park queue. Those belong to the device and are shared by every session it will ever hand out; this type reaches
- *   them through the `Impl` it borrows, which is what step 2 of the ADR turns into an explicit `createSession()`.
+ *   them through the `Impl` it borrows, which is what step 2 of the ADR turns into an explicit `createFrameDriver()`.
  * - ONE FRAME DRIVER TODAY, and the device drives its own frames through it: `Device::executeFrame` / `prepareFrame` are
- *   still the bodies, and the machinery they use is this object's. When `createSession()` hands out more than one, the
+ *   still the bodies, and the machinery they use is this object's. When `createFrameDriver()` hands out more than one, the
  *   bodies move in here (they will change at step 3 anyway) and the gate becomes one per driver for free.
  * - THE DEVICE DESTROYS IT (`Device::shutdown`), never the destructor: the objects need the device's entry points and
  *   an idle queue, and `shutdown` is the one place that has both.
@@ -517,7 +517,7 @@ struct Device::Impl {
 
     /// THE DEVICE'S OWN FRAME DRIVER: it owns the command machinery, the frame books and the gate.
     std::unique_ptr<FrameDriver> session{};
-    /// Every OTHER driver a host borrowed (see Device::createSession); the device owns them too.
+    /// Every OTHER driver a host borrowed (see Device::createFrameDriver); the device owns them too.
     std::vector<std::unique_ptr<FrameDriver>> extra_sessions{};
     ///
     /// THE DEVICE'S TWO LOCKS, ONE FOR EACH QUESTION.
@@ -1094,7 +1094,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 {
     // ONE FRAME AT A TIME PER DRIVER, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started
     // from the thread that is ALREADY driving one is refused - a re-entrant frame would corrupt this driver's command
-    // buffer and fence silently. The gate is the DRIVER's, so a second driver (step 2's `createSession()`) is not
+    // buffer and fence silently. The gate is the DRIVER's, so a second driver (step 2's `createFrameDriver()`) is not
     // serialised against this one for free. The lease releases the gate on EVERY return below, which is why it is a
     // lease and not a pair of calls.
     const vn::graphics::FrameGate::Exclusive frame_lease = frames.enterExclusive();
@@ -1239,8 +1239,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     };
     const auto claim_pass_samples = [&](const PassDraw& draw, const FrameDescription::Pass& entry) -> bool {
         bool every = true;
-        for (const DrawDescription& description : draw.draws) {
-            if (description.kind == DrawDescription::Kind::Screen && !claim_sampled(description.source)) {
+        for (const DrawCall& description : draw.draws) {
+            if (description.kind == DrawCall::Kind::Screen && !claim_sampled(description.source)) {
                 every = false;
             }
         }
@@ -1265,7 +1265,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // something, or it announced a clear (a clear is the pass' own load-op, so a clear-only pass is a real pass
         // with no draws). The reference recorder states the same rule, which is what makes the two reports comparable.
         std::uint64_t calls = 0U;
-        for (const DrawDescription& description : draw.draws) {
+        for (const DrawCall& description : draw.draws) {
             calls += vn::graphics::isDrawingCall(description) ? 1U : 0U;
         }
         // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
@@ -1451,9 +1451,9 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             const PassDraw&   pass_draw = *item.draw;
             FrameHead::Pass&  pass_head = frame_head.beginPass(pass_draw.draws.size());
             for (std::size_t draw_index = 0; draw_index < pass_draw.draws.size(); ++draw_index) {
-                const DrawDescription& description = pass_draw.draws[draw_index];
+                const DrawCall& description = pass_draw.draws[draw_index];
                 FrameHead::Call&        call        = pass_head.draws[draw_index];
-                if (description.kind == DrawDescription::Kind::Screen) {
+                if (description.kind == DrawCall::Kind::Screen) {
                     call.plans.resize(1U);
                     FrameHead::DrawPlan& plan = call.plans.front();
                     (void)owner.caches.planDraw(description,
@@ -1521,8 +1521,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 
         // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
         // barrier is unambiguously allowed (before any render pass instance begins).
-        for (const DrawDescription& description : draw.draws) {
-            if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
+        for (const DrawCall& description : draw.draws) {
+            if (description.kind != DrawCall::Kind::Screen || description.source == nullptr) {
                 continue;
             }
             const std::shared_ptr<TargetObjects> source_entry = owner.target_table.lookup(description.source);
@@ -1668,12 +1668,12 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 
         owner.device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
         // WHAT THIS PASS DRAWS: the frame head's plans and resolved bindings, in the drawing call's own order. Every
-        // command inside a call becomes one GPU draw (M3: the plan selected the pipeline, one `RenderCommand` = one
+        // command inside a call becomes one GPU draw (M3: the plan selected the pipeline, one `DrawItem` = one
         // indexed draw). The frame's DRAWING-CALL count was taken from the frame's shape above - a call is the
         // description, not its commands.
         const FrameHead::Pass&  pass_head = frame_head.passes()[pass_index];
         for (std::size_t draw_index = 0; draw_index < draw.draws.size(); ++draw_index) {
-            const DrawDescription& description = draw.draws[draw_index];
+            const DrawCall& description = draw.draws[draw_index];
             const FrameHead::Call&  call        = pass_head.draws[draw_index];
             // THE HEAD'S REFUSAL IS REPORTED WHERE THE DRAW IS (see planDraw): the code travels with the sentence
             // instead of being guessed at the sink, and a call whose later commands DID resolve still records them.
@@ -1687,7 +1687,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 }
             }
             ContentRefusal refusal;
-            if (description.kind == DrawDescription::Kind::Screen) {
+            if (description.kind == DrawCall::Kind::Screen) {
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
                 ContentDraw::ScreenSource source{};
@@ -1885,7 +1885,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 
 vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    using vn::graphics::EngineNotReady;
+    using vn::graphics::EngineNotReadyReason;
     using vn::graphics::PrepareReport;
 
     // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
@@ -1922,7 +1922,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
-        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
     // WHICH SURFACE THE FRAME NAMES - the same resolution executeFrame makes, minus everything that would touch it:
@@ -2080,16 +2080,16 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                 }
             }
 
-            for (const DrawDescription& description : draw.draws) {
+            for (const DrawCall& description : draw.draws) {
                 ContentRefusal refusal;
-                if (description.kind == DrawDescription::Kind::Screen) {
+                if (description.kind == DrawCall::Kind::Screen) {
                     FrameHead::DrawPlan plan;
                     (void)owner.caches.planDraw(description, draw, compatibility, render_pass, color_count, plan, refusal, cache_lock);
                 }
                 else if (description.commands != nullptr) {
                     // ONE PLAN PER COMMAND, the same resolution the frame head runs (see ContentCaches::planDraw): a
                     // warm-up may not build something the frame would not ask for, and vice versa.
-                    for (const vn::graphics::RenderCommand& command : *description.commands) {
+                    for (const vn::graphics::DrawItem& command : *description.commands) {
                         FrameHead::DrawPlan plan;
                         (void)owner.caches.planDraw(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock, warmup_builds);
                     }
@@ -3104,7 +3104,7 @@ void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::Shad
     impl->session->setDefaultContentProgram(std::move(program));
 }
 
-vn::graphics::RenderFrameExecutor* Device::createSession()
+vn::graphics::RenderFrameExecutor* Device::createFrameDriver()
 {
     if (impl->device_lost) {
         return nullptr;
@@ -3115,7 +3115,7 @@ vn::graphics::RenderFrameExecutor* Device::createSession()
     // serve).
     const vn::graphics::FrameGate::Exclusive guard = impl->body_gate.enterExclusive();
     if (!guard) {
-        impl->report_host_reentry(u8"createSession()");
+        impl->report_host_reentry(u8"createFrameDriver()");
         return nullptr;
     }
     std::unique_ptr<FrameDriver>      session = std::make_unique<FrameDriver>(*impl);
@@ -3141,7 +3141,7 @@ vn::graphics::RenderFrameExecutor* Device::createSession()
     return impl->extra_sessions.back().get();
 }
 
-void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
+void Device::releaseFrameDriver(vn::graphics::RenderFrameExecutor& session)
 {
     if (&session == impl->session.get()) {
         return; // the device's own driver is not a host's to return (see the header)
@@ -3150,7 +3150,7 @@ void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
     if (!guard) {
         // From a frame body's thread the answer is "nothing was released": destroying a driver a frame is running on
         // would be a use-after-free, and waiting would be the thread waiting for itself.
-        impl->report_host_reentry(u8"releaseSession()");
+        impl->report_host_reentry(u8"releaseFrameDriver()");
         return;
     }
     const auto found = std::find_if(impl->extra_sessions.begin(), impl->extra_sessions.end(), [&session](const std::unique_ptr<FrameDriver>& candidate) {
@@ -3170,7 +3170,7 @@ void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
 vn::graphics::RenderFrameExecutor& Device::executor()
 {
     // THE DEVICE'S OWN DRIVER (see Device::FrameDriver): the frames a host drives through the device are this object's
-    // frames, and step 2 of the ADR is what makes `createSession()` hand out the others.
+    // frames, and step 2 of the ADR is what makes `createFrameDriver()` hand out the others.
     return *impl->session;
 }
 
@@ -3376,7 +3376,7 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
         }
         return true;
     }
-    if (const auto* material = vn::obj_cast<const vn::graphics::MaterialBase>(content)) {
+    if (const auto* material = vn::obj_cast<const vn::graphics::MaterialValues>(content)) {
         // RECOGNIZED, AND NOTHING TO DROP: a material's values are packed into each draw's uniform buffer, and no
         // per-material GPU state is kept. Answering false here would say the object is not content - it is.
         (void)material;

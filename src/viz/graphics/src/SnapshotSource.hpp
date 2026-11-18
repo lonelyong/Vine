@@ -6,7 +6,7 @@
 
 #include <vine/graphics/View.hpp>
 #include <vine/graphics/DrawListSource.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 
 #include "DrawListMemo.hpp"
 #include "SceneSnapshot.hpp"
@@ -29,7 +29,7 @@ namespace detail
  * - THE MEMO IS THE SAME ONE THE SCENE USES. A list is a pure function of (snapshot, view, mask);
  *   two passes that draw the same view must select once. The snapshot's `revision` is the memo's state key.
  * - THREADS. `setSnapshot` runs on the content thread (inside `detail::PublicationStore::publish`);
- *   `collectRenderCommands` and `beginFrame` run on the engine thread. Only the shared pointer is shared, under one
+ *   `collectDrawItems` and `beginFrame` run on the engine thread. Only the shared pointer is shared, under one
  *   mutex; the snapshot is immutable and the memo is engine-thread-only.
  */
 class SnapshotSource final : public vn::graphics::DrawListSource
@@ -75,7 +75,7 @@ class SnapshotSource final : public vn::graphics::DrawListSource
      * @param view The view to collect for: camera value, device-pixel area and layer mask.
      * @return The commands, in draw order; empty when no snapshot was published.
      */
-    [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>> collectRenderCommands(
+    [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::DrawItem>> collectDrawItems(
         const vn::graphics::View& view) const override;
 
   private:

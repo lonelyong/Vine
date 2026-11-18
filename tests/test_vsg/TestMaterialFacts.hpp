@@ -4,7 +4,7 @@
 #include <vector>
 
 #include <vine/graphics/ContentId.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 
@@ -36,7 +36,7 @@ inline vn::graphics::MaterialId materialId(int index)
  * @param material The material (or instance) to name.
  * @return The reference.
  */
-inline vn::graphics::ContentRef materialRef(const vn::graphics::MaterialBase& material)
+inline vn::graphics::ContentRef materialRef(const vn::graphics::MaterialValues& material)
 {
     return vn::graphics::ContentRef{ material.id().handle(), material.revision() };
 }
@@ -57,7 +57,7 @@ inline vn::graphics::ContentRef materialRef(const vn::graphics::MaterialBase& ma
  * @param storage  Caller-owned storage the entry borrows.
  * @return None when the entry was built.
  */
-inline vn::backend_vsg::FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*           material,
+inline vn::backend_vsg::FactMiss buildMaterialFacts(const vn::graphics::MaterialValues*           material,
                                             const vn::graphics::MaterialDescriptionPtr& values,
                                             std::uint64_t                                revision,
                                             vn::backend_vsg::MaterialFacts&                      out,

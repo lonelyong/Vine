@@ -23,7 +23,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   again, and a frame that does not fit records nothing more and grows the ring BEFORE the next frame (growing inside
  *   a frame would destroy a buffer the command buffer being recorded already names). Two drivers with one ring would
  *   interleave slices and each rewrite what the other's submitted frame may still read - so the ring, the pool and the
- *   set cache move with the frame, which is what makes a second `createSession()` "one more driver" rather than "one
+ *   set cache move with the frame, which is what makes a second `createFrameDriver()` "one more driver" rather than "one
  *   more way to corrupt the first".
  * - WHAT IT BORROWS, AND FROM WHOM. The device's entry points, its memory pool and the three descriptor-set layouts
  *   belong to the device (`ContentCaches::create` builds them, because a pipeline's layout is shared by every frame).

@@ -1,4 +1,4 @@
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 
 #include <utility>
 
@@ -8,7 +8,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model, std::uint32_t primitive_index)
+DrawItem::DrawItem(intrusive_ptr<Geometry> g, MaterialValuesPtr m, const Mat4d& model, std::uint32_t primitive_index)
   : geometry(std::move(g))
   , description(geometry != nullptr ? geometry->description() : GeometryDescriptionPtr{})
   , geometry_ref(geometry != nullptr ? contentRefOf(geometry->id(), description != nullptr ? description->revision() : 0U) : ContentRef{})
@@ -17,14 +17,14 @@ RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const
   , model_matrix(model)
 {
     // Opacity is folded by the scene collector from leaf and subtree opacity. A material contributes the MODE
-    // (Blend says "sort me as transparent"), never the magnitude - see RenderCommand::isTransparent().
+    // (Blend says "sort me as transparent"), never the magnitude - see DrawItem::isTransparent().
     //
     // The shape is taken HERE, once, where the content lives: it is what a recording side reads, so a command that
-    // crosses a thread carries no read of the object it came from (see RenderCommand::geometryDescription). A
+    // crosses a thread carries no read of the object it came from (see DrawItem::geometryDescription). A
     // hand-built caller states the rest through setGeometry / setMaterial / setProgram.
 }
 
-MaterialDescriptionPtr RenderCommand::materialDescription() const
+MaterialDescriptionPtr DrawItem::materialDescription() const
 {
     if (material_description != nullptr) {
         return material_description;
@@ -34,7 +34,7 @@ MaterialDescriptionPtr RenderCommand::materialDescription() const
     return material != nullptr ? material->description() : MaterialDescriptionPtr{};
 }
 
-GeometryDescriptionPtr RenderCommand::geometryDescription() const
+GeometryDescriptionPtr DrawItem::geometryDescription() const
 {
     if (description != nullptr) {
         return description;
@@ -43,7 +43,7 @@ GeometryDescriptionPtr RenderCommand::geometryDescription() const
     return geometry != nullptr ? geometry->description() : GeometryDescriptionPtr{};
 }
 
-ShaderProgramDescriptionPtr RenderCommand::programDescription() const
+ShaderProgramDescriptionPtr DrawItem::programDescription() const
 {
     if (program_description != nullptr) {
         return program_description;

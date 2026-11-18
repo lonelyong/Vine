@@ -68,7 +68,7 @@ void main()
     //
     // It is also the per-drawable half of the engine's transparency INPUT, and the material's alpha mode decides
     // how the two are used (see the block below): the engine sorts a drawable by this value plus the mode
-    // (`RenderCommand::isTransparent`), so the picture and the order read the same pair.
+    // (`DrawItem::isTransparent`), so the picture and the order read the same pair.
     float vn_alpha = vn_draw.params.x;
     // The surface: this stage's geometric normal, then the material's five slots on top of its factors - the
     // same function the G-buffer writer calls, so one material has ONE surface on both paths.
@@ -94,7 +94,7 @@ void main()
         else if (vn_alpha_mode == 2u)
         {
             // Blend: the product IS the output alpha. The drawable is in the transparent queue by its mode alone
-            // (RenderCommand::isTransparent), so the order and the blend factor are the same two numbers.
+            // (DrawItem::isTransparent), so the order and the blend factor are the same two numbers.
             vn_alpha = vn_draw.params.x * vn_surface.alpha;
         }
         // Opaque ignores both material alphas and keeps the drawable's own opacity, which is what a host fades a

@@ -969,8 +969,8 @@ src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::hasColo
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::hasDepth
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::height
 src/viz/graphics/sdk/vine/graphics/RenderTarget.hpp	return|RenderTarget::width
-src/viz/graphics/sdk/vine/graphics/Scene.hpp	brief|Scene::collectRenderCommands
-src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::collectRenderCommands/3
+src/viz/graphics/sdk/vine/graphics/Scene.hpp	brief|Scene::collectDrawItems
+src/viz/graphics/sdk/vine/graphics/Scene.hpp	param|Scene::collectDrawItems/3
 src/viz/graphics/sdk/vine/graphics/SceneView.hpp	return|SceneView::camera
 src/viz/graphics/sdk/vine/graphics/SceneView.hpp	return|SceneView::engine
 src/viz/graphics/sdk/vine/graphics/Viewport.hpp	return|Viewport::isValid

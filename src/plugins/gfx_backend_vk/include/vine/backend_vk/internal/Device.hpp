@@ -16,7 +16,7 @@ VN_BACKEND_VK_NS_BEGIN
  * @details
  * - WHAT IT IS. A `RenderBackend` implemented directly on Vulkan through volk: it owns one `VkInstance`, one
  *   `VkPhysicalDevice`, one `VkDevice` and one graphics queue, off-screen targets with their render passes, and (M2)
- *   one content draw per `RenderCommand` - a GLSL program compiled through glslang into a pipeline, the geometry's
+ *   one content draw per `DrawItem` - a GLSL program compiled through glslang into a pipeline, the geometry's
  *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
  *   `vkCmdDrawIndexed`.
  * - WHAT IT DOES, MILESTONE BY MILESTONE. M4 landed the engine's content ABI (material, texture slots, lights, the
@@ -40,7 +40,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   target and six matrices (backlog S6, not triggered). The depth RESOLVE needs Vulkan 1.2; a device without it
  *   refuses a multisampled target whose depth a shader samples, once, instead of drawing a depth nobody can read.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the frame's passes in the order it carries and records the draws of each
- *   `DrawDescription` - an off-screen pass into its target, and a pass naming no target into the acquired image of the
+ *   `DrawCall` - an off-screen pass into its target, and a pass naming no target into the acquired image of the
  *   window the frame presents through. A draw naming no program is reported and left out. The readbacks answer the
  *   targets this device built.
  * - VULKAN LIVENESS. Every handle lives in the implementation object; `shutdown()` returns the device to the state of
@@ -115,7 +115,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override;
 
     /**
-     * @brief Borrows a NEW frame driver (see RenderDevice::createSession).
+     * @brief Borrows a NEW frame driver (see RenderDevice::createFrameDriver).
      *
      * @details
      * - THE OBJECT IS THE DEVICE'S FROM THIS CALL ON, and it is created INERT: `initialize()` is what gives it
@@ -128,10 +128,10 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @return The new driver, or null when the device is lost.
      */
-    [[nodiscard]] vn::graphics::RenderFrameExecutor* createSession() override;
+    [[nodiscard]] vn::graphics::RenderFrameExecutor* createFrameDriver() override;
 
     /**
-     * @brief Returns a driver borrowed through @ref createSession (see RenderDevice::releaseSession).
+     * @brief Returns a driver borrowed through @ref createFrameDriver (see RenderDevice::releaseFrameDriver).
      *
      * @details
      * - Releasing the device's OWN driver is a no-op (the device keeps it for its lifetime).
@@ -139,7 +139,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @param session The driver to return (ignored when this device never handed it out).
      */
-    void releaseSession(vn::graphics::RenderFrameExecutor& session) override;
+    void releaseFrameDriver(vn::graphics::RenderFrameExecutor& session) override;
 
     /**
      * @brief Selects the program content without one of its own is drawn with.
@@ -307,7 +307,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
 
     /**
      * @brief Runs the frame's passes and presents the window's picture when a window is named: each pass clears or
-     *        loads its target, then records the drawing calls of every `DrawDescription` it carries.
+     *        loads its target, then records the drawing calls of every `DrawCall` it carries.
      *
      * @details
      * - WHICH PASSES RUN. One that names an off-screen target is recorded as one render pass (colour attachments
@@ -321,7 +321,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   nothing. The map's depth image is moved to `SHADER_READ_ONLY_OPTIMAL` before the pass begins (a barrier inside
      *   a render pass is not legal), and back before a later pass writes that depth.
      * - Each scene draw is projected with its own camera snapshot and shaded with the resolved program (the pass'
-     *   override, else the command's own, else the default content program). One `RenderCommand` is one indexed draw.
+     *   override, else the command's own, else the default content program). One `DrawItem` is one indexed draw.
      *   A pass whose target has no colour attachment (a shadow map) draws with a depth-only pipeline and its fragment
      *   outputs are discarded.
      * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in

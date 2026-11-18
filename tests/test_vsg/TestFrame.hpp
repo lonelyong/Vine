@@ -8,7 +8,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Light.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -141,13 +141,13 @@ class TestFrame {
      * @param camera   The view the draw is projected and lit with.
      * @return This builder, for chaining.
      */
-    TestFrame& content(const std::vector<vn::graphics::RenderCommand>& commands, const vn::graphics::Camera* camera)
+    TestFrame& content(const std::vector<vn::graphics::DrawItem>& commands, const vn::graphics::Camera* camera)
     {
-        vn::graphics::DrawDescription draw;
-        draw.kind = vn::graphics::DrawDescription::Kind::Scene;
-        // A frame carries the VIEW as a value (see DrawDescription::view); a test that still holds the object names it.
+        vn::graphics::DrawCall draw;
+        draw.kind = vn::graphics::DrawCall::Kind::Scene;
+        // A frame carries the VIEW as a value (see DrawCall::view); a test that still holds the object names it.
         draw.view.camera = camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{};
-        draw.commands = std::make_shared<const std::vector<vn::graphics::RenderCommand>>(commands);
+        draw.commands = std::make_shared<const std::vector<vn::graphics::DrawItem>>(commands);
         description().draws.push_back(std::move(draw));
         return *this;
     }
@@ -161,8 +161,8 @@ class TestFrame {
      */
     TestFrame& screen(vn::graphics::RenderTarget* source, vn::raw_ptr<const vn::graphics::ShaderProgram> program, const vn::graphics::Camera* camera)
     {
-        vn::graphics::DrawDescription draw;
-        draw.kind    = vn::graphics::DrawDescription::Kind::Screen;
+        vn::graphics::DrawCall draw;
+        draw.kind    = vn::graphics::DrawCall::Kind::Screen;
         draw.view.camera = camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{};
         draw.source  = source;
         draw.program = std::move(program);

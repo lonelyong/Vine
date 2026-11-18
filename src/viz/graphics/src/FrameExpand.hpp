@@ -28,7 +28,7 @@ void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source);
  * @brief Turns the VIEWS of @p pass into command lists: the one O(drawables) step of a frame.
  *
  * @details
- * - It reads values only: each scene draw names its source (`DrawDescription::content`) and the VIEW it was
+ * - It reads values only: each scene draw names its source (`DrawCall::content`) and the VIEW it was
  *   described with, and the source answers. A draw that already carries @ref commands, a screen draw, and a draw
  *   with no view are left exactly as they are - "a list I already have" is not collected twice.
  * - This is the step the threaded mode runs on the engine side: the request is O(passes), this is O(drawables), and

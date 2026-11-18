@@ -14,7 +14,7 @@
 
 #include <vine/Color.hpp>
 #include <vine/graphics/RenderBackend.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -58,7 +58,7 @@
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderPass;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -223,7 +223,7 @@ struct TriangleFixture {
     /// The two streams the geometry reads, kept because a stream's residency key IS its buffer.
     vn::intrusive_ptr<vn::Buffer<float>>         positions;
     vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices;
-    std::vector<RenderCommand>                   commands;
+    std::vector<DrawItem>                   commands;
 };
 
 /// @brief Builds the triangle fixture: a view-block vertex stage and a constant red fragment stage.
@@ -264,7 +264,7 @@ TriangleFixture makeTriangle()
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     fixture.material = material;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
@@ -696,11 +696,11 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera_a = cameraLookingAt(0.5);
     const vn::intrusive_ptr<vn::graphics::Camera> camera_b = cameraLookingAt(-0.5);
@@ -1060,7 +1060,7 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
 /**
  * @brief A drawable's instance is content like the asset under it: releasing one drops the instance's residency.
  *
- * WHY IT IS ITS OWN CASE. `RenderCommand::material` is a `MaterialBasePtr` - an asset, or an instance over one - so
+ * WHY IT IS ITS OWN CASE. `DrawItem::material` is a `MaterialValuesPtr` - an asset, or an instance over one - so
  * the entry point has to dispatch at the BASE. A cast to the concrete `Material` misses every instance: the call falls
  * off the end of the dispatch and answers false, and the instance's row (and its arena slot) stays for the session's
  * lifetime. No picture shows that, which is why the assertion is on the tables.
@@ -1082,12 +1082,12 @@ TEST(VsgBackendTest, ReleasingAMaterialInstanceDropsItsResidency)
     target->setSize(32, 32);
 
     const TriangleFixture triangle = makeTriangle();
-    // The per-object material a host would vary (see MaterialInstance): it is a MaterialBase, and NOT a Material.
+    // The per-object material a host would vary (see MaterialInstance): it is a MaterialValues, and NOT a Material.
     const vn::intrusive_ptr<vn::graphics::MaterialInstance> instance(new vn::graphics::MaterialInstance(triangle.material));
     instance->setBaseColor(vn::Colorf(0.8F, 0.2F, 0.1F, 1.0F));
 
     // The frames name the INSTANCE: the asset it inherits from is named by no command, so it gets no row of its own.
-    std::vector<RenderCommand> commands = triangle.commands;
+    std::vector<DrawItem> commands = triangle.commands;
     commands[0].material                = instance;
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
@@ -1117,7 +1117,7 @@ TEST(VsgBackendTest, ReleasingAMaterialInstanceDropsItsResidency)
     ASSERT_NE(store, nullptr);
     ASSERT_EQ(store->materialEntries(), 1U) << "the instance is the only material a frame named";
 
-    EXPECT_TRUE(backend->releaseContent(instance.get())) << "an instance is a MaterialBase, i.e. content";
+    EXPECT_TRUE(backend->releaseContent(instance.get())) << "an instance is a MaterialValues, i.e. content";
     for (int frame = 0; frame < 8; ++frame) {
         drive_empty();
     }
@@ -1265,7 +1265,7 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
     }
 
     const TriangleFixture      triangle                  = makeTriangle();
-    std::vector<RenderCommand> commands                  = triangle.commands;
+    std::vector<DrawItem> commands                  = triangle.commands;
     commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
@@ -1390,7 +1390,7 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
     }
 
     const TriangleFixture      triangle                  = makeTriangle();
-    std::vector<RenderCommand> commands                  = triangle.commands;
+    std::vector<DrawItem> commands                  = triangle.commands;
     commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
@@ -1473,7 +1473,7 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
     }
 
     const TriangleFixture      triangle                  = makeTriangle();
-    std::vector<RenderCommand> commands                  = triangle.commands;
+    std::vector<DrawItem> commands                  = triangle.commands;
     commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
@@ -1775,7 +1775,7 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
     }
 
     const TriangleFixture      triangle                  = makeTriangle();
-    std::vector<RenderCommand> commands                  = triangle.commands;
+    std::vector<DrawItem> commands                  = triangle.commands;
     commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
@@ -1905,7 +1905,7 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
     }
 
     const TriangleFixture      triangle                  = makeTriangle();
-    std::vector<RenderCommand> commands                  = triangle.commands;
+    std::vector<DrawItem> commands                  = triangle.commands;
     commands.front().program                             = program;
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
@@ -2016,9 +2016,9 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
     }
 
     const TriangleFixture      triangle          = makeTriangle();
-    std::vector<RenderCommand> producer_commands = triangle.commands;
+    std::vector<DrawItem> producer_commands = triangle.commands;
     producer_commands.front().program            = producer_program;
-    std::vector<RenderCommand> consumer_commands = triangle.commands;
+    std::vector<DrawItem> consumer_commands = triangle.commands;
     consumer_commands.front().program            = consumer_program;
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
@@ -2430,11 +2430,11 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
     // 下 CPU 每帧与 GPU 帧同量级，纯粹加负载并不会制造出跨帧重叠窗口——本相位的职责见文件头）。
     constexpr int kDrawsPerFrame = 8;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands(kDrawsPerFrame, command);
+    const std::vector<DrawItem> commands(kDrawsPerFrame, command);
 
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
     const vn::graphics::ClearPolicy     clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
@@ -2570,11 +2570,11 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -2786,11 +2786,11 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -2941,7 +2941,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
 
-    std::vector<RenderCommand> commands(1U);
+    std::vector<DrawItem> commands(1U);
     commands[0].geometry = geometry;
     commands[0].material = material;
     commands[0].program  = program_a;
@@ -3261,7 +3261,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.3F, 0.4F, 0.3F, 1.0F));
 
-    std::vector<RenderCommand> commands(1U);
+    std::vector<DrawItem> commands(1U);
     commands[0].geometry = geometry;
     commands[0].material = material;
     commands[0].program  = program;
@@ -3465,7 +3465,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
     };
 
     const auto commands_for = [&](const std::vector<vn::intrusive_ptr<Material>>& materials, std::size_t count) {
-        std::vector<RenderCommand> built(count);
+        std::vector<DrawItem> built(count);
         for (std::size_t index = 0; index < count; ++index) {
             built[index].geometry = geometry;
             built[index].material = materials[index % materials.size()];
@@ -3474,7 +3474,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         return built;
     };
 
-    std::vector<RenderCommand> commands = commands_for(material_set(1U), 1U);
+    std::vector<DrawItem> commands = commands_for(material_set(1U), 1U);
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -3675,7 +3675,7 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
     constexpr float                          kHalf = 0.03F;
     std::vector<vn::intrusive_ptr<Geometry>> geometries;
     std::vector<vn::intrusive_ptr<Material>> materials;
-    std::vector<RenderCommand>               commands;
+    std::vector<DrawItem>               commands;
     std::vector<std::pair<float, float>>     centres;
     geometries.reserve(kCols * kRows);
     materials.reserve(kCols * kRows);
@@ -3703,7 +3703,7 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
             material->setBaseColor(vn::Colorf(red, 0.0F, 1.0F - red, 1.0F));
             materials.push_back(material);
 
-            RenderCommand command;
+            DrawItem command;
             command.geometry = geometries.back();
             command.material = materials.back();
             command.program  = program;
@@ -3930,7 +3930,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
-    std::vector<RenderCommand> commands;
+    std::vector<DrawItem> commands;
 
     const auto drive = [&]() {
         backend->executeFrame(TestFrame()
@@ -3982,7 +3982,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
                 program->addStage(fragment);
             }
 
-            commands             = std::vector<RenderCommand>(1U);
+            commands             = std::vector<DrawItem>(1U);
             commands[0].geometry = geometry;
             commands[0].material = material;
             commands[0].program  = program;
@@ -4151,15 +4151,15 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     const vn::intrusive_ptr<Material> second_material(new Material());
     second_material->setBaseColor(vn::Colorf(0.75F, 0.2F, 0.75F, 1.0F));
 
-    RenderCommand first;
+    DrawItem first;
     first.geometry = geometry;
     first.material = first_material;
     first.program  = program;
-    RenderCommand second;
+    DrawItem second;
     second.geometry = geometry;
     second.material = second_material;
     second.program  = program;
-    const std::vector<RenderCommand> commands{ first, second };
+    const std::vector<DrawItem> commands{ first, second };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -4260,7 +4260,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
-    const std::vector<RenderCommand>              no_commands;
+    const std::vector<DrawItem>              no_commands;
     const auto                                    drive = [&] {
         backend->executeFrame(TestFrame()
                                   .pass(pass.get())
@@ -4355,21 +4355,21 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> opaque_commands{ command };
-    RenderCommand                    translucent_command = command;
+    const std::vector<DrawItem> opaque_commands{ command };
+    DrawItem                    translucent_command = command;
     translucent_command.opacity                          = 0.5F;
-    const std::vector<RenderCommand> translucent_commands{ translucent_command };
+    const std::vector<DrawItem> translucent_commands{ translucent_command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     // A blue clear: the dst factor is what leaves it standing at half strength next to the fragment's red.
     const vn::graphics::ClearPolicy clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
 
-    const auto drive = [&](const std::vector<RenderCommand>& commands) {
+    const auto drive = [&](const std::vector<DrawItem>& commands) {
         backend->executeFrame(TestFrame()
                                   .pass(pass.get())
                                   .order(0)
@@ -4488,11 +4488,11 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.25F, 0.6F, 0.25F, 1.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands(static_cast<std::size_t>(kDraws), command);
+    const std::vector<DrawItem> commands(static_cast<std::size_t>(kDraws), command);
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -5099,7 +5099,7 @@ TEST(VsgBackendTest, AReadbackRefusalCarriesTheCodeOfItsCause)
 /*
  * @brief Two drivers on one device each shade program-less content with THEIR OWN default program (T8, S8b).
  *
- * The device's own driver answers `executor()`; `createSession()` hands out drivers that own their executor state and
+ * The device's own driver answers `executor()`; `createFrameDriver()` hands out drivers that own their executor state and
  * share the device's content and target table. A driver's default program is a DRIVER setting (C8): the two must not
  * overwrite each other, and the picture each driver produces must be its own.
  */
@@ -5124,8 +5124,8 @@ TEST(VsgBackendTest, TwoDriversKeepTheirOwnDefaultProgram)
     ASSERT_TRUE(backend->initialize());
 
     // TWO DRIVERS, TWO EXECUTOR STATES (see VsgDriver): the same device, its own frame state each.
-    auto* first  = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
-    auto* second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    auto* first  = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createFrameDriver());
+    auto* second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createFrameDriver());
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     EXPECT_NE(first, second);
@@ -5203,13 +5203,13 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
         << "the second driver's program-less content was not shaded by ITS green default";
 
     // RELEASING ONE LEAVES THE OTHER WORKING: the device owns what it handed out, and a released driver is gone.
-    backend->releaseSession(*first);
+    backend->releaseFrameDriver(*first);
     second->executeFrame(frame, nullptr);
     const std::array<std::uint8_t, 3> again = centre();
     EXPECT_TRUE(isColourByte(again[1], 1.0) && isColourByte(again[0], 0.0) && isColourByte(again[2], 0.0))
         << "the remaining driver lost its own default after the other was released";
 
-    backend->releaseSession(*second);
+    backend->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -5317,7 +5317,7 @@ TEST(VsgBackendTest, ACompilingFrameDoesNotWaitForAnotherDriversFrame)
 
     // TWO DRIVERS, EACH WITH ITS OWN DEFAULT PROGRAM: the blocked one shades its program-less triangle red, the other
     // green - so the picture each produced is its own after the overlap.
-    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createFrameDriver());
     ASSERT_NE(second, nullptr);
     backend->setDefaultContentProgram(solidColourProgram(u8R"(
 #version 450
@@ -5410,7 +5410,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     // could not resolve, which is reported and skipped), and the off-screen form submits.
     EXPECT_EQ(blocked_outcome.load(), static_cast<int>(vn::graphics::PresentOutcome::Skipped));
 
-    backend->releaseSession(*second);
+    backend->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -5451,7 +5451,7 @@ TEST(VsgBackendTest, ARecordingFrameDoesNotStopAnotherDriversContent)
 
     // TWO DRIVERS, EACH WITH ITS OWN DEFAULT PROGRAM (as in the compilation witness): the held one shades its
     // program-less triangle red, the other green.
-    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createFrameDriver());
     ASSERT_NE(second, nullptr);
     backend->setDefaultContentProgram(solidColourProgram(u8R"(
 #version 450
@@ -5543,7 +5543,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     EXPECT_TRUE(isColourByte(red[0], 1.0) && isColourByte(red[1], 0.0) && isColourByte(red[2], 0.0))
         << "the held frame's picture was not its own red default";
 
-    backend->releaseSession(*second);
+    backend->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -5567,7 +5567,7 @@ TEST(VsgBackendTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
     ASSERT_TRUE(backend->initialize());
 
-    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createFrameDriver());
     ASSERT_NE(second, nullptr);
     backend->setDefaultContentProgram(solidColourProgram(u8R"(
 #version 450
@@ -5633,7 +5633,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     EXPECT_TRUE(isColourByte(green[1], 1.0) && isColourByte(green[0], 0.0) && isColourByte(green[2], 0.0))
         << "the second driver's picture was not shaded by ITS green default";
 
-    backend->releaseSession(*second);
+    backend->releaseFrameDriver(*second);
     backend->shutdown();
 }
 

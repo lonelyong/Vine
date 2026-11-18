@@ -11,7 +11,7 @@
 
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MaterialInstance.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 
 using namespace vn::graphics;
 using vn::intrusive_ptr;
@@ -135,7 +135,7 @@ TEST(MaterialInstanceTest, TheTransparencySortReadsTheResolvedMode)
     const intrusive_ptr<Material> asset    = makeStatedMaterial();
     auto                          instance = vn::make_intrusive<MaterialInstance>(asset);
 
-    RenderCommand command(vn::intrusive_ptr<Geometry>(), MaterialBasePtr(instance), vn::math::Mat4d{});
+    DrawItem command(vn::intrusive_ptr<Geometry>(), MaterialValuesPtr(instance), vn::math::Mat4d{});
     command.opacity = 1.0f;
     EXPECT_FALSE(command.isTransparent()) << "an opaque instance at full opacity is opaque";
 

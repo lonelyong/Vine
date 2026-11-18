@@ -8,7 +8,7 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/Sampler.hpp>
 
 VN_BACKEND_VK_NS_BEGIN

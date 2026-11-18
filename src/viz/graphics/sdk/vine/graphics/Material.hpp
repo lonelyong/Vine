@@ -11,7 +11,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "MaterialBase.hpp"
+#include "MaterialValues.hpp"
 #include "Sampler.hpp"
 #include "Texture.hpp"
 
@@ -31,7 +31,7 @@ VN_GRAPHICS_NS_BEGIN
  * - Textures are a five-slot SET (`TextureSlot`): each slot is a map plus its `Sampler`, the slot's identity
  *   decides its binding and colour space, and a material carrying any slot takes the program's `VN_TEXTURED`
  *   variant (five samplers; an absent slot is short-circuited by the block's flags - graphics-material.md §2.5).
- * - It is a MaterialBase, not the only one: `MaterialInstance` overrides some of these values for one drawable
+ * - It is a MaterialValues, not the only one: `MaterialInstance` overrides some of these values for one drawable
  *   without copying the asset (graphics-material.md 2.2). A host that wants a per-object tint or a swapped normal
  *   map says so with an instance; editing the asset still reaches every instance that does not override that item.
  *
@@ -43,7 +43,7 @@ VN_GRAPHICS_NS_BEGIN
  *   (`Colorf`'s fourth component is a scalar slot here, not an opacity, exactly as the block's `emissive.a`
  *   states).
  */
-class VN_GRAPHICS_API Material : public MaterialBase {
+class VN_GRAPHICS_API Material : public MaterialValues {
     VN_OBJECT_META_DECL;
 
   public:
@@ -94,7 +94,7 @@ class VN_GRAPHICS_API Material : public MaterialBase {
 
     /** @brief Sets how the material's alpha is interpreted.
      *
-     * @param mode New alpha mode (the getter is `MaterialBase::alphaMode()`, which answers with the resolved value).
+     * @param mode New alpha mode (the getter is `MaterialValues::alphaMode()`, which answers with the resolved value).
      */
     void setAlphaMode(AlphaMode mode);
 

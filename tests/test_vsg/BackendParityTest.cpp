@@ -55,7 +55,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackend.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderState.hpp>
@@ -81,7 +81,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -93,7 +93,7 @@ using vn::graphics::PassDraw;
 using vn::graphics::PassRenderState;
 using vn::graphics::PresentOutcome;
 using vn::graphics::RenderBackend;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderState;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -321,9 +321,9 @@ void main()
 }
 
 /// @brief One collected command: @p geometry through @p program, shaded with @p material (or none when null).
-[[nodiscard]] RenderCommand commandOf(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Material>& material)
+[[nodiscard]] DrawItem commandOf(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Material>& material)
 {
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
     if (material != nullptr) {
@@ -334,17 +334,17 @@ void main()
 }
 
 /// @brief The shared, immutable list a frame's drawing call carries.
-[[nodiscard]] std::shared_ptr<const std::vector<RenderCommand>> commandsOf(std::vector<RenderCommand> commands)
+[[nodiscard]] std::shared_ptr<const std::vector<DrawItem>> commandsOf(std::vector<DrawItem> commands)
 {
-    return std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
+    return std::make_shared<const std::vector<DrawItem>>(std::move(commands));
 }
 
 /// @brief The drawing call that renders @p commands through the identity camera, announcing @p lights.
-[[nodiscard]] DrawDescription sceneDraw(std::shared_ptr<const std::vector<RenderCommand>> commands,
+[[nodiscard]] DrawCall sceneDraw(std::shared_ptr<const std::vector<DrawItem>> commands,
                                         vn::graphics::LightSetPtr                         lights = nullptr)
 {
-    DrawDescription draw;
-    draw.kind         = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind         = DrawCall::Kind::Scene;
     draw.view.camera  = identityCamera();
     draw.commands     = std::move(commands);
     draw.light_values = std::move(lights);
@@ -359,7 +359,7 @@ void main()
 [[nodiscard]] FrameDescription onePass(RenderTarget* target,
                                        std::optional<ClearPolicy> clear,
                                        DepthMode depth,
-                                       std::vector<DrawDescription> draws,
+                                       std::vector<DrawCall> draws,
                                        std::vector<vn::graphics::ImageSource> inputs = {})
 {
     FrameDescription frame;
@@ -651,7 +651,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
     std::optional<ClearPolicy> clear = ClearPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.25F, 1.0F);
 
-    DrawDescription idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
+    DrawCall idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
     idle.view.camera     = CameraSnapshot{}; // present == false: the pass has no view, so it issues no call
 
     // ONE PASS IDENTITY PER ENTRY (a backend keys retained per-pass state by it; two passes never share one).
@@ -673,7 +673,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
 
     std::vector<FrameDescription::Pass>                  frame_passes;
     std::vector<intrusive_ptr<vn::graphics::RenderPass>> pass_objects;
-    auto add = [&](std::optional<ClearPolicy> announced, std::vector<DrawDescription> draws) {
+    auto add = [&](std::optional<ClearPolicy> announced, std::vector<DrawCall> draws) {
         pass_objects.push_back(intrusive_ptr<vn::graphics::RenderPass>(new vn::graphics::RenderPass()));
         FrameDescription::Pass entry;
         entry.pass  = pass_objects.back().get();
@@ -756,7 +756,7 @@ TEST_F(BackendParityTest, TheSameHalfOpacityDrawBlendsTheSame)
     const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     const intrusive_ptr<Material>      green    = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
 
-    RenderCommand over = commandOf(geometry, program, green);
+    DrawItem over = commandOf(geometry, program, green);
     over.opacity       = 0.5F;
     over.authored_state.blend =
         BlendState{ true, BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha };
@@ -796,8 +796,8 @@ TEST_F(BackendParityTest, TheSameScreenCopySamplesTheSameColours)
     const FrameDescription scene_frame =
         onePass(source, source_clear, DepthMode::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, scene, red) })) });
 
-    DrawDescription screen;
-    screen.kind                = DrawDescription::Kind::Screen;
+    DrawCall screen;
+    screen.kind                = DrawCall::Kind::Screen;
     screen.view.camera         = identityCamera();
     screen.source              = source;
     screen.program             = copy;
@@ -1081,8 +1081,8 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     // "binding N = attachment N" finds all four G-buffer rows (see ImageSource::producedTarget).
     light_entry.inputs.push_back(vn::graphics::ImageSource::producedTarget(gbuffer));
 
-    DrawDescription screen;
-    screen.kind                = DrawDescription::Kind::Screen;
+    DrawCall screen;
+    screen.kind                = DrawCall::Kind::Screen;
     screen.view.camera         = identityCamera();
     screen.source              = gbuffer;
     screen.program             = light_program;

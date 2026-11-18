@@ -15,7 +15,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Node.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/math/Matrix4x4.hpp>
@@ -49,8 +49,8 @@ struct SceneSnapshot; // The immutable chunked publication (see SceneSnapshot.hp
  */
 struct DrawFacts {
     std::uint32_t      primitive_index{ 0 };                 ///< Which primitive of the geometry this draw is.
-    MaterialBasePtr    material{};                           ///< Resolved: primitive, else geometry, else inherited.
-    /// The same material's values as a value (see MaterialBase::description), taken where the facts were built: what a
+    MaterialValuesPtr    material{};                           ///< Resolved: primitive, else geometry, else inherited.
+    /// The same material's values as a value (see MaterialValues::description), taken where the facts were built: what a
     /// command hands a backend, so recording never reads the live material.
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr   program{};                            ///< Resolved the same way.
@@ -59,7 +59,7 @@ struct DrawFacts {
     ShaderProgramDescriptionPtr program_description{};
     BufferSlice<float> instance_transforms{};                ///< Null for a non-instanced draw.
     std::uint32_t      first_instance{ 0 };
-    std::uint32_t      instance_count{ 0 };                  ///< 0 for a plain draw (see RenderCommand).
+    std::uint32_t      instance_count{ 0 };                  ///< 0 for a plain draw (see DrawItem).
     bool               drawn{ true };
 };
 
@@ -96,7 +96,7 @@ struct Row {
     std::optional<int>           own_draw_order{};
     bool                         owns_state{ false };  ///< A StateNode's contribution below is meaningful.
     RenderState                  own_state{};
-    MaterialBasePtr              own_material{};
+    MaterialValuesPtr              own_material{};
     /// The own material's values, taken with it (content side): the fold copies pointers, so nothing downstream has to
     /// ask the material for its values on a thread that does not own it.
     MaterialDescriptionPtr       own_material_description{};
@@ -134,7 +134,7 @@ struct Row {
     std::int32_t     draw_order{ 0 };
     float            opacity{ 1.0F };
     RenderState      state{};
-    MaterialBasePtr  material{};
+    MaterialValuesPtr  material{};
     /// The resolved material's values (see `material`): from the row that owned the material, by pointer copy - a
     /// material EDIT is a new value at the next publish, never a live re-read in the middle of a frame.
     MaterialDescriptionPtr material_description{};
@@ -353,7 +353,7 @@ std::uint32_t refreshBoxes(SceneBake& bake);
  *   (`Material::setXxx` / `ShaderProgram::replaceStages`) - no node is touched, so no epoch moves, and a list memoised
  *   on that epoch would keep drawing the old values forever.
  * - SO THIS IS THE PUBLISH BOUNDARY FOR VALUES, the value half of `refreshBoxes`: the content side (the only thread
- *   that may read the objects) walks its own rows, takes `MaterialBase::description()` and
+ *   that may read the objects) walks its own rows, takes `MaterialValues::description()` and
  *   `ShaderProgram::description()` - a pointer compare in a steady frame, one new value when a revision moved - and
  *   reports what moved. The caller turns a non-zero answer into a version bump, and every consumer keyed on that
  *   version (the list memo, a mirror) then re-derives.
@@ -463,7 +463,7 @@ struct SortKey {
  * @param tie      The row-and-primitive index that makes the order total.
  * @return The key.
  */
-SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie);
+SortKey makeSortKey(const DrawItem& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie);
 
 /**
  * @brief Collects one view's commands from a row range, through an accessor.
@@ -491,7 +491,7 @@ void selectRows(std::uint32_t               row_count,
                 const Frustum&              frustum,
                 const View&                 view,
                 bool&                       viewport_used,
-                std::vector<RenderCommand>& out,
+                std::vector<DrawItem>& out,
                 std::vector<SortKey>*       keys = nullptr)
 {
     // The rows are in walk order, so the rows currently being resolved form the ancestor chain, deepest last. A row
@@ -553,7 +553,7 @@ void selectRows(std::uint32_t               row_count,
                 if (!draw.drawn) {
                     continue;
                 }
-                const MaterialBasePtr material = draw.material != nullptr ? draw.material : row.material;
+                const MaterialValuesPtr material = draw.material != nullptr ? draw.material : row.material;
                 const MaterialDescriptionPtr material_description =
                     draw.material_description != nullptr ? draw.material_description : row.material_description;
                 const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
@@ -603,7 +603,7 @@ void selectRows(std::uint32_t               row_count,
  * @param commands Commands to reorder (replaced by their sorted order).
  * @param keys     The key of every command, in the commands' current order (see selectRows).
  */
-void sortCollected(std::vector<RenderCommand>& commands, std::span<const SortKey> keys);
+void sortCollected(std::vector<DrawItem>& commands, std::span<const SortKey> keys);
 
 } // namespace detail
 

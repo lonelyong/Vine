@@ -20,7 +20,7 @@ struct Inherited {
     std::uint32_t    layers{ 1U };
     std::int32_t     draw_order{ 0 };
     RenderState      state{};
-    MaterialBasePtr  material{};
+    MaterialValuesPtr  material{};
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr program{};
     ShaderProgramDescriptionPtr program_description{};
@@ -230,7 +230,7 @@ void fillOwnFacts(const Node& node, Row& row)
     if (const auto* state_node = obj_cast<StateNode>(&node)) {
         row.owns_state = true;
         row.own_state  = state_node->renderState();
-        if (raw_ptr<MaterialBase> material = state_node->material()) {
+        if (raw_ptr<MaterialValues> material = state_node->material()) {
             row.own_material = material;
             // The values are taken WITH the identity, here, on the content side: the fold below only copies the value
             // pointer, which is what lets a mirror - threaded or not - resolve a material without reading the live
@@ -246,7 +246,7 @@ void fillOwnFacts(const Node& node, Row& row)
     if (const auto* geometry = obj_cast<Geometry>(&node)) {
         row.geometry    = GeometryPtr(const_cast<Geometry*>(geometry));
         row.description = geometry->description();
-        const raw_ptr<MaterialBase>  geometry_material = geometry->material();
+        const raw_ptr<MaterialValues>  geometry_material = geometry->material();
         const raw_ptr<ShaderProgram> geometry_program  = geometry->program();
         const std::size_t            primitive_count   = geometry->primitiveCount();
         row.draws.reserve(primitive_count);
@@ -258,8 +258,8 @@ void fillOwnFacts(const Node& node, Row& row)
             DrawFacts draw;
             draw.primitive_index = static_cast<std::uint32_t>(ordinal);
             draw.material        = primitive->material != nullptr
-                                       ? MaterialBasePtr(primitive->material)
-                                       : (geometry_material != nullptr ? MaterialBasePtr(geometry_material) : MaterialBasePtr());
+                                       ? MaterialValuesPtr(primitive->material)
+                                       : (geometry_material != nullptr ? MaterialValuesPtr(geometry_material) : MaterialValuesPtr());
             draw.material_description =
                 draw.material != nullptr ? draw.material->description() : MaterialDescriptionPtr();
             draw.program         = primitive->program != nullptr
@@ -555,7 +555,7 @@ std::uint32_t refreshValues(SceneBake& bake)
     return moved;
 }
 
-SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie)
+SortKey makeSortKey(const DrawItem& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie)
 {
     SortKey key;
     key.draw_order  = command.draw_order;
@@ -577,7 +577,7 @@ SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aa
     return key;
 }
 
-void sortCollected(std::vector<RenderCommand>& commands, std::span<const SortKey> keys)
+void sortCollected(std::vector<DrawItem>& commands, std::span<const SortKey> keys)
 {
     if (keys.size() != commands.size()) {
         return; // a list of keys that does not describe these commands cannot order them: answer what was handed in
@@ -590,7 +590,7 @@ void sortCollected(std::vector<RenderCommand>& commands, std::span<const SortKey
     }
     std::sort(order.begin(), order.end(), [&keys](std::uint32_t lhs, std::uint32_t rhs) { return keys[lhs] < keys[rhs]; });
 
-    std::vector<RenderCommand> ordered;
+    std::vector<DrawItem> ordered;
     ordered.reserve(commands.size());
     for (const std::uint32_t index : order) {
         ordered.push_back(std::move(commands[index]));

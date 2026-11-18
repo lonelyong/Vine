@@ -28,7 +28,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/ImageSource.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
@@ -43,7 +43,7 @@ using vn::graphics::BlendState;
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::Diagnostics;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::Sampler;
 using vn::graphics::ShaderProgram;
@@ -113,9 +113,9 @@ struct Rig {
 };
 
 /// @brief One command, because most cases only care that something was drawn.
-std::vector<RenderCommand> oneCommand()
+std::vector<DrawItem> oneCommand()
 {
-    return std::vector<RenderCommand>{ RenderCommand{} };
+    return std::vector<DrawItem>{ DrawItem{} };
 }
 
 } // namespace
@@ -133,7 +133,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     r.addTarget(source.get(), 64, 64, true);
     r.addTarget(destination.get(), 64, 64, true);
 
-    const std::vector<RenderCommand>               commands = oneCommand();
+    const std::vector<DrawItem>               commands = oneCommand();
     vn::intrusive_ptr<vn::graphics::ShaderProgram> screen_program(new vn::graphics::ShaderProgram());
 
     ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
@@ -186,7 +186,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     EXPECT_EQ(content.commands[0].dynamic.depth, consumer.state.depth) << "and a content command still takes the pass' depth policy";
 }
 
-// 计划读的字节由计划自己持有：实例流的片段是宿主的（`RenderCommand::instance_transforms` 借用），而上传表按**那个
+// 计划读的字节由计划自己持有：实例流的片段是宿主的（`DrawItem::instance_transforms` 借用），而上传表按**那个
 // 缓冲区的地址**做键。只借不持的话，宿主在收集之后放掉实例集，地址就可能被同尺寸的新缓冲区拿走，旧条目于是用别人的
 // 变换冒充这一条（见 .ai/bugs/vsg-content-address-recycled-before-rows.md）。
 TEST(FrameCompilerTest, ThePlanHoldsTheInstanceStreamItReads)
@@ -197,10 +197,10 @@ TEST(FrameCompilerTest, ThePlanHoldsTheInstanceStreamItReads)
 
     auto instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.instance_transforms = vn::BufferSlice<float>::whole(instance_storage);
     command.instance_count      = 2U;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
     ASSERT_TRUE(r.recorder.beginPass(1));
@@ -236,7 +236,7 @@ TEST(FrameCompilerTest, APassInputReachesThePlanWithWhatItOffers)
     r.addTarget(destination.get(), 64, 64, true);
 
     std::vector<RenderTarget*>       inputs{ source.get(), nullptr }; // the second one nobody produced this frame
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -291,7 +291,7 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     auto                  instance_storage = vn::make_intrusive<vn::Buffer<float>>(std::vector<float>(32U, 0.0F));
     const vn::math::Mat4d model            = vn::math::translate(vn::math::Vec3d(1.0, 2.0, 3.0));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry                 = geometry;
     command.material                 = material;
     command.program                  = program;
@@ -302,7 +302,7 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     command.instance_transforms      = vn::BufferSlice<float>::whole(instance_storage);
     command.first_instance           = 1U;
     command.instance_count           = 2U;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     ASSERT_TRUE(r.recorder.beginFrame(FrameToken{ 1 }));
     ASSERT_TRUE(r.recorder.beginPass(1));
@@ -318,7 +318,7 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     const CompiledCommand& planned = frame.passes[0].draws[0].commands[0];
 
     // A plan carries the content identity and the revision of the shape it describes, as one ref (see
-    // RenderCommand::node and CompiledCommand::geometry).
+    // DrawItem::node and CompiledCommand::geometry).
     EXPECT_EQ(planned.geometry, vn::graphics::contentRefOf(geometry->id(), 7U))
         << "the identity and the revision the facts row and every stream key are built from";
     EXPECT_EQ(planned.primitive, 0U);
@@ -347,7 +347,7 @@ TEST(FrameCompilerTest, AnImportedTextureInputIsAFirstClassInputWithNoProducerEd
     r.addTarget(destination.get(), 64, 64, true);
     const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
     std::vector<vn::graphics::ImageSource>           inputs{ vn::graphics::ImageSource::imported(texture.get()) };
-    const std::vector<RenderCommand>                 commands = oneCommand();
+    const std::vector<DrawItem>                 commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -391,7 +391,7 @@ TEST(FrameCompilerTest, AnImportedTextureInputCarriesItsDeclaredSampler)
         vn::graphics::ImageSource::imported(texture.get(), point_clamp),
         vn::graphics::ImageSource::imported(texture.get()),
     };
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -419,7 +419,7 @@ TEST(FrameCompilerTest, AnInputTheFactsCannotAnswerIsReportedAndOffersNothing)
     r.addTarget(destination.get(), 64, 64, true);
 
     std::vector<RenderTarget*>       inputs{ stranger.get() };
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -480,7 +480,7 @@ TEST(FrameCompilerTest, ThePlanResolvesAShadowFromWhatTheTargetStates)
     depth_target(map_flat.get(), /*promotion*/ false, /*is_map*/ true, /*with_matrix*/ true);
     depth_target(map_ok.get(), /*promotion*/ true, /*is_map*/ true, /*with_matrix*/ true);
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     const std::vector<RenderTarget*> inputs{ gbuffer.get(), map_flat.get(), map_no_matrix.get(), map_ok.get() };
 
     r.recorder.beginFrame(FrameToken{ 1 });
@@ -523,7 +523,7 @@ TEST(FrameCompilerTest, AViewportNobodyAnnouncedBecomesTheWholeTarget)
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 640, 360, true);
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -552,7 +552,7 @@ TEST(FrameCompilerTest, TheFirstWriterOfAFreshTargetBootstrapsAndTheSecondDoesNo
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, /*built=*/false); // freshly laid out: nothing to load
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     for (const std::uint32_t id : { 1u, 2u }) {
@@ -579,7 +579,7 @@ TEST(FrameCompilerTest, ASteadyTargetNeedsNoBootstrap)
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, /*built=*/true);
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -613,7 +613,7 @@ TEST(FrameCompilerTest, TheTargetTableSaysWhatEachTargetNeeds)
     // Changed shape: compatibility really moved, so the pass graph and the pipelines go with it.
     r.facts[2].wanted.shape.depth_format = RenderTarget::DepthFormat::D32;
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
     for (const auto& target : { steady, resized, reshaped }) {
         r.recorder.beginPass(1);
@@ -636,7 +636,7 @@ TEST(FrameCompilerTest, APassIntoATargetWhoseExtentIsNotUsableIsNotCompiledAndNo
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 0, 0, /*built=*/false); // laid out at 0x0: nothing may be drawn into it yet
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
@@ -655,7 +655,7 @@ TEST(FrameCompilerTest, APassDrawingIntoAnUnknownTargetIsNotCompiledAndIsReporte
 {
     Rig r; // no facts at all: the backend has never heard of this target
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(reinterpret_cast<const void*>(0x1234));
@@ -675,11 +675,11 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
     r.addTarget(target.get(), 64, 64, true);
 
     // A command that authored its own depth state (a StateNode set it) and one that did not.
-    RenderCommand authored;
+    DrawItem authored;
     authored.authored_state.depth = vn::graphics::DepthState{}; // test + write, as a StateNode would state it
-    RenderCommand inherited;                                    // nothing authored: the pass' policy applies
+    DrawItem inherited;                                    // nothing authored: the pass' policy applies
 
-    const std::vector<RenderCommand> commands{ authored, inherited };
+    const std::vector<DrawItem> commands{ authored, inherited };
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -709,12 +709,12 @@ TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)
     // One command authored a non-default compare op (a StateNode set it), one
     // left the default. The resolve copies what the content said and leaves the
     // reverse-Z inversion to the Vulkan boundary.
-    RenderCommand authored;
+    DrawItem authored;
     authored.authored_state.depth          = vn::graphics::DepthState{};
     authored.authored_state.depth->compare = vn::graphics::CompareOp::LessEqual;
-    RenderCommand inherited;
+    DrawItem inherited;
 
-    const std::vector<RenderCommand> commands{ authored, inherited };
+    const std::vector<DrawItem> commands{ authored, inherited };
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -741,13 +741,13 @@ TEST(FrameCompilerTest, AnOpaqueCommandDoesNotBlendAndATranslucentOneDoes)
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
 
-    RenderCommand opaque;
-    RenderCommand translucent;
+    DrawItem opaque;
+    DrawItem translucent;
     translucent.opacity = 0.5F;
-    RenderCommand authored;
+    DrawItem authored;
     authored.authored_state.blend = BlendState{ true, BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha };
 
-    const std::vector<RenderCommand> commands{ opaque, translucent, authored };
+    const std::vector<DrawItem> commands{ opaque, translucent, authored };
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -777,10 +777,10 @@ TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
     const vn::intrusive_ptr<ShaderProgram> own(new ShaderProgram());
     ASSERT_TRUE(r.recorder.setDefaultContentProgram(fallback.get()));
 
-    RenderCommand with_own;
+    DrawItem with_own;
     with_own.program = own;
-    RenderCommand                    without;
-    const std::vector<RenderCommand> commands{ with_own, without };
+    DrawItem                    without;
+    const std::vector<DrawItem> commands{ with_own, without };
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
@@ -806,7 +806,7 @@ TEST(FrameCompilerTest, TheCompilerKeepsTheOrderTheEngineAnnounced)
     r.addTarget(composed.get(), 64, 64, true);
 
     std::vector<RenderTarget*>       inputs{ produced.get() };
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
 
@@ -848,7 +848,7 @@ TEST(FrameCompilerTest, TheCompilerDoesNotReorderOrDropWhatTheEngineHandedOver)
 
     std::vector<RenderTarget*>       reads_right{ right.get() };
     std::vector<RenderTarget*>       reads_left{ left.get() };
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
 
@@ -896,7 +896,7 @@ TEST(FrameCompilerTest, APreservedDepthIsCarriedToThePassThatMustNotClearIt)
     r.facts[0].depth.promotion                = true; // the host wanted a sampleable depth
     r.facts[0].depth.any_pass_preserves_depth = true; // ...but a later pass reads what this one writes
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
@@ -924,7 +924,7 @@ TEST(FrameCompilerTest, ThePlanCarriesWhatAPipelineIdentityNeedsFromThePass)
     r.facts[0].depth.has_depth = true;
     r.facts[0].depth.promotion = true;
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
@@ -959,7 +959,7 @@ TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
     r.facts[0].wanted.shape.render_pass_key      = RenderPassKey{ 7U };
     r.facts[0].current.desc                      = r.facts[0].wanted;
 
-    const std::vector<RenderCommand> commands = oneCommand();
+    const std::vector<DrawItem> commands = oneCommand();
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
@@ -1070,7 +1070,7 @@ TEST(FrameCompilerTest, TheFrameCarriesWhatTheRecorderSnapshottedWithoutReworkin
 
     auto                                    sun = vn::graphics::Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
     std::vector<const vn::graphics::Light*> lights{ sun.get() };
-    const std::vector<RenderCommand>        commands = oneCommand();
+    const std::vector<DrawItem>        commands = oneCommand();
 
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);

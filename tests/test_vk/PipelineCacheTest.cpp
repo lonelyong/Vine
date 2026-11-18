@@ -34,7 +34,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -51,7 +51,7 @@ using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::backend_vk::PipelineCacheFile;
 using vn::backend_vk::PipelineCacheKey;
@@ -197,12 +197,12 @@ void main()
     auto       material = intrusive_ptr<vn::graphics::Material>(new vn::graphics::Material());
     material->setBaseColor(Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
     command.material_description = material->description();
-    const auto commands = std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ std::move(command) });
+    const auto commands = std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ std::move(command) });
 
     FrameDescription frame;
     FrameDescription::Pass entry;
@@ -212,8 +212,8 @@ void main()
     pass.target       = target;
     pass.clear        = vn::graphics::ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    vn::graphics::DrawDescription draw;
-    draw.kind     = vn::graphics::DrawDescription::Kind::Scene;
+    vn::graphics::DrawCall draw;
+    draw.kind     = vn::graphics::DrawCall::Kind::Scene;
     draw.view.camera   = vn::graphics::CameraSnapshot{};
     draw.commands = commands;
     pass.draws.push_back(std::move(draw));

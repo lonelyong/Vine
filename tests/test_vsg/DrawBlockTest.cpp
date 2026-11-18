@@ -15,7 +15,7 @@
 #include <vector>
 
 #include <vine/graphics/DrawAbi.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
@@ -23,7 +23,7 @@
 #include <vine/backend_vsg/internal/FrameRecorder.hpp>
 
 using vn::graphics::Diagnostics;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::backend_vsg::core::CompiledCommand;
 using vn::backend_vsg::core::CompiledFrame;
@@ -60,10 +60,10 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     model(1, 3) = -2.0; // y translation
     model(2, 3) = 1.5;  // z translation
 
-    RenderCommand command;
+    DrawItem command;
     command.model_matrix = model;
     command.opacity      = 0.25F;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);

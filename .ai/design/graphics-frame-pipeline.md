@@ -340,9 +340,9 @@
 | `Node::setVisible(bool)` | hiding is compiled by publication into "no rows" | exists |
 | `ContentRegistry::allocate<Tag>() / release(handle) / alive(handle)` | the only source of ids; a stale handle answers gone | exists (`ContentId.hpp`) |
 | `ContentRef{Handle id, uint64 revision}` | the cross-layer key; `contentRefOf()` is the only construction | exists |
-| `Geometry::description()` / `MaterialBase::description()` | immutable values cached by revision | exists |
+| `Geometry::description()` / `MaterialValues::description()` | immutable values cached by revision | exists |
 | `ShaderProgram::description() → ShaderProgramDescriptionPtr` | program text + id + revision; cached by revision | landed |
-| `Light::value() → LightValue` | the light's value half; `Scene::lightSet()` assembles them into **one immutable set** (`LightSet`) and shares it into `DrawDescription::light_values` when a pass describes itself (one set per frame, not one `vector` per pass) | landed |
+| `Light::value() → LightValue` | the light's value half; `Scene::lightSet()` assembles them into **one immutable set** (`LightSet`) and shares it into `DrawCall::light_values` when a pass describes itself (one set per frame, not one `vector` per pass) | landed |
 
 ### 4.2 The derivation side
 
@@ -355,9 +355,9 @@
 
 | Interface | Contract | Notes |
 |---|---|---|
-| `RenderEngine::prepare()` → `PrepareReport` | builds without submitting; answers the halves/sets/uploads needed (`NotReady` + `EngineNotReady`) | landed (the backend gets the same `FrameDescription` `executeFrame()` gets) |
+| `RenderEngine::prepare()` → `PrepareReport` | builds without submitting; answers the halves/sets/uploads needed (`NotReady` + `EngineNotReadyReason`) | landed (the backend gets the same `FrameDescription` `executeFrame()` gets) |
 | `RenderEngine::applyPlan() → PlanResult` / `plan()` | three states: `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | landed |
-| `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`; `NotReady` + `EngineNotReady` | landed |
+| `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`; `NotReady` + `EngineNotReadyReason` | landed |
 | `RenderEngine::frameResult() → FrameResult` | every fact of the previous frame when it was answered: `query` (snapshot / view) + passes / draws / diagnostics / present | landed (`poses` waits on F10) |
 | `RenderEngine::pass(name)` / `passFor(name, owner)` | reads a registered pass node back by name (`owner` is the scope's contributor) | landed |
 | `Session::frame(FrameRequest) → FrameResult` | submits one frame; `FrameRequest` carries a `View` (one surface per frame) | the target (`executeFrame` + `presentWindow` today) |
@@ -620,7 +620,7 @@ A step that breaks its own `K` ⇒ that step is rolled back and the conclusion i
 
 - **Landed**: F1 (snapshot publication), F2 (pure derivation), F3 (identity), F4 (the engine table by ref), F5 (row-level epoch reclamation),
   F6 (a plan is a value), F7 (the preparation entry point: the answer + the pre-build), F9 (publication's three-state answer + the snapshot handle), F11 (the total-order sort key).
-  `SnapshotSource` answers every draw of Published mode, and `Scene::collectRenderCommands` is Direct mode's direct path;
+  `SnapshotSource` answers every draw of Published mode, and `Scene::collectDrawItems` is Direct mode's direct path;
   the plan lives in `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp` (`applyPlan`); preparation lives in `DrawNeeds.*` and
   `RenderEngine::prepare()` → `RenderFrameExecutor::prepareFrame` → `VsgBackend::prepareFrame`.
 - **The plan's value shapes**: `PassDesc::target` is a `Target` value (`Window | Explicit | Transient`, §2.8) and `PassDesc::output`

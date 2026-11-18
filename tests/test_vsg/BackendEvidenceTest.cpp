@@ -32,7 +32,7 @@
 
 #include <vine/graphics/RenderDiagnostic.hpp>
 
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/backend_vsg/internal/ContentPass.hpp>
@@ -49,7 +49,7 @@
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::Diagnostics;
 using vn::graphics::DiagnosticSeverity;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::ReportOnce;
@@ -546,7 +546,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     vn::backend_vsg::core::TargetFacts second_facts = first_facts;
     second_facts.target                             = second.get();
 
-    const std::vector<RenderCommand>                      one_draw{ RenderCommand{} };
+    const std::vector<DrawItem>                      one_draw{ DrawItem{} };
     const std::vector<vn::backend_vsg::core::TargetFacts> one_target{ first_facts };
 
     // One frame, recorded the way the API layer records it: one pass, two content draws into the same target.

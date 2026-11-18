@@ -20,15 +20,15 @@ namespace
 
 } // namespace
 
-DrawListDiff diffDrawLists(const std::vector<vn::graphics::RenderCommand>& actual,
-                           const std::vector<vn::graphics::RenderCommand>& expected)
+DrawListDiff diffDrawLists(const std::vector<vn::graphics::DrawItem>& actual,
+                           const std::vector<vn::graphics::DrawItem>& expected)
 {
     if (actual.size() != expected.size()) {
         return mismatch(std::min(actual.size(), expected.size()), "count");
     }
     for (std::size_t index = 0; index < actual.size(); ++index) {
-        const vn::graphics::RenderCommand& lhs = actual[index];
-        const vn::graphics::RenderCommand& rhs = expected[index];
+        const vn::graphics::DrawItem& lhs = actual[index];
+        const vn::graphics::DrawItem& rhs = expected[index];
 
         if (lhs.node != rhs.node) {
             return mismatch(index, "node");

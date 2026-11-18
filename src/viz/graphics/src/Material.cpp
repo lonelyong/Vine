@@ -2,7 +2,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(Material, MaterialBase);
+VN_OBJECT_META_IMPL(Material, MaterialValues);
 
 MaterialDescription::MaterialDescription(std::uint64_t revision, MaterialParameters values)
     : revision_(revision)
@@ -36,7 +36,7 @@ bool MaterialDescription::isTransparent(float opacity) const noexcept
     return alphaModeSortsTransparent(values_.alpha_mode, opacity);
 }
 
-MaterialDescriptionPtr MaterialBase::description() const
+MaterialDescriptionPtr MaterialValues::description() const
 {
     const std::uint64_t revision = this->revision();
     if (described_ && described_revision_ == revision && description_ != nullptr) {
@@ -51,7 +51,7 @@ MaterialDescriptionPtr MaterialBase::description() const
     return description_;
 }
 
-MaterialDescriptionPtr MaterialBase::cachedDescription() const noexcept
+MaterialDescriptionPtr MaterialValues::cachedDescription() const noexcept
 {
     if (!described_ || described_revision_ != revision()) {
         return nullptr;

@@ -66,7 +66,7 @@
 #include <vine/graphics/Geometry.hpp>
 
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
@@ -96,7 +96,7 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
@@ -471,11 +471,11 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     ClearValues clear;
     clear.color          = true;

@@ -58,19 +58,19 @@ engine.setDevice(backend);
 | `AutoTransform` | `Group` + **面向屏幕/相机**的 billboard（OSG 同名） | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 保持恒定像素大小 |
 | `StateNode` | 给子树施加渲染状态，并可覆盖 material / program | 越深的节点优先；**拓扑不在状态里**（它随 `Primitive` 走） |
 | `Geometry` | 叶子：**借用**的属性缓冲 + 图元列表（每条图元是一次 draw） | `setPositions/setNormals/setTexcoords2`、`addBuffer` 加自定义通道、`addPrimitive` / `setPrimitive`、`setRevision()`；索引片段、实例流都写在 **Primitive** 上；`setMaterial()` / `setProgram()` 是这份资产的**几何级默认**，图元自己的值优先 |
-| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectRenderCommands(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
+| `Scene` | 根 + 灯光 + 每帧命令收集 | `setRoot()`、`addLight()`、`collectDrawItems(camera)`（**共享不可变表**：一次遍历，多个 pass 共用；要改写就自己 `*list` 复制一份） |
 
 ### 2.2 属性沿树折叠的规则
 
 一次烘焙（`DrawListBake` 的 `buildRows`：发布时把场景图压平成行）把属性沿路径折叠，帧里每个视图再跑一次
-`selectSnapshot` 取自己的 `RenderCommand` 列表；`Scene::collectRenderCommands` 是不经发布、直接问内容的查询。
+`selectSnapshot` 取自己的 `DrawItem` 列表；`Scene::collectDrawItems` 是不经发布、直接问内容的查询。
 规则**故意各不相同**：
 
 | 属性 | 规则 |
 | --- | --- |
-| 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::model_matrix` |
-| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。它是透明度的**幅度**：材质的 alpha 模式决定它怎么用（Opaque 只用它、Mask 把它当阈值、Blend 乘上材质与贴图的 alpha 当输出 alpha），排序与混合开关读**同一个**分类（`RenderCommand::isTransparent`） |
-| 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `RenderCommand::authored_state`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
+| 变换 | **相乘**；折好的结果烘焙进 `DrawItem::model_matrix` |
+| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。它是透明度的**幅度**：材质的 alpha 模式决定它怎么用（Opaque 只用它、Mask 把它当阈值、Blend 乘上材质与贴图的 alpha 当输出 alpha），排序与混合开关读**同一个**分类（`DrawItem::isTransparent`） |
+| 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `DrawItem::authored_state`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | 拓扑 | **不是状态**：每条 `Primitive` 自己说（数据事实，见 §3.21）；`RenderPass` 的 `topology` 可以把整片当点/线看，覆盖值由 `resolveRenderState` 报 `Pass` |
 | material / program | **图元**自己的优先 → `Geometry` 的几何级默认 → 最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
@@ -109,8 +109,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `MaterialInstance` —— 一份材质上的**稀疏覆盖**（“这只盒子是红的、粗糙度 0.9”）：`MaterialInstance(asset)` 然后
   `setBaseColor(...)` / `setRoughness(...)` / `setTexture(slot, ...)`，只有说过的那几项不跟随资产；`clearOverride(item)`
   回到继承，`overrideMask()` 回答“我覆盖了哪几项”。它的 `revision()` 是父与自身的**合成**：改资产自动让所有
-  未覆盖该项的实例重写一次，不需要遍历实例。渲染里它和资产同型（都是 `MaterialBase`），所以
-  `setMaterial()` 接受两种，`RenderCommand` / `Geometry` / `Primitive` / `StateNode` 存的都是 `MaterialBasePtr`。
+  未覆盖该项的实例重写一次，不需要遍历实例。渲染里它和资产同型（都是 `MaterialValues`），所以
+  `setMaterial()` 接受两种，`DrawItem` / `Geometry` / `Primitive` / `StateNode` 存的都是 `MaterialValuesPtr`。
 - **alpha 模式**（`Material::setAlphaMode`）：有效 alpha = `opacity × 材质 baseColor.a × base 贴图 alpha`。
   `Opaque` 忽略后两个（默认，也是旧的“材质不贡献 alpha”规则）；`Mask` 拿它当阈值，低于 `alphaCutoff` 的片元
   `discard`，活下来的**当作不透明**、仍留在不透明队列（剪切叶子必须自遮挡）；`Blend` 拿它当输出 alpha 并进透明
@@ -128,7 +128,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 ### 2.4 渲染对象
 
 - `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`applyPlan(plan)` / `plan()`、
-  `frame()`（返回 `FrameOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReady`）、
+  `frame()`（返回 `FrameOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReadyReason`）、
   `createArea()`（尺寸走 `RenderArea::resize()`）、`publish/resolve`（命名输出）、
   `frameTable()` / `frameDescription()` / `frameReport()` / `frameResult()` / `diagnostics()` / `releaseContent()`。
   - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
@@ -195,7 +195,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    并**顺手产出这一帧的值**（`FrameDescription`：每条启用的 pass 的身份 / order / 解析后的输入 + 它自己描述出来的
    绘制），`RenderEngine::frameDescription()` 可以读它。**帧跑的是这个值**，不是"逐条 pass 再问一遍"。
    编译**只描述每条 pass**（HUD 自更新那类"先写内容"的活是对象自己的 `FrameUpdate::update()`，由链/宿主在帧之前跑完）——
-   于是**内容收集**发生在编译里，`Scene::collectRenderCommands(camera)` 对 **(scene, camera, mask)** 只走一次树，
+   于是**内容收集**发生在编译里，`Scene::collectDrawItems(camera)` 对 **(scene, camera, mask)** 只走一次树，
    结果被记忆下来并**跨帧复用**——只有图里真的改了东西才会重走（每个节点改动都通过
    `Node::announceContentChange()` 公告，规则见 §2.2；公告沿父链走到根，所以只作废**这个场景**的记忆体，
    别的场景照常命中；直接写缓冲这类 Scene 看不见的改动要宿主自己调 `Scene::invalidateContent()`）。
@@ -210,7 +210,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 3. 然后把这个值**整帧交给后端**（`RenderFrameExecutor::executeFrame(frame, present_to)`，`present_to` = 本区那把目标）：后端拿到的就是全部 —— 每条 pass 的身份、
    order、解析好的输入，以及它发出的 target / viewport / 清屏 / 状态与每一条绘制调用。**没有 per-call 的平坦入口、
    也没有"没开 scope 时设置是惰性"这套顺序规则**：值的形状就是帧的形状，宣告不出岔子。
-   后端把每个 `RenderCommand` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
+   后端把每个 `DrawItem` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
    `MatrixTransform` → `StateGroup` → bind/draw 命令链，只在其输入（`geometry->revision()`、
    material、texture、resolved state、program）变化时重建。
 4. 顶点数据是**别名，不是拷贝**：真的 `vsg::vec3Array` 等直接读 geometry 自己的 buffer，于是模型与
@@ -223,7 +223,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 - Vine 对象全部引用计数（`intrusive_ptr`）：节点由父节点持有，target 由渲染它的 pass 持有，buffer 由
   geometry 持有。
-- `RenderCommand` 是**每帧的值**：它借用 geometry、material、program、camera。后端想留什么，就自己
+- `DrawItem` 是**每帧的值**：它借用 geometry、material、program、camera。后端想留什么，就自己
   取一份引用（见 `RenderBackend.hpp` 的 "WHAT MAY BE RETAINED"）。
 - geometry **借用**别人交给它的顶点字节（mesh 把自己的 buffer 交过来），所以：**先建模型、再接线**，
   之后每次改数据都要用 `Geometry::setRevision()` 公告。revision 是渲染侧唯一的重建闸门 ——
@@ -1048,7 +1048,7 @@ options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOpt
 - **为什么要两层**：一行内容要被两条 pass 用不同方式画（阴影只画 caster、主 pass 画全部），
   掩码就是**这条 pass 的内容选择**；只想要一幅画的投影，用 `setVisible` 就够。
 - **掩码进收集的记忆化键**：同一相机、两条不同掩码的 pass 各自走一次树（同掩码才复用）——
-  自己驱动收集时（`Scene::collectRenderCommands(camera, mask)`）注意这一点：掩码是参数，也是键。
+  自己驱动收集时（`Scene::collectDrawItems(camera, mask)`）注意这一点：掩码是参数，也是键。
   记忆体跨帧存活，只有图发生变化时才作废（见 §2.2 / `Node::announceContentChange`）。
 - **写 0 会空画**：掩码 0（或整棵树的层集合与掩码不相交）⇒ 这条 pass 一条命令都不发出。那是合法声明，
   但内容 pass 的掩码 0 会被引擎**报一次**（帧计划问题，`ContentSkipped`），因为那几乎总是笔误。
@@ -1075,7 +1075,7 @@ outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clea
 - **与 pass 的顺序无关**：谁先谁后是配方的事（`PassDesc::order` / `PassStage`），这个值不会把内容搬到别的 pass 里。
 - **要不要关深度看目的**：想"永远压在上面"就给那条 pass `DepthMode::Disabled`（或给几何一点偏移）；想"被挡住就不该看见"
   就让它照常测深度。**共面**的两件东西若开着深度，后画的那件会被深度拒绝（同深度 `LESS` 不成立）—— 那时量到的是深度，不是画序。
-- 自己驱动收集 / 后处理命令表时，`RenderCommand::draw_order` 就是这个命令的档。
+- 自己驱动收集 / 后处理命令表时，`DrawItem::draw_order` 就是这个命令的档。
 - 默认 0 ⇒ 不声明就与老画面逐位相同；判据是 `test_graphics` 的 `DrawOrderTest` 四条（外键 / 越过透明批次 / 继承 / 叶子声明）
   加真设备像素用例 `SdkPixelTest.ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop`。
 
@@ -1355,7 +1355,7 @@ root->addChild(label);
   不同矩形也仍是一次收集。
 - **viewport 从哪来**：`RenderPass` 自动填——子视口优先，其次 target 尺寸，最后是窗口 pass 的 surface
   设备像素尺寸（`PassChain::resize` 按 pixel ratio 写 `setDrawSize`，引擎每帧兜底）。直接调
-  `Scene::collectRenderCommands` 的宿主传 `const Viewport*`；不传就保持作者 `scale()`。
+  `Scene::collectDrawItems` 的宿主传 `const Viewport*`；不传就保持作者 `scale()`。
 - **恒定像素大小的口径**：照 OSG，局部半径 `0.48` 覆盖 1 像素；透视/正交都按
   `projection * view` 的 `clip.w` 与 `viewport` 求像素密度，结果 clamp 到
   `[minimumScale, maximumScale]`。计算出的 scale **不写回** `scale()`（同节点可能被两个 viewport 画）。
@@ -1560,8 +1560,8 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | 作者树 | `Scene` | `Scene`（实体部分） | `RPI::Scene` 的实体部分 | `UWorld` |
 | 相机 + 画面区域 | `View`（一帧内的值）/ `SceneView`（窗口控制器，见 §5.6） | `View` | `RPI::View` | `FSceneView` |
 | 一条 pass 的声明 | `PassDesc`（注册后的对象是 `RenderPass`） | 没有（`Renderer` 自己决定 pass） | `RPI::Pass` | RDG 的 pass |
-| 一个可画项 | `RenderCommand` | `Renderable` / `RenderableManager` | `RPI::DrawItem` | `FMeshBatch` |
-| 一次绘制调用 | `DrawDescription` | 没有同名的值 | `RPI::DrawPacket` | `FMeshDrawCommand` |
+| 一个可画项 | `DrawItem` | `Renderable` / `RenderableManager` | `RPI::DrawItem` | `FMeshBatch` |
+| 一次绘制调用 | `DrawCall` | 没有同名的值 | `RPI::DrawPacket` | `FMeshDrawCommand` |
 | 编译后的整帧 | `FrameDescription`（喂后端）/ `FrameTable`（给人看，见 §5.3） | 没有 | pass 树 + `RPI::FrameGraph` | `FRDGBuilder` 建出来的图 |
 | 帧结束的答案 | `FrameResult` | 没有一一对应 | 没有一一对应 | 没有一一对应 |
 
@@ -1575,15 +1575,17 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | `RenderEngine` | 一扇窗口的帧循环 + 编译 | Filament / UE 的 `Engine`（那是设备所有者——在这里叫 `RenderDevice`） |
 | `RenderPass` | 引擎层的一个渲染**阶段**（OSG render stage / VSG view + target + clear policy 那一类；`RenderPass.hpp` 的类注就写了这句） | 不是 `VkRenderPass`；同一个 framebuffer 上的几条 pass 录进后端的**一个** render pass |
 | `RenderPassKey` / `RenderPassCompatibility` | 才是"Vulkan 形状"的那两个词：兼容性 = 管道 key 的 render-pass 那一半 | 不是引擎的 pass |
-| `RenderCommand` | 场景里**一个可画的项**（一个 drawable） | 不是 command buffer，也不是"一次绘制调用" |
-| `DrawDescription` | **一次绘制调用** | 不是一条 GPU 命令；真正把命令记下去的是后端的录制 |
+| `DrawItem` | 场景里**一个可画的项**（一个 drawable） | 不是 command buffer，也不是"一次绘制调用" |
+| `DrawCall` | **一次绘制调用** | 不是一条 GPU 命令；真正把命令记下去的是后端的录制 |
 | command buffer | 后端内部的录制对象 | 前端（SDK）没有这个名字 |
 | `target` | 画到哪：`RenderTarget` = 宿主的画布，`Target` = pass 的声明，`TargetDecision` = 该做什么（见 §5.4） | 不是 `GPUTexture`，也不是 `VkFramebuffer`（那两个在 `TargetObjects` 里） |
 | `residency` | GPU 对象存不存在（`Use` / `Build` / `Copy` 三态） | 不是内存压力或驱逐策略 |
 | `content` | 引擎持有的场景 / 材质 / 几何 / 程序 / 光源 | 不是 GPU 上的字节 |
 
-`RenderCommand` 与 `DrawDescription` 这对名字**正好与业界相反**（业界按"项 / 调用"的顺序命名 DrawItem / DrawPacket）：
-这是已知的读者成本，改名属于一次公开 API 批次，不在这一章里动。
+`DrawItem` 与 `DrawCall` 这两个名字是 2026-11-18 改的（B12）：它们以前叫 `RenderCommand` / `DrawDescription`，
+与业界"项 → 调用"的顺序正好相反——`RenderCommand` 说不出它是"一个项"，`DrawDescription` 也说不出它是"一次调用"。
+现在两项与 O3DE 的 `DrawItem` / `DrawPacket`、UE 的 `FMeshBatch` / `FMeshDrawCommand` 同一顺序，迁移说明在
+[`graphics-rendering.md`](../../.ai/design/graphics-rendering.md) §2.10。
 
 ### 5.3 五个帧值：一句问题，一个答案
 
@@ -1597,7 +1599,7 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 
 `FrameQuery` 不是第六个答案：它是 `FrameResult::query` 的类型，因为"哪份快照 + 哪个视图"永远一起被问，
 分开放就会有一半过期。`FrameOutcome` 的 `NotReady` 也不是第三种结局——它是"这次调用什么都没驱动"，
-理由在 `EngineNotReady`（和 `prepare()` 共用同一个原因枚举）。
+理由在 `EngineNotReadyReason`（和 `prepare()` 共用同一个原因枚举）。
 
 ### 5.4 目标：六个角色，另加后端内部三个
 

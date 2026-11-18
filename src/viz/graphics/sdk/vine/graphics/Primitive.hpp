@@ -64,7 +64,7 @@ struct VN_GRAPHICS_API Primitive {
     IndexSpan indices{};
 
     /// Shading, or nullptr to use the geometry's default material (then the nearest StateNode's).
-    MaterialBasePtr material{};
+    MaterialValuesPtr material{};
     /// Program, or nullptr to use the geometry's default (then StateNode, then the pass).
     intrusive_ptr<ShaderProgram> program{};
 

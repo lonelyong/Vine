@@ -9,7 +9,7 @@
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**
- * @brief ONE frame driver handed out by `VsgBackend::createSession()`: its own executor state over the device's pool.
+ * @brief ONE frame driver handed out by `VsgBackend::createFrameDriver()`: its own executor state over the device's pool.
  *
  * @details
  * - WHAT IT OWNS: one `VsgExecutor` - the frame state that is one frame's (the window it drives, the passes it
@@ -17,11 +17,11 @@
  *   what makes two engines on one device possible at all: each calls THIS object, and a frame cannot see the other's
  *   frame state (`.ai/design/graphics-sessions.md` S8b).
  * - WHAT IT BORROWS: the device (`VsgBackend`), whose content world, target registry, clock and park queue are the
- *   pool every driver draws from. The device owns the driver (see `RenderDevice::createSession`) and destroys it in
- *   `releaseSession()` or `shutdown()`.
+ *   pool every driver draws from. The device owns the driver (see `RenderDevice::createFrameDriver`) and destroys it in
+ *   `releaseFrameDriver()` or `shutdown()`.
  * - It adds no policy: every verb forwards to the device's frame body with this driver's executor, so the picture and
  *   the reports are the ones the device produces for any driver. The device's OWN driver is the aggregate itself
- *   (`&executor()`), which is why this type is only made by `createSession()`.
+ *   (`&executor()`), which is why this type is only made by `createFrameDriver()`.
  *
  * @warning One frame at a time per driver (the device's frame gate serialises frame bodies today): a second call from
  *          the same thread is refused, from another thread it waits - the same rule the aggregate states.

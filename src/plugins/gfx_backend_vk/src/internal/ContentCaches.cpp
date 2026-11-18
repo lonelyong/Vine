@@ -1078,7 +1078,7 @@ struct ContentCaches::Impl {
      * @param builds            This frame's admissions (see FrameBuilds).
      * @return true when the command can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::RenderCommand&                     command,
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawItem&                     command,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::ShaderProgramDescription*          default_program,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
@@ -1203,7 +1203,7 @@ struct ContentCaches::Impl {
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawDescription&                  draw,
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawCall&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,
@@ -1211,7 +1211,7 @@ struct ContentCaches::Impl {
                                 FrameHead::DrawPlan&                                   plan,
                                 ContentRefusal&                                        refusal)
     {
-        plan      = FrameHead::DrawPlan{}; // see planDraw(RenderCommand): an empty plan is "this draw records nothing"
+        plan      = FrameHead::DrawPlan{}; // see planDraw(DrawItem): an empty plan is "this draw records nothing"
         plan.kind = FrameHead::Kind::Screen;
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
@@ -1724,7 +1724,7 @@ VkPipelineLayout ContentCaches::screenPipelineLayout() const noexcept
     return impl->screen_pipeline_layout;
 }
 
-bool ContentCaches::planDraw(const vn::graphics::RenderCommand&                     command,
+bool ContentCaches::planDraw(const vn::graphics::DrawItem&                     command,
                              const vn::graphics::PassDraw&                          pass,
                              const vn::graphics::ShaderProgramDescription*          default_program,
                              const vn::graphics::RenderPassCompatibility&  compatibility,
@@ -1739,7 +1739,7 @@ bool ContentCaches::planDraw(const vn::graphics::RenderCommand&                 
     return impl->planDraw(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal, builds);
 }
 
-bool ContentCaches::planDraw(const vn::graphics::DrawDescription&                  draw,
+bool ContentCaches::planDraw(const vn::graphics::DrawCall&                  draw,
                              const vn::graphics::PassDraw&                          pass,
                              const vn::graphics::RenderPassCompatibility&  compatibility,
                              const VkRenderPass                                     render_pass,
@@ -2033,7 +2033,7 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     return dropped;
 }
 
-void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawDescription> draws, const Lock& held)
+void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawCall> draws, const Lock& held)
 {
     (void)held; // see Lock: the caller's hold is the precondition
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
@@ -2043,11 +2043,11 @@ void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<
     if (!impl->images.ensureFallback(commands, 0, &why)) {
         return; // reported when a draw finds no fallback view
     }
-    for (const vn::graphics::DrawDescription& draw : draws) {
-        if (draw.kind != vn::graphics::DrawDescription::Kind::Scene || draw.commands == nullptr) {
+    for (const vn::graphics::DrawCall& draw : draws) {
+        if (draw.kind != vn::graphics::DrawCall::Kind::Scene || draw.commands == nullptr) {
             continue;
         }
-        for (const vn::graphics::RenderCommand& command : *draw.commands) {
+        for (const vn::graphics::DrawItem& command : *draw.commands) {
             vn::graphics::MaterialDescriptionPtr description = command.material_description;
             if (description == nullptr && command.material != nullptr) {
                 description = command.material->description();

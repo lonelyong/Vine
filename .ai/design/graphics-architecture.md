@@ -45,8 +45,8 @@ It satisfies `G1` / `G4`; for `G1` it gives up "one instance, several contents".
 
 2.7 **A change that can fail is visible from the return value**: `applyPlan` returns the three-state `PlanResult` (`Applied` / `Invalid` + problems /
 `Refused` + `PlanRefusal::Busy`), `bindPassContent` / `PassRegistry::bindContent` return whether a registered pass was hit,
-`frame()`'s `FrameOutcome` answers only Ran / Submitted (`NotReady` + `EngineNotReady` is a precondition, not a frame ending),
-`prepare()` reuses the same `EngineNotReady`.
+`frame()`'s `FrameOutcome` answers only Ran / Submitted (`NotReady` + `EngineNotReadyReason` is a precondition, not a frame ending),
+`prepare()` reuses the same `EngineNotReadyReason`.
 Why: a silent no-op lets the host take "did not take effect" for "took effect"; the return value is the only answer the call site can judge by. Boundary: `removePass` stays idempotent and returns nothing —
 removing an unregistered pass and removing an already removed pass are the same result. It satisfies `G4` / `G6`; the price is one ignorable return value per call site.
 
@@ -96,7 +96,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 
 | Extension point | Where it touches today (actual files) | Places |
 |---|---|---|
-| A **pass kind** (e.g. compute) | `PassDesc.hpp`'s `PassKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `ScreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend recording by `DrawDescription::Kind` | 6–8 |
+| A **pass kind** (e.g. compute) | `PassDesc.hpp`'s `PassKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `ScreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend recording by `DrawCall::Kind` | 6–8 |
 | A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.cpp`'s `colorFormatOf` / `depthFormatOf`; vk `ContentImages.cpp`'s `formatOf`; vsg `VsgSceneRules.cpp`'s format mapping | 4 |
 | A **pass declaration field** | `PassDesc.hpp`; `Plan.cpp` (diff and validation); `FrameDescription.hpp`'s `PassDraw`; each backend's recorder | 4+ |
 | A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; vsg's binding | 4 |
@@ -119,7 +119,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Role | vk | vsg |
 |---|---|---|
 | Facade (= `RenderBackend`) | `Device` | `VsgBackend` |
-| Frame driver (one frame's machinery and scratch) | `Device::FrameDriver` (lent by `createSession`) | `VsgDriver` (lent by `createSession`) |
+| Frame driver (one frame's machinery and scratch) | `Device::FrameDriver` (lent by `createFrameDriver`) | `VsgDriver` (lent by `createFrameDriver`) |
 | The value plan resolved at frame head | `FrameHead` | `FrameHead` |
 | The device's target table / target objects | `TargetTable` / `TargetObjects` | `TargetTable` / `TargetObjects` |
 | Window target | `WindowTarget` | `WindowTarget` |
@@ -196,7 +196,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Interface | Purpose |
 |---|---|
 | `initialize()` / `shutdown()` | Lifetime |
-| `frame()` | Compile and execute one frame; returns `FrameOutcome` (Ran / Submitted; `NotReady` + `EngineNotReady`) |
+| `frame()` | Compile and execute one frame; returns `FrameOutcome` (Ran / Submitted; `NotReady` + `EngineNotReadyReason`) |
 | `passes()` / `outputs()` / `diagnostics()` | The three facades |
 | `device()` / `setDevice()` | Borrow/install a device |
 | `createArea()` | Create the one area |

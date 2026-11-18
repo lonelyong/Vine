@@ -22,7 +22,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
 
 #include "DrawListBake.hpp"
@@ -35,7 +35,7 @@ using vn::graphics::Geometry;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::Scene;
 using vn::graphics::detail::buildRows;
 using vn::graphics::detail::refreshBoxes;
@@ -77,13 +77,13 @@ intrusive_ptr<MatrixTransform> placed(double x, double y, double z)
 }
 
 /// @brief Asserts @p actual is @p expected draw for draw, field for field.
-void expectSameDrawList(const std::vector<RenderCommand>& actual, const std::shared_ptr<const std::vector<RenderCommand>>& expected)
+void expectSameDrawList(const std::vector<DrawItem>& actual, const std::shared_ptr<const std::vector<DrawItem>>& expected)
 {
     ASSERT_TRUE(expected != nullptr);
     ASSERT_EQ(actual.size(), expected->size()) << "the two sides drew a different number of commands";
     for (std::size_t index = 0; index < actual.size(); ++index) {
-        const RenderCommand& lhs = actual[index];
-        const RenderCommand& rhs = (*expected)[index];
+        const DrawItem& lhs = actual[index];
+        const DrawItem& rhs = (*expected)[index];
         EXPECT_EQ(lhs.geometry.get(), rhs.geometry.get()) << "command " << index << ": different geometry";
         EXPECT_EQ(lhs.primitive_index, rhs.primitive_index) << "command " << index << ": different primitive";
         EXPECT_EQ(lhs.program.get(), rhs.program.get()) << "command " << index << ": different program";
@@ -164,10 +164,10 @@ TEST(SnapshotTest, ThePureSelectMatchesTheScene)
     const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
     ASSERT_NE(snapshot, nullptr);
 
-    std::vector<RenderCommand> selected;
+    std::vector<DrawItem> selected;
     bool                       viewport_used = false;
     vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
-    expectSameDrawList(selected, scene.collectRenderCommands(view));
+    expectSameDrawList(selected, scene.collectDrawItems(view));
 }
 
 TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
@@ -189,7 +189,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
     const View view = clipBoxView();
 
     const auto old_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
-    std::vector<RenderCommand> old_commands;
+    std::vector<DrawItem> old_commands;
     bool                       viewport_used = false;
     vn::graphics::detail::selectSnapshot(*old_snapshot, view, old_commands, viewport_used);
     ASSERT_EQ(old_commands.size(), 1U);
@@ -199,7 +199,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
 
     material->setMetallic(0.75F);
     const auto fresh_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
-    std::vector<RenderCommand> fresh_commands;
+    std::vector<DrawItem> fresh_commands;
     vn::graphics::detail::selectSnapshot(*fresh_snapshot, view, fresh_commands, viewport_used);
     ASSERT_EQ(fresh_commands.size(), 1U);
     const auto fresh_values = fresh_commands.front().material_description;
@@ -208,7 +208,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
     EXPECT_FLOAT_EQ(fresh_values->values().metallic, 0.75F);
 
     // The old snapshot is still the old picture after the edit.
-    std::vector<RenderCommand> old_again;
+    std::vector<DrawItem> old_again;
     vn::graphics::detail::selectSnapshot(*old_snapshot, view, old_again, viewport_used);
     ASSERT_EQ(old_again.size(), 1U);
     EXPECT_EQ(old_again.front().material_description.get(), old_values.get());
@@ -228,7 +228,7 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
     scene.setRoot(root);
 
     const View view = clipBoxView();
-    std::vector<RenderCommand> selected;
+    std::vector<DrawItem> selected;
     bool                       viewport_used = false;
     const auto                 warm_snapshot = vn::graphics::detail::SceneRows::snapshot(scene); // warm the bake
 
@@ -289,10 +289,10 @@ TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)
     ASSERT_NE(after, nullptr);
     EXPECT_NE(before.get(), after.get()) << "an edit is a new publication";
 
-    std::vector<RenderCommand> selected;
+    std::vector<DrawItem> selected;
     bool                       viewport_used = false;
     vn::graphics::detail::selectSnapshot(*after, view, selected, viewport_used);
-    expectSameDrawList(selected, scene.collectRenderCommands(view));
+    expectSameDrawList(selected, scene.collectDrawItems(view));
 }
 
 TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
@@ -309,7 +309,7 @@ TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
     scene.setRoot(root);
 
     const View view = clipBoxView();
-    (void)scene.collectRenderCommands(view); // build the rows (the baseline)
+    (void)scene.collectDrawItems(view); // build the rows (the baseline)
 
     const std::size_t before = mallinfo2().uordblks;
     const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);

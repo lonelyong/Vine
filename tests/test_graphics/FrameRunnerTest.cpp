@@ -13,7 +13,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
 
 #include "FrameExpand.hpp"
@@ -23,13 +23,13 @@
 
 using vn::graphics::CameraSnapshot;
 using vn::graphics::View;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishStatus;
 using vn::graphics::detail::expandFrame;
@@ -54,8 +54,8 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource& content){
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawDescription draw;
-    draw.kind       = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind       = DrawCall::Kind::Scene;
     draw.view.camera = camera;
     draw.content    = &content;
     draw.view.layer_mask = vn::graphics::kAllLayers;
@@ -89,9 +89,9 @@ intrusive_ptr<Group> twoLeafAssembly()
 }
 
 /// @brief Collects the commands of the frame's one draw.
-const std::vector<RenderCommand>& commandsOf(const FrameDescription& frame)
+const std::vector<DrawItem>& commandsOf(const FrameDescription& frame)
 {
-    static const std::vector<RenderCommand> kNone;
+    static const std::vector<DrawItem> kNone;
     if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->draws.empty()) {
         return kNone;
     }
@@ -100,7 +100,7 @@ const std::vector<RenderCommand>& commandsOf(const FrameDescription& frame)
 }
 
 /// @brief Asserts two command lists are the same picture, field for field.
-void expectSamePicture(const std::vector<RenderCommand>& actual, const std::vector<RenderCommand>& expected)
+void expectSamePicture(const std::vector<DrawItem>& actual, const std::vector<DrawItem>& expected)
 {
     ASSERT_EQ(actual.size(), expected.size());
     for (std::size_t index = 0; index < actual.size(); ++index) {
@@ -128,7 +128,7 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     // The content's own answer, for the SAME view the frames state (a query on the thread that owns it).
     View view;
     view.camera.eye = Vec3d(0.0, 0.0, 10.0);
-    const std::vector<RenderCommand> from_content = *scene.collectRenderCommands(view);
+    const std::vector<DrawItem> from_content = *scene.collectDrawItems(view);
 
     // A JOB IS ONE FRAME'S ENGINE HALF (see RenderEngine::runEngineHalf): the expansion of a value that already names
     // the publications it draws, which is what a caller without a device has to hand over.
@@ -176,7 +176,7 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
         FrameDescription frame = onePassFrame(*source);
         runner.run([&] { expandFrame(frame); });
         ASSERT_EQ(commandsOf(frame).size(), 2U) << "frame " << frame_index;
-        const std::vector<RenderCommand> reference = *scene.collectRenderCommands(view);
+        const std::vector<DrawItem> reference = *scene.collectDrawItems(view);
         expectSamePicture(commandsOf(frame), reference);
     }
     EXPECT_EQ(runner.frames(), static_cast<std::uint64_t>(kFrames));

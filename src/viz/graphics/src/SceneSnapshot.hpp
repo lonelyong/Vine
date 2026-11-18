@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <vine/graphics/View.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 
 #include "DrawListBake.hpp"
 
@@ -77,7 +77,7 @@ using SceneSnapshotPtr = std::shared_ptr<const SceneSnapshot>;
  * @details
  * - It reads only @p snapshot and @p view; it never asks a Scene, a Node or a material for anything.
  * - The output is cleared first, then filled in walk order and sorted by the same `sortCollected` the Scene uses,
- *   so the result is directly comparable with `Scene::collectRenderCommands` for the same view.
+ *   so the result is directly comparable with `Scene::collectDrawItems` for the same view.
  * - `viewport_used` reports whether a viewport-dependent placement was resolved, exactly as the Scene's collector
  *   reports it to its memo.
  *
@@ -88,7 +88,7 @@ using SceneSnapshotPtr = std::shared_ptr<const SceneSnapshot>;
  */
 void selectSnapshot(const SceneSnapshot&        snapshot,
                     const View&                 view,
-                    std::vector<RenderCommand>& out,
+                    std::vector<DrawItem>& out,
                     bool&                       viewport_used);
 
 } // namespace detail

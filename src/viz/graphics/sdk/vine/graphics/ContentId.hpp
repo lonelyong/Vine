@@ -120,7 +120,7 @@ struct InstanceTag;
 
 using NodeId     = Id<NodeTag>;     ///< A placement in the graph (see Node).
 using GeometryId = Id<GeometryTag>; ///< A leaf's shape (see Geometry).
-using MaterialId = Id<MaterialTag>; ///< A material's values (see MaterialBase).
+using MaterialId = Id<MaterialTag>; ///< A material's values (see MaterialValues).
 using ProgramId  = Id<ProgramTag>;  ///< A shader program (see ShaderProgram).
 using TextureId  = Id<TextureTag>;  ///< An image a material reads (see Texture).
 using InstanceId = Id<InstanceTag>; ///< One instance of an instanced draw.

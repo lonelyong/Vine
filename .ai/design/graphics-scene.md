@@ -57,11 +57,11 @@ and the meta parent chain must match C++ inheritance; a wrong chain makes `stati
 keep using `dynamic_cast`. It satisfies `G6` / `G10`, the price is that the metatype chain must be kept correct.
 
 2.11 **Derived state gets its own object**: `Scene` holds only the author tree, lights and queries; the baked rows (`SceneBake`), the per-view memo, the edit batch
-depth and the published values live in `detail::ScenePublisher` (`src/viz/graphics/src/ScenePublisher.hpp`), and `Scene`'s `collectRenderCommands` /
+depth and the published values live in `detail::ScenePublisher` (`src/viz/graphics/src/ScenePublisher.hpp`), and `Scene`'s `collectDrawItems` /
 `publish` / `beginEdit` / `endEdit` / `setContentFrame` / `invalidateContent` and three counters all delegate. Why: with the three in one class,
 changing the cache or the publication meant touching the author's class (`G1` / `G5`), and the author API had to carry lifetime rules it did not own; split apart, the dependency is only Scene → publisher
 (the publisher reads the author's tree, the reverse does not hold). Boundary: `Scene` is **not** the frame's source (W9a deleted its `DrawListSource` base) —
-a frame draws a publication (`SnapshotSource`), `Scene::collectRenderCommands` answers "what does the current publication draw for this view" (the same
+a frame draws a publication (`SnapshotSource`), `Scene::collectDrawItems` answers "what does the current publication draw for this view" (the same
 `selectSnapshot` rule as the frame's source, only read on its own thread); the public API and test semantics are unchanged;
 `detail::SceneRows::snapshot` is still the module's one-line gate, forwarding to the publisher.
 
@@ -93,7 +93,7 @@ a frame draws a publication (`SnapshotSource`), `Scene::collectRenderCommands` a
 
 | # | Feature | Notes |
 |---|---|---|
-| F12 | Command table | `Scene::collectRenderCommands(camera, layer_mask, viewport?)` / `(View)`. |
+| F12 | Command table | `Scene::collectDrawItems(camera, layer_mask, viewport?)` / `(View)`. |
 | F13 | Command snapshot | geometry, primitive, model matrix, opacity, draw_order, state, material, program, instance. |
 | F14 | memo | Key = published revision + view-projection + eye + layer_mask (+ viewport when needed); invalidated automatically when a new publication is created because the picture/box/value changed. |
 | F15 | Frustum culling | The subtree box `subtreeBounds` is cached persistently in the node's own frame; moving the camera does not recompute. |
@@ -156,7 +156,7 @@ a frame draws a publication (`SnapshotSource`), `Scene::collectRenderCommands` a
 | `Scene::setVisible()` / `setOpacity()` | Scene-level folding |
 | `Scene::addLight()` / `lights()` / `setLighting()` | Lights |
 | `Scene::lightSet()` | One **immutable shared value** of the lights (`LightSet`): cached by each light's `revision()`, zero copies when describing a pass (B11) |
-| `Scene::collectRenderCommands()` | Collection |
+| `Scene::collectDrawItems()` | Collection |
 | `Scene::boundingBox(mask)` | Visible content box |
 | `Scene::setContentFrame()` | memo frame token |
 | `Scene::findNode(name)` | Lookup by name |
@@ -221,7 +221,7 @@ a frame draws a publication (`SnapshotSource`), `Scene::collectRenderCommands` a
 
 ### 6.3 Transparent classification's "order" is frozen in the command table
 
-- How it fails: `RenderCommand::isTransparent()` takes part in sorting **at collection time** (F16), while F14's memo key has no material revision — a material setter only bumps `Material::revision()`, there is no announcement channel to the scene (N3 is about the node side). So after changing `Material::setAlphaMode()` (Opaque ↔ Blend/Mask) at runtime, the command table a memo hit returns **is not re-batched**: the command stays in its old batch and position until the next picture edit (pose change, node add/remove, `Scene::invalidateContent()`).
+- How it fails: `DrawItem::isTransparent()` takes part in sorting **at collection time** (F16), while F14's memo key has no material revision — a material setter only bumps `Material::revision()`, there is no announcement channel to the scene (N3 is about the node side). So after changing `Material::setAlphaMode()` (Opaque ↔ Blend/Mask) at runtime, the command table a memo hit returns **is not re-batched**: the command stays in its old batch and position until the next picture edit (pose change, node add/remove, `Scene::invalidateContent()`).
 - Only the **order** is frozen. The plan's transparent flag is re-read from the live material every frame (`target.transparent = source.isTransparent()` in `src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp`), and blending follows on that frame; the shading side re-packs the alpha mode with the material block `flags` (bits 8-9) as the revision advances. What goes stale is "is it in the opaque batch or the transparent batch, and at which position".
 - How to detect it: after changing alphaMode, `Scene::contentCollectCount()` does not grow (which means a memo hit), while the front/back occlusion of overlapping objects still follows the old classification — the typical symptom is "the one that just became transparent is drawn at the opaque batch's position" (drawn first, covered later), or a translucent object sits on top of something it should cover.
 - How to prevent it: call `Scene::invalidateContent()` once after switching alphaMode at runtime; or express "draw first/later" through an entry that announces (`Node::setOpacity`, `Node::setDrawOrder`, layers). With a single drawable there is no effect — there is no other command to order it wrongly against.

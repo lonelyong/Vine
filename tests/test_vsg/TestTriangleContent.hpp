@@ -9,7 +9,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/intrusive_ptr.hpp>
 
@@ -33,7 +33,7 @@ struct TriangleFixture {
     vn::intrusive_ptr<vn::graphics::Material>      material;
     /// The position stream the geometry reads: the buffer whose revision the stream layer keys an upload by.
     vn::intrusive_ptr<vn::Buffer<float>> positions;
-    std::vector<vn::graphics::RenderCommand> commands;
+    std::vector<vn::graphics::DrawItem> commands;
 };
 
 /**
@@ -78,7 +78,7 @@ inline TriangleFixture triangleFromPositions(std::vector<float> positions)
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
     fixture.material = material;
 
-    vn::graphics::RenderCommand command;
+    vn::graphics::DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;

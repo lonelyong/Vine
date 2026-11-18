@@ -32,7 +32,7 @@
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderArea.hpp>
@@ -525,7 +525,7 @@ TEST(SceneTest, TheCacheStatsAreASnapshotAndReadingThemDisturbsNothing)
     EXPECT_EQ(snapshot.layer_union_recomputes, again.layer_union_recomputes) << "a copied record is a snapshot";
 }
 
-// ============ RenderCommand collection / culling ============
+// ============ DrawItem collection / culling ============
 
 /**
  * @brief Configures a camera at (0,0,5) looking at the origin.
@@ -590,7 +590,7 @@ TEST(SceneTest, CollectCommandsSortsOpaqueFrontToBack)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 2u);
     EXPECT_EQ(commands[0].geometry->name(), u8"near");
@@ -615,7 +615,7 @@ TEST(SceneTest, CollectCommandsSortsTransparentBackToFrontAfterOpaque)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 3u);
     // Opaque batch first (regardless of depth).
@@ -640,7 +640,7 @@ TEST(SceneTest, CollectCommandsCullsOutOfView)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"visible");
@@ -658,7 +658,7 @@ TEST(SceneTest, CollectCommandsCullsOffToTheSide)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"visible");
@@ -678,7 +678,7 @@ TEST(SceneTest, OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks)
     setupLookAtCamera(cam); // eye (0,0,5), vertical fov 60: about +-4.6 wide at the object's distance
 
     scene.setContentFrame(1);
-    const auto square = scene.collectRenderCommands(&cam);
+    const auto square = scene.collectDrawItems(&cam);
     EXPECT_TRUE(square->empty()) << "a square picture culls what sits off to the side";
     EXPECT_EQ(scene.contentCollectCount(), 1u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 0u);
@@ -686,7 +686,7 @@ TEST(SceneTest, OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks)
     // Changing the camera's SHAPE is changing the view (one camera, one picture shape): the projection encodes
     // it, so the memo cannot answer for one shape with another's walk.
     cam.setAspect(8.0 / 3.0);
-    const auto wide = scene.collectRenderCommands(&cam);
+    const auto wide = scene.collectDrawItems(&cam);
     ASSERT_EQ(wide->size(), 1u) << "a wide one through the same eye holds it";
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "one walk per SHAPE the camera has been given";
     EXPECT_EQ(scene.contentCollectReuseCount(), 0u);
@@ -694,9 +694,9 @@ TEST(SceneTest, OneCameraInTwoRectanglesIsTwoPicturesAndTwoWalks)
     // Asking again reuses each shape's own answer - and never the other's, because the shape is part of the view
     // the memo is keyed on.
     cam.setAspect(kSceneAspect);
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty()) << "the square shape's own answer";
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty()) << "the square shape's own answer";
     cam.setAspect(8.0 / 3.0);
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u) << "and the wide shape's";
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u) << "and the wide shape's";
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "both shapes are remembered: still two walks";
     EXPECT_EQ(scene.contentCollectReuseCount(), 2u);
 }
@@ -735,8 +735,8 @@ TEST(SceneTest, ARootAttachedElsewhereTakesTheSceneOutOfThePicture)
 
     first.setContentFrame(1);
     second.setContentFrame(1);
-    ASSERT_EQ(first.collectRenderCommands(&cam)->size(), 1u);
-    ASSERT_EQ(second.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(first.collectDrawItems(&cam)->size(), 1u);
+    ASSERT_EQ(second.collectDrawItems(&cam)->size(), 1u);
     EXPECT_FALSE(first.boundingBox().isEmpty());
 
     auto host = intrusive_ptr<Group>(new Group());
@@ -746,8 +746,8 @@ TEST(SceneTest, ARootAttachedElsewhereTakesTheSceneOutOfThePicture)
     // The frame token advances, but even a surviving memo entry must not answer: the guard runs before the lookup.
     first.setContentFrame(2);
     second.setContentFrame(2);
-    EXPECT_TRUE(first.collectRenderCommands(&cam)->empty());
-    EXPECT_TRUE(second.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(first.collectDrawItems(&cam)->empty());
+    EXPECT_TRUE(second.collectDrawItems(&cam)->empty());
     EXPECT_TRUE(first.boundingBox().isEmpty());
     EXPECT_TRUE(second.boundingBox().isEmpty());
 }
@@ -758,7 +758,7 @@ TEST(SceneTest, CollectCommandsNullCameraYieldsEmpty)
     auto  node = makeTriangleNode(Vec3d(0, 0, -3), nullptr);
     scene.setRoot(node);
 
-    auto commands = (*scene.collectRenderCommands(nullptr));
+    auto commands = (*scene.collectDrawItems(nullptr));
     EXPECT_TRUE(commands.empty());
 }
 
@@ -770,7 +770,7 @@ TEST(SceneTest, CollectCommandsHidesWholeScene)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     EXPECT_TRUE(commands.empty());
 }
 
@@ -786,7 +786,7 @@ TEST(SceneTest, CollectCommandsHidesNode)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"shown");
 }
@@ -807,7 +807,7 @@ TEST(SceneTest, CollectCommandsHidesDrawable)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"g2");
 }
@@ -823,7 +823,7 @@ TEST(SceneTest, CollectCommandsEffectiveOpacity)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].opacity, 0.5f * 0.5f * 0.5f, 1e-5f);
     EXPECT_TRUE(commands[0].isTransparent());
@@ -841,7 +841,7 @@ TEST(SceneTest, CollectCommandsOpacityLeafAndNode)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].opacity, 0.5f * 0.5f, 1e-5f);
     EXPECT_TRUE(commands[0].isTransparent());
@@ -859,7 +859,7 @@ TEST(SceneTest, CollectCommandsOpacityMultipliesAlongHierarchy)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].opacity, 0.25f, 1e-5f);
     EXPECT_TRUE(commands[0].isTransparent());
@@ -1586,7 +1586,7 @@ TEST(PrimitiveInstancingTest, AnInstancedPrimitiveDrawsEveryPlacement)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = scene.collectRenderCommands(&cam);
+    const auto commands = scene.collectDrawItems(&cam);
     ASSERT_TRUE(commands != nullptr);
     ASSERT_EQ(commands->size(), 1u);
     EXPECT_EQ((*commands)[0].instance_count, 2u);
@@ -1621,14 +1621,14 @@ TEST(PrimitiveInstancingTest, TheVisiblePrefixIsTheDrawRangeAndCanChangeWithoutA
     ASSERT_TRUE(geom->setVisibleInstanceCount(0U, 0u));
     Camera cam;
     setupLookAtCamera(cam);
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty());
     EXPECT_EQ(geom->primitive(0)->visibleInstanceCount(), 0u);
 
     ASSERT_TRUE(geom->clearInstanceTransforms(0u));
     ASSERT_TRUE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::slice(storage, 16u, 16u)));
     ASSERT_TRUE(geom->clearVisibleInstanceCount(0U));
     EXPECT_EQ(geom->primitive(0)->visibleInstanceCount(), 1u);
-    const auto commands = scene.collectRenderCommands(&cam);
+    const auto commands = scene.collectDrawItems(&cam);
     ASSERT_EQ(commands->size(), 1u);
     EXPECT_EQ((*commands)[0].first_instance, 1u);
     EXPECT_EQ((*commands)[0].instance_count, 1u);
@@ -1643,7 +1643,7 @@ TEST(PrimitiveInstancingTest, WithoutAStreamItIsAPlainDrawAndMalformedStreamsAre
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = scene.collectRenderCommands(&cam);
+    const auto commands = scene.collectDrawItems(&cam);
     ASSERT_EQ(commands->size(), 1u);
     EXPECT_EQ((*commands)[0].instance_count, 0u);
     ASSERT_NE(geom->primitive(0), nullptr);
@@ -1653,7 +1653,7 @@ TEST(PrimitiveInstancingTest, WithoutAStreamItIsAPlainDrawAndMalformedStreamsAre
     intrusive_ptr<vn::Buffer<float>> storage = identityInstances(1);
     EXPECT_FALSE(geom->setInstanceTransforms(0U, vn::BufferSlice<float>::slice(storage, 0u, 8u)));
     EXPECT_FALSE(geom->primitive(0)->hasInstances());
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->size() == 1u);
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->size() == 1u);
 }
 
 TEST(PrimitiveInstancingTest, CullingUsesTheInstancesOwnBounds)
@@ -1677,7 +1677,7 @@ TEST(PrimitiveInstancingTest, CullingUsesTheInstancesOwnBounds)
     cam.setPerspective(60.0, 0.1, 1000.0);
     cam.setAspect(kSceneAspect);
 
-    const auto commands = scene.collectRenderCommands(&cam);
+    const auto commands = scene.collectDrawItems(&cam);
     ASSERT_EQ(commands->size(), 1u);
     EXPECT_EQ((*commands)[0].instance_count, 1u);
 }
@@ -1700,7 +1700,7 @@ TEST(PrimitiveInstancingTest, EachPrimitiveOwnsItsInstanceStream)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = scene.collectRenderCommands(&cam);
+    const auto commands = scene.collectDrawItems(&cam);
     ASSERT_EQ(commands->size(), 2u);
     EXPECT_EQ((*commands)[0].instance_count, 1u) << "primitive 0 draws its own visible prefix";
     EXPECT_EQ((*commands)[1].instance_count, 3u) << "primitive 1 keeps its own stream and count";
@@ -1997,11 +1997,11 @@ namespace
 {
 
 /// @brief Collects the commands of a scene rooted at @p root.
-std::vector<RenderCommand> commandsOf(const intrusive_ptr<Node>& root, Camera& camera)
+std::vector<DrawItem> commandsOf(const intrusive_ptr<Node>& root, Camera& camera)
 {
     Scene scene;
     scene.setRoot(root);
-    return (*scene.collectRenderCommands(&camera));
+    return (*scene.collectDrawItems(&camera));
 }
 
 } // namespace
@@ -2526,7 +2526,7 @@ TEST(NodeTest, AddChildRejectsCycles)
     leaf->addChild(geom);
     Camera cam;
     setupLookAtCamera(cam);
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
 }
 
 TEST(NodeTest, WorldTransformCascades)
@@ -2762,14 +2762,14 @@ TEST(PositionAttitudeTransformTest, AnEditInvalidatesTheCollectedCommands)
     setupLookAtCamera(cam);
 
     scene.setContentFrame(1);
-    const auto first = scene.collectRenderCommands(&cam);
+    const auto first = scene.collectDrawItems(&cam);
     ASSERT_EQ(first->size(), 1u);
     EXPECT_NEAR(((*first)[0].model_matrix * Point3d(0, 0, 0)).x, 0.0, 1e-9);
     EXPECT_EQ(scene.contentCollectCount(), 1u);
 
     place->setPosition(Point3d(1, 0, 0));
     scene.setContentFrame(2);
-    const auto second = scene.collectRenderCommands(&cam);
+    const auto second = scene.collectDrawItems(&cam);
     ASSERT_EQ(second->size(), 1u);
     EXPECT_NEAR(((*second)[0].model_matrix * Point3d(0, 0, 0)).x, 1.0, 1e-9);
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "a transform edit must end the memo";
@@ -2980,8 +2980,8 @@ TEST(AutoTransformTest, TwoViewsGetTheirOwnCommandMatrices)
     side.setAspect(1.0);
 
     scene.setContentFrame(1);
-    const auto front_commands = scene.collectRenderCommands(&front);
-    const auto side_commands  = scene.collectRenderCommands(&side);
+    const auto front_commands = scene.collectDrawItems(&front);
+    const auto side_commands  = scene.collectDrawItems(&side);
     ASSERT_EQ(front_commands->size(), 1u);
     ASSERT_EQ(side_commands->size(), 1u);
 
@@ -3080,12 +3080,12 @@ TEST(AutoTransformTest, TwoViewportsGetTheirOwnCommandMatrices)
     const Viewport small{ 0, 0, 400, 300 };
 
     scene.setContentFrame(1);
-    const auto large_commands = scene.collectRenderCommands(&cam, kAllLayers, &large);
-    const auto small_commands = scene.collectRenderCommands(&cam, kAllLayers, &small);
+    const auto large_commands = scene.collectDrawItems(&cam, kAllLayers, &large);
+    const auto small_commands = scene.collectDrawItems(&cam, kAllLayers, &small);
     ASSERT_EQ(large_commands->size(), 1u);
     ASSERT_EQ(small_commands->size(), 1u);
 
-    const auto height = [](const RenderCommand& command) {
+    const auto height = [](const DrawItem& command) {
         return (command.model_matrix * Point3d(0, 1, 0) - command.model_matrix * Point3d(0, 0, 0)).length();
     };
     EXPECT_NEAR(height((*small_commands)[0]), 2.0 * height((*large_commands)[0]), 1e-9) << "half the pixels need twice the world scale";
@@ -3140,7 +3140,7 @@ TEST(SceneTest, CollectCommandsBakesNestedWorldMatrix)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     // The command's model matrix is the folded world transform of the leaf.
     const auto origin = commands[0].model_matrix * vn::math::Point3d(0, 0, 0);
@@ -3163,7 +3163,7 @@ TEST(GeometryTest, CountsStayDataStatsUnderPointsTopology)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     // The topology is the geometry's PRIMITIVE, and restating it changes the draw's identity while the data
     // counts stay: this is the pair of facts the old StateNode spelling used to blur.
@@ -3175,7 +3175,7 @@ TEST(GeometryTest, CountsStayDataStatsUnderPointsTopology)
     points.topology  = Topology::Points;
     commands[0].geometry->setPrimitive(0U, std::move(points));
     commands[0].geometry->bumpRevision();
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     ASSERT_NE(commands[0].primitive(), nullptr);
     EXPECT_EQ(commands[0].primitive()->topology, Topology::Points);
@@ -3546,7 +3546,7 @@ class MockBackend : public RenderBackend {
     std::vector<CameraSnapshot> render_cameras;
     /// How many commands every content draw carried, in run order (next to render_cameras): after a frame
     /// that ran several passes this says which pass drew what.
-    std::vector<std::size_t> render_command_counts;
+    std::vector<std::size_t> draw_item_counts;
     int                      last_viewport[4] = { 0, 0, 0, 0 };
     // Programs of the commands of the last content draw (per command).
     std::vector<const ShaderProgram*> last_programs;
@@ -3562,7 +3562,7 @@ class MockBackend : public RenderBackend {
     std::optional<vn::graphics::LightValue> last_light;
     int                                default_content_program_sets = 0;
     intrusive_ptr<const ShaderProgram> last_default_content_program;
-    /// How many frame drivers the engine borrowed and returned (see RenderDevice::createSession). This double IS
+    /// How many frame drivers the engine borrowed and returned (see RenderDevice::createFrameDriver). This double IS
     /// its own executor, which is the default shape: one driver per device.
     int sessions_created  = 0;
     int sessions_released = 0;
@@ -3587,13 +3587,13 @@ class MockBackend : public RenderBackend {
         ++default_content_program_sets;
     }
 
-    [[nodiscard]] RenderFrameExecutor* createSession() override
+    [[nodiscard]] RenderFrameExecutor* createFrameDriver() override
     {
         ++sessions_created;
         return this;
     }
 
-    void releaseSession(RenderFrameExecutor& session) override
+    void releaseFrameDriver(RenderFrameExecutor& session) override
     {
         (void)session;
         ++sessions_released;
@@ -3703,7 +3703,7 @@ class MockBackend : public RenderBackend {
             last_clear_policy = *description.clear;
         }
         pass_state = description.state;
-        for (const DrawDescription& draw : description.draws) {
+        for (const DrawCall& draw : description.draws) {
             if (draw.light_values != nullptr) {
                 ++light_sets;
                 last_light_count = draw.light_values->size();
@@ -3712,7 +3712,7 @@ class MockBackend : public RenderBackend {
             if (!draw.view.camera.present) {
                 continue; // a drawing call with no view is no call at all
             }
-            if (draw.kind == DrawDescription::Kind::Screen) {
+            if (draw.kind == DrawCall::Kind::Screen) {
                 ++program_draws;
                 last_program_source = draw.source;
                 last_program        = draw.program.get();
@@ -3728,12 +3728,12 @@ class MockBackend : public RenderBackend {
     ///
     /// The pass' program override is applied here, exactly as a real backend applies it (see PassDraw::program_override
     /// and FrameRecorder::render): the commands handed over are the shared list the engine collected, never a rewrite.
-    void consumeCommands(const std::vector<RenderCommand>& commands, const CameraSnapshot& camera, const ShaderProgram* program_override)
+    void consumeCommands(const std::vector<DrawItem>& commands, const CameraSnapshot& camera, const ShaderProgram* program_override)
     {
         ++render_calls;
         last_camera = camera;
         render_cameras.push_back(camera);
-        render_command_counts.push_back(commands.size());
+        draw_item_counts.push_back(commands.size());
         last_programs.clear();
         last_programs.reserve(commands.size());
         last_polygon_modes.clear();
@@ -3778,7 +3778,7 @@ class MockBackend : public RenderBackend {
 
 TEST(RenderEngineTest, AnEngineBorrowsADriverAndReturnsItWhenTheDeviceChangesOrItDies)
 {
-    // OWNERSHIP OF THE FRAME DRIVER (see RenderDevice::createSession): the device owns it, the engine borrows it for
+    // OWNERSHIP OF THE FRAME DRIVER (see RenderDevice::createFrameDriver): the device owns it, the engine borrows it for
     // as long as it drives that device - and re-announcing the same device must not borrow a second one.
     {
         const vn::intrusive_ptr<MockBackend> backend(new MockBackend());
@@ -4358,7 +4358,7 @@ TEST(RenderEngineTest, AnAttachToADeviceThatIsNotUpIsRefusedOnce)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
     const FrameOutcome outcome = engine->frame();
     EXPECT_EQ(outcome.status, FrameOutcome::Status::NotReady);
-    EXPECT_EQ(outcome.reason, EngineNotReady::NotInitialized);
+    EXPECT_EQ(outcome.reason, EngineNotReadyReason::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 0) << "and nothing runs until the creator brings the device up";
 }
 
@@ -4369,13 +4369,13 @@ TEST(RenderEngineTest, FrameSaysWhetherItRan)
     // No device: nothing to hand a frame to, and that is a different answer from "ran and drew nothing".
     const FrameOutcome no_device = engine->frame();
     EXPECT_EQ(no_device.status, FrameOutcome::Status::NotReady);
-    EXPECT_EQ(no_device.reason, EngineNotReady::NoDevice);
+    EXPECT_EQ(no_device.reason, EngineNotReadyReason::NoDevice);
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     engine->setDevice(backend);
     const FrameOutcome not_attached = engine->frame();
     EXPECT_EQ(not_attached.status, FrameOutcome::Status::NotReady) << "a frame through an engine that never attached is a frame nobody drove";
-    EXPECT_EQ(not_attached.reason, EngineNotReady::NotInitialized);
+    EXPECT_EQ(not_attached.reason, EngineNotReadyReason::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 0);
 
     ASSERT_TRUE(engine->initialize());
@@ -4385,7 +4385,7 @@ TEST(RenderEngineTest, FrameSaysWhetherItRan)
     engine->shutdown();
     const FrameOutcome detached = engine->frame();
     EXPECT_EQ(detached.status, FrameOutcome::Status::NotReady);
-    EXPECT_EQ(detached.reason, EngineNotReady::NotInitialized);
+    EXPECT_EQ(detached.reason, EngineNotReadyReason::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 1) << "a detached engine drives nothing";
 }
 
@@ -5738,7 +5738,7 @@ TEST(SceneViewTest, SetSceneReachesDefaultWindowPassAndSceneAwareManipulator)
     auto view = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
-    // Both scenes get a root: collectRenderCommands() only counts a walk when
+    // Both scenes get a root: collectDrawItems() only counts a walk when
     // there is something to walk, so the count below is the observable.
     auto original = view->scene();
     original->setRoot(intrusive_ptr<Group>(new Group()));
@@ -6168,13 +6168,13 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
 
     // —— 一次绘制：相机、命令、灯，以及走的是哪条调用 ——
     ASSERT_EQ(described.draws.size(), 1u);
-    const vn::graphics::DrawDescription& draw = described.draws.front();
-    EXPECT_EQ(draw.kind, vn::graphics::DrawDescription::Kind::Scene);
+    const vn::graphics::DrawCall& draw = described.draws.front();
+    EXPECT_EQ(draw.kind, vn::graphics::DrawCall::Kind::Scene);
     ASSERT_FALSE(backend->render_cameras.empty());
     EXPECT_TRUE(draw.view.camera.view.isEqual(backend->render_cameras.back().view, 1e-12)) << "the view the frame carried";
     ASSERT_NE(draw.commands, nullptr);
     EXPECT_FALSE(draw.commands->empty()) << "三角形必须在里面，否则这条只验证了空集合相等";
-    EXPECT_EQ(draw.commands->size(), backend->render_command_counts.back());
+    EXPECT_EQ(draw.commands->size(), backend->draw_item_counts.back());
     ASSERT_TRUE(draw.light_values != nullptr) << "有相机 ⇒ 灯一定被公告（哪怕是空的）";
     EXPECT_EQ(draw.light_values->size(), backend->last_light_count);
     EXPECT_EQ(backend->render_calls, 1);
@@ -6219,8 +6219,8 @@ TEST(PassDrawTest, WhatAScreenPassDescribesIsWhatItAnnounces)
     vn::graphics::detail::expandPass(described);
 
     ASSERT_EQ(described.draws.size(), 1u);
-    const vn::graphics::DrawDescription& draw = described.draws.front();
-    EXPECT_EQ(draw.kind, vn::graphics::DrawDescription::Kind::Screen);
+    const vn::graphics::DrawCall& draw = described.draws.front();
+    EXPECT_EQ(draw.kind, vn::graphics::DrawCall::Kind::Screen);
     EXPECT_EQ(draw.source, source.get());
     EXPECT_EQ(draw.program.get(), program.get());
     EXPECT_TRUE(draw.view.camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the pass' own view, as a value";
@@ -6511,8 +6511,8 @@ class DescribeOnlyPass : public RenderPass {
             return false; // nothing to describe, and therefore no frame
         }
         fillPassFacts(out);
-        DrawDescription draw;
-        draw.kind   = DrawDescription::Kind::Scene;
+        DrawCall draw;
+        draw.kind   = DrawCall::Kind::Scene;
         draw.view.camera = CameraSnapshot::of(*camera());
         out.draws.push_back(std::move(draw));
         (void)scene; // the pass is content-agnostic: its picture is the camera's
@@ -7689,7 +7689,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
         auto texture  = intrusive_ptr<Texture>(new Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm));
         auto geometry = intrusive_ptr<Geometry>(new Geometry());
         auto material = intrusive_ptr<Material>(new Material());
-        auto commands = std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ RenderCommand(geometry, material, Mat4d{}) });
+        auto commands = std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ DrawItem(geometry, material, Mat4d{}) });
 
         pass_raw    = pass.get();
         target_raw  = target.get();
@@ -9034,14 +9034,14 @@ TEST(SceneTest, CollectCommandsCarriesEffectiveProgram)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].program.get(), program.get());
 
     // Without any program the command carries the engine default (null).
     Scene plain;
     plain.setRoot(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
-    auto plain_commands = (*plain.collectRenderCommands(&cam));
+    auto plain_commands = (*plain.collectDrawItems(&cam));
     ASSERT_EQ(plain_commands.size(), 1u);
     EXPECT_EQ(plain_commands[0].program, nullptr);
 }
@@ -9070,7 +9070,7 @@ TEST(SceneTest, TheDrawResolvesPrimitiveThenGeometryThenStateNode)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), geom_material.get()) << "the geometry default beats the StateNode";
     EXPECT_EQ(commands[0].program.get(), geom_program.get());
@@ -9085,7 +9085,7 @@ TEST(SceneTest, TheDrawResolvesPrimitiveThenGeometryThenStateNode)
     draw.program            = draw_program;
     geom->setPrimitive(0, std::move(draw));
 
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), draw_material.get());
     EXPECT_EQ(commands[0].program.get(), draw_program.get());
@@ -9095,14 +9095,14 @@ TEST(SceneTest, TheDrawResolvesPrimitiveThenGeometryThenStateNode)
     draw.material = nullptr;
     draw.program  = nullptr;
     geom->setPrimitive(0, std::move(draw));
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     EXPECT_EQ(commands[0].material.get(), geom_material.get());
     EXPECT_EQ(commands[0].program.get(), geom_program.get());
 
     // Clearing the geometry defaults hands the draws back to the StateNode.
     geom->setMaterial(nullptr);
     geom->setProgram(nullptr);
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     EXPECT_EQ(commands[0].material.get(), state_material.get());
     EXPECT_EQ(commands[0].program.get(), state_program.get());
 }
@@ -9193,7 +9193,7 @@ TEST(SceneTest, CollectCommandsCarriesStateFromAncestorStateNode)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 1u);
     // The command carries what the CONTENT authored; the pass completes it (and the default pass state changes
@@ -9222,7 +9222,7 @@ TEST(SceneTest, CollectCommandsDeeperStateNodeOverrides)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 1u);
     ASSERT_TRUE(commands[0].authored_state.polygonMode.has_value());
@@ -9237,7 +9237,7 @@ TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
 
     Camera cam;
     setupLookAtCamera(cam);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
 
     ASSERT_EQ(commands.size(), 1u);
     // "Nobody said anything" is a fact of its own, and it is NOT the same as "said the default": the command
@@ -9921,14 +9921,14 @@ TEST(SceneTest, CollectCommandsKeepsVec4PositionGeometryInView)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"vec4-tri");
 
     // The same geometry pushed far outside the view is still culled, so the
     // fix did not disable culling for this data layout.
     node->setMatrix(vn::math::translate(Vec3d(400.0, 0.0, -3.0)));
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty());
 }
 
 // ============ Traversal: world accumulation, bounds, child access ============
@@ -10005,7 +10005,7 @@ TEST(NodeTest, DeepHierarchyWorldMatrixFoldsWholeChain)
     scene->setRoot(root);
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene->collectRenderCommands(&cam));
+    const auto commands = (*scene->collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_TRUE(close(commands[0].model_matrix, leaf->worldMatrix()));
 }
@@ -10033,7 +10033,7 @@ TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"nested");
     EXPECT_NEAR(commands[0].model_matrix.element(0, 3), 0.0, 1e-9);
@@ -10042,7 +10042,7 @@ TEST(SceneTest, CollectCommandsAccumulatesWorldMatrixAcrossNesting)
     // Moving the geometry genuinely out of view still culls it, i.e. the
     // container bound is being derived from the children rather than ignored.
     inner->setMatrix(vn::math::translate(Vec3d(-100.0, 0.0, 500.0)));
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty());
 }
 
 TEST(SceneTest, CollectCommandsCullsContainersByUnionOfChildren)
@@ -10061,7 +10061,7 @@ TEST(SceneTest, CollectCommandsCullsContainersByUnionOfChildren)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry->name(), u8"near");
 }
@@ -10082,7 +10082,7 @@ TEST(SceneTest, CollectCommandsPreservesCollectionOrderForEqualDepth)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 3u);
     EXPECT_EQ(commands[0].geometry->name(), u8"first");
     EXPECT_EQ(commands[1].geometry->name(), u8"second");
@@ -10091,7 +10091,7 @@ TEST(SceneTest, CollectCommandsPreservesCollectionOrderForEqualDepth)
     // Transparent siblings keep collection order too when equidistant.
     first->setOpacity(0.5f);
     second->setOpacity(0.5f);
-    const auto transparent = (*scene.collectRenderCommands(&cam));
+    const auto transparent = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(transparent.size(), 3u);
     EXPECT_EQ(transparent[0].geometry->name(), u8"third"); // opaque batch
     EXPECT_FALSE(transparent[0].isTransparent());
@@ -10172,21 +10172,21 @@ TEST(SceneTest, CollectCommandsAsksEachLeafForItsOwnBoxOnly)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(counted_container->bound_calls, 0) << "a container is never asked for a bound";
     EXPECT_EQ(leaf->localBoundsComputationCount(), 1u) << "the build scans the leaf's data box once";
 
     // A second collection of the same content asks NOTHING expensive: the rows answer for the boxes, and the one
     // refresh a pass runs is a cache hit per leaf - a camera move (a different view over the same rows) is the same.
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(leaf->localBoundsComputationCount(), 1u) << "a pass re-reads the box, the revision-keyed cache answers";
     EXPECT_EQ(counted_container->bound_calls, 0);
 
     // A placement edit RE-PLACES the rows and measures nothing: the cull still drops the subtree once it is out of
     // view, and the leaf's own box is still the one the build read.
     first_transform->setMatrix(vn::math::translate(Vec3d(4000.0, 0.0, 0.0)));
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty());
     EXPECT_EQ(leaf->localBoundsComputationCount(), 1u) << "a moved subtree is re-placed, not re-measured";
 }
 
@@ -10216,13 +10216,13 @@ TEST(SceneTest, ALeafThatOnlyAnswersInWorldSpaceStillCulls)
 
     Camera cam;
     setupLookAtCamera(cam);
-    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_GE(leaf->bound_calls, 1) << "the leaf that can only answer in world space is asked for that answer";
 
     // Culling still works from the value, and an announcement is what makes the next build re-read the answer.
     leaf->setName(u8"culled");
     first_transform->setMatrix(vn::math::translate(Vec3d(4000.0, 0.0, 0.0)));
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty());
 }
 
 namespace
@@ -10290,19 +10290,19 @@ TEST(SceneTest, TheRowsSurviveCameraMovesAndFollowAnnouncements)
     second.setPerspective(70.0, 0.1, 1000.0); // the camera MOVED: same scene, new view
 
     scene.setContentFrame(1);
-    ASSERT_EQ(scene.collectRenderCommands(&first)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&first)->size(), 1u);
     const std::uint64_t first_bakes = scene.contentBakeCount();
     const std::uint64_t first_scans = leaf->localBoundsComputationCount();
     EXPECT_GT(first_bakes, 0u) << "the first collect builds the rows";
 
     scene.setContentFrame(2);
-    EXPECT_EQ(scene.collectRenderCommands(&second)->size(), 1u) << "the triangle is still in view";
+    EXPECT_EQ(scene.collectDrawItems(&second)->size(), 1u) << "the triangle is still in view";
     EXPECT_EQ(scene.contentBakeCount(), first_bakes) << "a camera move must not rebuild the rows";
     EXPECT_EQ(leaf->localBoundsComputationCount(), first_scans) << "nor re-scan a data box";
 
     transform->setMatrix(vn::math::translate(Vec3d(0.0, 0.4, 0.0)));
     scene.setContentFrame(3);
-    (void)(*scene.collectRenderCommands(&first));
+    (void)(*scene.collectDrawItems(&first));
     EXPECT_GT(scene.contentBakeCount(), first_bakes) << "the announcement is what rebuilds the rows";
     EXPECT_EQ(leaf->localBoundsComputationCount(), first_scans) << "and the leaf's own box is still a cache hit";
 }
@@ -10324,11 +10324,11 @@ TEST(SceneTest, ASubtreeMovedIntoViewIsNotHiddenByAStaleBox)
     pointCameraAtX5(camera);
 
     scene.setContentFrame(1);
-    EXPECT_TRUE(scene.collectRenderCommands(&camera)->empty()) << "x in [0, 1] is out of view";
+    EXPECT_TRUE(scene.collectDrawItems(&camera)->empty()) << "x in [0, 1] is out of view";
 
     transform->setMatrix(vn::math::translate(Vec3d(5.0, 0.0, 0.0)));
     scene.setContentFrame(2);
-    EXPECT_EQ(scene.collectRenderCommands(&camera)->size(), 1u) << "the moved subtree must be found again: a stale box would hide it";
+    EXPECT_EQ(scene.collectDrawItems(&camera)->size(), 1u) << "the moved subtree must be found again: a stale box would hide it";
 }
 
 TEST(SceneTest, AChildAddedLaterExtendsItsParentsBox)
@@ -10342,14 +10342,14 @@ TEST(SceneTest, AChildAddedLaterExtendsItsParentsBox)
     pointCameraAtX5(camera);
 
     scene.setContentFrame(1);
-    EXPECT_TRUE(scene.collectRenderCommands(&camera)->empty()) << "an empty container draws nothing";
+    EXPECT_TRUE(scene.collectDrawItems(&camera)->empty()) << "an empty container draws nothing";
 
     auto transform = intrusive_ptr<MatrixTransform>(new MatrixTransform());
     transform->setMatrix(vn::math::translate(Vec3d(5.0, 0.0, 0.0)));
     transform->addChild(geometryOf(*makeUnitTriangle()));
     container->addChild(transform);
     scene.setContentFrame(2);
-    EXPECT_EQ(scene.collectRenderCommands(&camera)->size(), 1u) << "addChild announces: a stale empty box would hide the new child";
+    EXPECT_EQ(scene.collectDrawItems(&camera)->size(), 1u) << "addChild announces: a stale empty box would hide the new child";
 }
 
 TEST(SceneTest, AnEditedGeometryAnnouncesItsBoundsThroughItsSetters)
@@ -10367,7 +10367,7 @@ TEST(SceneTest, AnEditedGeometryAnnouncesItsBoundsThroughItsSetters)
     pointCameraAtX5(camera);
 
     scene.setContentFrame(1);
-    EXPECT_TRUE(scene.collectRenderCommands(&camera)->empty()) << "x in [0, 1] is out of view";
+    EXPECT_TRUE(scene.collectDrawItems(&camera)->empty()) << "x in [0, 1] is out of view";
 
     // The host replaces the data: the triangle moves +5 on X in the geometry's own frame, and the
     // revision announcement is what tells every cached box above the leaf to let go.
@@ -10375,7 +10375,7 @@ TEST(SceneTest, AnEditedGeometryAnnouncesItsBoundsThroughItsSetters)
         intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{ 5.0F, 0.0F, 0.0F, 6.0F, 0.0F, 0.0F, 5.0F, 1.0F, 0.0F })));
     leaf->bumpRevision();
     scene.setContentFrame(2);
-    EXPECT_EQ(scene.collectRenderCommands(&camera)->size(), 1u) << "the data edit must reach the boxes above: an unannounced edit would hide the object";
+    EXPECT_EQ(scene.collectDrawItems(&camera)->size(), 1u) << "the data edit must reach the boxes above: an unannounced edit would hide the object";
 }
 
 TEST(SceneTest, ACustomPlacementAnnouncesThroughInvalidateBounds)
@@ -10394,18 +10394,18 @@ TEST(SceneTest, ACustomPlacementAnnouncesThroughInvalidateBounds)
     pointCameraAtX5(camera);
 
     scene.setContentFrame(1);
-    EXPECT_TRUE(scene.collectRenderCommands(&camera)->empty()) << "x in [0, 1] is out of view";
+    EXPECT_TRUE(scene.collectDrawItems(&camera)->empty()) << "x in [0, 1] is out of view";
 
     custom->setShift(5.0);
     custom->invalidateBounds();
     scene.setContentFrame(2);
-    EXPECT_EQ(scene.collectRenderCommands(&camera)->size(), 1u) << "the announced custom placement must be picked up";
+    EXPECT_EQ(scene.collectDrawItems(&camera)->size(), 1u) << "the announced custom placement must be picked up";
 }
 
 TEST(SceneTest, TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt)
 {
     // The passes of one frame draw the SAME commands, so the engine's pass path takes the list by
-    // reference (collectRenderCommands): copying it per pass cost an intrusive_ptr increment per
+    // reference (collectDrawItems): copying it per pass cost an intrusive_ptr increment per
     // command (three of them) plus a command-sized memcpy, on every pass of every frame, for a list
     // nobody was going to change. What must NOT change is the other half of that contract: a caller
     // that DOES change the list gets its own copy (that is what the pass-level program override relies
@@ -10419,8 +10419,8 @@ TEST(SceneTest, TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt)
     setupLookAtCamera(cam);
 
     scene.setContentFrame(1);
-    const auto first  = scene.collectRenderCommands(&cam);
-    const auto second = scene.collectRenderCommands(&cam);
+    const auto first  = scene.collectDrawItems(&cam);
+    const auto second = scene.collectDrawItems(&cam);
     ASSERT_NE(first, nullptr);
     EXPECT_EQ(first.get(), second.get()) << "one walk builds one list, and every pass shares it";
     EXPECT_EQ(first->size(), 1u);
@@ -10428,29 +10428,29 @@ TEST(SceneTest, TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt)
     EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
 
     // The owning spelling hands out a COPY: editing it is a pass' own business.
-    auto owned = (*scene.collectRenderCommands(&cam));
+    auto owned = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(owned.size(), first->size());
     owned[0].opacity = 0.25f;
     owned.clear();
     EXPECT_EQ(first->size(), 1u) << "the shared list is untouched by a caller's own list";
     EXPECT_NE((*first)[0].opacity, 0.25f) << "a pass' edit must not reach the frame's shared list";
-    EXPECT_EQ(scene.collectRenderCommands(&cam).get(), first.get());
+    EXPECT_EQ(scene.collectDrawItems(&cam).get(), first.get());
 
     // Outside a content frame nothing is memoised, so each call builds its own list: a caller that
     // drives the collection itself keeps the plain walk-on-every-call behaviour.
     Scene plain;
     auto  plain_root = setIdentityRoot(plain);
     plain_root->addChild(geometryOf(*makeUnitTriangle()));
-    const auto plain_first  = plain.collectRenderCommands(&cam);
-    const auto plain_second = plain.collectRenderCommands(&cam);
+    const auto plain_first  = plain.collectDrawItems(&cam);
+    const auto plain_second = plain.collectDrawItems(&cam);
     EXPECT_NE(plain_first.get(), plain_second.get());
     EXPECT_EQ(plain.contentCollectCount(), 2u);
 
     // And a scene with nothing to draw hands out the shared EMPTY list, not a fresh allocation per
     // call: asking "nothing" is the one question a caller asks most often.
     Scene      empty;
-    const auto empty_first  = empty.collectRenderCommands(&cam);
-    const auto empty_second = empty.collectRenderCommands(nullptr);
+    const auto empty_first  = empty.collectDrawItems(&cam);
+    const auto empty_second = empty.collectDrawItems(nullptr);
     EXPECT_TRUE(empty_first->empty());
     EXPECT_EQ(empty_first.get(), empty_second.get());
 }
@@ -10475,12 +10475,12 @@ TEST(SceneTest, TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges)
     setupLookAtCamera(cam);
 
     EXPECT_EQ(geometry->localBoundsComputationCount(), 0u) << "nothing asked yet, nothing computed";
-    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(geometry->localBoundsComputationCount(), 1u);
 
     // A second walk asks for the bound again (the cache lives for one collection) but does not scan the
     // vertices again — this is the per-frame cost the cache removes, not the per-call one.
-    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(geometry->localBoundsComputationCount(), 1u);
 
     // Moving the node recomputes nothing: the LOCAL box is what was cached, the world box is derived.
@@ -10497,18 +10497,18 @@ TEST(SceneTest, TheLocalDataBoxIsComputedOnceAndRecomputedWhenTheDataChanges)
 
     // An edit announced at the GEOMETRY level (the "I changed the data" call every writer makes).
     geometry->setRevision(geometry->revision() + 1);
-    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(geometry->localBoundsComputationCount(), 2u) << "an announced edit re-derives the box";
 
     // ...and one announced on the STREAM, which is how a buffer edited in place is announced.
     positions->setRevision(positions->revision() + 1);
-    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(geometry->localBoundsComputationCount(), 3u);
 
     // A different SEGMENT of the same buffer is a different stream, so it is a different box: an arena
     // holds several geometries' vertices, and sharing one cached box between them would cull them together.
     geometry->setPositions(positions, 0u, 2u);
-    ASSERT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(geometry->localBoundsComputationCount(), 4u);
 }
 
@@ -10545,9 +10545,9 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
-    const RenderCommand& command = commands[0];
+    const DrawItem& command = commands[0];
 
     // The folded state, item by item, against the SDK's own up-walking spelling.
     const RenderState         folded   = collectRenderState(geometry.get());
@@ -10575,14 +10575,14 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
 
     // With the leaf's own material cleared, the NEAREST ancestor's covers it.
     geometry->setMaterial(nullptr);
-    const auto inherited = (*scene.collectRenderCommands(&cam));
+    const auto inherited = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(inherited.size(), 1u);
     EXPECT_EQ(inherited[0].material.get(), outer_material.get());
     EXPECT_EQ(inherited[0].material.get(), effectiveMaterial(geometry.get()).get());
 
     // A hidden StateNode hides its whole subtree (the fold must not outlive the culling decision).
     inner->setVisible(false);
-    EXPECT_TRUE(scene.collectRenderCommands(&cam)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty());
 }
 
 // ============ Backend diagnostics channel ============
@@ -10639,7 +10639,7 @@ TEST(DiagnosticsTest, EngineForwardsSinkToCurrentAndFutureBackend)
 /**
  * @brief The memo is an optimisation the ENGINE opens, not a new default.
  *
- * A caller that drives collectRenderCommands() itself (a tool, a test, a
+ * A caller that drives collectDrawItems() itself (a tool, a test, a
  * hand-rolled loop) must keep the plain "walk the tree on every call"
  * behaviour: nothing is memoised until a content frame is announced, so such a
  * caller cannot silently be served a stale list.
@@ -10652,8 +10652,8 @@ TEST(SceneContentCacheTest, CollectingIsNotMemoisedUntilAContentFrameIsOpen)
     Camera cam;
     setupLookAtCamera(cam);
 
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 2u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 0u);
 }
@@ -10681,43 +10681,43 @@ TEST(SceneContentCacheTest, MemoisesPerViewAndLastsUntilTheGraphChanges)
     cam_further.setPerspective(60.0, 0.1, 1000.0);
 
     scene.setContentFrame(1);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_a)->size(), 1u);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_a)->size(), 1u);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_same_view)->size(), 1u); // same view: same entry
+    EXPECT_EQ(scene.collectDrawItems(&cam_a)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_a)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_same_view)->size(), 1u); // same view: same entry
     EXPECT_EQ(scene.contentCollectCount(), 1u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 2u);
 
     // A different view is its own entry — and that does not evict the first one
     // (the passes interleave).
-    EXPECT_EQ(scene.collectRenderCommands(&cam_further)->size(), 1u);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_a)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_further)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_a)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 2u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 3u);
 
     // Announcing the same frame again is a no-op (every pass may announce it).
     scene.setContentFrame(1);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_a)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_a)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 2u);
 
     // The next frame REUSES: the lists outlive the frame for as long as the graph does not change (every node
     // mutator announces one, see Node::announceContentChange - the measured payoff is in
     // MeasureWhatOneCollectionCostsWithACameraThatDoesNotMove).
     scene.setContentFrame(2);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_a)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_a)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "a still frame is a memo lookup, not a walk";
 
     // AN EDIT ends it: the announcement is what makes the next collection re-walk every view.
     root->children().front()->setOpacity(0.5f);
     scene.setContentFrame(3);
-    EXPECT_EQ(scene.collectRenderCommands(&cam_a)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam_a)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 3u) << "an edit is a new walk";
 
     // And the scope is still a FRAME: nothing is memoised while no frame is open.
     Scene loose;
     auto  loose_root = setIdentityRoot(loose);
     loose_root->addChild(makeTriangleNode(Vec3d(0, 0, -2), nullptr, u8"only"));
-    EXPECT_EQ(loose.collectRenderCommands(&cam_a)->size(), 1u);
-    EXPECT_EQ(loose.collectRenderCommands(&cam_a)->size(), 1u);
+    EXPECT_EQ(loose.collectDrawItems(&cam_a)->size(), 1u);
+    EXPECT_EQ(loose.collectDrawItems(&cam_a)->size(), 1u);
     EXPECT_EQ(loose.contentCollectCount(), 2u) << "no frame open: every call walks";
 }
 
@@ -10734,18 +10734,18 @@ TEST(SceneContentCacheTest, SceneLevelEditsInvalidateTheMemo)
     setupLookAtCamera(cam);
 
     scene.setContentFrame(1);
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 1u);
 
     scene.setOpacity(0.5f);
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
-    EXPECT_EQ((*scene.collectRenderCommands(&cam))[0].opacity, 0.5f);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
+    EXPECT_EQ((*scene.collectDrawItems(&cam))[0].opacity, 0.5f);
     EXPECT_EQ(scene.contentCollectCount(), 2u);
 
     // Re-setting the same value is not a content change: an app that re-applies
     // its settings every frame keeps the memo (and with it the single walk).
     scene.setOpacity(0.5f);
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 2u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 2u);
 
@@ -10754,7 +10754,7 @@ TEST(SceneContentCacheTest, SceneLevelEditsInvalidateTheMemo)
     // command opacity is the scene multiplier timed this node's own opacity.
     root->children()[0]->setOpacity(0.25f);
     scene.invalidateContent();
-    EXPECT_EQ((*scene.collectRenderCommands(&cam))[0].opacity, 0.125f);
+    EXPECT_EQ((*scene.collectDrawItems(&cam))[0].opacity, 0.125f);
     EXPECT_EQ(scene.contentCollectCount(), 3u);
 }
 
@@ -10779,8 +10779,8 @@ TEST(SceneContentCacheTest, AnEditInOneSceneDoesNotEndAnotherScenesMemo)
     scene_a.setContentFrame(1);
     scene_b.setContentFrame(1);
 
-    const auto list_a = scene_a.collectRenderCommands(&cam);
-    const auto list_b = scene_b.collectRenderCommands(&cam);
+    const auto list_a = scene_a.collectDrawItems(&cam);
+    const auto list_b = scene_b.collectDrawItems(&cam);
     ASSERT_NE(list_a, nullptr);
     ASSERT_NE(list_b, nullptr);
     EXPECT_EQ(scene_a.contentCollectCount(), 1u);
@@ -10791,8 +10791,8 @@ TEST(SceneContentCacheTest, AnEditInOneSceneDoesNotEndAnotherScenesMemo)
     scene_b.setContentFrame(2);
     root_a->children().front()->setOpacity(0.5f);
 
-    const auto a_after = scene_a.collectRenderCommands(&cam);
-    const auto b_after = scene_b.collectRenderCommands(&cam);
+    const auto a_after = scene_a.collectDrawItems(&cam);
+    const auto b_after = scene_b.collectDrawItems(&cam);
     ASSERT_NE(a_after, nullptr);
     ASSERT_NE(b_after, nullptr);
     EXPECT_EQ(scene_a.contentCollectCount(), 2u) << "the edited scene collects again";
@@ -10844,7 +10844,7 @@ TEST(SceneContentCacheTest, EditingADetachedSubtreeDoesNotEndTheScenesMemo)
     Camera cam;
     setupLookAtCamera(cam);
     scene.setContentFrame(1);
-    const auto list = scene.collectRenderCommands(&cam);
+    const auto list = scene.collectDrawItems(&cam);
     ASSERT_NE(list, nullptr);
     ASSERT_EQ(list->size(), 1u);
 
@@ -10855,7 +10855,7 @@ TEST(SceneContentCacheTest, EditingADetachedSubtreeDoesNotEndTheScenesMemo)
     loose->setOpacity(0.25f);
 
     scene.setContentFrame(2);
-    const auto again = scene.collectRenderCommands(&cam);
+    const auto again = scene.collectDrawItems(&cam);
     ASSERT_NE(again, nullptr);
     EXPECT_EQ(scene.contentCollectCount(), 1u) << "a detached edit is not this scene's content";
     EXPECT_EQ(again.get(), list.get());
@@ -10872,7 +10872,7 @@ TEST(SceneContentCacheTest, SwappingTheRootEndsTheMemo)
     Camera cam;
     setupLookAtCamera(cam);
     scene.setContentFrame(1);
-    const auto before = scene.collectRenderCommands(&cam);
+    const auto before = scene.collectDrawItems(&cam);
     ASSERT_NE(before, nullptr);
     ASSERT_EQ(before->size(), 1u);
     ASSERT_EQ((*before)[0].geometry->name(), u8"first");
@@ -10882,7 +10882,7 @@ TEST(SceneContentCacheTest, SwappingTheRootEndsTheMemo)
     scene.setRoot(second_root);
 
     scene.setContentFrame(2);
-    const auto after = scene.collectRenderCommands(&cam);
+    const auto after = scene.collectDrawItems(&cam);
     ASSERT_NE(after, nullptr);
     ASSERT_EQ(after->size(), 1u);
     EXPECT_NE(after.get(), before.get()) << "a swapped root is a new list";
@@ -10906,11 +10906,11 @@ TEST(SceneContentCacheTest, EachCallerGetsItsOwnCopyOfTheMemoisedList)
     setupLookAtCamera(cam);
     scene.setContentFrame(1);
 
-    auto first = (*scene.collectRenderCommands(&cam));
+    auto first = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(first.size(), 1u);
     first[0].opacity = 0.25f;
 
-    const auto second = (*scene.collectRenderCommands(&cam));
+    const auto second = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(second.size(), 1u);
     EXPECT_EQ(second[0].opacity, 1.0f);
     EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
@@ -10941,24 +10941,24 @@ TEST(ContentLayersTest, TheMaskDecidesWhichNodesAreCollected)
     EXPECT_EQ(caster->layers().value_or(0u), 1u << 1) << "setLayers() stores the declaration on the node";
 
     // The default mask draws EVERY layer, so a scene that says nothing about layers draws as it always did.
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 2u) << "kAllLayers is what a caller naming no mask gets";
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kAllLayers)->size(), 2u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 2u) << "kAllLayers is what a caller naming no mask gets";
+    EXPECT_EQ(scene.collectDrawItems(&cam, kAllLayers)->size(), 2u);
 
     // A selective mask leaves the ordinary content (kDefaultLayer) out, which is what makes it worth having: the
     // few nodes that ARE in the named layer are the ones that had to be declared.
-    const auto only_casters = (*scene.collectRenderCommands(&cam, 1u << 1));
+    const auto only_casters = (*scene.collectDrawItems(&cam, 1u << 1));
     ASSERT_EQ(only_casters.size(), 1u);
     EXPECT_EQ(only_casters[0].geometry->name(), u8"caster");
 
-    const auto only_ordinary = (*scene.collectRenderCommands(&cam, kDefaultLayer));
+    const auto only_ordinary = (*scene.collectDrawItems(&cam, kDefaultLayer));
     ASSERT_EQ(only_ordinary.size(), 1u);
     EXPECT_EQ(only_ordinary[0].geometry->name(), u8"ordinary");
 
     // Several layers are one mask, not a list of calls.
-    EXPECT_EQ((*scene.collectRenderCommands(&cam, kDefaultLayer | (1u << 1))).size(), 2u);
+    EXPECT_EQ((*scene.collectDrawItems(&cam, kDefaultLayer | (1u << 1))).size(), 2u);
 
     // A mask no node intersects selects nothing - the honest answer, not "everything".
-    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 20)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam, 1u << 20)->empty());
 }
 
 /**
@@ -11019,17 +11019,17 @@ TEST(SceneContentCacheTest, EveryMutationThatChangesACommandEndsTheMemo)
     for (const auto& [what, mutate] : mutations) {
         auto [scene, root, state, leaf] = build();
         scene->setContentFrame(++frame);
-        const auto before = scene->collectRenderCommands(&cam);
+        const auto before = scene->collectDrawItems(&cam);
         ASSERT_NE(before, nullptr);
 
         // Nothing changed: the same list comes back (this is what the memo is for).
         scene->setContentFrame(++frame);
-        EXPECT_EQ(scene->collectRenderCommands(&cam).get(), before.get()) << what << ": an untouched graph reuses";
+        EXPECT_EQ(scene->collectDrawItems(&cam).get(), before.get()) << what << ": an untouched graph reuses";
 
         mutate(root, state, leaf);
 
         scene->setContentFrame(++frame);
-        const auto after = scene->collectRenderCommands(&cam);
+        const auto after = scene->collectDrawItems(&cam);
         ASSERT_NE(after, nullptr);
         EXPECT_NE(after.get(), before.get()) << what << " must end the memo, or the picture goes stale";
         EXPECT_EQ(scene->contentCollectCount(), 2u) << what << ": one walk before, one after";
@@ -11046,19 +11046,19 @@ TEST(ContentLayersTest, TheMaskIsPartOfWhatTheMemoIsKeyedOn)
     scene.setContentFrame(1);
 
     // One mask, asked twice: the frame's memo answers the second time (one walk per view per frame).
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer)->size(), 1u);
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam, kDefaultLayer)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam, kDefaultLayer)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 1u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
 
     // A DIFFERENT mask over the same view is a different list: the walk happens again, for its own entry.
-    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 20)->empty());
+    EXPECT_TRUE(scene.collectDrawItems(&cam, 1u << 20)->empty());
     EXPECT_EQ(scene.contentCollectCount(), 2u) << "one walk per (view, mask)";
     EXPECT_EQ(scene.contentCollectReuseCount(), 1u);
 
     // And each key keeps its own answer afterwards, in any order.
-    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 20)->empty());
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer)->size(), 1u);
+    EXPECT_TRUE(scene.collectDrawItems(&cam, 1u << 20)->empty());
+    EXPECT_EQ(scene.collectDrawItems(&cam, kDefaultLayer)->size(), 1u);
     EXPECT_EQ(scene.contentCollectCount(), 2u);
     EXPECT_EQ(scene.contentCollectReuseCount(), 3u);
 }
@@ -11086,23 +11086,23 @@ TEST(ContentLayersTest, TheNearestDeclarationCoversItsSubtree)
     setupLookAtCamera(cam);
 
     // The parent's declaration covers the child that says nothing; the child that declares its own replaces it.
-    EXPECT_EQ(scene.collectRenderCommands(&cam)->size(), 3u) << "the default mask still draws all of them";
-    auto in_parent_layer = (*scene.collectRenderCommands(&cam, 1u << 1));
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 3u) << "the default mask still draws all of them";
+    auto in_parent_layer = (*scene.collectDrawItems(&cam, 1u << 1));
     ASSERT_EQ(in_parent_layer.size(), 1u);
     EXPECT_EQ(in_parent_layer[0].geometry->name(), u8"inherited");
-    auto in_child_layer = (*scene.collectRenderCommands(&cam, 1u << 2));
+    auto in_child_layer = (*scene.collectDrawItems(&cam, 1u << 2));
     ASSERT_EQ(in_child_layer.size(), 1u);
     EXPECT_EQ(in_child_layer[0].geometry->name(), u8"redeclared");
-    auto ordinary = (*scene.collectRenderCommands(&cam, kDefaultLayer));
+    auto ordinary = (*scene.collectDrawItems(&cam, kDefaultLayer));
     ASSERT_EQ(ordinary.size(), 1u);
     EXPECT_EQ(ordinary[0].geometry->name(), u8"outside") << "a node outside the declared subtree is untouched";
 
     // Withdrawing the declaration puts the subtree back to what it inherited (here: the default layer).
     group->clearLayers();
     EXPECT_EQ(group->layers(), std::nullopt);
-    auto after_withdrawal = (*scene.collectRenderCommands(&cam, kDefaultLayer));
+    auto after_withdrawal = (*scene.collectDrawItems(&cam, kDefaultLayer));
     EXPECT_EQ(after_withdrawal.size(), 2u) << "the group's own child is ordinary content again";
-    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 1)->empty()) << "and nothing is left in that layer";
+    EXPECT_TRUE(scene.collectDrawItems(&cam, 1u << 1)->empty()) << "and nothing is left in that layer";
 }
 
 /**
@@ -11122,14 +11122,14 @@ TEST(ContentLayersTest, VisibilityAndLayersAreTwoQuestions)
     Camera cam;
     setupLookAtCamera(cam);
 
-    EXPECT_EQ(scene.collectRenderCommands(&cam, 1u << 1)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam, 1u << 1)->size(), 1u);
 
     node->setVisible(false);
-    EXPECT_TRUE(scene.collectRenderCommands(&cam, 1u << 1)->empty()) << "hidden wins over the layer";
+    EXPECT_TRUE(scene.collectDrawItems(&cam, 1u << 1)->empty()) << "hidden wins over the layer";
 
     node->setVisible(true);
-    EXPECT_EQ(scene.collectRenderCommands(&cam, 1u << 1)->size(), 1u) << "the layer survived the toggle";
-    EXPECT_TRUE(scene.collectRenderCommands(&cam, kDefaultLayer)->empty()) << "and the declaration still holds";
+    EXPECT_EQ(scene.collectDrawItems(&cam, 1u << 1)->size(), 1u) << "the layer survived the toggle";
+    EXPECT_TRUE(scene.collectDrawItems(&cam, kDefaultLayer)->empty()) << "and the declaration still holds";
 }
 
 /**
@@ -11242,8 +11242,8 @@ TEST(ContentLayersTest, APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce)
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u);
-    ASSERT_FALSE(backend->render_command_counts.empty());
-    EXPECT_EQ(backend->render_command_counts.back(), 0u) << "the pass ran and issued a drawing call with no command in it";
+    ASSERT_FALSE(backend->draw_item_counts.empty());
+    EXPECT_EQ(backend->draw_item_counts.back(), 0u) << "the pass ran and issued a drawing call with no command in it";
 
     // The same declaration, the same frame: the episode has been said.
     engine->frame();
@@ -11277,9 +11277,9 @@ TEST(DrawOrderTest, TheDeclaredOrderIsTheOuterKeyOfTheSort)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto order = [](const std::vector<RenderCommand>& commands) {
+    const auto order = [](const std::vector<DrawItem>& commands) {
         std::string text;
-        for (const RenderCommand& command : commands) {
+        for (const DrawItem& command : commands) {
             if (!text.empty()) {
                 text += ",";
             }
@@ -11288,21 +11288,21 @@ TEST(DrawOrderTest, TheDeclaredOrderIsTheOuterKeyOfTheSort)
         return text;
     };
 
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "first,second,third") << "nobody declared one: the traversal order decides, and the sort is stable";
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "first,second,third") << "nobody declared one: the traversal order decides, and the sort is stable";
 
     // A higher order is drawn LATER - the subtree added first comes out last.
     first->setDrawOrder(2);
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "second,third,first");
-    EXPECT_EQ((*scene.collectRenderCommands(&cam)).back().draw_order, 2) << "the command carries the resolved order";
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "second,third,first");
+    EXPECT_EQ((*scene.collectDrawItems(&cam)).back().draw_order, 2) << "the command carries the resolved order";
 
     // A lower one is drawn EARLIER (negative orders are as legal as positive ones).
     third->setDrawOrder(-1);
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "third,second,first");
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "third,second,first");
 
     // Withdrawing the declarations puts the picture back where it started.
     first->clearDrawOrder();
     third->clearDrawOrder();
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "first,second,third");
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "first,second,third");
 }
 
 /**
@@ -11326,9 +11326,9 @@ TEST(DrawOrderTest, ADrawOrderLeapfrogsTheTransparentBatch)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto order = [](const std::vector<RenderCommand>& commands) {
+    const auto order = [](const std::vector<DrawItem>& commands) {
         std::string text;
-        for (const RenderCommand& command : commands) {
+        for (const DrawItem& command : commands) {
             if (!text.empty()) {
                 text += ",";
             }
@@ -11337,15 +11337,15 @@ TEST(DrawOrderTest, ADrawOrderLeapfrogsTheTransparentBatch)
         return text;
     };
 
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "plain,highlight,glass") << "no declarations: opaque (near to far), then transparent";
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "plain,highlight,glass") << "no declarations: opaque (near to far), then transparent";
 
     highlight->setDrawOrder(1);
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "plain,glass,highlight")
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "plain,glass,highlight")
         << "the highlight is opaque and still lands AFTER the transparent draw - that is the point of the key";
 
     // Inside one order nothing changed: the transparent draw is still last among its own order.
     glass->setDrawOrder(0);
-    EXPECT_EQ(order((*scene.collectRenderCommands(&cam))), "plain,glass,highlight");
+    EXPECT_EQ(order((*scene.collectDrawItems(&cam))), "plain,glass,highlight");
 }
 
 /**
@@ -11371,8 +11371,8 @@ TEST(DrawOrderTest, TheNearestDeclarationCoversItsSubtree)
         // The shared list is held for the loop: a range-for over `*temporary` would let the shared_ptr die with
         // the init-statement and leave the loop reading a freed list (this scene opens no content frame, so no
         // memo holds it either).
-        const auto commands = scene.collectRenderCommands(&cam);
-        for (const RenderCommand& command : *commands) {
+        const auto commands = scene.collectDrawItems(&cam);
+        for (const DrawItem& command : *commands) {
             if (command.geometry.get() == geometry) {
                 return command.draw_order;
             }
@@ -11435,7 +11435,7 @@ TEST(DrawOrderTest, TheDeclarationAppliesAtTheDrawableToo)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const auto commands = (*scene.collectRenderCommands(&cam));
+    const auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 2u);
     EXPECT_EQ(commands[0].geometry->name(), u8"plain") << "the marked one is drawn later, by its own declaration";
     EXPECT_EQ(commands[1].geometry->name(), u8"marked");
@@ -11540,7 +11540,7 @@ TEST(RenderEngineTest, AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStarted
         if (!draws.has_value() || draws->draws.empty() || draws->draws[0].commands == nullptr) {
             return -1000.0;
         }
-        const std::shared_ptr<const std::vector<RenderCommand>> list = draws->draws[0].commands;
+        const std::shared_ptr<const std::vector<DrawItem>> list = draws->draws[0].commands;
         return list->empty() ? -1000.0 : (*list)[0].model_matrix.element(0, 3);
     };
 
@@ -12154,14 +12154,14 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
 
     const auto        walks_before  = engine->contentCollectCount();
     const auto        reuses_before = engine->contentCollectReuseCount();
-    const std::size_t calls_before  = backend->render_command_counts.size();
+    const std::size_t calls_before  = backend->draw_item_counts.size();
     engine->frame();
 
     // The wide rectangle does not widen the frustum: both passes cull with the camera's own (square) shape, which
     // puts the object off to the side of both.
-    ASSERT_EQ(backend->render_command_counts.size() - calls_before, 2u) << "one drawing call per pass";
-    EXPECT_EQ(backend->render_command_counts[calls_before], 0u) << "the wide rectangle does not hand the camera a wider shape";
-    EXPECT_EQ(backend->render_command_counts[calls_before + 1], 0u);
+    ASSERT_EQ(backend->draw_item_counts.size() - calls_before, 2u) << "one drawing call per pass";
+    EXPECT_EQ(backend->draw_item_counts[calls_before], 0u) << "the wide rectangle does not hand the camera a wider shape";
+    EXPECT_EQ(backend->draw_item_counts[calls_before + 1], 0u);
     EXPECT_EQ(engine->contentCollectCount() - walks_before, 1u) << "one walk for the frame: one camera, one shape, however many rectangles it fills";
     // One describe per pass per frame (the frame runs from the value the compile built): the second pass is served
     // by the memo, and nothing describes anything twice.
@@ -12172,9 +12172,9 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
     const std::size_t walks_before_wide = engine->contentCollectCount();
     engine->frame();
 
-    ASSERT_EQ(backend->render_command_counts.size() - calls_before, 4u);
-    EXPECT_EQ(backend->render_command_counts[calls_before + 2], 1u) << "the wide shape holds the off-centre object";
-    EXPECT_EQ(backend->render_command_counts[calls_before + 3], 1u)
+    ASSERT_EQ(backend->draw_item_counts.size() - calls_before, 4u);
+    EXPECT_EQ(backend->draw_item_counts[calls_before + 2], 1u) << "the wide shape holds the off-centre object";
+    EXPECT_EQ(backend->draw_item_counts[calls_before + 3], 1u)
         << "and so does the square rectangle the camera was given it for - the picture is stretched, not re-culled";
     EXPECT_EQ(engine->contentCollectCount() - walks_before_wide, 1u) << "one walk per SHAPE the camera has been given";
 }
@@ -12371,7 +12371,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     ASSERT_EQ(scene_pass.draws.size(), 1u);
     ASSERT_EQ(backend->render_cameras.size(), 1u);
     EXPECT_TRUE(scene_pass.draws[0].view.camera.view.isEqual(backend->render_cameras[0].view, 1e-12));
-    EXPECT_EQ(scene_pass.draws[0].commands->size(), backend->render_command_counts[0]);
+    EXPECT_EQ(scene_pass.draws[0].commands->size(), backend->draw_item_counts[0]);
     // 覆盖是 PASS 的事实（见 PassDraw::program_override）：命令表是共享的、原样的，画的时候由后端逐命令解析。
     EXPECT_EQ(scene_pass.program_override.get(), override_program.get()) << "the pass states the override once, and the backend draws its commands with it";
     EXPECT_NE(scene_pass.draws[0].commands->front().program.get(), override_program.get()) << "the shared command list is never rewritten";
@@ -12384,7 +12384,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     ASSERT_TRUE(screen_entry.draw.has_value());
     const PassDraw& screen_pass = *screen_entry.draw;
     ASSERT_EQ(screen_pass.draws.size(), 1u);
-    EXPECT_EQ(screen_pass.draws[0].kind, DrawDescription::Kind::Screen);
+    EXPECT_EQ(screen_pass.draws[0].kind, DrawCall::Kind::Screen);
     EXPECT_EQ(screen_pass.draws[0].source, backend->last_program_source);
     EXPECT_EQ(screen_pass.draws[0].program.get(), backend->last_program);
     EXPECT_EQ(backend->program_draws, 1);
@@ -12451,7 +12451,7 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndDescribesEachPassOnce)
     EXPECT_EQ(backend->render_calls, 2);
     ASSERT_EQ(backend->render_cameras.size(), 2u);
     EXPECT_TRUE(backend->render_cameras[1].view.isEqual(camera->viewMatrix(), 1e-12));
-    EXPECT_EQ(backend->render_command_counts[1], 1u);
+    EXPECT_EQ(backend->draw_item_counts[1], 1u);
 }
 
 /**
@@ -14706,7 +14706,7 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 
         moving(0);
         const std::uint64_t collects_before = scene.contentCollectCount();
-        const auto          warm            = scene.collectRenderCommands(&camera);
+        const auto          warm            = scene.collectDrawItems(&camera);
         ASSERT_NE(warm, nullptr);
         const std::size_t commands = warm->size();
         EXPECT_EQ(scene.contentCollectCount(), collects_before + 1U);
@@ -14716,7 +14716,7 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
         const void*   last         = nullptr;
         for (int step = 1; step <= kRepetitions; ++step) {
             moving(step);
-            const auto collected = scene.collectRenderCommands(&camera);
+            const auto collected = scene.collectDrawItems(&camera);
             ASSERT_NE(collected, nullptr);
             EXPECT_NE(collected.get(), warm.get()) << "a moved camera cannot reuse the shared list";
             last = collected.get();
@@ -14727,9 +14727,9 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 
         const std::uint64_t reuses_before = scene.contentCollectReuseCount();
         const auto          still_began   = std::chrono::steady_clock::now();
-        const auto          still_first   = scene.collectRenderCommands(&camera);
+        const auto          still_first   = scene.collectDrawItems(&camera);
         for (int step = 1; step < kRepetitions; ++step) {
-            const auto again = scene.collectRenderCommands(&camera);
+            const auto again = scene.collectDrawItems(&camera);
             ASSERT_NE(again, nullptr);
             EXPECT_EQ(again.get(), still_first.get()) << "a still camera reuses the shared list";
         }
@@ -14747,7 +14747,7 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
         const auto          frame_began        = std::chrono::steady_clock::now();
         for (int step = 1; step <= kRepetitions; ++step) {
             scene.setContentFrame(static_cast<std::uint64_t>(step) + 1U);
-            const auto collected = scene.collectRenderCommands(&camera);
+            const auto collected = scene.collectDrawItems(&camera);
             ASSERT_NE(collected, nullptr);
             EXPECT_EQ(collected.get(), still_first.get()) << "the same unchanged scene keeps ONE list, frame after frame";
             EXPECT_EQ(collected->size(), commands) << "the same scene and the same camera draw the same commands";
@@ -14760,7 +14760,7 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
         intrusive_ptr<Group> moved = setIdentityRoot(scene);
         scene.setContentFrame(static_cast<std::uint64_t>(kRepetitions) + 2U);
         root->children().front()->setOpacity(0.5f);
-        const auto after_edit = scene.collectRenderCommands(&camera);
+        const auto after_edit = scene.collectDrawItems(&camera);
         ASSERT_NE(after_edit, nullptr);
         EXPECT_NE(after_edit.get(), still_first.get()) << "an edit is a new list";
         EXPECT_EQ(scene.contentCollectCount(), per_frame_collects + 1U);
@@ -14807,16 +14807,16 @@ TEST(SceneTest, ATwoMaskFrameBakesOnceAndCollectsPerView)
     const auto bakes_before   = scene.contentBakeCount();
     const auto collects_before = scene.contentCollectCount();
 
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kDefaultLayer)->size(), 1U) << "the main pass: the default-layer leaf";
-    EXPECT_EQ(scene.collectRenderCommands(&cam, 1U << 2)->size(), 1U) << "the shadow pass: the caster only";
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kAllLayers)->size(), 2U) << "a pass that draws both";
+    EXPECT_EQ(scene.collectDrawItems(&cam, kDefaultLayer)->size(), 1U) << "the main pass: the default-layer leaf";
+    EXPECT_EQ(scene.collectDrawItems(&cam, 1U << 2)->size(), 1U) << "the shadow pass: the caster only";
+    EXPECT_EQ(scene.collectDrawItems(&cam, kAllLayers)->size(), 2U) << "a pass that draws both";
 
     EXPECT_EQ(scene.contentBakeCount() - bakes_before, 1U) << "one graph, one bake, however many masks ask";
     EXPECT_EQ(scene.contentCollectCount() - collects_before, 3U) << "each (view, mask) is still its own collection";
 
     // And the graph changing is what buys the next bake - the same announcement the memo uses.
     caster->setOpacity(0.5F);
-    EXPECT_EQ(scene.collectRenderCommands(&cam, kAllLayers)->size(), 2U);
+    EXPECT_EQ(scene.collectDrawItems(&cam, kAllLayers)->size(), 2U);
     EXPECT_EQ(scene.contentBakeCount() - bakes_before, 2U);
 }
 
@@ -14862,7 +14862,7 @@ TEST(SceneTest, MeasureWhereACollectionSpendsItsTime)
                 // Looking away from the content: the same walk, the same box lookups, ZERO commands.
                 camera.lookAt(Vec3d(0.001 * static_cast<double>(step), 0, 5), Vec3d(0, 0, 50), Vec3d(0, 1, 0));
             }
-            last_size = scene.collectRenderCommands(&camera)->size();
+            last_size = scene.collectDrawItems(&camera)->size();
         }
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / kRepetitions;
         return std::make_pair(us, last_size);
@@ -14893,7 +14893,7 @@ TEST(SceneTest, MeasureWhereACollectionSpendsItsTime)
     }
 
     // The primitives, measured at the same counts: this is the cross-check on the split above. A box transform and a
-    // hash-map round trip are what the per-node half is made of; a RenderCommand copy plus a sort is what the
+    // hash-map round trip are what the per-node half is made of; a DrawItem copy plus a sort is what the
     // per-command half is made of.
     for (const std::size_t count : { std::size_t{ 200 }, std::size_t{ 2000 } }) {
         const Mat4d world = vn::math::translate(Vec3d(0.25, 0.5, -5.0));
@@ -14923,46 +14923,46 @@ TEST(SceneTest, MeasureWhereACollectionSpendsItsTime)
         }
         const auto map_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - map_begin).count() / kRepetitions;
 
-        std::vector<RenderCommand> commands;
+        std::vector<DrawItem> commands;
         commands.reserve(count);
         for (std::size_t index = 0; index < count; ++index) {
-            RenderCommand cmd;
+            DrawItem cmd;
             cmd.geometry     = geometryOf(*makeUnitTriangle());
             cmd.model_matrix = world;
             commands.push_back(std::move(cmd));
         }
         const auto copy_begin = std::chrono::steady_clock::now();
         for (int pass = 0; pass < kRepetitions; ++pass) {
-            std::vector<RenderCommand> into;
+            std::vector<DrawItem> into;
             into.reserve(count);
-            for (const RenderCommand& cmd : commands) {
+            for (const DrawItem& cmd : commands) {
                 into.push_back(cmd);
             }
         }
         const auto copy_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - copy_begin).count() / kRepetitions;
 
-        std::vector<std::pair<double, RenderCommand*>> keyed;
+        std::vector<std::pair<double, DrawItem*>> keyed;
         keyed.reserve(count);
         for (auto& cmd : commands) {
             keyed.emplace_back(1.0, &cmd);
         }
         const auto sort_begin = std::chrono::steady_clock::now();
         for (int pass = 0; pass < kRepetitions; ++pass) {
-            std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, RenderCommand*>& lhs, const std::pair<double, RenderCommand*>& rhs) {
+            std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, DrawItem*>& lhs, const std::pair<double, DrawItem*>& rhs) {
                 return lhs.first < rhs.first;
             });
         }
         const auto sort_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - sort_begin).count() / kRepetitions;
 
         // The two halves of the list-building that happen OUTSIDE the collector: the sort key (one Mat4d x Point3d per
-        // command) and the copy out of the pointer-sorted list into the shared vector (a RenderCommand copy each).
+        // command) and the copy out of the pointer-sorted list into the shared vector (a DrawItem copy each).
         const Vec3d eye(0.0, 0.0, 5.0);
         const auto  key_begin = std::chrono::steady_clock::now();
         double      key_sink  = 0.0;
         for (int pass = 0; pass < kRepetitions; ++pass) {
-            std::vector<std::pair<double, RenderCommand*>> keys;
+            std::vector<std::pair<double, DrawItem*>> keys;
             keys.reserve(count);
-            for (RenderCommand& cmd : commands) {
+            for (DrawItem& cmd : commands) {
                 const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
                 const auto key    = (origin.asVector() - eye).length2();
                 key_sink += key;
@@ -14973,7 +14973,7 @@ TEST(SceneTest, MeasureWhereACollectionSpendsItsTime)
 
         const auto ordered_begin = std::chrono::steady_clock::now();
         for (int pass = 0; pass < kRepetitions; ++pass) {
-            std::vector<RenderCommand> ordered;
+            std::vector<DrawItem> ordered;
             ordered.reserve(count);
             for (auto& [distance, cmd] : keyed) {
                 (void)distance;
@@ -15021,7 +15021,7 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     EXPECT_NEAR(before.min().x, -2.0, 1e-9);
     EXPECT_NEAR(before.max().x, -1.0, 1e-9);
 
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].model_matrix.element(0, 3), -2.0, 1e-9);
     const std::uint64_t bakes_before = scene.contentBakeCount();
@@ -15038,12 +15038,12 @@ TEST(SceneMutationTest, ReparentingMovesTheCommandAndBothSubtreeBoxes){
     EXPECT_NEAR(after.min().x, 2.0, 1e-9);
     EXPECT_NEAR(after.max().x, 3.0, 1e-9);
 
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_NEAR(commands[0].model_matrix.element(0, 3), 2.0, 1e-9);
 
     // The rows are REBUILT: a reparent announces on both chains, so the fold runs again instead of the table being
-    // served stale (see Scene::collectRenderCommands - the epoch is what decides).
+    // served stale (see Scene::collectDrawItems - the epoch is what decides).
     EXPECT_GT(scene.contentBakeCount(), bakes_before) << "the reparent announces on both chains";
 }
 
@@ -15077,7 +15077,7 @@ TEST(SceneMutationTest, ReparentingSwapsWhichStateOverridesApply)
     Camera cam;
     setupLookAtCamera(cam);
 
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), material_a.get());
     EXPECT_EQ(commands[0].program.get(), program_a.get());
@@ -15086,7 +15086,7 @@ TEST(SceneMutationTest, ReparentingSwapsWhichStateOverridesApply)
     // The override chain is re-resolved every collection, so the move changes
     // material, program and opacity together.
     state_b->addChild(holder);
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), material_b.get());
     EXPECT_EQ(commands[0].program.get(), program_b.get());
@@ -15094,7 +15094,7 @@ TEST(SceneMutationTest, ReparentingSwapsWhichStateOverridesApply)
 
     // And back: nothing of the other subtree sticks.
     state_a->addChild(holder);
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), material_a.get());
     EXPECT_EQ(commands[0].program.get(), program_a.get());
@@ -15122,7 +15122,7 @@ TEST(SceneMutationTest, SwappingMaterialAndProgramTakesEffectOnTheNextCollection
 
     geom->setMaterial(material_x);
     geom->setProgram(program_x);
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), material_x.get());
     EXPECT_EQ(commands[0].program.get(), program_x.get());
@@ -15131,7 +15131,7 @@ TEST(SceneMutationTest, SwappingMaterialAndProgramTakesEffectOnTheNextCollection
     // identities, not the ones it started with.
     geom->setMaterial(material_y);
     geom->setProgram(program_y);
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material.get(), material_y.get());
     EXPECT_EQ(commands[0].program.get(), program_y.get());
@@ -15139,7 +15139,7 @@ TEST(SceneMutationTest, SwappingMaterialAndProgramTakesEffectOnTheNextCollection
     // And clearing both falls back to the inherited defaults.
     geom->setMaterial(nullptr);
     geom->setProgram(nullptr);
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].material, nullptr);
     EXPECT_EQ(commands[0].program, nullptr);
@@ -15169,7 +15169,7 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
     ASSERT_TRUE(before.isValid());
     EXPECT_NEAR(before.min().x, -2.0, 1e-9);
 
-    auto commands = (*scene.collectRenderCommands(&cam));
+    auto commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 2u);
     const std::uint64_t bakes_before = scene.contentBakeCount();
 
@@ -15183,7 +15183,7 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
     EXPECT_NEAR(after.min().x, 0.0, 1e-9);
     EXPECT_NEAR(after.max().x, 1.0, 1e-9);
 
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 1u);
     EXPECT_EQ(commands[0].geometry.get(), keeper_geom);
 
@@ -15192,10 +15192,10 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
 
     // Removal is not destruction: the detached subtree can come back.
     root->addChild(removed);
-    commands = (*scene.collectRenderCommands(&cam));
+    commands = (*scene.collectDrawItems(&cam));
     ASSERT_EQ(commands.size(), 2u);
     bool removed_back = false;
-    for (const RenderCommand& command : commands) {
+    for (const DrawItem& command : commands) {
         removed_back = removed_back || command.geometry.get() == removed_geom;
     }
     EXPECT_TRUE(removed_back);

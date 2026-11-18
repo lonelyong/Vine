@@ -33,7 +33,7 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -69,7 +69,7 @@ using vn::graphics::kMaxLights;
 using vn::graphics::Light;
 using vn::graphics::LightType;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -655,14 +655,14 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     band3_refs.push_back(sun_a.get());
 
     const auto command_for = [&](const vn::intrusive_ptr<Geometry>& geometry, const vn::intrusive_ptr<ShaderProgram>& program) {
-        RenderCommand command;
+        DrawItem command;
         command.geometry = geometry;
         command.material = material;
         command.program  = program;
         return command;
     };
-    const RenderCommand producer_command = command_for(full_quad, producer_program);
-    const RenderCommand commands[]{ command_for(bands[0], consumer_program),
+    const DrawItem producer_command = command_for(full_quad, producer_program);
+    const DrawItem commands[]{ command_for(bands[0], consumer_program),
                                     command_for(bands[1], consumer_program),
                                     command_for(bands[2], consumer_program),
                                     command_for(bands[3], consumer_program) };
@@ -698,7 +698,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     recorder.beginPass(1U); // the engine's shadow pass: the map, and nothing else
     recorder.setRenderTarget(map_handle.get());
     recorder.setLights(lightValues(std::span<const Light* const>(band0_lights, 2U)));
-    recorder.render(std::span<const RenderCommand>(&producer_command, 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&producer_command, 1U), &camera);
     recorder.endPass();
     recorder.beginPass(2U); // the receiver: four calls, four light lists
     recorder.setRenderTarget(receiver_handle.get());
@@ -711,17 +711,17 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     const RenderTarget* map_inputs[]{ map_handle.get() };
     recorder.setPassInputs(std::span<const RenderTarget* const>(map_inputs, 1U));
     recorder.setLights(lightValues(std::span<const Light* const>(band0_lights, 2U)));
-    recorder.render(std::span<const RenderCommand>(&commands[0], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[0], 1U), &camera);
     // The runtime switch, flipped on the SAME light between two calls of one frame: the map's owner has to stop
     // shading the moment it stops casting (a snapshot taken once per call is what makes that observable).
     sun_a->setCastShadow(false);
     recorder.setLights(lightValues(std::span<const Light* const>(band1_lights, 2U)));
-    recorder.render(std::span<const RenderCommand>(&commands[1], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[1], 1U), &camera);
     sun_a->setCastShadow(true);
     recorder.setLights(lightValues(std::span<const Light* const>(band2_lights, 3U)));
-    recorder.render(std::span<const RenderCommand>(&commands[2], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[2], 1U), &camera);
     recorder.setLights(lightValues(std::span<const Light* const>(band3_refs)));
-    recorder.render(std::span<const RenderCommand>(&commands[3], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[3], 1U), &camera);
     recorder.endPass();
     recorder.endFrame();
 

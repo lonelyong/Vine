@@ -45,7 +45,7 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -60,7 +60,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::ImageSource;
@@ -69,7 +69,7 @@ using vn::graphics::LightValue;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -153,11 +153,11 @@ makeQuad(float x0, float x1, float z)
 }
 
 /// @brief One command: @p geometry through @p program, shaded with @p material.
-[[nodiscard]] RenderCommand commandOf(const intrusive_ptr<Geometry>& geometry,
+[[nodiscard]] DrawItem commandOf(const intrusive_ptr<Geometry>& geometry,
                                       const intrusive_ptr<ShaderProgram>& program,
                                       const intrusive_ptr<Material>& material)
 {
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
@@ -166,11 +166,11 @@ makeQuad(float x0, float x1, float z)
 }
 
 /// @brief One scene drawing call: @p commands through the identity camera, optionally announcing @p lights.
-[[nodiscard]] DrawDescription sceneDraw(std::shared_ptr<const std::vector<RenderCommand>> commands,
+[[nodiscard]] DrawCall sceneDraw(std::shared_ptr<const std::vector<DrawItem>> commands,
                                         vn::graphics::LightSetPtr                         lights = nullptr)
 {
-    DrawDescription draw;
-    draw.kind        = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind        = DrawCall::Kind::Scene;
     draw.view.camera      = identityCamera();
     draw.commands    = std::move(commands);
     draw.light_values = std::move(lights);
@@ -219,14 +219,14 @@ struct Scene {
  */
 [[nodiscard]] FrameDescription shadowFrame(const Scene& scene, bool declare, bool casting)
 {
-    std::vector<RenderCommand> casters;
+    std::vector<DrawItem> casters;
     casters.push_back(commandOf(scene.ground, scene.program, scene.material));
     casters.push_back(commandOf(scene.occluder, scene.program, scene.material));
-    const auto caster_list = std::make_shared<const std::vector<RenderCommand>>(std::move(casters));
+    const auto caster_list = std::make_shared<const std::vector<DrawItem>>(std::move(casters));
 
-    std::vector<RenderCommand> receivers;
+    std::vector<DrawItem> receivers;
     receivers.push_back(commandOf(scene.ground, scene.program, scene.material));
-    const auto receiver_list = std::make_shared<const std::vector<RenderCommand>>(std::move(receivers));
+    const auto receiver_list = std::make_shared<const std::vector<DrawItem>>(std::move(receivers));
 
     const intrusive_ptr<Light> light = scene.light;
     light->setCastShadow(casting);
@@ -446,9 +446,9 @@ void main()
     // The map's content is stated directly, so the sampled numbers are unambiguous: a strip at z = 0.5 covers the
     // LEFT half and the clear leaves the right half at 0. Reverse-Z's GREATER keeps the strip's larger depth.
     const intrusive_ptr<Geometry> strip = makeQuad(-1.0F, 0.0F, 0.5F);
-    std::vector<RenderCommand>    casters;
+    std::vector<DrawItem>    casters;
     casters.push_back(commandOf(strip, scene.program, scene.material));
-    const auto caster_list = std::make_shared<const std::vector<RenderCommand>>(std::move(casters));
+    const auto caster_list = std::make_shared<const std::vector<DrawItem>>(std::move(casters));
 
     FrameDescription frame;
 
@@ -477,8 +477,8 @@ void main()
     source_entry.draw       = std::move(source_pass);
     frame.passes.push_back(std::move(source_entry));
 
-    DrawDescription screen_draw;
-    screen_draw.kind                = DrawDescription::Kind::Screen;
+    DrawCall screen_draw;
+    screen_draw.kind                = DrawCall::Kind::Screen;
     screen_draw.view.camera              = identityCamera();
     screen_draw.source              = source.get();
     screen_draw.program             = read_program;

@@ -39,7 +39,7 @@
 
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
@@ -69,7 +69,7 @@
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -291,12 +291,12 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     blue_clear.color_value[2] = kBlue[2];
     blue_clear.color_value[3] = 1.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
     // Two drawing calls: the sampled-input set is the PASS', so the second one must not re-issue its bind.
-    const std::vector<RenderCommand> commands{ command, command };
+    const std::vector<DrawItem> commands{ command, command };
 
     std::vector<RenderTarget*> inputs{ source_handle.get() };
 
@@ -763,11 +763,11 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     receiver_facts.current       = receiver->instance();
     const std::vector<TargetFacts> target_table{ shadow_facts_table, receiver_facts };
 
-    RenderCommand shadow_command;
+    DrawItem shadow_command;
     shadow_command.geometry = shadow_geometry;
     shadow_command.material = material;
     shadow_command.program  = shadow_program;
-    RenderCommand sampling_command;
+    DrawItem sampling_command;
     sampling_command.geometry = sampling_geometry;
     sampling_command.material = material;
     sampling_command.program  = sampling_program;
@@ -778,13 +778,13 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     recorder.beginPass(1U);
     recorder.setRenderTarget(shadow_handle.get());
     recorder.setClearPolicy(shadow_layout.clear);
-    recorder.render(std::vector<RenderCommand>{ shadow_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ shadow_command }, nullptr);
     recorder.endPass();
     recorder.beginPass(2U);
     recorder.setRenderTarget(receiver_handle.get());
     recorder.setClearPolicy(receiver_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(shadow_inputs, 1U));
-    recorder.render(std::vector<RenderCommand>{ sampling_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ sampling_command }, nullptr);
     recorder.endPass();
     recorder.endFrame();
 

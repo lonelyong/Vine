@@ -14,7 +14,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/Scene.hpp>
 
@@ -25,14 +25,14 @@
 using vn::graphics::Camera;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::View;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
 using vn::graphics::PassDesc;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderPass;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishResult;
@@ -56,7 +56,7 @@ namespace
 ///                frame's bind step wrote.
 FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
 {
-    // The view the frame was DESCRIBED for: values only, exactly what a pass hands over (see DrawDescription). The
+    // The view the frame was DESCRIBED for: values only, exactly what a pass hands over (see DrawCall). The
     // clip box is [-1, 1]^3 with the eye on +Z, and the content below is authored to sit inside it.
     CameraSnapshot camera;
     camera.present    = true;
@@ -66,8 +66,8 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawDescription draw;
-    draw.kind       = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind       = DrawCall::Kind::Scene;
     draw.view.camera = camera;
     draw.content    = content;
     draw.view.layer_mask = vn::graphics::kAllLayers;
@@ -107,9 +107,9 @@ SnapshotSource* frameSourceFor(PublicationStore& store, Scene& scene)
 }
 
 /// @brief Collects the commands of the frame's one draw.
-const std::vector<RenderCommand>& commandsOf(const FrameDescription& frame)
+const std::vector<DrawItem>& commandsOf(const FrameDescription& frame)
 {
-    static const std::vector<RenderCommand> kNone;
+    static const std::vector<DrawItem> kNone;
     if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->draws.empty()) {
         return kNone;
     }
@@ -135,7 +135,7 @@ TEST(FrameExpandTest, AFrameExpandsTheSamePictureTheSceneWould)
     scene.setRoot(root);
 
     // The content's own answer, for the SAME view value (a query on the thread that owns it - see Scene).
-    const auto from_content = scene.collectRenderCommands(theView());
+    const auto from_content = scene.collectDrawItems(theView());
 
     // The engine side's answer: publish the content, bind the draw to its publication, then expand.
     PublicationStore store;
@@ -143,8 +143,8 @@ TEST(FrameExpandTest, AFrameExpandsTheSamePictureTheSceneWould)
     FrameDescription from_snapshot = onePassFrame(frameSourceFor(store, scene));
     expandFrame(from_snapshot);
 
-    const std::vector<RenderCommand>& expected = *from_content;
-    const std::vector<RenderCommand>& actual   = commandsOf(from_snapshot);
+    const std::vector<DrawItem>& expected = *from_content;
+    const std::vector<DrawItem>& actual   = commandsOf(from_snapshot);
     ASSERT_EQ(expected.size(), 2U) << "both leaves are in the clip box";
     ASSERT_EQ(actual.size(), expected.size()) << "the two sides drew a different number of commands";
     for (std::size_t index = 0; index < expected.size(); ++index) {
@@ -224,7 +224,7 @@ TEST(FrameExpandTest, ASecondExpansionKeepsTheListTheDrawAlreadyCarries)
     ASSERT_TRUE(scene.publish());
     FrameDescription frame = onePassFrame(frameSourceFor(store, scene));
     expandFrame(frame);
-    const std::vector<RenderCommand>* const first = &commandsOf(frame);
+    const std::vector<DrawItem>* const first = &commandsOf(frame);
     EXPECT_EQ(first->size(), 1U);
 
     expandFrame(frame);
@@ -290,11 +290,11 @@ TEST(FrameExpandTest, BindSceneDrawsBindsOnlyWhatNothingBoundYet)
 
     PassDraw pass;
     pass.draws.emplace_back(); // scene draw, nothing bound
-    pass.draws.back().kind = DrawDescription::Kind::Scene;
+    pass.draws.back().kind = DrawCall::Kind::Scene;
     pass.draws.emplace_back(); // screen draw
-    pass.draws.back().kind = DrawDescription::Kind::Screen;
+    pass.draws.back().kind = DrawCall::Kind::Screen;
     pass.draws.emplace_back(); // scene draw already naming a source
-    pass.draws.back().kind    = DrawDescription::Kind::Scene;
+    pass.draws.back().kind    = DrawCall::Kind::Scene;
     pass.draws.back().content = other_source;
 
     bindSceneDraws(pass, source);
@@ -362,13 +362,13 @@ TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
 
     expandPass(described);
     ASSERT_NE(described.draws.front().commands, nullptr) << "the expansion collected through the View";
-    const std::vector<RenderCommand>& described_commands = *described.draws.front().commands;
+    const std::vector<DrawItem>& described_commands = *described.draws.front().commands;
 
     // The pure select, fed the very same value, answers the same list.
     const vn::graphics::detail::SceneSnapshotPtr snapshot = source->snapshot();
     ASSERT_NE(snapshot, nullptr);
 
-    std::vector<RenderCommand> selected;
+    std::vector<DrawItem> selected;
     bool                       viewport_used = false;
     vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
 

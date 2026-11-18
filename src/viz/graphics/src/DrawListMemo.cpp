@@ -55,7 +55,7 @@ DrawListMemo::Entry& DrawListMemo::store(const Mat4d&                     view_p
                                          std::uint32_t                    layer_mask,
                                          bool                             viewport_sensitive,
                                          std::uint64_t                    revision,
-                                         std::shared_ptr<const std::vector<RenderCommand>> commands,
+                                         std::shared_ptr<const std::vector<DrawItem>> commands,
                                          std::uint64_t                    frame)
 {
     ++stores_;

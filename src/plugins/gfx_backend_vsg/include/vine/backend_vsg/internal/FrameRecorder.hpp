@@ -12,7 +12,7 @@
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/Light.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
@@ -116,16 +116,16 @@ using LightRef = vn::graphics::LightValue;
  *
  * @details
  * - It used to be declared here, because the recorder was the first thing that needed it. It is a FRAME value now:
- *   a pass takes it when it describes itself (see DrawDescription::camera), the recorder copies it, and nothing
+ *   a pass takes it when it describes itself (see DrawCall::camera), the recorder copies it, and nothing
  *   reads a `Camera` object while recording - so the type belongs one layer up, next to the camera it snapshots.
  */
 using CameraSnapshot = vn::graphics::CameraSnapshot;
 
-/** @brief One instance of one command, as the frame remembers it (the SDK's RenderCommand, copied). */
+/** @brief One instance of one command, as the frame remembers it (the SDK's DrawItem, copied). */
 struct CollectedCommand {
     /// The geometry identity AND revision the plan names for this draw's facts (see `ContentId.hpp`).
     ///
-    /// THE IDENTITY IS THE DRAW LIST'S NODE (`RenderCommand::node`), which a `Geometry` inherits as its own id, and
+    /// THE IDENTITY IS THE DRAW LIST'S NODE (`DrawItem::node`), which a `Geometry` inherits as its own id, and
     /// the revision is `Geometry::revision()` at collection time. Both travel together because a frame in flight
     /// must be answered with the row the content published for it, not with whatever the geometry says by the time
     /// the plan is recorded - the same rule `program` and `material` follow.
@@ -146,7 +146,7 @@ struct CollectedCommand {
     vn::graphics::ContentRef material{};        // The material identity AND revision, or a null id for none.
     vn::math::Mat4d        model{};             // World-space model matrix.
     float                  opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
-    /// Whether this command belongs in the transparent queue, from `RenderCommand::isTransparent` (the
+    /// Whether this command belongs in the transparent queue, from `DrawItem::isTransparent` (the
     /// material's resolved alpha mode plus the opacity). Carried because the plan has only identities, and the
     /// blend enable must be the same answer the collector sorted by (graphics-material.md 2.7).
     bool                      transparent{ false };
@@ -352,7 +352,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
     /** @brief Collects a content drawing call (the SDK's render()).
      *
      * @details
-     * - What the frame path calls: the commands are VALUES (see RenderCommand), and
+     * - What the frame path calls: the commands are VALUES (see DrawItem), and
      *   `PassDraw::program_override_description` was taken when the pass described itself - so an override edited
      *   while the frame is in flight keeps the text the frame recorded.
      *
@@ -361,7 +361,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      * @param program_override Program text every command is drawn with, or null for each command's own.
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
-    bool render(std::span<const vn::graphics::RenderCommand> commands,
+    bool render(std::span<const vn::graphics::DrawItem> commands,
                 const vn::graphics::CameraSnapshot&          camera,
                 const vn::graphics::ShaderProgramDescription* program_override);
 
@@ -369,14 +369,14 @@ class VN_BACKEND_VSG_API FrameRecorder {
      *
      * @details
      * - It converts ONCE (`CameraSnapshot::of`) and delegates, so a host or a test that names the object says so in
-     *   one word - while the frame path itself carries the value (see DrawDescription::camera). Null means "no view".
+     *   one word - while the frame path itself carries the value (see DrawCall::camera). Null means "no view".
      *
      * @param commands         Commands to draw, copied into the arena before this call returns.
      * @param camera           The camera to snapshot, or null for a call with no view.
      * @param program_override Program every command is drawn with, or null to use each command's own.
      * @return true when the call was collected; false when it was refused (no scope, or a released target).
      */
-    bool render(std::span<const vn::graphics::RenderCommand> commands,
+    bool render(std::span<const vn::graphics::DrawItem> commands,
                 const vn::graphics::Camera*                        camera,
                 const vn::graphics::ShaderProgramDescription*      program_override = nullptr)
     {
@@ -392,7 +392,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera);
 
-    /** @brief The value spelling: @p program is the fragment program's TEXT (see DrawDescription::program_description).
+    /** @brief The value spelling: @p program is the fragment program's TEXT (see DrawCall::program_description).
      *
      * @param source  Target whose colour attachments are sampled.
      * @param program Fragment program text to draw with.
@@ -460,7 +460,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      * @param program_override Program text every command is drawn with, or null for each command's own.
      * @return The recorded commands (arena storage, valid until the frame's arena is reset).
      */
-    [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
+    [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(std::span<const vn::graphics::DrawItem> commands,
                                                                      const vn::graphics::ShaderProgramDescription* program_override);
 
 

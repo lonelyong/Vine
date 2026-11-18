@@ -10,7 +10,7 @@
 
 #include <volk.h>
 
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/StateResolution.hpp>
 #include <vine/backend_vk/internal/ContentAbi.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
@@ -64,7 +64,7 @@ class FrameHead final {
      * - `pipeline == VK_NULL_HANDLE` means "this call cannot be recorded": the head already stated why in the drawing
      *   call's `ContentRefusal`, and the recorder skips exactly this plan.
      * - THE ONE PAYLOAD THAT IS NOT SHARED is the content call's: material, variant and streams describe a
-     *   `RenderCommand`, and a screen call has none of them. The pipeline and the resolved state are what a screen
+     *   `DrawItem`, and a screen call has none of them. The pipeline and the resolved state are what a screen
      *   call uses beside its slots, which is why they are the common half of this value.
      * - THE SLOTS ARE RESOLVED BEFORE THE RENDER PASS BEGINS, because a texture upload records a buffer-to-image copy
      *   and an image barrier, neither of which is legal inside a render pass instance (the same rule

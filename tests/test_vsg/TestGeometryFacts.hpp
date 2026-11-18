@@ -28,7 +28,7 @@ inline vn::backend_vsg::FactMiss buildGeometryFacts(const vn::graphics::Geometry
 {
     const vn::backend_vsg::FactMiss miss = vn::backend_vsg::buildGeometryFacts(*geometry.description(), out, channels, primitives);
     // The ref these tests will name from their commands: the geometry's own id, which is what a hand-built
-    // `RenderCommand` / `CompiledCommand` carries (a draw list's row identity is the same node id), and the revision
+    // `DrawItem` / `CompiledCommand` carries (a draw list's row identity is the same node id), and the revision
     // its shape is at. The backend's builder stamps no identity at all, because a description knows its revision,
     // not who published it.
     out.geometry = vn::graphics::contentRefOf(geometry.id(), geometry.revision());

@@ -5,7 +5,7 @@
  * WHY THIS FILE EXISTS. Step S4 of the sessions design is a state machine before it is a wiring: the rules it must
  * make true - exactly one driver builds a key, a second driver copies instead of waiting, a claim that leaves the
  * frame publishes or withdraws but never lingers - can all be pinned WITHOUT a GPU, by naming two "sessions" with two
- * ids. The device-level wiring lands with `createSession()` (S6); these cases are what it will lean on.
+ * ids. The device-level wiring lands with `createFrameDriver()` (S6); these cases are what it will lean on.
  *
  * THE WITNESSES ARE THE TABLE'S OWN BOOKS (`ResidencyClaims::numbers`), not a test-side guess about what should have
  * happened: `claims` / `published` / `withdrawn` / `copies` / `stale` say which path ran, and `uploading` says nothing

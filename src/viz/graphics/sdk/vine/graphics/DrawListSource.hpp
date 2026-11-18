@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "View.hpp"
-#include "RenderCommand.hpp"
+#include "DrawItem.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -14,7 +14,7 @@ VN_GRAPHICS_NS_BEGIN
  * @brief The ONE question a frame asks about a drawable set: "what would this view draw, from you".
  *
  * @details
- * - WHY AN INTERFACE. A frame's shape is a set of VIEWS (see DrawDescription), and the commands behind a view come
+ * - WHY AN INTERFACE. A frame's shape is a set of VIEWS (see DrawCall), and the commands behind a view come
  *   from something that owns the content. Two such owners exist and must answer identically: a `Scene` (the authored
  *   graph, which answers on the content thread) and a `SnapshotSource` (an immutable publication, which answers
  *   anywhere). Naming the question here is what lets the frame machinery ask it without knowing which side answers.
@@ -45,7 +45,7 @@ class VN_GRAPHICS_API DrawListSource {
      * @return The commands, in draw order; empty when nothing is drawn. Shared because every pass of a frame that
      *         draws this view names the same list.
      */
-    [[nodiscard]] virtual std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const View& view) const = 0;
+    [[nodiscard]] virtual std::shared_ptr<const std::vector<DrawItem>> collectDrawItems(const View& view) const = 0;
 };
 
 VN_GRAPHICS_NS_END

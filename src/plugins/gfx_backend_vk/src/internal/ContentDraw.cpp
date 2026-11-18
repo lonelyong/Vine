@@ -103,7 +103,7 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
  * @param draw   The drawing call: its camera (the view space to map from) and the lights it announced.
  * @return The block; every field is written and the switch is off when the map cannot shade this call.
  */
-[[nodiscard]] vn::graphics::VineShadowBlock buildShadowBlock(const ContentDraw::ShadowSource& shadow, const vn::graphics::DrawDescription& draw) noexcept
+[[nodiscard]] vn::graphics::VineShadowBlock buildShadowBlock(const ContentDraw::ShadowSource& shadow, const vn::graphics::DrawCall& draw) noexcept
 {
     vn::graphics::VineShadowBlock block{};
     if (shadow.light == nullptr || !shadow.has_view_projection || shadow.view == VK_NULL_HANDLE || !draw.view.camera.present ||
@@ -166,7 +166,7 @@ void ContentDraw::writeSlice(const VkDeviceSize                    slice,
 std::uint64_t ContentDraw::record(VkCommandBuffer                              commands,
                                   int                                          width,
                                   int                                          height,
-                                  const vn::graphics::DrawDescription&         draw,
+                                  const vn::graphics::DrawCall&         draw,
                                   const vn::graphics::PassDraw&                pass,
                                   const std::span<const FrameHead::DrawPlan>   plans,
                                   const FrameHead&                             head,
@@ -180,11 +180,11 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     if (!caches.ready() || !scratch.ready() || draw.commands == nullptr) {
         return 0;
     }
-    // NO CAMERA MEANS NO DRAW (see DrawDescription::camera): the pass issues nothing, and that is not a failure.
+    // NO CAMERA MEANS NO DRAW (see DrawCall::camera): the pass issues nothing, and that is not a failure.
     if (!draw.view.camera.present) {
         return 0;
     }
-    if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
+    if (draw.kind != vn::graphics::DrawCall::Kind::Scene) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::WrongPath),
                    vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
@@ -247,7 +247,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     };
 
     for (std::size_t command_index = 0; command_index < draw.commands->size(); ++command_index) {
-        const vn::graphics::RenderCommand& command = (*draw.commands)[command_index];
+        const vn::graphics::DrawItem& command = (*draw.commands)[command_index];
         const FrameHead::DrawPlan&         plan    = plans[command_index];
         // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planDraw): the
         // drawing call's refusal carries that reason, and a later command still records.
@@ -395,7 +395,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
 std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                            commands,
                                         int                                        width,
                                         int                                        height,
-                                        const vn::graphics::DrawDescription&       draw,
+                                        const vn::graphics::DrawCall&       draw,
                                         const vn::graphics::PassDraw&              pass,
                                         const FrameHead::DrawPlan&                 plan,
                                         const FrameHead&                           head,

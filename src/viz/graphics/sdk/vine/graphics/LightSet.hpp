@@ -21,8 +21,8 @@ VN_GRAPHICS_NS_BEGIN
  *   and the frame pipeline's own rule is zero allocations outside the frame arena). The scene builds this value once
  *   (`Scene::lightSet`), every pass holds the same shared value, and a steady frame copies nothing.
  * - IMMUTABLE AFTER CREATION (`std::shared_ptr<const LightSet>`): a frame that is already described keeps the
- *   numbers it was lit with while the content thread edits a light - the same rule `DrawDescription::light_values`
- *   and `RenderCommand` follow. A new publication/description gets a new set.
+ *   numbers it was lit with while the content thread edits a light - the same rule `DrawCall::light_values`
+ *   and `DrawItem` follow. A new publication/description gets a new set.
  * - `LightValue` carries `identity` for the one match that needs it (`RenderTarget::shadowOf` against the announced
  *   lights); this type adds no identity of its own - it is the list, not a light.
  * - A NULL HANDLE MEANS "NOTHING ANNOUNCED" and an EMPTY SET means "there are none". They are different statements
@@ -62,7 +62,7 @@ class VN_GRAPHICS_API LightSet final {
     std::vector<LightValue> values_;
 };
 
-/// @brief The shared handle a frame value carries (see `DrawDescription::light_values`).
+/// @brief The shared handle a frame value carries (see `DrawCall::light_values`).
 using LightSetPtr = std::shared_ptr<const LightSet>;
 
 VN_GRAPHICS_NS_END

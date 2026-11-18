@@ -46,8 +46,8 @@ emissive / occlusion / normal). Phong is no longer the engine model; `vn::geom::
 PBR at the import boundary by a fixed table, and the engine has one semantics inside. Both paths, the importers and the tests only need to agree on one definition; the price is that the old setters disappear (see §9.3).
 
 2.2 **Asset and instance are two types** (`G1` `G4`): `Material` is the asset — shareable, editable, a change propagates to every instance
-that does not override it; `MaterialInstance` references an asset and overrides only the items it changes. They share the base class `MaterialBase`,
-and `RenderCommand` / `Geometry` / `Primitive` / `StateNode` hold a `MaterialBasePtr`, so "what can shade one draw" is one type. "One class + an optional parent" (D2) is rejected: it makes "does changing the asset affect whom" runtime data instead of a type.
+that does not override it; `MaterialInstance` references an asset and overrides only the items it changes. They share the base class `MaterialValues`,
+and `DrawItem` / `Geometry` / `Primitive` / `StateNode` hold a `MaterialValuesPtr`, so "what can shade one draw" is one type. "One class + an optional parent" (D2) is rejected: it makes "does changing the asset affect whom" runtime data instead of a type.
 
 2.3 **Overrides are sparse and explicit** (`G4` `G8`): every item of an instance is optional, `clearOverride(x)` restores inheritance; the resolution result
 is cached in the instance, keyed by (parent revision, own revision). Resolve once, read many times, an overridden item is not copied.
@@ -69,7 +69,7 @@ and both surface-writing stages (forward / G-buffer) include it.
 
 2.7 **Transparency: the mode on the material, the magnitude on the drawable** (`G1` `G4`): `AlphaMode::Opaque | Mask | Blend`; effective alpha =
 `vn_draw.params.x` (drawable opacity) × `vn_material.base_color.a` × the optional base texture alpha.
-`RenderCommand::isTransparent()` becomes "opacity < 1 **or** the material is Blend"; Mask discards by cutoff in the shading stage,
+`DrawItem::isTransparent()` becomes "opacity < 1 **or** the material is Blend"; Mask discards by cutoff in the shading stage,
 takes no part in sorting and stays in the opaque pass. This replaces the old "materials contribute no alpha" rule, so sorting and shading read the same pair of inputs (see N5).
 Blend content goes through the forward overlay; the deferred G-buffer takes opaque and Mask only.
 
@@ -112,7 +112,7 @@ An instance copies neither textures nor bytes beyond the block.
 
 - **Behaviour**: `Material`'s fields = base_color (linear RGBA), emissive (RGB + intensity), metallic, roughness,
   occlusion, alpha_mode, alpha_cutoff, five texture slots; `MaterialInstance` = one `Material` parent + optional versions of the same fields
-  (`MaterialItem` one bit per item, one bit per texture slot). Both answer through `MaterialBase::resolved()`.
+  (`MaterialItem` one bit per item, one bit per texture slot). Both answer through `MaterialValues::resolved()`.
 - **Constraint** (C1): an instance has one parent, and the parent cannot be an instance (the parent's type is `Material`); `G1` one definition.
 - **Requirement** (R1): the resolution result = the parent's values replaced item by item, giving one `MaterialParameters`; the resolution cache is keyed by
   (parent revision, own revision), a hit compares two numbers only.
@@ -177,7 +177,7 @@ An instance copies neither textures nor bytes beyond the block.
 
 ## 4. Public Interface
 
-### 4.1 `MaterialBase` / `Material` / `MaterialInstance`
+### 4.1 `MaterialValues` / `Material` / `MaterialInstance`
 
 | Interface | Contract |
 |---|---|
@@ -185,8 +185,8 @@ An instance copies neither textures nor bytes beyond the block.
 | `Material::setAlphaMode` / `setAlphaCutoff` | Mode and cutoff; affects Mask/Blend only |
 | `Material::setTexture(slot, texture, sampler)` / `clearTexture(slot)` / `texture(slot)` | Texture set |
 | `MaterialInstance::parent()` / `overrideMask()` / `clearOverride(item)` | Sparse override |
-| `MaterialBase::revision()` / `name()` / `resolved()` | The asset's own revision; an instance's composite revision and resolved values |
-| `MaterialBasePtr` | The unified type held by `RenderCommand` / `Geometry` / `Primitive` / `StateNode` |
+| `MaterialValues::revision()` / `name()` / `resolved()` | The asset's own revision; an instance's composite revision and resolved values |
+| `MaterialValuesPtr` | The unified type held by `DrawItem` / `Geometry` / `Primitive` / `StateNode` |
 
 ### 4.2 Shading side
 
@@ -266,7 +266,7 @@ An instance copies neither textures nor bytes beyond the block.
 ### 9.1 Current status
 
 **M1–M4 have all landed** (M4 = instances + alpha modes), only F11's per-material diagnostics are left: `Material` /`MaterialInstance`
-share `MaterialBase` and `MaterialParameters`, every holder uses `MaterialBasePtr`; the block and the content-set bindings are unchanged since M1–M3 (material 0 /
+share `MaterialValues` and `MaterialParameters`, every holder uses `MaterialValuesPtr`; the block and the content-set bindings are unchanged since M1–M3 (material 0 /
 slots 1–5 / lights 6 / shadow 7–8, `VN_TEXTURED` one bit), shading is GGX / Smith / Schlick (`vine_brdf.glsl`),
 forward and deferred reconstruct the same set of surfaces from their own inputs and then call the same function. All three alpha branches are in the shading: Opaque ignores material alpha, Mask clips by
 `opacity × material α × texture α` and is then treated as opaque, Blend uses that product as output alpha, and sorting and the blend switch read the same classification result.
@@ -281,14 +281,14 @@ forward and deferred reconstruct the same set of surfaces from their own inputs 
 ### 9.3 Compatibility / migration
 
 - `setDiffuse` → `setBaseColor`, `setAmbient` / `setSpecular` / `setShininess` deleted; `setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`, `texture()` → `texture(slot)`.
-- `MaterialPtr` becomes `MaterialBasePtr` at every holder (already landed: `RenderCommand` / `Geometry` / `Primitive` / `StateNode`
+- `MaterialPtr` becomes `MaterialValuesPtr` at every holder (already landed: `DrawItem` / `Geometry` / `Primitive` / `StateNode`
   and `effectiveMaterial`); the `vn::geometry` side is unchanged. An instance uses `MaterialInstance(parent)` + `setX` / `clearOverride`.
 
 ## 10. References
 
 ### 10.1 Code
 
-- `src/viz/graphics/sdk/vine/graphics/MaterialBase.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
+- `src/viz/graphics/sdk/vine/graphics/MaterialValues.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
 - `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
 - `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
 - `ContentSources.cpp` (`blockOfMaterial`) · `MaterialSlotCheck.hpp` (F11's decision) · `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp` (`materialFrom`)

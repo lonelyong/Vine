@@ -44,7 +44,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -61,7 +61,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::ImageSource;
@@ -72,7 +72,7 @@ using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::intrusive_ptr;
@@ -163,19 +163,19 @@ struct Scene {
 }
 
 /// @brief One scene drawing call: the triangle through the G-buffer program, shaded with the scene's material.
-[[nodiscard]] DrawDescription gbufferDraw(const Scene& scene)
+[[nodiscard]] DrawCall gbufferDraw(const Scene& scene)
 {
-    RenderCommand command(scene.geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(scene.geometry, nullptr, vn::math::Mat4d{});
     command.program              = scene.gbuffer_program;
     command.program_description  = scene.gbuffer_program->description();
     command.material             = scene.material;
     command.material_description = scene.material->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
@@ -237,8 +237,8 @@ struct Scene {
     // OVER what the target holds, which is the same policy the SDK's own lighting pass states by having no depth.
     pass.state.depth = DepthMode::Disabled;
 
-    DrawDescription draw;
-    draw.kind                 = DrawDescription::Kind::Screen;
+    DrawCall draw;
+    draw.kind                 = DrawCall::Kind::Screen;
     draw.view.camera               = identityCamera();
     draw.source               = scene.gbuffer.get();
     draw.program              = scene.light_program;
@@ -267,8 +267,8 @@ struct Scene {
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.state.depth  = DepthMode::Disabled;
 
-    DrawDescription draw;
-    draw.kind                = DrawDescription::Kind::Screen;
+    DrawCall draw;
+    draw.kind                = DrawCall::Kind::Screen;
     draw.view.camera              = identityCamera();
     draw.source              = source;
     draw.program             = program;

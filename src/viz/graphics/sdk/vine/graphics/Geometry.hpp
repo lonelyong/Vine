@@ -724,7 +724,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      *
      * @return The default material, or null when this geometry inherits.
      */
-    raw_ptr<MaterialBase> material() const;
+    raw_ptr<MaterialValues> material() const;
 
     /** @brief Sets this geometry's default material (the one primitives without their own use).
      *
@@ -737,7 +737,7 @@ class VN_GRAPHICS_API Geometry : public Node {
      *
      * @param m Material to use as the default, or nullptr to inherit from the nearest StateNode again.
      */
-    void setMaterial(MaterialBasePtr m);
+    void setMaterial(MaterialValuesPtr m);
 
     /** @brief Gets this geometry's default program (a primitive's own program overrides it).
      *
@@ -1119,7 +1119,7 @@ class VN_GRAPHICS_API Geometry : public Node {
     mutable std::uint64_t triangle_tests_ = 0;
     /// The leaf's default material/program: a primitive's own value overrides it, and a null default
     /// inherits from the nearest StateNode (see Scene.cpp's fold).
-    MaterialBasePtr  material_;
+    MaterialValuesPtr  material_;
     ShaderProgramPtr program_;
     std::uint64_t    revision_                = 0;
     std::uint64_t    ignored_primitive_edits_ = 0;

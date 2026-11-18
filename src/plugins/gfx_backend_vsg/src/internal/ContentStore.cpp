@@ -129,7 +129,7 @@ struct ContentStore::Data {
     };
 
     struct LiveMaterial {
-        vn::intrusive_ptr<vn::graphics::MaterialBase> object{};
+        vn::intrusive_ptr<vn::graphics::MaterialValues> object{};
         /// The VALUES this entry answers for: what a frame published (see the file note on geometry's `shape`), or
         /// null for a material nobody published - a hand-built command, answered from the object's own cache.
         vn::graphics::MaterialDescriptionPtr values{};
@@ -883,7 +883,7 @@ void ContentStore::track(const vn::graphics::ShaderProgramDescriptionPtr& descri
     live.description = description;
 }
 
-void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& material)
+void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialValues>& material)
 {
     if (material == nullptr) {
         return;
@@ -897,7 +897,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& ma
     }
 }
 
-void ContentStore::track(const vn::graphics::MaterialBase* identity, const vn::graphics::MaterialDescriptionPtr& values)
+void ContentStore::track(const vn::graphics::MaterialValues* identity, const vn::graphics::MaterialDescriptionPtr& values)
 {
     if (identity == nullptr || values == nullptr) {
         return;
@@ -1228,7 +1228,7 @@ bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram>
     return true;
 }
 
-bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material)
+bool ContentStore::releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialValues> material)
 {
     if (material == nullptr) {
         return false;

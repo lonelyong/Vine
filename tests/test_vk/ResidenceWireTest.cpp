@@ -34,7 +34,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderFrameExecutor.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -55,11 +55,11 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderFrameExecutor;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -152,23 +152,23 @@ void main()
 }
 
 /// @brief One scene draw that NAMES its program (no default program, so the frame is self-contained).
-[[nodiscard]] DrawDescription programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
+[[nodiscard]] DrawCall programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
 {
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass into @p target: a clear, then @p draw when it is engaged.
-[[nodiscard]] FrameDescription passFrame(RenderTarget* target, std::optional<DrawDescription> draw)
+[[nodiscard]] FrameDescription passFrame(RenderTarget* target, std::optional<DrawCall> draw)
 {
     FrameDescription frame;
 
@@ -194,7 +194,7 @@ void main()
     return passFrame(target, std::nullopt);
 }
 
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
 {
     return passFrame(target, std::move(draw));
 }
@@ -307,7 +307,7 @@ TEST(VkResidenceWireTest, TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMos
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr) << "the device handed out no second driver";
 
     const intrusive_ptr<ShaderProgram> program  = redProgram();
@@ -373,7 +373,7 @@ TEST(VkResidenceWireTest, TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMos
     EXPECT_EQ(second->frameReport().uploads->stream_uploads, 0U) << "the second driver uploaded a geometry the device already holds";
     EXPECT_EQ(second->frameReport().uploads->texture_uploads, 0U);
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 

@@ -123,7 +123,7 @@ struct VN_GRAPHICS_API MaterialParameters {
  *   on the frame's own thread. A command carries this value, and the backend describes its tables from it - so a material
  *   edit is a NEW VALUE that reaches the render side the way every other content fact does: at a publication boundary
  *   (one frame, or one edit batch - see `Scene::beginEdit`), never by a live re-read in the middle of one.
- * - ONE PER REVISION: `MaterialBase::description()` returns the cached instance for the material's current revision, so a
+ * - ONE PER REVISION: `MaterialValues::description()` returns the cached instance for the material's current revision, so a
  *   frame with no material edit shares one object and the backend's rows stay put.
  * - NOT thread-safe to mutate, and it never is: every field is set by the constructor and read-only afterwards.
  *
@@ -141,7 +141,7 @@ class VN_GRAPHICS_API MaterialDescription final : public RefCounted<MaterialDesc
      */
     MaterialDescription(std::uint64_t revision, MaterialParameters values);
 
-    /** @brief Gets the revision these values were read at (see MaterialBase::revision). */
+    /** @brief Gets the revision these values were read at (see MaterialValues::revision). */
     [[nodiscard]] std::uint64_t revision() const noexcept;
 
     /** @brief Gets the resolved values. */
@@ -222,8 +222,8 @@ enum class MaterialItem : std::uint32_t
  * @brief What a draw can be shaded with: an asset (`Material`) or one of its instances (`MaterialInstance`).
  *
  * @details
- * - ONE TYPE FOR "what shades this draw" (graphics-material.md 2.2): `RenderCommand` / `Geometry` / `Primitive`
- *   and `StateNode` hold a `MaterialBasePtr`, so a host never has to ask whether the thing it assigned can be
+ * - ONE TYPE FOR "what shades this draw" (graphics-material.md 2.2): `DrawItem` / `Geometry` / `Primitive`
+ *   and `StateNode` hold a `MaterialValuesPtr`, so a host never has to ask whether the thing it assigned can be
  *   edited without re-shading somebody else.
  * - The values are the RESOLVED ones: an asset answers with what it stores, an instance with its parent's values
  *   overlaid by what it overrides. Everything downstream - the block packer, the variant decision, the
@@ -231,13 +231,13 @@ enum class MaterialItem : std::uint32_t
  * - `revision()` is the identity of those values for a cache: an asset counts its own edits, an instance counts
  *   every resolution in which its parent's values changed too (2.11 / R1).
  */
-class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBase> {
+class VN_GRAPHICS_API MaterialValues : public Object, public RefCounted<MaterialValues> {
     VN_OBJECT_META_DECL;
 
   public:
     /** @brief Constructs a material: unnamed, opaque, with an identity of its own. */
-    MaterialBase();
-    ~MaterialBase();
+    MaterialValues();
+    ~MaterialValues();
 
   public:
     /** @brief Gets this material's identity.
@@ -295,7 +295,7 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
      * - THE CONVERSION, the same shape as `Geometry::description`: call it where the values may still be read - the
      *   publish that copies a scene's rows, a row fact built for a delta. It caches, so the second call in a revision is
      *   an integer compare.
-     * - What the RENDER side reads is the value that was handed to it (`RenderCommand::materialDescription`), never this
+     * - What the RENDER side reads is the value that was handed to it (`DrawItem::materialDescription`), never this
      *   call: a material edit must reach a frame at a publication boundary, not in the middle of one (design
      *   graphics-threading.md C18).
      *
@@ -320,7 +320,7 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
      * @brief Gets the resolved alpha mode, which is what the transparency sort asks for.
      *
      * @details
-     * - One spelling for both kinds: `RenderCommand::isTransparent()` must classify an instance exactly like the
+     * - One spelling for both kinds: `DrawItem::isTransparent()` must classify an instance exactly like the
      *   asset it inherits from, and reading it through the base is what keeps that from being a branch per kind.
      *
      * @return The resolved mode (Opaque when nothing overrode it).
@@ -406,6 +406,6 @@ class VN_GRAPHICS_API MaterialBase : public Object, public RefCounted<MaterialBa
     mutable bool                   described_{ false };
 };
 
-using MaterialBasePtr = intrusive_ptr<MaterialBase>;
+using MaterialValuesPtr = intrusive_ptr<MaterialValues>;
 
 VN_GRAPHICS_NS_END

@@ -71,7 +71,7 @@ Everything not shareable is **one copy per session**, so it needs no lock: owner
 ### 2.3 Frame-head snapshot: the caches are read once at the frame head, and the recording path takes no lock (`G10`)
 
 - **What it is**: at the start of a frame the session takes the device caches' **exclusive lock once** and resolves the identities this frame will use — the frame value already
-  lists them: each `RenderCommand`'s geometry / program / material description and each pass' target — into **session-local tables** (`FrameSnapshot`: identity → handle +
+  lists them: each `DrawItem`'s geometry / program / material description and each pass' target — into **session-local tables** (`FrameSnapshot`: identity → handle +
   state). Recording then reads only the session's own tables and **never touches the device caches again**.
 - **Why not "take a read lock per lookup"**: a 2000-draw frame at 20–40 ns per `std::shared_mutex` read lock is 40–80 µs, 5–9% of this machine's host-side frame time
   (~0.9 ms), and all that buys is "reading a table nobody writes" — `G10`'s textbook waste, and the same reason `D2` was rejected.
@@ -178,15 +178,15 @@ recording path); what the wiring decides is "who may build and who copies".
 
 ```cpp
 // RenderDevice
-virtual RenderFrameExecutor* createSession();                 // default: return &executor(); (one session per device)
-virtual void                 releaseSession(RenderFrameExecutor& session);  // default: no-op
+virtual RenderFrameExecutor* createFrameDriver();                 // default: return &executor(); (one session per device)
+virtual void                 releaseFrameDriver(RenderFrameExecutor& session);  // default: no-op
 // RenderFrameExecutor (one new optional entry point, not a requirement)
 virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program);  // default: no-op
 ```
 
-- **The default implementation is "today"**: `createSession()` returns `&executor()` by default, so **existing backends and every case change not one line**; only vk and vsg
+- **The default implementation is "today"**: `createFrameDriver()` returns `&executor()` by default, so **existing backends and every case change not one line**; only vk and vsg
   override it. That makes "concurrent sessions" a **seam** rather than a repository-wide rewrite (`G9`), and does not force a shape a third backend does not need today (`G8`).
-- **Ownership**: **the device owns the session**; `createSession()` lends a reference, contracted as "until `releaseSession` or the device's `shutdown()`". An engine creates one
+- **Ownership**: **the device owns the session**; `createFrameDriver()` lends a reference, contracted as "until `releaseFrameDriver` or the device's `shutdown()`". An engine creates one
   in `setDevice` and releases it when the device changes or it is destroyed. An engine that frames after `shutdown()` asks `initialized()` first (as it already does) and
   reports "the device is not up", **without dereferencing** the reference — `RenderDevice`'s existing "the creator guarantees no frame in flight" is the same ordering
   guarantee (`P5`).
@@ -216,7 +216,7 @@ resolves them into session-local values; the only difference is where the comple
 
 | # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | Session type and creation | the device owns sessions; `createSession()` lends one and answers `&executor()` by default | landed: the SDK's default seam + the engine holding it; vk has several drivers (each with its own command pool / fence / scratch / default program), **frame bodies really run in parallel**, and a window frame takes the body gate exclusively |
+| F1 | Session type and creation | the device owns sessions; `createFrameDriver()` lends one and answers `&executor()` by default | landed: the SDK's default seam + the engine holding it; vk has several drivers (each with its own command pool / fence / scratch / default program), **frame bodies really run in parallel**, and a window frame takes the body gate exclusively |
 | F2 | Per-session frame machinery | command pool / fence / timestamp pool / frame books / frame gate, one per session | landed: `Device::FrameDriver` owns the frame machinery and the frame body, and `Device` only forwards |
 | F3 | Device caches + frame-head snapshot | the caches are read once at the frame head; the recording path takes no lock | landed: `ContentCaches` / `FrameScratch` are separate; plans go by value; the observation point is `contentCacheCounters().cache_lock_acquisitions` (a constant 4 per frame) |
 | F4 | Residency's three states | `Absent → Uploading → Resident`, publish or withdraw, a race means a copy | landed: the state machine + `ensureGeometry` asking the table (`Use`/`Build`/`Copy`); `FrameBuilds` publishes when the frame completes, a racing frame builds a temporary copy, and failure and release each have an owner (see §3.1.4) |
@@ -229,10 +229,10 @@ resolves them into session-local values; the only difference is where the comple
 
 ### 3.1.1 F1 Session type and creation
 
-- **Behaviour**: `RenderDevice::createSession()` returns `&executor()` by default; vk / vsg override it to "build a session". `releaseSession(RenderFrameExecutor&)` is a no-op by
+- **Behaviour**: `RenderDevice::createFrameDriver()` returns `&executor()` by default; vk / vsg override it to "build a session". `releaseFrameDriver(RenderFrameExecutor&)` is a no-op by
   default. `RenderEngine` holds a `RenderFrameExecutor*`, creates it in `setDevice` and releases it on a device change or destruction.
 - **Constraints** (C1): the **device** owns a session; an engine only borrows it.
-- **Requirements** (R1): `createSession()` may be called before `initialize()` (the creator initializes the device and the engine attaches first).
+- **Requirements** (R1): `createFrameDriver()` may be called before `initialize()` (the creator initializes the device and the engine attaches first).
 - **Acceptance** (T1): a single-session backend (the default implementation) runs `test_graphics` with no behaviour change.
 - **Caveat** (N1): `shutdown()` leaves no dangling session behind — see `P5`.
 
@@ -360,8 +360,8 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 - **`TargetTable`**: the target table and identity resolution are one — the device's single table (one row per identity: description, object, the owner's tag, and the
   executor's "not applied" episode); each driver's executor borrows it, so two drivers resolve against the same identity table (`P8`: there is no second copy). A
   separately constructed executor (a test) brings its own, and `adopt` registers an object someone else built (non-owning).
-- **`VsgDriver`** (`internal/VsgDriver.hpp`): the frame driver `createSession()` hands out, and the `RenderFrameExecutor` implementation; it owns a `VsgExecutor`
-  (`window_` / `window_recorded_` / `recorded_` / `profile_entries_` / `skipped_`) and its own default content program; the device owns it, `releaseSession` destroys it, and
+- **`VsgDriver`** (`internal/VsgDriver.hpp`): the frame driver `createFrameDriver()` hands out, and the `RenderFrameExecutor` implementation; it owns a `VsgExecutor`
+  (`window_` / `window_recorded_` / `recorded_` / `profile_entries_` / `skipped_`) and its own default content program; the device owns it, `releaseFrameDriver` destroys it, and
   `shutdown` takes it away.
 - **The device itself uses one path too**: `VsgBackend::executeFrame` / `prepareFrame` are two lines of forwarding, and the truth is in
   `executeFrameFor(executor, ...)` / `prepareFrameFor(executor, ...)`; `Data::driving_executor` is set when a frame opens and cleared at every exit, like `Data::scratch`, and
@@ -441,8 +441,8 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 
 | Interface | Contract | Notes |
 |---|---|---|
-| `RenderFrameExecutor* createSession()` | lends a new frame driver; the device owns it; by default `return &executor();` | the full signature is in `RenderDevice.hpp` |
-| `void releaseSession(RenderFrameExecutor&)` | gives it back; no-op by default; `shutdown()` takes every session with it | the same "lend / give back" shape as `setDiagnosticsRoute` |
+| `RenderFrameExecutor* createFrameDriver()` | lends a new frame driver; the device owns it; by default `return &executor();` | the full signature is in `RenderDevice.hpp` |
+| `void releaseFrameDriver(RenderFrameExecutor&)` | gives it back; no-op by default; `shutdown()` takes every session with it | the same "lend / give back" shape as `setDiagnosticsRoute` |
 | ~~`setDefaultContentProgram`~~ | **moved out** of this class, see 4.2: it is a frame's setting, and two virtuals with the same signature would be ambiguous | `G1` / `G4` |
 
 ### 4.2 `RenderFrameExecutor` (SDK)
@@ -469,7 +469,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 
 | # | Constraint |
 |---|---|
-| C1 | The **device** owns a session; an engine only borrows it (`createSession` / `releaseSession`). |
+| C1 | The **device** owns a session; an engine only borrows it (`createFrameDriver` / `releaseFrameDriver`). |
 | C2 | The frame machinery (command pool / fence / ring / descriptor pools / frame books) exists **only** in a session. |
 | C3 | The recording path **must not** take the device caches' lock; device-cache reads happen at the frame-head snapshot only. It holds in both backends today: both sides' recording reads only the values resolved at the frame head. |
 | C4 | Only a `Resident` entry may be used by a non-owner; `Uploading` equals `Absent` + a temporary copy for everyone else. |
@@ -484,7 +484,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 
 | # | Requirement |
 |---|---|
-| R1 | `createSession()` may be called before `initialize()`. |
+| R1 | `createFrameDriver()` may be called before `initialize()`. |
 | R2 | `executor()` stays, meaning "the device's own session". |
 | R3 | A steady-state frame's device-cache lock acquisitions on the **recording path** are 0 (apart from the frame-head one; the whole frame's count does not grow with the draw count, and there is a counter and a case) |
 | R4 | Residency entries are immutable; no `Uploading` may persist (publish or withdraw). |
@@ -590,7 +590,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | a single-session backend changes no behaviour | `build/bin/test_graphics`, `test_vsg` (the default `createSession`) |
+| T1 | a single-session backend changes no behaviour | `build/bin/test_graphics`, `test_vsg` (the default `createFrameDriver`) |
 | T2 | `test_vk` is green on a tree with "one session only" | `build/bin/test_vk` |
 | T3 | the recording path's cache locks are 0; the whole frame's count **does not grow with the draw count** (measured 4: 1 at the frame head + 2 for the books + 1 at the frame tail) | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls` (1 vs 6 commands; the mutation 6 → 10 goes red) |
 | T4 | two sessions first-drawing the same geometry at once: no crash, both pictures right, uploads ≤ 2 | `test_vk` `VkResidenceWireTest.TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMostOneCopy` (really two sessions on two threads: claims 1 / published 1 / copies ≤ 1 / both pictures red / the next frame uploads nothing), `AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDiscarded` (a fake lease: a copy, exactly two streams, `used_bytes` back in place), `ARefusedBuildIsWithdrawnInsteadOfPublished`, `AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`; mutations 3/3 red (not asking the table / publishing a failed fill / not forgetting on release) |

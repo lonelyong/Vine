@@ -16,9 +16,9 @@ using vn::math::Vec3d;
 namespace detail
 {
 
-[[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>> noCommands()
+[[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::DrawItem>> noCommands()
 {
-    static const auto kNoCommands = std::make_shared<const std::vector<vn::graphics::RenderCommand>>();
+    static const auto kNoCommands = std::make_shared<const std::vector<vn::graphics::DrawItem>>();
     return kNoCommands;
 }
 
@@ -46,8 +46,8 @@ ScenePublisher::ScenePublisher(vn::graphics::Scene& scene) noexcept
 
 ScenePublisher::~ScenePublisher() = default;
 
-std::shared_ptr<const std::vector<vn::graphics::RenderCommand>>
-ScenePublisher::collectRenderCommands(const vn::graphics::View& view) const
+std::shared_ptr<const std::vector<vn::graphics::DrawItem>>
+ScenePublisher::collectDrawItems(const vn::graphics::View& view) const
 {
     // THE EMPTY ANSWER, SHARED rather than built: an empty scene asks for nothing, and paying an allocation for
     // "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same answer,
@@ -83,11 +83,11 @@ ScenePublisher::collectRenderCommands(const vn::graphics::View& view) const
     }
     ++content_collect_count_;
 
-    std::vector<vn::graphics::RenderCommand> commands;
+    std::vector<vn::graphics::DrawItem> commands;
     bool                                    viewport_used = false;
     selectSnapshot(*current, view, commands, viewport_used);
     // Into the shared list by MOVE: the selection's result is the only copy that ever exists.
-    auto shared = std::make_shared<const std::vector<vn::graphics::RenderCommand>>(std::move(commands));
+    auto shared = std::make_shared<const std::vector<vn::graphics::DrawItem>>(std::move(commands));
     if (memoising) {
         if (DrawListMemo::Entry* entry = content_memo_->find(view_proj, view.camera.eye, view.viewport, view.layer_mask, current->revision)) {
             entry->commands           = shared;
@@ -196,7 +196,7 @@ SceneSnapshotPtr ScenePublisher::snapshot() const
 
 const SceneBake& ScenePublisher::ensureRows() const
 {
-    // A scene with no rooted root DRAWS NOTHING (see collectRenderCommands), so its rows are empty - and that is a
+    // A scene with no rooted root DRAWS NOTHING (see collectDrawItems), so its rows are empty - and that is a
     // state, not an error: a publication of such a scene is an empty table and the frame stays correct. This is the
     // total contract of this function; a caller (the publication) has no business repeating the guard.
     if (!scene_.hasRootedRoot()) {

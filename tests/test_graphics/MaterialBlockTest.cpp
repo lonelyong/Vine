@@ -12,7 +12,7 @@
 
 #include <vine/Colorf.hpp>
 #include <vine/graphics/MaterialAbi.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 
 using vn::graphics::AlphaMode;
 using vn::graphics::kMaterialAlphaModeShift;

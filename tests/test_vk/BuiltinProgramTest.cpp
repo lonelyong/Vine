@@ -32,7 +32,7 @@
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/Residency.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -52,14 +52,14 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ResidencyKind;
 using vn::graphics::ResidencyRow;
@@ -157,9 +157,9 @@ constexpr int kTargetSize = 64;
 }
 
 /// @brief One command of @p geometry through @p program, shaded with @p material.
-[[nodiscard]] RenderCommand commandOf(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Material>& material)
+[[nodiscard]] DrawItem commandOf(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Material>& material)
 {
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
@@ -168,15 +168,15 @@ constexpr int kTargetSize = 64;
 }
 
 /// @brief A frame with ONE pass: it clears @p target black and issues @p commands through the identity camera.
-[[nodiscard]] FrameDescription frameWith(RenderTarget* target, const std::shared_ptr<const std::vector<RenderCommand>>& commands)
+[[nodiscard]] FrameDescription frameWith(RenderTarget* target, const std::shared_ptr<const std::vector<DrawItem>>& commands)
 {
     CameraSnapshot camera;
     camera.present    = true;
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = camera;
     draw.commands = commands;
 
@@ -230,7 +230,7 @@ TEST(VkBuiltinProgramTest, TheEngineUnlitProgramDrawsItsMaterialColour)
     const intrusive_ptr<Geometry>      geometry = makeTriangle(false, false);
     const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ commandOf(geometry, program, red) })));
+    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, red) })));
 
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
@@ -256,7 +256,7 @@ TEST(VkBuiltinProgramTest, ABaseColorMapCompilesAndSamplesTheTexturedVariant)
     const intrusive_ptr<Geometry>      geometry = makeTriangle(false, true);
     const intrusive_ptr<Material>      material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F), makePixel(0U, 0U, 255U));
 
-    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ commandOf(geometry, program, material) })));
+    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })));
 
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
@@ -280,7 +280,7 @@ TEST(VkBuiltinProgramTest, AVertexColourChannelModulatesTheAlbedoOnItsOwnVariant
     const intrusive_ptr<Geometry>      geometry = makeTriangle(true, false); // feeds the red colour channel
     const intrusive_ptr<Material>      material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
 
-    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ commandOf(geometry, program, material) })));
+    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })));
 
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
@@ -319,12 +319,12 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
         0.5F, 0.0F, 0.0F, 1.0F,
     }));
 
-    RenderCommand command = commandOf(geometry, program, material);
+    DrawItem command = commandOf(geometry, program, material);
     command.instance_transforms = BufferSlice<float>::whole(instances);
     command.first_instance      = 0U;
     command.instance_count      = 2U;
 
-    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ command })));
+    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command })));
 
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
@@ -342,7 +342,7 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
     EXPECT_TRUE(backend->releaseContent(*instances));
     EXPECT_EQ(streamsLive(backend->frameReport()), before - 1U) << "the released instance stream stayed resident";
 
-    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ command })));
+    backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command })));
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
     EXPECT_EQ(pixelAt(pixels, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the re-uploaded instance stream drew nothing";
     EXPECT_EQ(pixelAt(pixels, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 }));

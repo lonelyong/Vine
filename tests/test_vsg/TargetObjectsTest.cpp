@@ -41,7 +41,7 @@
 #include <vsg/vk/Device.h>
 #include <vsg/vk/DeviceMemory.h>
 
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/graphics/Diagnostics.hpp>
@@ -61,7 +61,7 @@
 #include "DevicePhases.hpp"
 
 using vn::graphics::Diagnostics;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::backend_vsg::core::CompiledPass;
 using vn::backend_vsg::core::FrameArena;
@@ -476,7 +476,7 @@ void runLostSubmissionPhase(const vn::backend_vsg::DeviceResult& device, DeviceP
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     vn::intrusive_ptr<RenderTarget>  handle(new RenderTarget());
-    const std::vector<RenderCommand> one_draw{ RenderCommand{} };
+    const std::vector<DrawItem> one_draw{ DrawItem{} };
 
     const auto facts_of = [&]() {
         TargetFacts facts;

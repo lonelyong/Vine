@@ -403,12 +403,12 @@ bool Geometry::clearInstanceTransforms(std::size_t index)
     return true;
 }
 
-raw_ptr<MaterialBase> Geometry::material() const
+raw_ptr<MaterialValues> Geometry::material() const
 {
     return material_.get();
 }
 
-void Geometry::setMaterial(MaterialBasePtr m)
+void Geometry::setMaterial(MaterialValuesPtr m)
 {
     if (material_.get() == m.get()) {
         return; // an assignment that changes nothing must not cost the frame's collection

@@ -75,10 +75,10 @@ class ContentStore {
     /**
      * @brief Answers for the SHAPE @p description at @p identity from now on.
      *
-     * WHY BOTH. The identity is the draw-list row's node handle (see `RenderCommand::node`), which a plan names and a
+     * WHY BOTH. The identity is the draw-list row's node handle (see `DrawItem::node`), which a plan names and a
      * lookup matches; the description is the immutable value the shape was read into (see `Geometry::description`), so
      * the tables are built from values and never read content. A frame hands both, once per geometry it commands
-     * (`RenderCommand::node` and `RenderCommand::description`).
+     * (`DrawItem::node` and `DrawItem::description`).
      *
      * A NEW DESCRIPTION AT A KNOWN IDENTITY IS AN EDIT: the value replaces the old one, and the rows the tables answer
      * for the old revision stay answerable until no live plan has named them for a window (see the file note).
@@ -114,7 +114,7 @@ class ContentStore {
      * @brief Answers for @p description's TEXT from now on - the program's half of the material value overload.
      *
      * @details
-     * - THE VALUE, NOT THE OBJECT: a row is built from what the frame carried (`RenderCommand::program_description`,
+     * - THE VALUE, NOT THE OBJECT: a row is built from what the frame carried (`DrawItem::program_description`,
      *   `PassDraw::program_override_description`), so describing a program never reads the live program on the
      *   thread that records the frame. A stage edit is a new value at the next publish (see
      *   `detail::refreshValues`), which is what makes an edit while a frame is in flight keep that frame's text.
@@ -132,25 +132,25 @@ class ContentStore {
      * @param material Material the host shades with; null is ignored (content without a material is answered
      *                 for by the default entry, which needs no tracking).
      */
-    void track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& material);
+    void track(const vn::intrusive_ptr<vn::graphics::MaterialValues>& material);
 
     /**
      * @brief Answers for @p identity 's VALUES from now on - the material's half of the geometry overload above.
      *
      * @details
-     * - THE VALUE, NOT THE OBJECT: a row is built from what the frame published (`RenderCommand::materialDescription`),
+     * - THE VALUE, NOT THE OBJECT: a row is built from what the frame published (`DrawItem::materialDescription`),
      *   so describing a material never reads the live material on the thread that records the frame. A material edit
      *   is a new value at the next publish, which is what makes an edit inside an edit batch land with the batch
      *   (design graphics-threading.md C18).
      * - The rows the tables answer for the old value stay answerable until no live plan has named them for a window
      *   (see `LiveMaterial::values` and the file note).
      * - A host that built its command by hand and never published a value is answered from the object's own cache
-     *   (`MaterialBase::description`), the same door such a command uses everywhere else.
+     *   (`MaterialValues::description`), the same door such a command uses everywhere else.
      *
      * @param identity Address the plan names; null is ignored.
      * @param values   The material's values; null is ignored (the object's own value answers instead).
      */
-    void track(const vn::graphics::MaterialBase* identity, const vn::graphics::MaterialDescriptionPtr& values);
+    void track(const vn::graphics::MaterialValues* identity, const vn::graphics::MaterialDescriptionPtr& values);
 
     /**
      * @brief Claims the right to report one of @p identity 's texture slots, once per episode.
@@ -253,7 +253,7 @@ class ContentStore {
      * @param material Material to release; null is refused.
      * @return true when the material is not (or no longer) resident; false for a null material.
      */
-    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialBase> material);
+    bool releaseMaterial(vn::raw_ptr<const vn::graphics::MaterialValues> material);
 
     /** @brief Forgets every tracked object and every entry. The session-teardown path: nothing is parked. */
     void clear();

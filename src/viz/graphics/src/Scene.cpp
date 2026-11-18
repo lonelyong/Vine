@@ -14,7 +14,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/math/Transform3.hpp>
 
@@ -100,7 +100,7 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
         return box;
     }
     // The content selection, taken where the box is contributed (the drawn node): a container stands
-    // for structure, so the mask never prunes it (see Scene::collectRenderCommands).
+    // for structure, so the mask never prunes it (see Scene::collectDrawItems).
     if ((layers & layer_mask) == 0) {
         return Aabbd::empty();
     }
@@ -283,8 +283,8 @@ Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
     return detail::visibleWorldBox(*root_, kDefaultLayer, layer_mask);
 }
 
-std::shared_ptr<const std::vector<RenderCommand>>
-Scene::collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_mask, const Viewport* viewport) const
+std::shared_ptr<const std::vector<DrawItem>>
+Scene::collectDrawItems(raw_ptr<const Camera> camera, std::uint32_t layer_mask, const Viewport* viewport) const
 {
     if (camera == nullptr) {
         // The empty answer, shared rather than built: a caller with no camera asks for nothing.
@@ -296,14 +296,14 @@ Scene::collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_m
     view.camera     = CameraSnapshot::of(*camera);
     view.viewport   = viewport != nullptr ? *viewport : Viewport{};
     view.layer_mask = layer_mask;
-    return collectRenderCommands(view);
+    return collectDrawItems(view);
 }
 
-std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(const View& view) const
+std::shared_ptr<const std::vector<DrawItem>> Scene::collectDrawItems(const View& view) const
 {
     // THE QUESTION BELONGS TO THE DERIVED SIDE (see detail::ScenePublisher): this scene's baked rows, its memo key
     // and its edit batch are what the answer depends on, and none of them is authored content.
-    return publisher_->collectRenderCommands(view);
+    return publisher_->collectDrawItems(view);
 }
 
 ScenePublishResult Scene::publish()

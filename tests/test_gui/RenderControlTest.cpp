@@ -23,7 +23,7 @@
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>

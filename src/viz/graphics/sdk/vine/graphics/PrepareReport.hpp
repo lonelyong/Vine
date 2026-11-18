@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "EngineNotReady.hpp"
+#include "EngineNotReadyReason.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -50,7 +50,7 @@ struct VN_GRAPHICS_API PrepareReport {
     };
 
     Outcome       outcome{ Outcome::NotReady }; // What became of the request (see Outcome).
-    EngineNotReady reason{ EngineNotReady::NoDevice }; // Why, when @ref outcome is #Outcome::NotReady.
+    EngineNotReadyReason reason{ EngineNotReadyReason::NoDevice }; // Why, when @ref outcome is #Outcome::NotReady.
     std::uint32_t passes{ 0 };                  // Passes with an EFFECT: a drawing call or an announced clear (see FrameShape).
     std::uint32_t draws{ 0 };                   // Drawing calls those passes issue (what was asked, not what was built).
     std::uint64_t halves{ 0 };                  // Compiled halves THIS call built (0 = already there).

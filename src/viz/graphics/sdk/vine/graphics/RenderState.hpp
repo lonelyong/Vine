@@ -89,7 +89,7 @@ inline bool operator!=(const DepthState& lhs, const DepthState& rhs)
  *   program writes an alpha below 1 (the rule three.js / Filament / Unity follow for an opaque material).
  * - TRANSPARENCY HAS ONE OTHER SOURCE, and it is merged where the two meet: a command whose effective
  *   opacity is below 1 (Node::setOpacity / Scene::setOpacity) is drawn with blending on and the pair
- *   below, because opacity is the engine's transparency channel (see RenderCommand::opacity). Content that
+ *   below, because opacity is the engine's transparency channel (see DrawItem::opacity). Content that
  *   wants per-pixel alpha from its own shader states the blend here instead of relying on the object's
  *   opacity.
  * - A backend whose target carries several colour attachments never blends them (they hold data, not a

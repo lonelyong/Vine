@@ -31,7 +31,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -49,7 +49,7 @@ using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::intrusive_ptr;
 
@@ -85,7 +85,7 @@ constexpr int kTargetSize = 64;
 }
 
 /// @brief One frame with one pass clearing @p target and drawing one textured triangle.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, std::shared_ptr<const std::vector<RenderCommand>> commands)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, std::shared_ptr<const std::vector<DrawItem>> commands)
 {
     FrameDescription frame;
     FrameDescription::Pass entry;
@@ -96,8 +96,8 @@ constexpr int kTargetSize = 64;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
 
-    vn::graphics::DrawDescription draw;
-    draw.kind     = vn::graphics::DrawDescription::Kind::Scene;
+    vn::graphics::DrawCall draw;
+    draw.kind     = vn::graphics::DrawCall::Kind::Scene;
     draw.view.camera   = CameraSnapshot{};
     draw.commands = std::move(commands);
     pass.draws.push_back(std::move(draw));
@@ -251,12 +251,12 @@ TEST(VkMemoryPoolTest, ASteadyFrameAllocatesNothing)
     const intrusive_ptr<vn::graphics::Material>      material = intrusive_ptr<vn::graphics::Material>(new vn::graphics::Material());
     material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
     command.material_description = material->description();
-    const auto commands = std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ std::move(command) });
+    const auto commands = std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ std::move(command) });
     const FrameDescription frame = drawingFrame(target.get(), commands);
 
     (void)backend->executeFrame(frame, nullptr);

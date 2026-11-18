@@ -57,12 +57,12 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         // declarations (RenderEngine::collectPlanProblems), so this path stays silent and draws nothing.
         return true;
     }
-    DrawDescription draw;
-    draw.kind        = DrawDescription::Kind::Screen;
+    DrawCall draw;
+    draw.kind        = DrawCall::Kind::Screen;
     draw.view.camera = CameraSnapshot::of(*camera());
     draw.source      = source_;
     draw.program     = desc_.program;
-    // Its text as a value, taken with the pointer (see DrawDescription::program_description): the recorder reads the
+    // Its text as a value, taken with the pointer (see DrawCall::program_description): the recorder reads the
     // value, so a program edited while a frame is in flight keeps the text it was described with.
     draw.program_description = desc_.program != nullptr ? desc_.program->description() : ShaderProgramDescriptionPtr{};
     // Forward the content scene's lights so the backend can push them to the

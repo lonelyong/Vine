@@ -42,7 +42,7 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -75,7 +75,7 @@ using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
 using vn::graphics::Light;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -304,13 +304,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     FrameCompiler compiler{ arena, diagnostics, observe };
 
     const auto command_of = [&](std::size_t index) {
-        RenderCommand command;
+        DrawItem command;
         command.geometry = bands[index];
         command.material = material;
         command.program  = program;
         return command;
     };
-    const RenderCommand commands[]{ command_of(0), command_of(1), command_of(2), command_of(3) };
+    const DrawItem commands[]{ command_of(0), command_of(1), command_of(2), command_of(3) };
 
     ClearValues clear;
     clear.color = true;
@@ -323,13 +323,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     recorder.setRenderTarget(handle.get());
     recorder.setClearPolicy(clear);
     recorder.setLights(lightValues(std::span<const Light* const>(towards_lights, 2U)));
-    recorder.render(std::span<const RenderCommand>(&commands[0], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[0], 1U), &camera);
     recorder.setLights(lightValues(std::span<const Light* const>(away_lights, 2U)));
-    recorder.render(std::span<const RenderCommand>(&commands[1], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[1], 1U), &camera);
     recorder.setLights(lightValues(std::span<const Light* const>(disabled_ambient_lights, 1U)));
-    recorder.render(std::span<const RenderCommand>(&commands[2], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[2], 1U), &camera);
     recorder.setLights(lightValues(std::span<const Light* const>(disabled_sun_lights, 1U)));
-    recorder.render(std::span<const RenderCommand>(&commands[3], 1U), &camera);
+    recorder.render(std::span<const DrawItem>(&commands[3], 1U), &camera);
     recorder.endPass();
     recorder.endFrame();
 

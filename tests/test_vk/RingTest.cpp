@@ -34,7 +34,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -50,14 +50,14 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::intrusive_ptr;
@@ -156,10 +156,10 @@ void main()
 }
 
 /// @brief One frame with one pass clearing @p target and drawing @p commands.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, std::shared_ptr<const std::vector<RenderCommand>> commands)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, std::shared_ptr<const std::vector<DrawItem>> commands)
 {
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
 
@@ -200,12 +200,12 @@ TEST(VkUniformRingTest, ASteadyFrameCreatesNoRingAndBuildsNoSet)
     const intrusive_ptr<Material>      material = intrusive_ptr<Material>(new Material());
     material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
     command.material_description = material->description();
-    auto commands = std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ std::move(command) });
+    auto commands = std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ std::move(command) });
 
     const FrameDescription frame = drawingFrame(target.get(), commands);
 
@@ -259,7 +259,7 @@ TEST(VkUniformRingTest, TwoDrawablesWithDifferentMaterialsShareTheRing)
     const auto make_command = [&](const Colorf& colour) {
         auto material = intrusive_ptr<Material>(new Material());
         material->setBaseColor(colour);
-        RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+        DrawItem command(geometry, nullptr, vn::math::Mat4d{});
         command.program              = program;
         command.program_description  = program->description();
         command.material             = material;
@@ -267,8 +267,8 @@ TEST(VkUniformRingTest, TwoDrawablesWithDifferentMaterialsShareTheRing)
         return command;
     };
 
-    const auto commands = std::make_shared<const std::vector<RenderCommand>>(
-        std::vector<RenderCommand>{ make_command(Colorf(1.0F, 0.0F, 0.0F, 1.0F)), make_command(Colorf(0.0F, 1.0F, 0.0F, 1.0F)) });
+    const auto commands = std::make_shared<const std::vector<DrawItem>>(
+        std::vector<DrawItem>{ make_command(Colorf(1.0F, 0.0F, 0.0F, 1.0F)), make_command(Colorf(0.0F, 1.0F, 0.0F, 1.0F)) });
     const FrameDescription frame = drawingFrame(target.get(), commands);
 
     (void)backend->executeFrame(frame, nullptr);
@@ -303,12 +303,12 @@ TEST(VkDeviceClockTest, AFrameReportsItsDeviceTime)
     const intrusive_ptr<Material>      material = intrusive_ptr<Material>(new Material());
     material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
     command.material_description = material->description();
-    auto       commands          = std::make_shared<const std::vector<RenderCommand>>(std::vector<RenderCommand>{ std::move(command) });
+    auto       commands          = std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ std::move(command) });
     const FrameDescription frame = drawingFrame(target.get(), commands);
 
     // THE CLOCK IS SAMPLED (see kTimestampSampleFrames in the backend): the first frame is measured, the frames in
@@ -358,17 +358,17 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
     material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
     const auto make_commands = [&](std::size_t count) {
-        std::vector<RenderCommand> commands;
+        std::vector<DrawItem> commands;
         commands.reserve(count);
         for (std::size_t index = 0; index < count; ++index) {
-            RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+            DrawItem command(geometry, nullptr, vn::math::Mat4d{});
             command.program              = program;
             command.program_description  = program->description();
             command.material             = material;
             command.material_description = material->description();
             commands.push_back(std::move(command));
         }
-        return std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
+        return std::make_shared<const std::vector<DrawItem>>(std::move(commands));
     };
 
     const FrameDescription one_command = drawingFrame(target.get(), make_commands(1));
@@ -426,17 +426,17 @@ TEST(VkFrameHeadTest, AFrameReportsWhatItSpentOnTheCacheLock)
     material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
     const auto make_commands = [&](std::size_t count) {
-        std::vector<RenderCommand> commands;
+        std::vector<DrawItem> commands;
         commands.reserve(count);
         for (std::size_t index = 0; index < count; ++index) {
-            RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+            DrawItem command(geometry, nullptr, vn::math::Mat4d{});
             command.program              = program;
             command.program_description  = program->description();
             command.material             = material;
             command.material_description = material->description();
             commands.push_back(std::move(command));
         }
-        return std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
+        return std::make_shared<const std::vector<DrawItem>>(std::move(commands));
     };
 
     (void)backend->executeFrame(drawingFrame(target.get(), make_commands(1)), nullptr);
@@ -482,9 +482,9 @@ TEST(VkFrameHeadTest, ASteadyFrameDoesNotGrowTheHeadsStorage)
     const intrusive_ptr<Material>      material = intrusive_ptr<Material>(new Material());
     material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    std::vector<RenderCommand> commands;
+    std::vector<DrawItem> commands;
     for (std::size_t index = 0; index < 2; ++index) {
-        RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+        DrawItem command(geometry, nullptr, vn::math::Mat4d{});
         command.program              = program;
         command.program_description  = program->description();
         command.material             = material;
@@ -492,7 +492,7 @@ TEST(VkFrameHeadTest, ASteadyFrameDoesNotGrowTheHeadsStorage)
         commands.push_back(std::move(command));
     }
     const FrameDescription frame =
-        drawingFrame(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::move(commands)));
+        drawingFrame(target.get(), std::make_shared<const std::vector<DrawItem>>(std::move(commands)));
 
     // WARM-UP: the first frames compile, upload, build pipelines and size the head's slots. Only the frames AFTER that
     // are the promise.

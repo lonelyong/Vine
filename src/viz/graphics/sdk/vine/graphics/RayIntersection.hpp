@@ -105,7 +105,7 @@ class VN_GRAPHICS_API RayIntersection {
     /** @brief Tests ray intersection with all geometries in a scene (closest hit only).
      *
      * @details
-     * - The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
+     * - The @p layer_mask selects like the collection does (see Scene::collectDrawItems): a visible
      *   geometry whose resolved layers do not intersect the mask is left out of the query; a node that
      *   re-declares its layers is picked under its own declaration (containers are structure - the test is
      *   taken at the drawn geometry); kAllLayers (the default) picks everything visible, exactly as before.
@@ -122,7 +122,7 @@ class VN_GRAPHICS_API RayIntersection {
      * @details
      * - Results are sorted by distance (near to far). Nearest returns the closest hit of every geometry;
      *   AllHits returns every triangle hit in the scene, including one entry per instance.
-     * - The @p layer_mask selects like the collection does (see Scene::collectRenderCommands): a visible
+     * - The @p layer_mask selects like the collection does (see Scene::collectDrawItems): a visible
      *   geometry whose resolved layers do not intersect the mask is left out; a re-declaration counts;
      *   kAllLayers (the default) picks everything visible.
      *

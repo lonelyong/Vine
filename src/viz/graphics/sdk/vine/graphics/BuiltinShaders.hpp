@@ -16,7 +16,7 @@ VN_GRAPHICS_NS_BEGIN
  *   GLSL in src/viz/graphics/shaders/, embedded at build time (see cmake/VineShaders.cmake) — so
  *   editing that file, and nothing else, is how the built-in shading changes.
  * - A PROGRAM IS THE ONLY WAY TO SELECT SHADING. There is no shading-model enum: "which shading" is
- *   answered by which program a drawable is shaded with — an explicit choice (RenderCommand::program
+ *   answered by which program a drawable is shaded with — an explicit choice (DrawItem::program
  *   / StateNode::setProgram / Geometry::setProgram, or the engine's default content program), never an
  *   implicit lookup. Two
  *   built-in programs exist because they differ in the TEXT (one define), not because the engine has

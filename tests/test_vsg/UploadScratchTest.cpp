@@ -28,7 +28,7 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -44,7 +44,7 @@ using vn::test::makeTriangle;
 using vn::test::TriangleFixture;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderPass;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;

@@ -251,7 +251,7 @@ bool FrameRecorder::setLights(std::span<const vn::graphics::LightValue> lights)
     return true;
 }
 
-bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
+bool FrameRecorder::render(std::span<const vn::graphics::DrawItem> commands,
                            const vn::graphics::CameraSnapshot&           camera,
                            const vn::graphics::ShaderProgramDescription* program_override)
 {
@@ -376,15 +376,15 @@ void FrameRecorder::snapshotLights(std::span<const vn::graphics::LightValue> lig
     pending_lights_ = copy;
 }
 
-std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
+std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<const vn::graphics::DrawItem> commands,
                                                                   const vn::graphics::ShaderProgramDescription* program_override)
 {
     const std::span<CollectedCommand> copy = arena_.makeArray<CollectedCommand>(commands.size());
     for (std::size_t i = 0; i < commands.size(); ++i) {
-        const vn::graphics::RenderCommand& source = commands[i];
+        const vn::graphics::DrawItem& source = commands[i];
         CollectedCommand&                  target = copy[i];
 
-        // The SHAPE travels as a value and the IDENTITY as a handle (see RenderCommand::node): a draw-list command
+        // The SHAPE travels as a value and the IDENTITY as a handle (see DrawItem::node): a draw-list command
         // carries both, and a hand-built one is converted here by the content-side caller that built it - this step
         // runs before the plan crosses to whatever records it, exactly like the collection it follows.
         //
@@ -419,7 +419,7 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         // from, and the fallback builds one only for a hand-built command (the named content-side door).
         const vn::graphics::ShaderProgramDescriptionPtr own_text = source.programDescription();
         target.program = programRef(program_override != nullptr ? program_override : own_text.get());
-        // THE MATERIAL'S VALUES CROSS, NOT THE OBJECT (see RenderCommand::materialDescription): the identity is the
+        // THE MATERIAL'S VALUES CROSS, NOT THE OBJECT (see DrawItem::materialDescription): the identity is the
         // material's own id and the revision is the one the values are at, so a frame in flight is served the bytes it
         // started with rather than whatever the material says by the time the plan is recorded.
         //

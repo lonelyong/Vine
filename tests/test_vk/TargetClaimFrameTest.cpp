@@ -5,7 +5,7 @@
  * WHY THIS FILE EXISTS. `TargetTableTest` pins the state machine; this one pins what the DEVICE does with a lost
  * claim: the pass is skipped, the REST of the frame still runs (a one-pass frame makes the skip observable as "nothing
  * was recorded"), and the sentence arrives ONCE - a second frame that loses the same target is the same episode and is
- * not re-reported. S6's public `createSession()` is what makes this a two-engine story; until then a lease taken by
+ * not re-reported. S6's public `createFrameDriver()` is what makes this a two-engine story; until then a lease taken by
  * the test plays the other driver.
  */
 
@@ -21,7 +21,7 @@
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderState.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/math/Matrix4x4.hpp>
@@ -40,14 +40,14 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::Topology;
@@ -99,20 +99,20 @@ constexpr int kTargetSize = 32;
 }
 
 /// @brief One scene draw with one command (it names a geometry and no program: the pass never gets to draw it).
-[[nodiscard]] DrawDescription makeDraw()
+[[nodiscard]] DrawCall makeDraw()
 {
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    commands->push_back(RenderCommand(makeTriangle(), nullptr, vn::math::Mat4d{}));
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(DrawItem(makeTriangle(), nullptr, vn::math::Mat4d{}));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
 {
     FrameDescription frame;
 

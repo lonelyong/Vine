@@ -34,7 +34,7 @@
 #include <vsg/commands/BindIndexBuffer.h>
 #include <vsg/commands/BindVertexBuffers.h>
 
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
@@ -81,7 +81,7 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
 }
 
 using vn::graphics::Diagnostics;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::backend_vsg::core::ClearValues;
 using vn::backend_vsg::core::CompiledFrame;
@@ -744,7 +744,7 @@ TEST(ExecutorTest, TheContentOfAPassIsRecordedInsideThatPassWithThePlansClear)
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    const std::vector<RenderCommand> commands{ RenderCommand{} };
+    const std::vector<DrawItem> commands{ DrawItem{} };
     fixture.recorder.beginFrame(FrameToken{ 1 });
     fixture.recorder.beginPass(1U);
     fixture.recorder.setRenderTarget(fixture.first.get());

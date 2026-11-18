@@ -20,7 +20,7 @@
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
 #include "DiagnosticsRoute.hpp"
-#include "EngineNotReady.hpp"
+#include "EngineNotReadyReason.hpp"
 #include "FrameDescription.hpp"
 #include "FrameResult.hpp"
 #include "FrameStats.hpp"
@@ -68,7 +68,7 @@ class PresentTarget;
  *   before returning (there is no frame thread), #Status::Submitted means it compiled and handed it over, so the
  *   picture follows one frame later (see waitForFrame). Nothing else is a frame outcome.
  * - #Status::NotReady is not a third frame outcome: it says the call drove NOTHING, and @ref reason says which
- *   precondition failed. It shares #EngineNotReady with `prepare()` so a host answers "is this engine ready" once.
+ *   precondition failed. It shares #EngineNotReadyReason with `prepare()` so a host answers "is this engine ready" once.
  * - What it deliberately does not answer: whether anything was drawn (RenderEngine::frameReport) or where the picture
  *   went (RenderEngine::presentRecord / #PresentOutcome). Both describe the frame, not the call's readiness.
  *
@@ -86,7 +86,7 @@ struct VN_GRAPHICS_API FrameOutcome {
     };
 
     Status         status{ Status::NotReady };            ///< Which answer this is.
-    EngineNotReady reason{ EngineNotReady::NoDevice };     ///< Why, when @ref status is #Status::NotReady.
+    EngineNotReadyReason reason{ EngineNotReadyReason::NoDevice };     ///< Why, when @ref status is #Status::NotReady.
 
     /**
      * @brief Gets whether the frame was answered before this call returned.
@@ -805,7 +805,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Sets the DEFAULT program for content: what a drawable naming none of its own gets.
      *
      * @details
-     * - A default, not an override: a drawable's own program (RenderCommand::program, Geometry::setProgram,
+     * - A default, not an override: a drawable's own program (DrawItem::program, Geometry::setProgram,
      *   StateNode::setProgram) still wins. The name says so - "setContentProgram" would read as "shade all
      *   content with this".
      * - Forwarded to the backend (before initialize() it is the session's decision; on a running session
@@ -1052,8 +1052,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     [[nodiscard]] raw_ptr<const RenderPass> passNeedingAnUnsupportedTarget() const;
 
     intrusive_ptr<RenderBackend> device_;
-    // THIS ENGINE'S FRAME DRIVER: borrowed from the device (RenderDevice::createSession) and returned to it
-    // (RenderDevice::releaseSession) when the device is replaced or this engine dies. The device owns it, so a NULL
+    // THIS ENGINE'S FRAME DRIVER: borrowed from the device (RenderDevice::createFrameDriver) and returned to it
+    // (RenderDevice::releaseFrameDriver) when the device is replaced or this engine dies. The device owns it, so a NULL
     // SESSION means the device could not hand one out - frames then answer NotInitialized rather than guess a driver.
     RenderFrameExecutor* session_{ nullptr };
     // The validity bit behind every Lease this engine handed out (see lease): set to this in the constructor and

@@ -20,7 +20,7 @@ VN_GRAPHICS_NS_BEGIN
  * - Readiness is not a frame fact: a frame that ran and issued no draw is a #FrameReport question, and a picture that
  *   did not reach its surface is #PresentOutcome's.
  */
-enum class EngineNotReady : std::uint8_t
+enum class EngineNotReadyReason : std::uint8_t
 {
     NoDevice,       // setDevice() was never called, so there is nothing to hand a frame to.
     NotInitialized, // initialize() has not succeeded: never called, refused, or shutdown() ran since.

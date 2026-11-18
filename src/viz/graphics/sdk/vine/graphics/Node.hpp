@@ -143,7 +143,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   subtree is in the layer its ancestors declared (kDefaultLayer when nobody did).
      * - Resolution happens once, in the collection walk - which is why there is no up-walking spelling
      *   here; "why was this not drawn" is asked by a pass and answered while collecting (see
-     *   Scene::collectRenderCommands and .ai/design/graphics-scene.md).
+     *   Scene::collectDrawItems and .ai/design/graphics-scene.md).
      *
      * @return The declared layer set, or nullopt when this node declares none.
      */
@@ -184,7 +184,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      * - The order is the OUTER sort key of the pass's draw list, so a declared order leapfrogs the default
      *   batches (order 1 is drawn after every draw at order 0, opaque or not); INSIDE one order the usual
      *   picture holds - opaque front-to-back, then transparent back-to-front (see
-     *   Scene::collectRenderCommands) - which keeps alpha ordering intact among content that shares it.
+     *   Scene::collectDrawItems) - which keeps alpha ordering intact among content that shares it.
      * - It covers the whole subtree and the NEAREST declaration wins, like the layer declaration beside it;
      *   clearDrawOrder() goes back to inheriting.
      *
@@ -199,7 +199,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *
      * @details
      * - Not the folded value: a drawable's effective opacity is scene.opacity() x every ancestor's
-     *   opacity() x its own, clamped to [0, 1] at the drawn leaf (see RenderCommand::opacity).
+     *   opacity() x its own, clamped to [0, 1] at the drawn leaf (see DrawItem::opacity).
      * - The per-drawable half of the transparency INPUT: the material's alpha mode says what the product with
      *   the material's own alpha means (Opaque ignores it, Mask thresholds it, Blend blends it), so a shared
      *   material's alpha cannot fade every drawable that uses it on its own - the mode has to say so

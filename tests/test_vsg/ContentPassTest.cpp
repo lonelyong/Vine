@@ -39,7 +39,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
@@ -78,7 +78,7 @@
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ReportOnce;
 using vn::graphics::ShaderProgram;
@@ -310,11 +310,11 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -514,13 +514,13 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry            = geometry;
     command.material            = material;
     command.program             = program;
     command.instance_transforms = vn::BufferSlice<float>::whole(instance_storage);
     command.instance_count      = 2U;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -708,15 +708,15 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand left_command;
+    DrawItem left_command;
     left_command.geometry = left.geometry;
     left_command.material = material;
     left_command.program  = green_program;
-    RenderCommand right_command;
+    DrawItem right_command;
     right_command.geometry = right.geometry;
     right_command.material = material;
     right_command.program  = blue_program;
-    const std::vector<RenderCommand> commands{ left_command, right_command, left_command };
+    const std::vector<DrawItem> commands{ left_command, right_command, left_command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -813,7 +813,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     const std::uint64_t skipped_before = diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped);
     const std::uint64_t uploads_before = uploads.uploads();
 
-    RenderCommand unserved_command;
+    DrawItem unserved_command;
     unserved_command.geometry = unserved.geometry;
     unserved_command.material = material;
     unserved_command.program  = green_program;
@@ -822,7 +822,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     recorder.beginPass(1U);
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
-    recorder.render(std::vector<RenderCommand>{ unserved_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ unserved_command }, nullptr);
     recorder.endPass();
     recorder.endFrame();
     recorder.swapBuffers();
@@ -839,7 +839,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
 
     // A program no half was compiled from: refused too, with the message that sends the reader to the program
     // half of the key instead.
-    RenderCommand other_command;
+    DrawItem other_command;
     other_command.geometry = left.geometry; // a geometry whose layout IS served
     other_command.material = material;
     other_command.program  = other_program;
@@ -848,7 +848,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     recorder.beginPass(1U);
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
-    recorder.render(std::vector<RenderCommand>{ other_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ other_command }, nullptr);
     recorder.endPass();
     recorder.endFrame();
     recorder.swapBuffers();
@@ -970,11 +970,11 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand left_command;
+    DrawItem left_command;
     left_command.geometry = left.geometry;
     left_command.material = material;
     left_command.program  = program;
-    RenderCommand right_command;
+    DrawItem right_command;
     right_command.geometry = right.geometry;
     right_command.material = material;
     right_command.program  = program;
@@ -983,12 +983,12 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     recorder.beginPass(1U);
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
-    recorder.render(std::vector<RenderCommand>{ left_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ left_command }, nullptr);
     recorder.endPass();
     recorder.beginPass(2U);
     recorder.setRenderTarget(target.get());
     // NO clear policy for the second pass: it keeps what the first one left.
-    recorder.render(std::vector<RenderCommand>{ right_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ right_command }, nullptr);
     recorder.endPass();
     recorder.endFrame();
 
@@ -1190,11 +1190,11 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -1379,12 +1379,12 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     model(2, 2) = 0.5;
     model(0, 3) = 0.5;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry     = geometry;
     command.material     = material;
     command.program      = program;
     command.model_matrix = model;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -1603,11 +1603,11 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -1852,11 +1852,11 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -2082,11 +2082,11 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -2398,16 +2398,16 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
 
     // ONE pass, two drawing calls side by side: the LEFT half is the textured material, the RIGHT half the
     // untextured one.
-    RenderCommand textured_command;
+    DrawItem textured_command;
     textured_command.geometry = geometry;
     textured_command.material = textured_material;
     textured_command.program  = program;
-    RenderCommand plain_command;
+    DrawItem plain_command;
     plain_command.geometry = geometry;
     plain_command.material = plain_material;
     plain_command.program  = program;
-    const std::vector<RenderCommand> textured_commands{ textured_command };
-    const std::vector<RenderCommand> plain_commands{ plain_command };
+    const std::vector<DrawItem> textured_commands{ textured_command };
+    const std::vector<DrawItem> plain_commands{ plain_command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -2655,11 +2655,11 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 2 });
     recorder.beginPass(2U);
@@ -2868,11 +2868,11 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -3128,16 +3128,16 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand shadow_command;
+    DrawItem shadow_command;
     shadow_command.geometry = geometry;
     shadow_command.material = material;
     shadow_command.program  = shadow_program;
-    RenderCommand unshadowed_command;
+    DrawItem unshadowed_command;
     unshadowed_command.geometry = geometry;
     unshadowed_command.material = material;
     unshadowed_command.program  = unshadowed_program;
-    const std::vector<RenderCommand> shadow_commands{ shadow_command };
-    const std::vector<RenderCommand> unshadowed_commands{ unshadowed_command };
+    const std::vector<DrawItem> shadow_commands{ shadow_command };
+    const std::vector<DrawItem> unshadowed_commands{ unshadowed_command };
     const RenderTarget*              both_inputs[]{ depth_handle.get(), map_handle.get() };
     const RenderTarget*              depth_only[]{ depth_handle.get() };
 
@@ -3606,11 +3606,11 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     shadowed_map_clear.depth       = true;
     shadowed_map_clear.depth_value = 1.0F; // a caster at the near plane: the fragment is behind it
 
-    RenderCommand writer_command;
+    DrawItem writer_command;
     writer_command.geometry = geometry;
     writer_command.material = material;
     writer_command.program  = writer_program;
-    const std::vector<RenderCommand> writer_commands{ writer_command };
+    const std::vector<DrawItem> writer_commands{ writer_command };
     const vn::graphics::Light* const shading_lights[]{ ambient.get(), sun.get() };
     const RenderTarget*              gbuffer_input[]{ gbuffer_handle.get() };
     const RenderTarget*              gbuffer_and_lit_map_inputs[]{ gbuffer_handle.get(), lit_map_handle.get() };
@@ -3972,11 +3972,11 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     lit_clear.color_value[2] = 0.0F;
     lit_clear.color_value[3] = 1.0F;
 
-    RenderCommand writer_command;
+    DrawItem writer_command;
     writer_command.geometry = geometry;
     writer_command.material = material;
     writer_command.program  = writer_program;
-    const std::vector<RenderCommand> writer_commands{ writer_command };
+    const std::vector<DrawItem> writer_commands{ writer_command };
     const vn::graphics::Light* const shading_lights[]{ ambient.get() };
     const RenderTarget*              gbuffer_input[]{ gbuffer_handle.get() };
 
@@ -4253,15 +4253,15 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     ClearValues black_clear;
     black_clear.color          = true;
     black_clear.color_value[3] = 1.0F;
-    RenderCommand black_command;
+    DrawItem black_command;
     black_command.geometry = geometry;
     black_command.material = black_material;
     black_command.program  = forward_program;
-    RenderCommand quarter_command;
+    DrawItem quarter_command;
     quarter_command.geometry = geometry;
     quarter_command.material = quarter_material;
     quarter_command.program  = forward_program;
-    RenderCommand gbuffer_command;
+    DrawItem gbuffer_command;
     gbuffer_command.geometry = geometry;
     gbuffer_command.material = quarter_material;
     gbuffer_command.program  = gbuffer_program;
@@ -4273,18 +4273,18 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     recorder.setRenderTarget(forward_black_handle.get());
     recorder.setClearPolicy(black_clear);
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(lights, 1U)));
-    recorder.render(std::vector<RenderCommand>{ black_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ black_command }, camera.get());
     recorder.endPass();
     recorder.beginPass(2U);
     recorder.setRenderTarget(forward_quarter_handle.get());
     recorder.setClearPolicy(black_clear);
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(lights, 1U)));
-    recorder.render(std::vector<RenderCommand>{ quarter_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ quarter_command }, camera.get());
     recorder.endPass();
     recorder.beginPass(3U);
     recorder.setRenderTarget(gbuffer_handle.get());
     recorder.setClearPolicy(black_clear);
-    recorder.render(std::vector<RenderCommand>{ gbuffer_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ gbuffer_command }, camera.get());
     recorder.endPass();
     recorder.beginPass(4U);
     recorder.setRenderTarget(deferred_handle.get());
@@ -4527,11 +4527,11 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     clear.color_value[2] = kClear[2];
     clear.color_value[3] = 1.0F;
 
-    RenderCommand broken;
+    DrawItem broken;
     broken.geometry = geometry;
     broken.material = material;
     broken.program  = absent_program;
-    const std::vector<RenderCommand> broken_commands{ broken, broken, broken };
+    const std::vector<DrawItem> broken_commands{ broken, broken, broken };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);
@@ -4675,7 +4675,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
-    RenderCommand ramp_command;
+    DrawItem ramp_command;
     ramp_command.geometry = geometry;
     ramp_command.material = material;
     ramp_command.program  = ramp_program;
@@ -4683,7 +4683,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     recorder.beginPass(1U);
     recorder.setRenderTarget(target_handle.get());
     recorder.setClearPolicy(clear);
-    recorder.render(std::vector<RenderCommand>{ ramp_command }, nullptr);
+    recorder.render(std::vector<DrawItem>{ ramp_command }, nullptr);
     recorder.endPass();
     recorder.endFrame();
 
@@ -4857,11 +4857,11 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 5.0), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
@@ -5116,11 +5116,11 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     ClearValues clear;
     clear.color          = true;
     clear.color_value[3] = 1.0F;
-    RenderCommand write_command;
+    DrawItem write_command;
     write_command.geometry = geometry;
     write_command.material = material;
     write_command.program  = writer;
-    const std::vector<RenderCommand> write_commands{ write_command };
+    const std::vector<DrawItem> write_commands{ write_command };
     const vn::graphics::Light* const dim_lights[]{ dim_light.get() };
     const vn::graphics::Light* const bright_lights[]{ bright_light.get() };
     const RenderTarget*              input_eight_bit[]{ eight_bit_handle.get() };
@@ -5456,11 +5456,11 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    RenderCommand textured_command;
+    DrawItem textured_command;
     textured_command.geometry = geometry;
     textured_command.material = textured_material;
     textured_command.program  = program;
-    RenderCommand plain_command;
+    DrawItem plain_command;
     plain_command.geometry = geometry;
     plain_command.material = plain_material;
     plain_command.program  = program;
@@ -5471,9 +5471,9 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
     recorder.setViewport(static_cast<int>(kSize) / 2, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ plain_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ plain_command }, camera.get());
     recorder.setViewport(0, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ textured_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ textured_command }, camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -5683,11 +5683,11 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     // stage places the quad itself), so a default camera is all the plan needs.
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
 
-    RenderCommand left_command;
+    DrawItem left_command;
     left_command.geometry = geometry;
     left_command.material = left_map_material;
     left_command.program  = program;
-    RenderCommand right_command;
+    DrawItem right_command;
     right_command.geometry = geometry;
     right_command.material = right_material;
     right_command.program  = program;
@@ -5697,9 +5697,9 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
     recorder.setViewport(0, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ left_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ left_command }, camera.get());
     recorder.setViewport(static_cast<int>(kSize) / 2, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ right_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ right_command }, camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -5910,11 +5910,11 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     // stage places the quad itself), so a default camera is all the plan needs.
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
 
-    RenderCommand left_command;
+    DrawItem left_command;
     left_command.geometry = geometry;
     left_command.material = left_produced_material;
     left_command.program  = program;
-    RenderCommand right_command;
+    DrawItem right_command;
     right_command.geometry = geometry;
     right_command.material = right_material;
     right_command.program  = program;
@@ -5924,9 +5924,9 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
     recorder.setViewport(0, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ left_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ left_command }, camera.get());
     recorder.setViewport(static_cast<int>(kSize) / 2, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ right_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ right_command }, camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -6133,11 +6133,11 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     // stage places the quad itself), so a default camera is all the plan needs.
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
 
-    RenderCommand left_command;
+    DrawItem left_command;
     left_command.geometry = geometry;
     left_command.material = left_assembled_material;
     left_command.program  = program;
-    RenderCommand right_command;
+    DrawItem right_command;
     right_command.geometry = geometry;
     right_command.material = right_material;
     right_command.program  = program;
@@ -6147,9 +6147,9 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
     recorder.setViewport(0, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ left_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ left_command }, camera.get());
     recorder.setViewport(static_cast<int>(kSize) / 2, 0, static_cast<int>(kSize) / 2, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ right_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ right_command }, camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -6381,19 +6381,19 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
-    RenderCommand posz_command;
+    DrawItem posz_command;
     posz_command.geometry = to_posz;
     posz_command.material = sky_material;
     posz_command.program  = sky_program;
-    RenderCommand posx_command;
+    DrawItem posx_command;
     posx_command.geometry = to_posx;
     posx_command.material = sky_material;
     posx_command.program  = sky_program;
-    RenderCommand bare_command;
+    DrawItem bare_command;
     bare_command.geometry = to_posz;
     bare_command.material = bare_material;
     bare_command.program  = sky_program;
-    RenderCommand flat_command;
+    DrawItem flat_command;
     flat_command.geometry = to_posz;
     flat_command.material = flat_material;
     flat_command.program  = sky_program;
@@ -6404,13 +6404,13 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     recorder.setRenderTarget(target.get());
     recorder.setClearPolicy(clear);
     recorder.setViewport(0 * kStrip, 0, kStrip, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ posz_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ posz_command }, camera.get());
     recorder.setViewport(1 * kStrip, 0, kStrip, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ posx_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ posx_command }, camera.get());
     recorder.setViewport(2 * kStrip, 0, kStrip, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ bare_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ bare_command }, camera.get());
     recorder.setViewport(3 * kStrip, 0, kStrip, static_cast<int>(kSize));
-    recorder.render(std::vector<RenderCommand>{ flat_command }, camera.get());
+    recorder.render(std::vector<DrawItem>{ flat_command }, camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -6601,7 +6601,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
 
     // The point cloud IS a points draw: the primitive states it (see Primitive.hpp) - a StateNode cannot. It is stated
     // BEFORE the command is built, because a command carries the geometry's SHAPE as a value (see
-    // RenderCommand::description): an edit after that is a new description, not a mutation the recorder would see.
+    // DrawItem::description): an edit after that is a new description, not a mutation the recorder would see.
     if (geometry != nullptr && geometry->primitive(0) != nullptr) {
         vn::graphics::Primitive points = *geometry->primitive(0);
         points.topology                = vn::graphics::Topology::Points;
@@ -6609,11 +6609,11 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
         geometry->bumpRevision();
         store.track(geometry); // the frame hands the new shape over (a description is a value, never a live read)
     }
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     recorder.beginFrame(FrameToken{ 1 });
     recorder.beginPass(1U);

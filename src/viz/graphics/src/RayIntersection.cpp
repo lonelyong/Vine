@@ -361,7 +361,7 @@ void intersectNode(const vn::geom::spatial::Rayd& ray, const Node* node, std::ui
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
-        // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
+        // Scene::collectDrawItems): a container stands for structure, so it is never pruned.
         if ((layers & layer_mask) == 0) {
             return;
         }
@@ -402,7 +402,7 @@ void collectNodeNearest(const vn::geom::spatial::Rayd& ray, const Node* node, st
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
-        // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
+        // Scene::collectDrawItems): a container stands for structure, so it is never pruned.
         if ((layers & layer_mask) == 0) {
             return;
         }
@@ -445,7 +445,7 @@ void collectNodeHits(const vn::geom::spatial::Rayd& ray, const Node* node, std::
     const std::uint32_t layers = node->layers().value_or(inherited_layers);
     if (const auto* geometry = obj_cast<Geometry>(node)) {
         // The content selection, taken at the drawn node like the collection walk (see
-        // Scene::collectRenderCommands): a container stands for structure, so it is never pruned.
+        // Scene::collectDrawItems): a container stands for structure, so it is never pruned.
         if ((layers & layer_mask) == 0) {
             return;
         }

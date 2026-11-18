@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "MaterialBase.hpp"
+#include "MaterialValues.hpp"
 #include "ShaderAbi.hpp"
 
 VN_GRAPHICS_NS_BEGIN

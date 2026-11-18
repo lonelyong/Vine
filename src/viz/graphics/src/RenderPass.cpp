@@ -133,8 +133,8 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         // No view to build: the pass announces what it is and where, and issues no draw.
         return true;
     }
-    DrawDescription draw;
-    draw.kind = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind = DrawCall::Kind::Scene;
     // THE VIEW, AS A VALUE (see View). Taking it here is what lets the frame's expansion collect on another
     // thread, and what keeps this frame's culling and shading on one camera state.
     draw.view.camera = CameraSnapshot::of(*desc_.camera);

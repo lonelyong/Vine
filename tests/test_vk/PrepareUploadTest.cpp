@@ -31,7 +31,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -49,7 +49,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -58,7 +58,7 @@ using vn::graphics::PrepareReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -207,17 +207,17 @@ struct TexturedScene {
     scene.material->setBaseColor(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
     scene.material->setTexture(TextureSlot::BaseColor, scene.texture);
 
-    RenderCommand command(scene.geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(scene.geometry, nullptr, vn::math::Mat4d{});
     command.program             = scene.program;
     command.program_description = scene.program->description();
     command.material            = scene.material;
     command.material_description = scene.material->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 

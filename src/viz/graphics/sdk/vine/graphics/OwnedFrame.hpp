@@ -13,7 +13,7 @@
 #include "FrameDescription.hpp"
 #include "ImageSource.hpp"
 #include "Light.hpp"
-#include "RenderCommand.hpp"
+#include "DrawItem.hpp"
 #include "RenderTarget.hpp"
 #include "ShaderProgram.hpp"
 
@@ -25,7 +25,7 @@ class RenderPass;
  * @brief One drawing call of an OWNED frame: the borrowed description's fields, each one held.
  *
  * @details
- * - The owned twin of @ref DrawDescription. Every handle is an owning one, so the value outlives the scene, the
+ * - The owned twin of @ref DrawCall. Every handle is an owning one, so the value outlives the scene, the
  *   camera and the program it was assembled from - which is what lets a caller build a frame on one thread, keep it,
  *   and hand it to an executor later (or serialise it, or record it). The commands are a `shared_ptr` in both forms:
  *   one collection is usually drawn by several passes, and ownership of it is already shared.
@@ -35,18 +35,18 @@ class RenderPass;
  *   the type deliberately carries no VN_GRAPHICS_API (the DLL never instantiates it).
  */
 struct OwnedDraw {
-    /// Which drawing call this is (see DrawDescription::Kind).
-    DrawDescription::Kind kind{ DrawDescription::Kind::Scene };
+    /// Which drawing call this is (see DrawCall::Kind).
+    DrawCall::Kind kind{ DrawCall::Kind::Scene };
     /// The view this draw is projected and lit with, as the VALUE the frame carries (`camera.present == false` = no
     /// draw). It is owned by being a value: no camera object has to outlive the frame for it to be replayable.
     View view{};
     /// Scene kind: the commands this draw issues (held; the collection owns its geometry and materials).
-    std::shared_ptr<const std::vector<RenderCommand>> commands;
+    std::shared_ptr<const std::vector<DrawItem>> commands;
     /// Screen kind: the target whose colour attachments the program samples (held).
     intrusive_ptr<RenderTarget> source;
     /// Screen kind: the fragment program to draw the source through (held).
     intrusive_ptr<const ShaderProgram> program;
-    /// The lights this draw announces, as values, or null for NONE (see DrawDescription::light_values).
+    /// The lights this draw announces, as values, or null for NONE (see DrawCall::light_values).
     LightSetPtr light_values;
 };
 
@@ -181,7 +181,7 @@ class OwnedFrame {
         out.program_override = owned.program_override;
         out.draws.reserve(owned.draws.size());
         for (const OwnedDraw& draw : owned.draws) {
-            DrawDescription borrowed_draw;
+            DrawCall borrowed_draw;
             borrowed_draw.kind     = draw.kind;
             borrowed_draw.view     = draw.view;
             borrowed_draw.commands = draw.commands;

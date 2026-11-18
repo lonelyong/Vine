@@ -352,7 +352,7 @@ FrameCompiler::resolveCommands(const CollectedDraw& source, const vn::graphics::
         // vertex-shader output), so it travels beside the opacity instead of into `dynamic`.
         out.point_size                             = resolved.pointSize;
         // THE ENGINE'S TRANSPARENCY DECISION IS THE COMMAND'S, made when the typed command was read
-        // (`RenderCommand::isTransparent`: the material's resolved alpha mode plus the drawable's opacity), and the
+        // (`DrawItem::isTransparent`: the material's resolved alpha mode plus the drawable's opacity), and the
         // plan carried it here as one bool. A translucent command blends with the standard pair even though its
         // content authored none (no StateNode has to say "and blend"), and an opaque one that authored none stays
         // unblended - what `ResolvedRenderState::blend` documents. The order and the blend factor read the same

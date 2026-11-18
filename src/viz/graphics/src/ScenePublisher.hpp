@@ -5,7 +5,7 @@
 #include <vector>
 
 #include <vine/graphics/View.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
 
 #include "SceneSnapshot.hpp"
@@ -26,7 +26,7 @@ class DrawListMemo;
  *
  * @return The shared empty list.
  */
-[[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>> noCommands();
+[[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::DrawItem>> noCommands();
 
 /**
  * @brief THE DERIVED SIDE OF A SCENE: what a collection and a publication compute from the authored tree.
@@ -43,7 +43,7 @@ class DrawListMemo;
  *   one thread, and the authoring half stays an object the host holds.
  * - WHAT IT DOES NOT OWN. The content: no node, no light, no material. It holds a reference to the scene it reads
  *   (the scene owns it, both live on the content thread) and only ever reads the authored side.
- * - THREADS. Content thread, like the scene: `collectRenderCommands` selects from the publication and `publish`
+ * - THREADS. Content thread, like the scene: `collectDrawItems` selects from the publication and `publish`
  *   builds it. The immutable results (`SceneSnapshotPtr`, the shared command lists) are what may leave the thread.
  *
  * @note
@@ -67,20 +67,20 @@ class ScenePublisher final
 
   public:
     /**
-     * @brief Collects the commands @p view draws (see Scene::collectRenderCommands).
+     * @brief Collects the commands @p view draws (see Scene::collectDrawItems).
      *
      * @details
      * - ONE SELECTION RULE: the query answers from the scene's current publication (the value a frame draws) through
      *   the same `selectSnapshot` the frame's source runs. There is no second walk over the live rows.
      * - NOT A FRAME SOURCE: a frame draws a publication (see SnapshotSource); this is the content thread's own query,
-     *   which `Scene::collectRenderCommands` forwards to - and inside an edit batch it answers the picture the batch
+     *   which `Scene::collectDrawItems` forwards to - and inside an edit batch it answers the picture the batch
      *   started from, exactly as `publish()` reports it.
      *
      * @param view The view to collect for: camera value, device-pixel area and layer mask.
      * @return The shared, immutable command list.
      */
-    [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>>
-    collectRenderCommands(const vn::graphics::View& view) const;
+    [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::DrawItem>>
+    collectDrawItems(const vn::graphics::View& view) const;
 
     /**
      * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.
@@ -123,7 +123,7 @@ class ScenePublisher final
      * - The one snapshot builder: it brings the rows up to date (boxes and material values included), shares unchanged
      *   chunks with the previous publication, and returns the cached value when nothing moved (see
      *   `detail::SceneRows`, its one caller).
-     * - Const because a query (see collectRenderCommands) reads it too: everything it maintains is a mutable cache.
+     * - Const because a query (see collectDrawItems) reads it too: everything it maintains is a mutable cache.
      *
      * @return The immutable publication; never null.
      */
@@ -173,7 +173,7 @@ class ScenePublisher final
     mutable std::uint64_t box_generation_ = 0;
     // How many times a VALUE moved under the rows (see detail::refreshValues): a material's values and a program's
     // text are edited through live objects, so no node mutator announces it and `bake_epoch_` cannot see it - while
-    // the values a command carries do change (RenderCommand::material_description / program_description).
+    // the values a command carries do change (DrawItem::material_description / program_description).
     mutable std::uint64_t value_generation_ = 0;
     // HOW DEEP THE EDIT BATCH IS (see Scene::beginEdit), and the version a publication compares (`publish`). Inside a
     // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next

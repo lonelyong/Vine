@@ -37,7 +37,7 @@
 | `RenderFrameExecutor::executeFrame(value, present_to)` | 一帧的整个身体：开帧 → 按帧值走 pass → 编译 → 记录/提交 → 帧尾 present（`present_to` 为空走离屏会话、不 present） |
 | `RenderFrameExecutor::prepareFrame(...)` | 预热：构建、不取图、不录制、不提交、不 present；之后的同值帧构建为 0 |
 | `RenderDevice::capabilities()` | `render_targets`、`presentation`（创建意图）、`Features` / `Limits`；缺席不是零 |
-| `RenderDevice::createSession()` / `releaseSession()` | 一个设备服务多个窗口/引擎；每个驱动者有自己的帧机器与暂存 |
+| `RenderDevice::createFrameDriver()` / `releaseFrameDriver()` | 一个设备服务多个窗口/引擎；每个驱动者有自己的帧机器与暂存 |
 | `createSurfaceTarget` / `setRenderTarget` / `releaseRenderTarget` / `releasePass` | 目标由设备持有；窗口目标一格一次（第二次答 `WindowOccupied`）；释放后下一帧重建 |
 | `releaseContent(Object)` / `releaseContent(Buffer)` | 放掉 GPU 驻留，对象仍有效；释放本身不增加 `deviceWaits()` |
 | `readColorBuffer` / `readDepthBuffer` | 先分类再工作：`Unsupported`（永远不行）与 `NotReady`（还没画）是不同答案；读回按每次一次计数等待设备 |

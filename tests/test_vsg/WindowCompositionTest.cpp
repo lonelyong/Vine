@@ -53,7 +53,7 @@
 #include <vine/graphics/Geometry.hpp>
 
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
@@ -96,7 +96,7 @@
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -334,12 +334,12 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     const vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());
     camera->lookAt(vn::math::Vec3d(0.5, 0.0, 1.5), vn::math::Vec3d(0.5, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
-    const std::vector<RenderCommand> commands = [&] {
-        RenderCommand command;
+    const std::vector<DrawItem> commands = [&] {
+        DrawItem command;
         command.geometry = geometry;
         command.material = material;
         command.program  = program;
-        return std::vector<RenderCommand>{ command };
+        return std::vector<DrawItem>{ command };
     }();
 
     // The identity the plan names the targets by: the SDK handles the engine announces them with.

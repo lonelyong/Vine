@@ -28,7 +28,9 @@
 | `FrameOutcome` | 调用结果 | What one `frame()` call did (Ran / Submitted); `NotReady` is a precondition, not a frame ending. |
 | `FrameQuery` | 帧所见 | The publication and the view the picture was taken from (`FrameResult::query`). |
 | pass | pass (not translated) | One `PassDesc`; the only authoring shape. |
-| draw call | 绘制调用 | One `DrawDescription`, not one recorded GPU command. |
+| draw call | 绘制调用 | One `DrawCall`, not one recorded GPU command. |
+| draw item | 可画项 | One `DrawItem`: a scene drawable as this frame sees it (a pass collects a list of them). |
+| material values, `MaterialValues` | 材质值 | The read face of a material's values; `Material` is the asset and `MaterialInstance` an instance of it. |
 | content | 内容 | Scene, material, geometry, program and light as engine-owned objects. |
 | target, `RenderTarget` | 目标 | The host's off-screen target; its address is the identity a frame names. |
 | attachment | 附件 | One colour image or the depth image of a target. |
@@ -65,13 +67,14 @@
 
 | Retired | Use | Why |
 |---|---|---|
-| `Session` / 会话 (as the design noun) | frame driver / `FrameDriver` | Renamed in S2; `createSession()` is still the API verb, but the concept is the driver. |
+| `Session` / 会话 (as the design noun) | frame driver / `FrameDriver` | Renamed in S2; `createFrameDriver()` is still the API verb, but the concept is the driver. |
 | backend half / 后端半边 | seam | The directory and the concept were deleted (`ADR-2026-11-16-no-backend-half`). |
 | `ContentHalves` / `ContentSets` / `ContentPush` | `CompiledPrograms` / `BindingSets` / `PushRange` | B17 (S8), then B13 for the first (via `ProgramHalves`). |
 | `ProgramHalves` / `ResourceTable` / `ResidenceTable` | `CompiledPrograms` / `PinnedResources` / `ResidencyClaims` | B13: three near-names, one per role (compiled programs / pinned values / build claims). |
 | `TargetImages` / `OffscreenTarget` / `HostTargets` | `TargetObjects` / `TargetTable` | S4 (B5a/B5b). |
 | `TargetClaims` | the target table's lease | S4: one table answers map, shape and claims. |
 | `SceneBake` as "the production collector" | `DrawListBake::buildRows` + `selectSnapshot` | The frame compiles draws from the published snapshot. |
+| `RenderCommand` / `DrawDescription` / `MaterialBase` / `EngineNotReady` / `createSession` / `releaseSession` | `DrawItem` / `DrawCall` / `MaterialValues` / `EngineNotReadyReason` / `createFrameDriver` / `releaseFrameDriver` | B12 (2026-11-18): each name now says what the thing is; no aliases kept (see `graphics-rendering.md` 2.10). |
 
 ## 3. False friends
 
@@ -83,4 +86,4 @@
 | driver | frame driver (`FrameDriver`) | a GPU device driver |
 | content | engine-owned scene, material, geometry, program, light | bytes on the GPU |
 | residency | whether GPU objects exist | memory pressure or an eviction policy |
-| command | `RenderCommand`, one scene drawable | one recorded GPU command |
+| command | `DrawItem`, one scene drawable | one recorded GPU command |

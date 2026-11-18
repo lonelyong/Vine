@@ -16,7 +16,7 @@
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"
-#include "RenderCommand.hpp"
+#include "DrawItem.hpp"
 #include "StateResolution.hpp"
 #include "View.hpp"
 #include "Viewport.hpp"
@@ -95,10 +95,10 @@ struct ClearPolicy {
  * - Why the ORDER is not here: the old wire made the backend infer meaning from call order (state setters as
  *   the open scope's attribute; viewport / lights consumed by the NEXT draw). A description has no order -
  *   which state belongs to a pass and which to one draw is the SHAPE of these structs (PassDraw's
- *   fields belong to the pass, DrawDescription's to this draw), so the rules cannot be broken by calling
+ *   fields belong to the pass, DrawCall's to this draw), so the rules cannot be broken by calling
  *   something at the wrong moment.
  */
-struct VN_GRAPHICS_API DrawDescription {
+struct VN_GRAPHICS_API DrawCall {
     /// Which drawing call this is (the two the contract has; they take different arguments).
     enum class Kind : std::uint8_t
     {
@@ -126,7 +126,7 @@ struct VN_GRAPHICS_API DrawDescription {
     /// FILLED BY THE EXPANSION from @ref content (or carried by a hand-built description). Shared rather than copied:
     /// every pass of a frame usually draws the same command list, and the collection is memoised per view (see
     /// DrawListSource), so one description per pass holds a handle to the same list.
-    std::shared_ptr<const std::vector<RenderCommand>> commands;
+    std::shared_ptr<const std::vector<DrawItem>> commands;
     /// Screen kind: the target whose colour attachments the full-screen program samples.
     raw_ptr<RenderTarget> source = nullptr;
     /// Screen kind: the fragment program to draw the source through (required; null means no draw).
@@ -193,7 +193,7 @@ struct VN_GRAPHICS_API PassDraw {
     /// There is deliberately no aspect here: the picture's shape belongs to the CAMERA a draw names (see Camera),
     /// which is what the projection, the culling and the picking ray all read - so a description carries no shape
     /// of its own that could disagree with the one the picture is drawn with.
-    std::vector<DrawDescription> draws;
+    std::vector<DrawCall> draws;
 };
 
 /**
@@ -269,7 +269,7 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
  *
  * @details
  * - THE ONE DEFINITION the two backends and the reports share (see FrameCounters::draws). A drawing call is one
- *   `DrawDescription` a backend can issue, NOT the GPU commands inside it: one drawable is one call whatever its
+ *   `DrawCall` a backend can issue, NOT the GPU commands inside it: one drawable is one call whatever its
  *   primitives. The conditions are the value's own:
  *   - a call with no camera (`camera.present == false`) issues nothing - the pass said it has no view to build;
  *   - a screen call needs a program (the object or its text) - without one there is nothing to run;
@@ -280,12 +280,12 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
  * @param description The drawing call as a frame describes it.
  * @return true when it is a call a recorder counts.
  */
-[[nodiscard]] inline bool isDrawingCall(const DrawDescription& description) noexcept
+[[nodiscard]] inline bool isDrawingCall(const DrawCall& description) noexcept
 {
     if (!description.view.present()) {
         return false;
     }
-    if (description.kind == DrawDescription::Kind::Screen) {
+    if (description.kind == DrawCall::Kind::Screen) {
         return description.program != nullptr || description.program_description != nullptr;
     }
     return description.commands != nullptr && !description.commands->empty();
@@ -309,7 +309,7 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
     if (draw.clear.has_value()) {
         return true;
     }
-    for (const DrawDescription& description : draw.draws) {
+    for (const DrawCall& description : draw.draws) {
         if (isDrawingCall(description)) {
             return true;
         }
@@ -346,7 +346,7 @@ struct VN_GRAPHICS_API FrameShape {
             continue; // it announced nothing at all - not even a target (see Pass)
         }
         std::uint32_t calls = 0U;
-        for (const DrawDescription& description : entry.draw->draws) {
+        for (const DrawCall& description : entry.draw->draws) {
             calls += isDrawingCall(description) ? 1U : 0U;
         }
         if (calls == 0U && !entry.draw->clear.has_value()) {

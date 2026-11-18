@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <vector>
 
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -35,8 +35,8 @@ struct DrawListDiff {
  * @param expected The reference list.
  * @return The first difference; `same == true` when the lists agree.
  */
-[[nodiscard]] DrawListDiff diffDrawLists(const std::vector<vn::graphics::RenderCommand>& actual,
-                                         const std::vector<vn::graphics::RenderCommand>& expected);
+[[nodiscard]] DrawListDiff diffDrawLists(const std::vector<vn::graphics::DrawItem>& actual,
+                                         const std::vector<vn::graphics::DrawItem>& expected);
 
 } // namespace detail
 

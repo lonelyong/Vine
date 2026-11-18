@@ -1,6 +1,6 @@
 /**
  * @brief TWO frame drivers on one device: each shades with its own default program, each keeps its own picture, and
- *        a driver borrowed before `initialize()` comes up with the device (see `RenderDevice::createSession`).
+ *        a driver borrowed before `initialize()` comes up with the device (see `RenderDevice::createFrameDriver`).
  *
  * WHY THIS FILE EXISTS. S6a introduced the seam and deliberately answered the device's own driver. S6b makes the device
  * hand out a REAL second driver - its own command machinery, its own frame scratch, its own default program - while the
@@ -31,7 +31,7 @@
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderState.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -54,7 +54,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -62,7 +62,7 @@ using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderFrameExecutor;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -162,29 +162,29 @@ void main()
 }
 
 /// @brief One scene draw with one command that names NO program: the driver's default is what shades it.
-[[nodiscard]] DrawDescription programlessDraw(const intrusive_ptr<Geometry>& geometry)
+[[nodiscard]] DrawCall programlessDraw(const intrusive_ptr<Geometry>& geometry)
 {
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    commands->push_back(RenderCommand(geometry, nullptr, vn::math::Mat4d{}));
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{}));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief One scene draw whose command names @p material (and no program: the driver's default shades it).
-[[nodiscard]] DrawDescription materialDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<Material>& material)
+[[nodiscard]] DrawCall materialDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<Material>& material)
 {
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.material             = material;
     command.material_description = material->description();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
@@ -210,7 +210,7 @@ void main()
 }
 
 /// @brief A frame with ONE pass whose drawing calls are issued in order (a good draw, then a refusing one).
-[[nodiscard]] FrameDescription drawingFrameWith(RenderTarget* target, std::vector<DrawDescription> draws)
+[[nodiscard]] FrameDescription drawingFrameWith(RenderTarget* target, std::vector<DrawCall> draws)
 {
     FrameDescription frame;
 
@@ -249,23 +249,23 @@ void main()
 }
 
 /// @brief One scene draw that NAMES its program (so the frame records it without a default program).
-[[nodiscard]] DrawDescription programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
+[[nodiscard]] DrawCall programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
 {
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
 {
     FrameDescription frame;
 
@@ -304,7 +304,7 @@ TEST(VkMultiSessionTest, TwoDriversShadeWithTheirOwnDefaultProgram)
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr) << "the device handed out no second driver";
     EXPECT_NE(second, &device->executor());
 
@@ -338,7 +338,7 @@ TEST(VkMultiSessionTest, TwoDriversShadeWithTheirOwnDefaultProgram)
         EXPECT_LE(centre[2], 1);
     }
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -352,7 +352,7 @@ TEST(VkMultiSessionTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr);
     device->setDefaultContentProgram(redProgram());
     second->setDefaultContentProgram(greenProgram());
@@ -391,20 +391,20 @@ TEST(VkMultiSessionTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
     EXPECT_GE(green[1], 254) << "the two drivers' pictures were mixed (green lost its own colour)";
     EXPECT_LE(green[0], 1);
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
 TEST(VkMultiSessionTest, ADriverBorrowedBeforeInitializeComesUpWithTheDevice)
 {
-    // R1: an engine attaches before its creator brings the device up, so createSession() must answer an object whose
+    // R1: an engine attaches before its creator brings the device up, so createFrameDriver() must answer an object whose
     // machinery is built by initialize().
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const early = device->createSession();
+    RenderFrameExecutor* const early = device->createFrameDriver();
     ASSERT_NE(early, nullptr) << "a device that is not up yet refused to borrow a driver (R1)";
 
     if (!backend->initialize()) {
@@ -421,7 +421,7 @@ TEST(VkMultiSessionTest, ADriverBorrowedBeforeInitializeComesUpWithTheDevice)
     const std::array<int, 4> centre = centreOf(pixels);
     EXPECT_GE(centre[1], 254) << "the driver borrowed before initialize() never came up";
 
-    device->releaseSession(*early);
+    device->releaseFrameDriver(*early);
     backend->shutdown();
 }
 
@@ -435,15 +435,15 @@ TEST(VkMultiSessionTest, ReleasingTheDevicesOwnDriverIsANoOpAndAnotherDriverCanB
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    backend->releaseSession(backend->executor());
+    backend->releaseFrameDriver(backend->executor());
     EXPECT_EQ(&backend->executor(), &device->executor()) << "releasing the device's own driver replaced it";
 
-    RenderFrameExecutor* const borrowed = device->createSession();
+    RenderFrameExecutor* const borrowed = device->createFrameDriver();
     ASSERT_NE(borrowed, nullptr);
-    device->releaseSession(*borrowed);
+    device->releaseFrameDriver(*borrowed);
     // A released driver is gone and another can be borrowed: the address may be reused (the allocator is free to), so
     // what is asserted is that the NEW driver comes up and works - not where it lives.
-    RenderFrameExecutor* const again = device->createSession();
+    RenderFrameExecutor* const again = device->createFrameDriver();
     ASSERT_NE(again, nullptr);
     again->setDefaultContentProgram(greenProgram());
     const intrusive_ptr<RenderTarget> target = makeTarget(u8"after_release");
@@ -451,7 +451,7 @@ TEST(VkMultiSessionTest, ReleasingTheDevicesOwnDriverIsANoOpAndAnotherDriverCanB
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
     EXPECT_GE(centreOf(pixels)[1], 254) << "a driver borrowed after a release never came up";
-    device->releaseSession(*again);
+    device->releaseFrameDriver(*again);
 
     backend->shutdown();
 }
@@ -469,7 +469,7 @@ TEST(VkMultiSessionTest, AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt)
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr);
     device->setDefaultContentProgram(redProgram());
     second->setDefaultContentProgram(greenProgram());
@@ -508,7 +508,7 @@ TEST(VkMultiSessionTest, AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt)
     ASSERT_TRUE(backend->readColorBuffer(busy_target.get(), 0, pixels));
     EXPECT_GE(centreOf(pixels)[1], 254) << "a release during the other driver's frame broke its next picture";
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -522,7 +522,7 @@ TEST(VkMultiSessionTest, TheDefaultProgramMayChangeWhileAnotherDriverFrames)
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr);
     device->setDefaultContentProgram(redProgram());
     second->setDefaultContentProgram(greenProgram());
@@ -548,7 +548,7 @@ TEST(VkMultiSessionTest, TheDefaultProgramMayChangeWhileAnotherDriverFrames)
     ASSERT_TRUE(backend->readColorBuffer(own_target.get(), 0, pixels));
     EXPECT_GE(centreOf(pixels)[1], 254) << "the live program switch was lost while the other driver framed";
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -566,7 +566,7 @@ TEST(VkMultiSessionTest, AFrameBodyDoesNotWaitForAnotherDriversFrame)
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr);
 
     // The SECOND driver shades program-less content; the device's own driver has NO default program, so its
@@ -636,7 +636,7 @@ TEST(VkMultiSessionTest, AFrameBodyDoesNotWaitForAnotherDriversFrame)
     EXPECT_LE(centre[2], 1);
 
     backend->setDiagnosticSink({});
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -683,7 +683,7 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
 
     // The frame draws ONE good call (recorded with the handles the head resolved) and then a call with no program (the
     // refusal that reaches the sink) - so the release below targets objects the frame has already resolved.
-    std::vector<DrawDescription> draws;
+    std::vector<DrawCall> draws;
     draws.push_back(programDraw(geometry, program));
     draws.push_back(programlessDraw(geometry));
 
@@ -756,7 +756,7 @@ TEST(VkMultiSessionTest, EachDriversTargetReadsBackItsOwnLastCompletedFrame)
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr);
     device->setDefaultContentProgram(redProgram());
     second->setDefaultContentProgram(greenProgram());
@@ -795,7 +795,7 @@ TEST(VkMultiSessionTest, EachDriversTargetReadsBackItsOwnLastCompletedFrame)
     EXPECT_EQ(device->retirementNumbers().device_waits, waits_before + 2U * kRounds)
         << "a readback's wait for the frames in flight is not counted";
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }
 
@@ -833,7 +833,7 @@ TEST(VkMultiSessionTest, AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt
 
     // ONE GOOD CALL (the target is built and the frame is inside its body) and one program-less call, whose refusal
     // reaches the sink.
-    std::vector<DrawDescription> draws;
+    std::vector<DrawCall> draws;
     draws.push_back(programDraw(geometry, program));
     draws.push_back(programlessDraw(geometry));
     (void)backend->executeFrame(drawingFrameWith(target.get(), std::move(draws)), nullptr);
@@ -886,7 +886,7 @@ TEST(VkMultiSessionTest, AReadbackWaitsForTheFrameInFlightAndCountsTheWait)
         }
     });
 
-    std::vector<DrawDescription> draws;
+    std::vector<DrawCall> draws;
     draws.push_back(programDraw(geometry, program));
     draws.push_back(programlessDraw(geometry)); // the refusal that holds the frame
     const FrameDescription blocked = drawingFrameWith(target.get(), std::move(draws));
@@ -947,7 +947,7 @@ TEST(VkMultiSessionTest, AReadbackRacingARebuiltTargetAnswersAValueItCanStandBeh
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    RenderFrameExecutor* const second = device->createSession();
+    RenderFrameExecutor* const second = device->createFrameDriver();
     ASSERT_NE(second, nullptr);
 
     const intrusive_ptr<RenderTarget> target = makeTarget(u8"readback_rebuilt");
@@ -999,6 +999,6 @@ TEST(VkMultiSessionTest, AReadbackRacingARebuiltTargetAnswersAValueItCanStandBeh
     EXPECT_GT(reads, 0U) << "the readback loop never ran";
     EXPECT_GT(successes, 0U) << "no readback saw a finished frame, so the loop proved nothing";
 
-    device->releaseSession(*second);
+    device->releaseFrameDriver(*second);
     backend->shutdown();
 }

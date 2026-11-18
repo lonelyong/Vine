@@ -74,7 +74,7 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
 
 void selectSnapshot(const SceneSnapshot&        snapshot,
                     const View&                 view,
-                    std::vector<RenderCommand>& out,
+                    std::vector<DrawItem>& out,
                     bool&                       viewport_used)
 {
     out.clear();

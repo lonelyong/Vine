@@ -165,7 +165,7 @@ raw_ptr<ShaderProgram> StateNode::program() const
     return program_.get();
 }
 
-void StateNode::setMaterial(MaterialBasePtr material)
+void StateNode::setMaterial(MaterialValuesPtr material)
 {
     announceContentChange();
     material_ = std::move(material);
@@ -177,7 +177,7 @@ void StateNode::clearMaterial()
     material_.reset();
 }
 
-raw_ptr<MaterialBase> StateNode::material() const
+raw_ptr<MaterialValues> StateNode::material() const
 {
     return material_.get();
 }
@@ -216,7 +216,7 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
     // The LEAF's own word is the first PRIMITIVE's, then the GEOMETRY's default (see Primitive.hpp): this
     // helper answers "what would this node's single draw use", which is the question a host asks about a leaf
     // it built itself. A geometry whose draws state different programs has no single answer - a caller that
-    // means a specific draw reads `RenderCommand::program`, which the collection already resolved per primitive.
+    // means a specific draw reads `DrawItem::program`, which the collection already resolved per primitive.
     if (const auto* geometry = obj_cast<Geometry>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->program != nullptr) {
             return ShaderProgramPtr(draw->program);
@@ -235,32 +235,32 @@ ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)
     return ShaderProgramPtr();
 }
 
-MaterialBasePtr effectiveMaterial(raw_ptr<const Node> node)
+MaterialValuesPtr effectiveMaterial(raw_ptr<const Node> node)
 {
     // A leaf Geometry's own material wins; otherwise the nearest ancestor StateNode material applies; otherwise
     // the engine default (null). Deliberately the SAME shape as effectiveProgram() above: both are
     // single-valued overrides that replace the shading, as opposed to the render-state items, which fold
     // item by item.
     if (node == nullptr) {
-        return MaterialBasePtr();
+        return MaterialValuesPtr();
     }
     // Same rule as effectiveProgram: the first primitive's own material, then the geometry's default.
     if (const auto* geometry = obj_cast<Geometry>(node)) {
         if (const Primitive* draw = geometry->primitive(0); draw != nullptr && draw->material != nullptr) {
-            return MaterialBasePtr(draw->material);
+            return MaterialValuesPtr(draw->material);
         }
-        if (raw_ptr<MaterialBase> own = geometry->material()) {
-            return MaterialBasePtr(own);
+        if (raw_ptr<MaterialValues> own = geometry->material()) {
+            return MaterialValuesPtr(own);
         }
     }
     for (const Node* current = node->parent(); current != nullptr; current = current->parent()) {
         if (const auto* state_node = obj_cast<StateNode>(current)) {
-            if (raw_ptr<MaterialBase> ancestor = state_node->material()) {
-                return MaterialBasePtr(ancestor);
+            if (raw_ptr<MaterialValues> ancestor = state_node->material()) {
+                return MaterialValuesPtr(ancestor);
             }
         }
     }
-    return MaterialBasePtr();
+    return MaterialValuesPtr();
 }
 
 VN_GRAPHICS_NS_END

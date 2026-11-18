@@ -36,7 +36,7 @@
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -52,7 +52,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
@@ -60,7 +60,7 @@ using vn::graphics::PrepareReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -133,11 +133,11 @@ void main()
     const intrusive_ptr<ShaderProgram> program  = makeProgram();
     const intrusive_ptr<Geometry>      geometry = makeTriangle();
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
     CameraSnapshot camera;
@@ -145,8 +145,8 @@ void main()
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = camera;
     draw.commands = commands;
 

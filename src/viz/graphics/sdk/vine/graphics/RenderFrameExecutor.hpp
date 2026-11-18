@@ -20,7 +20,7 @@ VN_GRAPHICS_NS_BEGIN
  *   RenderBackend, which is the aggregate), and a device that splits them hands this face out itself.
  * - ONE WIRE: THE FRAME IS A VALUE. A frame reaches an executor in ONE call - executeFrame(FrameDescription,
  *   present_to) - with every pass of it in EXECUTION order, each entry carrying the pass' identity, its order, its
- *   resolved inputs and everything the pass issues (see FrameDescription / PassDraw / DrawDescription). There is no
+ *   resolved inputs and everything the pass issues (see FrameDescription / PassDraw / DrawCall). There is no
  *   pass scope, no incremental state setter and no call order to keep: what a frame ran and what it drew is the SHAPE
  *   of the value, so the sequence rules this layer used to document cannot be violated - they cannot be expressed.
  *   The engine compiles the frame and hands that value over (see RenderEngine::frameDescription); a host that drives
@@ -43,12 +43,12 @@ VN_GRAPHICS_NS_BEGIN
  * - WHAT A FRAME OWNS AND WHAT IT BORROWS - two rules, because a FrameDescription is both, and a value that mixes them
  *   without saying which is which is a lifetime bug waiting for its second reader.
  *   - BORROWED for the duration of executeFrame() and never owned: `camera` and `light_values` (values, copied into the
- *     description), the pass' `target` / `viewport` / `clear` / `state`, the `DrawDescription::content` source,
+ *     description), the pass' `target` / `viewport` / `clear` / `state`, the `DrawCall::content` source,
  *     `source`, and every resolved input. The producer keeps them alive while the call runs, and the engine reuses its
  *     own storage for them (a pass' resolved input vector, a scene's command list) as soon as it returns - so a
  *     backend that needs the data later copies what it keeps, at the moment it is called.
- *   - OWNED, and these three members are the whole list: `DrawDescription::commands` (a `shared_ptr`),
- *     `DrawDescription::program` and `PassDraw::program_override` (both `intrusive_ptr`). They keep what they name
+ *   - OWNED, and these three members are the whole list: `DrawCall::commands` (a `shared_ptr`),
+ *     `DrawCall::program` and `PassDraw::program_override` (both `intrusive_ptr`). They keep what they name
  *     alive for as long as the value that holds them lives - which is what lets a described frame outlive the edit
  *     that produced it - so a backend MAY keep them across the call without copying, and doing so is not a leak: the
  *     reference is the value's.
@@ -61,7 +61,7 @@ VN_GRAPHICS_NS_BEGIN
  * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED; SEVERAL EXECUTORS MAY RUN AT ONCE. A call from a second
  *   thread WAITS for THIS executor's frame in flight, and a call made from the thread that is already driving one is
  *   REFUSED (`PresentOutcome::Refused`, `PrepareReport::Outcome::Refused`) with one diagnostic - waiting there would
- *   be the caller waiting for itself. A device that hands out drivers through `RenderDevice::createSession()` may run
+ *   be the caller waiting for itself. A device that hands out drivers through `RenderDevice::createFrameDriver()` may run
  *   their frame bodies CONCURRENTLY (vk does; `.ai/design/graphics-sessions.md` S1–S7): two engines then cost two
  *   frames' worth of host time rather than two assets' worth, and what they share - content caches, allocator, targets,
  *   the diagnostic sink - is the DEVICE's to keep safe. An executor may therefore keep its per-frame state
@@ -182,7 +182,7 @@ class VN_GRAPHICS_API RenderFrameExecutor {
      *
      * @details
      * - A SESSION SETTING, not a device one: the program is resolved while the frame is recorded (see
-     *   DrawDescription / PassDraw), so it belongs to the object that records the frame - and two executors handed out
+     *   DrawCall / PassDraw), so it belongs to the object that records the frame - and two executors handed out
      *   by one device may be told different programs (`C8`).
      * - The default implementation keeps nothing, which is the honest answer for an executor whose device has no
      *   content path of its own.

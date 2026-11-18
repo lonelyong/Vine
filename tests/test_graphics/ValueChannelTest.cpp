@@ -10,7 +10,7 @@
  *   * frame N+1 - published and described after the edit - must see the new ones.
  *
  * The gates are `program_description` / `material_description` / `material_ref` on the collected command, and
- * `DrawDescription::light_values`. A recorder that re-read a live object would pass the "N+1 sees the new values" half
+ * `DrawCall::light_values`. A recorder that re-read a live object would pass the "N+1 sees the new values" half
  * and fail the "N stayed the same" half; under ThreadSanitizer it would also report the race this case makes real.
  */
 
@@ -43,7 +43,7 @@ using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::graphics::Camera;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::geometryFromShape;
 using vn::graphics::Geometry;
@@ -51,7 +51,7 @@ using vn::graphics::Light;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::PassDesc;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderPass;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishStatus;
@@ -85,9 +85,9 @@ FrameDescription describedFrame(RenderPass& pass, const intrusive_ptr<Scene>& sc
 }
 
 /// @brief The commands the frame's one drawing call collected (empty when it collected nothing).
-const std::vector<RenderCommand>& commandsOf(const FrameDescription& frame)
+const std::vector<DrawItem>& commandsOf(const FrameDescription& frame)
 {
-    static const std::vector<RenderCommand> kNone;
+    static const std::vector<DrawItem> kNone;
     if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->draws.empty()) {
         return kNone;
     }
@@ -165,7 +165,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
 
         expandFrame(frame); // expand on the engine thread (the real engine half's reads)
 
-        const std::vector<RenderCommand>& commands = commandsOf(frame);
+        const std::vector<DrawItem>& commands = commandsOf(frame);
         ASSERT_EQ(commands.size(), 1U);
         captured_program      = commands.front().program_description;
         captured_material     = commands.front().material_description;
@@ -207,7 +207,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     FrameDescription next = describedFrame(pass, scene, store);
     expandFrame(next);
 
-    const std::vector<RenderCommand>& next_commands = commandsOf(next);
+    const std::vector<DrawItem>& next_commands = commandsOf(next);
     ASSERT_EQ(next_commands.size(), 1U);
     ASSERT_NE(next_commands.front().program_description, nullptr);
     EXPECT_EQ(next_commands.front().program_description->revision(), program->revision());

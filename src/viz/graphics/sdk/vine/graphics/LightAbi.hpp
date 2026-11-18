@@ -101,7 +101,7 @@ static_assert(offsetof(VineLightsBlock, cone) == 16U + 3U * kMaxLights * 16U, "V
  * - No camera means no block: with nothing to rotate into, the block stays empty (black) and the count is zero - a pass
  *   that announced no camera is unlit rather than lit by a guess.
  *
- * @param lights The lights the drawing call announced (see `DrawDescription::light_values`); empty means "the backend
+ * @param lights The lights the drawing call announced (see `DrawCall::light_values`); empty means "the backend
  *               default", an ambient-lit scene.
  * @param camera The camera announced with the same call (its view matrix is the world -> view transform).
  * @param out    Receives the block; every field is written, the ambient fill included.

@@ -58,6 +58,30 @@ and so is the old answer shape (`bool` + `ReadbackResult*`): the answer is now t
 `[[deprecated]]` for one release. Why: `G4` (one question, one answer) and `G6` (one "which image" does not get
 two spellings).
 
+2.10 **A public name states the thing, not the artifact that produced it** (naming, `G1` / `G4` / `G12`; audit-4 `T-12`, 2026-11-18):
+five spellings changed, one migration note each, and **no `[[deprecated]]` alias was kept** - the module promises no source or ABI
+stability (`graphics-frame-pipeline.md` 1.3), every in-tree consumer moved in the same commit, and an alias would leave two names in
+every search, every guide table and every reader's head, which is the cost this batch removes (`G1`).
+
+| Before | Now | What the old name got wrong | Note |
+|---|---|---|---|
+| `RenderCommand` | `DrawItem` | named the engine's artifact instead of the scene's one drawable; the industry order is item, then call | `BC-17` |
+| `DrawDescription` | `DrawCall` | "description" hid that it is *one drawing call* (a pass may issue several) | `BC-18` |
+| `MaterialBase` | `MaterialValues` | a base-class name on the interface that is the **read face of a material's values** (`Material` is the asset, `MaterialInstance` the instance) | `BC-19` |
+| `EngineNotReady` | `EngineNotReadyReason` | the type is a reason (`FrameOutcome::reason`); the name read as a state | `BC-20` |
+| `createSession` / `releaseSession` | `createFrameDriver` / `releaseFrameDriver` | the noun became *frame driver* in S2 and the verbs stayed behind | `BC-21` |
+
+- What it is: names only. `DrawItem` is still the per-frame value and `DrawCall` still the per-pass request (`graphics-frame-pipeline.md`
+  2.2 / 2.8); `MaterialValues` is still what a description publishes; `EngineNotReadyReason` still shares its enumerators with
+  `prepare()`; and `createFrameDriver` still hands out a `RenderFrameExecutor` (that type's name did not change).
+- Why now: the third round registered all five (`C-A3-02` / `C-A3-03` / `C-A3-08`, `A3-17`) and the fourth round corrected the
+  register first - two of the words it had listed (`releaseResidency`, `SessionId`) no longer existed, so the batch was smaller than
+  recorded and could be taken in one go.
+- Rejected: keeping the old spellings as deprecated aliases (the shape B4 used for the readback answer). B4 migrated a *shape*
+  whose in-tree callers still existed; a migrated *word* has no such callers left after the sweep, and the alias is exactly the
+  double spelling the guide's 5.2 table warns about (`G1`). Also rejected: renaming only the cheap words - the register is read as
+  one vocabulary, and a half-renamed pair (`DrawItem` beside `DrawDescription`) would be worse than either end.
+
 ## 3. Features
 
 ### 3.1 Targets

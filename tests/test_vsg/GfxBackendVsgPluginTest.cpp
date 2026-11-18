@@ -15,7 +15,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
@@ -48,7 +48,7 @@
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderPass;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
@@ -259,11 +259,11 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
-    RenderCommand command;
+    DrawItem command;
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    const std::vector<RenderCommand> commands{ command };
+    const std::vector<DrawItem> commands{ command };
 
     // The camera looks half a unit to its right, so the triangle lands in the window's LEFT half.
     vn::intrusive_ptr<vn::graphics::Camera> camera(new vn::graphics::Camera());

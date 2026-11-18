@@ -3,7 +3,7 @@
  *        target, and a full-screen draw copies another target's pixels; the probe reads each of them.
  *
  * What this pins, and why each half matters:
- *   - a `DrawDescription` is enough to draw from: the camera snapshot, the command list and the program text cross
+ *   - a `DrawCall` is enough to draw from: the camera snapshot, the command list and the program text cross
  *     the seam as values, so the backend needs nothing from a live scene or a live `ShaderProgram`;
  *   - `ShaderProgramDescription` compiles through glslang into a pipeline, and `GeometryDescription` becomes the
  *     vertex/index streams the pipeline reads - the first half of the test needs no device, the second needs one;
@@ -35,7 +35,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderState.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -59,7 +59,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::LightType;
@@ -71,7 +71,7 @@ using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderState;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -260,7 +260,7 @@ void main()
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
 {
     FrameDescription frame;
 
@@ -280,7 +280,7 @@ void main()
 }
 
 /// @brief A frame with ONE pass that clears NOTHING and issues @p draw (the screen-pass shape).
-[[nodiscard]] FrameDescription screenFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription screenFrame(RenderTarget* target, DrawCall draw)
 {
     FrameDescription frame;
 
@@ -345,17 +345,17 @@ TEST(VkContentDrawTest, ATriangleIsDrawnIntoTheTargetAndProbed)
     const intrusive_ptr<Geometry>      geometry = makeTriangle();
     const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
     command.material            = material;
     command.material_description = material->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -399,11 +399,11 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
     const intrusive_ptr<RenderTarget> target   = makeTarget();
     const intrusive_ptr<Geometry>      geometry = makeTriangle();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    commands->push_back(RenderCommand(geometry, nullptr, vn::math::Mat4d{}));
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{}));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -509,11 +509,11 @@ TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)
     const intrusive_ptr<RenderTarget> target   = makeTarget();
     const intrusive_ptr<Geometry>     geometry = makeTriangle();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
-    commands->push_back(RenderCommand(geometry, nullptr, vn::math::Mat4d{})); // no program, and none announced
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{})); // no program, and none announced
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -561,17 +561,17 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
     texture->setImage(image);
     material->setTexture(TextureSlot::BaseColor, texture);
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = program;
     command.program_description  = program->description();
     command.material             = material;
     command.material_description = material->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -601,11 +601,11 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kLightFragment);
     const intrusive_ptr<Geometry>      geometry = makeTriangle();
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
     LightValue ambient;
@@ -614,8 +614,8 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     ambient.color     = Colorf(0.0F, 1.0F, 0.0F, 1.0F);
     ambient.intensity = 1.0F;
 
-    DrawDescription draw;
-    draw.kind        = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind        = DrawCall::Kind::Scene;
     draw.view.camera      = identityCamera();
     draw.commands    = commands;
     draw.light_values = vn::graphics::LightSet::create({ ambient });
@@ -649,25 +649,25 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     const intrusive_ptr<Material>              red         = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     const intrusive_ptr<vn::graphics::ShaderProgram> copy = vn::graphics::screenCopyProgram(0);
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = scene;
     command.program_description  = scene->description();
     command.material             = red;
     command.material_description = red->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription scene_draw;
-    scene_draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall scene_draw;
+    scene_draw.kind     = DrawCall::Kind::Scene;
     scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
 
     const intrusive_ptr<RenderTarget> destination = makeTarget();
 
-    DrawDescription screen_draw;
-    screen_draw.kind                 = DrawDescription::Kind::Screen;
+    DrawCall screen_draw;
+    screen_draw.kind                 = DrawCall::Kind::Screen;
     screen_draw.view.camera               = identityCamera();
     screen_draw.source               = source.get();
     screen_draw.program              = copy;
@@ -710,17 +710,17 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     const intrusive_ptr<Material>                    red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     const intrusive_ptr<vn::graphics::ShaderProgram> copy     = vn::graphics::screenCopyProgram(0);
 
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = scene;
     command.program_description  = scene->description();
     command.material             = red;
     command.material_description = red->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription scene_draw;
-    scene_draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall scene_draw;
+    scene_draw.kind     = DrawCall::Kind::Scene;
     scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
@@ -729,8 +729,8 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     // render pass' clear (far, 0.0), which is exactly what a TestAndWrite full-screen call fails against.
     const intrusive_ptr<RenderTarget> destination = makeTarget();
 
-    DrawDescription screen_draw;
-    screen_draw.kind                = DrawDescription::Kind::Screen;
+    DrawCall screen_draw;
+    screen_draw.kind                = DrawCall::Kind::Screen;
     screen_draw.view.camera              = identityCamera();
     screen_draw.source              = source.get();
     screen_draw.program             = copy;
@@ -776,13 +776,13 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     const intrusive_ptr<Material> red   = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     const intrusive_ptr<Material> green = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
 
-    RenderCommand first(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem first(geometry, nullptr, vn::math::Mat4d{});
     first.program              = program;
     first.program_description  = program->description();
     first.material             = red;
     first.material_description = red->description();
 
-    RenderCommand second(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem second(geometry, nullptr, vn::math::Mat4d{});
     second.program              = program;
     second.program_description  = program->description();
     second.material             = green;
@@ -792,12 +792,12 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     authored.blend = vn::graphics::BlendState{ true, vn::graphics::BlendFactor::SrcAlpha, vn::graphics::BlendFactor::OneMinusSrcAlpha };
     second.authored_state = authored;
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(first));
     commands->push_back(std::move(second));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -886,17 +886,17 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
         material->setTexture(TextureSlot::BaseColor, cube);
 
         const intrusive_ptr<ShaderProgram> program = makeProgramWith(fragment);
-        RenderCommand                      command(geometry, nullptr, vn::math::Mat4d{});
+        DrawItem                      command(geometry, nullptr, vn::math::Mat4d{});
         command.program              = program;
         command.program_description  = program->description();
         command.material             = material;
         command.material_description = material->description();
 
-        auto commands = std::make_shared<std::vector<RenderCommand>>();
+        auto commands = std::make_shared<std::vector<DrawItem>>();
         commands->push_back(std::move(command));
 
-        DrawDescription draw;
-        draw.kind     = DrawDescription::Kind::Scene;
+        DrawCall draw;
+        draw.kind     = DrawCall::Kind::Scene;
         draw.view.camera   = identityCamera();
         draw.commands = commands;
         backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -934,14 +934,14 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
     const intrusive_ptr<ShaderProgram> scene       = makeProgram();
     const intrusive_ptr<Geometry>      geometry    = makeTriangle();
     {
-        RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+        DrawItem command(geometry, nullptr, vn::math::Mat4d{});
         command.program             = scene;
         command.program_description = scene->description();
-        auto commands               = std::make_shared<std::vector<RenderCommand>>();
+        auto commands               = std::make_shared<std::vector<DrawItem>>();
         commands->push_back(std::move(command));
 
-        DrawDescription scene_draw;
-        scene_draw.kind     = DrawDescription::Kind::Scene;
+        DrawCall scene_draw;
+        scene_draw.kind     = DrawCall::Kind::Scene;
         scene_draw.view.camera   = identityCamera();
         scene_draw.commands = commands;
         backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
@@ -950,8 +950,8 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
     const intrusive_ptr<ShaderProgram> lit = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(lit, nullptr);
 
-    DrawDescription screen_draw;
-    screen_draw.kind                = DrawDescription::Kind::Screen;
+    DrawCall screen_draw;
+    screen_draw.kind                = DrawCall::Kind::Screen;
     screen_draw.view.camera              = identityCamera();
     screen_draw.source              = source.get();
     screen_draw.program             = lit;

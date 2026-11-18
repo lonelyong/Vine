@@ -13,7 +13,7 @@
 /**
  * @brief ONE WINDOW SESSION: a window, a device and a swapchain, plus the frame pairing the contract demands.
  *
- * IT IS NOT A FRAME DRIVER. A frame driver is what a host borrows (`RenderDevice::createSession`) and owns the command
+ * IT IS NOT A FRAME DRIVER. A frame driver is what a host borrows (`RenderDevice::createFrameDriver`) and owns the command
  * machinery a frame is recorded on; this object owns one platform surface and its swapchain, which is what a driver
  * presents through. The two are named apart on purpose (see `.ai/design/graphics-sessions.md` §2.1).
  *

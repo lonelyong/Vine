@@ -34,7 +34,7 @@ class FrameScratch;
  * - TWO OWNERS, ONE JOB EACH (see `.ai/design/graphics-sessions.md` §3.1.3): `ContentCaches` (the device's) answers
  *   WHAT a command draws with - compiled programs, uploaded streams, pipelines - and `FrameScratch` (the driver's)
  *   answers WHERE this frame's constants and descriptor sets live. This type owns neither; it is the value that turns
- *   one `DrawDescription` into commands, which is why a second driver needs a second scratch and NOT a second cache.
+ *   one `DrawCall` into commands, which is why a second driver needs a second scratch and NOT a second cache.
  * - IT HOLDS a borrowed reference to the device's caches for their IMMUTABLE projections only (`table()`, the pipeline
  *   layouts, the line-width limit): what a drawing call draws with arrives as the frame head's resolved values
  *   (`FrameHead::DrawPlan`), so the recording path takes no cache lock and names no cache entry.
@@ -50,7 +50,7 @@ class FrameScratch;
  *   engine's forward text declares both unconditionally. A pass that samples no map binds the 1x1 stand-in and zeroes
  *   the block (`params.x = 0` is the switch the one text takes its unshadowed path with), so a shadow is an
  *   ADDITIONAL fact about a pass rather than a second pipeline.
- * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawDescription::camera`), one with no
+ * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawCall::camera`), one with no
  *   program is skipped and reported, and a screen draw with no source target is skipped and reported. Every skip
  *   leaves the rest of the pass drawn, and the FIRST reason travels in a `ContentRefusal` so the device's report
  *   carries the code of the cause rather than a sentence about a symptom.
@@ -143,7 +143,7 @@ class VN_BACKEND_VK_API ContentDraw final {
     std::uint64_t record(VkCommandBuffer                           commands,
                          int                                       width,
                          int                                       height,
-                         const vn::graphics::DrawDescription&      draw,
+                         const vn::graphics::DrawCall&      draw,
                          const vn::graphics::PassDraw&             pass,
                          std::span<const FrameHead::DrawPlan>      plans,
                          const FrameHead&                          head,
@@ -183,7 +183,7 @@ class VN_BACKEND_VK_API ContentDraw final {
     std::uint64_t recordScreen(VkCommandBuffer                               commands,
                                int                                           width,
                                int                                           height,
-                               const vn::graphics::DrawDescription&          draw,
+                               const vn::graphics::DrawCall&          draw,
                                const vn::graphics::PassDraw&                 pass,
                                const FrameHead::DrawPlan&                    plan,
                                const FrameHead&                              head,

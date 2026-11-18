@@ -2,7 +2,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(MaterialInstance, MaterialBase);
+VN_OBJECT_META_IMPL(MaterialInstance, MaterialValues);
 
 MaterialInstance::MaterialInstance(intrusive_ptr<Material> parent)
   : parent_(std::move(parent))

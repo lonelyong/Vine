@@ -59,7 +59,7 @@ namespace
 /// A NAMED CONVERSION, and the same one production makes: `FrameRecorder` builds the reference from the object's id and
 /// the revision of the values it published. Overloading the free function keeps the cases reading like the lookup they
 /// mean without giving the table a second identity.
-vn::backend_vsg::FactResult<vn::backend_vsg::MaterialFacts> findMaterial(const ContentFacts& facts, const vn::graphics::MaterialBase* material)
+vn::backend_vsg::FactResult<vn::backend_vsg::MaterialFacts> findMaterial(const ContentFacts& facts, const vn::graphics::MaterialValues* material)
 {
     if (material == nullptr) {
         return vn::backend_vsg::findMaterial(facts, vn::graphics::ContentRef{});
@@ -201,7 +201,7 @@ CompiledCommand command(vn::graphics::ContentRef geometry, const ShaderProgram* 
 }
 
 /** @brief The same command naming a material by the OBJECT a case holds: the plan carries the id and the revision. */
-CompiledCommand command(vn::graphics::ContentRef geometry, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
+CompiledCommand command(vn::graphics::ContentRef geometry, const ShaderProgram* program, const vn::graphics::MaterialValues* material)
 {
     const vn::graphics::ContentRef ref =
         material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
@@ -211,7 +211,7 @@ CompiledCommand command(vn::graphics::ContentRef geometry, const ShaderProgram* 
 /** @brief The same command named by the OBJECT a case holds: a plan carries the geometry's id and the revision its
  *         shape is at (a `Geometry` inherits its id from `Node`), so the two halves make one ref here. */
 CompiledCommand
-command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
+command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialValues* material)
 {
     const vn::graphics::NodeId identity = geometry != nullptr ? geometry->id() : vn::graphics::NodeId{};
     return command(vn::graphics::contentRefOf(identity, geometry_revision), program, material);

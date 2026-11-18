@@ -207,7 +207,7 @@ CompiledCommand commandOf(vn::graphics::ContentRef geometry, const ShaderProgram
 }
 
 /** @brief The same command naming a material by the OBJECT a test holds: the plan carries the id and the revision. */
-CompiledCommand commandOf(vn::graphics::ContentRef geometry, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+CompiledCommand commandOf(vn::graphics::ContentRef geometry, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialValues* material)
 {
     const vn::graphics::ContentRef ref =
         material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
@@ -223,7 +223,7 @@ CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t 
 }
 
 /** @brief Both identities named by the OBJECTS a case holds - the shape most cases write. */
-CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialValues* material)
 {
     const vn::graphics::NodeId identity = geometry != nullptr ? geometry->id() : vn::graphics::NodeId{};
     return commandOf(vn::graphics::contentRefOf(identity, geometry_revision), program, program_revision, material);

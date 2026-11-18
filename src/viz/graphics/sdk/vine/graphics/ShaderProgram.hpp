@@ -202,10 +202,10 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
      * @brief Gets the program's text as an immutable value, building it when the revision moved.
      *
      * @details
-     * - THE CONVERSION, the same shape as `Geometry::description()` and `MaterialBase::description()`: call it where
+     * - THE CONVERSION, the same shape as `Geometry::description()` and `MaterialValues::description()`: call it where
      *   the program may still be read (the publish that copies a scene's rows, a pass describing itself). It caches,
      *   so the second call in a revision is an integer compare.
-     * - What the RECORDING side reads is the value handed to it (`RenderCommand::program_description`,
+     * - What the RECORDING side reads is the value handed to it (`DrawItem::program_description`,
      *   `PassDraw::program_override_description`), never this call: a program edit must reach a frame at a
      *   publication boundary, not in the middle of one (design graphics-threading.md).
      *

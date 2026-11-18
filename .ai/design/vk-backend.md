@@ -149,12 +149,12 @@ and every cache has a witness a test can read.**
 ### 2.11 One `Device` object = one session pool (`G1` / `G8`)
 
 - **What it is**: this plugin's `Device` is both the **device pool** and **its own session**: one `VkInstance` / `VkPhysicalDevice` / `VkDevice` / graphics queue, one
-  device-level content cache and target table, one `DeviceClock` + `RetirementQueue`; `createSession()` lends an additional `FrameDriver`.
+  device-level content cache and target table, one `DeviceClock` + `RetirementQueue`; `createFrameDriver()` lends an additional `FrameDriver`.
   `RenderDevice::executor()` answers the device's own driver.
 - **The frame machinery** lives in the driver — command pool / fence / timestamp pool / frame books / `FrameGate` / clock window; the device owns it and destroys it in
   `shutdown()`; the frame body (`executeFrame` / `prepareFrame` / `frameReport`) is in the driver too, and `Device` keeps three one-line forwards.
-- **The session seam**: `createSession()` builds a `FrameDriver` (allowed before `initialize()`, which then starts it; built on the spot on a started device), and
-  `releaseSession()` destroys and forgets it (the device's own driver cannot be given back). The default content program belongs to `RenderFrameExecutor`: each of this
+- **The session seam**: `createFrameDriver()` builds a `FrameDriver` (allowed before `initialize()`, which then starts it; built on the spot on a started device), and
+  `releaseFrameDriver()` destroys and forgets it (the device's own driver cannot be given back). The default content program belongs to `RenderFrameExecutor`: each of this
   device's `FrameDriver`s holds its own, and `Device` overrides the call to forward to its own driver.
 - **Concurrency**: the device's big lock is `graphics::FrameGate body_gate`: a (non-window) frame body takes SHARED, so two drivers on two threads record and submit at
   the same time; a frame outside a window and every host verb (readback / release / default program / release target / create window / diagnostic reads) take EXCLUSIVE
@@ -267,7 +267,7 @@ and every cache has a witness a test can read.**
 - **Why**: the caches are keyed by **host identity** (program revision / geometry revision / buffer address) and rebuilding them is expensive — a second driver wants to
   **find** them, not to copy them; while the ring and the set cache are written **per frame** (`beginFrame` hands out slices from zero and they grow inside a frame), so two
   frames interleaving writes to one ring overwrite constants the other's submitted frame still reads. Cutting "expensive and shared by identity" from "written and broken
-  every frame" along that line is what makes `createSession()` "one more driver" rather than "one more thing that can destroy the first" (`G5`).
+  every frame" along that line is what makes `createFrameDriver()` "one more driver" rather than "one more thing that can destroy the first" (`G5`).
 - **Boundary**: layouts belong to the caches (pipeline state needs them), the pool and the ring to the scratch (allocation happens inside a frame); the scratch **borrows** the
   layouts and the device entry, so the teardown order is scratch → caches → allocator → device (the same family of rule as `P8`). The set cache is evicted by `frame_index`
   rather than by a lock: it belongs to its own driver.
@@ -327,7 +327,7 @@ and every cache has a witness a test can read.**
 - **Boundary**: a lease is not a lock (`C5`) — waiting would tie two engines' frame rates together; a conflict destroys nothing and the target is retried next frame. `Lease`'s
   destructor is the **only release point** (`P3`), so no early return in a frame can pin a target. A window target needs no claim: `createSurfaceTarget` already guarantees one
   window belongs to one session (`WindowOccupied`).
-- **When a conflict happens**: once two drivers are lent out by `RenderDevice::createSession()`, the conflict is exercised by a lease impersonating "another driver" and by
+- **When a conflict happens**: once two drivers are lent out by `RenderDevice::createFrameDriver()`, the conflict is exercised by a lease impersonating "another driver" and by
   `VkMultiSessionTest`'s concurrent cases; a single driver never conflicts.
 
 ## 3. Features
@@ -389,7 +389,7 @@ and every cache has a witness a test can read.**
 ### 3.1.5 F5 Content drawing
 
 - **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key = render-pass compatibility + state (polygon / cull / depth
-  test / write / compare / blend) + variant bits; one `RenderCommand` = one `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision.
+  test / write / compare / blend) + variant bits; one `DrawItem` = one `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision.
 - **The declared vertex input is the vertex stage's own set**: the geometry contributes channels, but the pipeline declares only the locations the compiled vertex
   stage reads (read back from the module's `OpVariable`/`Location` interface, one location per matrix column, so the instance stream keeps 12-15). A geometry channel the
   stage does not read is neither declared nor fetched - it would otherwise be a validation warning ("attribute at location N not consumed by vertex shader") and a

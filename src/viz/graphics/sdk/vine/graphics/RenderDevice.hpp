@@ -138,7 +138,7 @@ struct VN_GRAPHICS_API DeviceDesc {
  * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED. An executor call from a second thread WAITS for that
  *   executor's frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is the shared
  *   implementation, and the two backends answer the same way. SEVERAL EXECUTORS MAY RUN AT THE SAME TIME: a backend
- *   that hands out drivers through `createSession()` may run their frame bodies concurrently (vk does), which is what
+ *   that hands out drivers through `createFrameDriver()` may run their frame bodies concurrently (vk does), which is what
  *   makes two engines cost two frames' worth of host time rather than two assets' worth. What a backend must state is
  *   which of its verbs may overlap: vk's frame bodies overlap each other, a frame that presents is serialised with
  *   every other frame, and the HOST VERBS (`setRenderTarget`, `releaseContent`, the readbacks, ...) wait for the frames
@@ -221,22 +221,22 @@ class VN_GRAPHICS_API RenderDevice {
      *   difference. A backend that hands out more than one (see `.ai/design/graphics-sessions.md`) answers a NEW
      *   executor per call; each is a frame driver with its own waiting and its own per-frame state, and which of them
      *   may run concurrently is that backend's documented contract.
-     * - OWNERSHIP: THE DEVICE OWNS WHAT IT HANDS OUT. The reference is valid until releaseSession() or the device's
+     * - OWNERSHIP: THE DEVICE OWNS WHAT IT HANDS OUT. The reference is valid until releaseFrameDriver() or the device's
      *   shutdown(); the caller never destroys it.
      * - A backend that needs its device up to build a driver documents that and answers null until it is.
      *
      * @return The borrowed executor, or null when the device cannot hand one out (not initialized, or exhausted).
      */
-    [[nodiscard]] virtual RenderFrameExecutor* createSession()
+    [[nodiscard]] virtual RenderFrameExecutor* createFrameDriver()
     {
         return &executor();
     }
 
     /**
-     * @brief Returns an executor a host borrowed through @ref createSession.
+     * @brief Returns an executor a host borrowed through @ref createFrameDriver.
      *
      * @details
-     * - The default does nothing: a device whose createSession() answers its own executor has nothing to reclaim.
+     * - The default does nothing: a device whose createFrameDriver() answers its own executor has nothing to reclaim.
      * - Releasing the device's OWN executor is a no-op, so a host that releases what it borrowed can do so
      *   unconditionally.
      * - Call it only when nothing is driving that executor any more; the device may destroy the driver's objects at
@@ -244,7 +244,7 @@ class VN_GRAPHICS_API RenderDevice {
      *
      * @param session The executor to return (ignored when it is not one this device handed out).
      */
-    virtual void releaseSession(RenderFrameExecutor& session)
+    virtual void releaseFrameDriver(RenderFrameExecutor& session)
     {
         (void)session;
     }

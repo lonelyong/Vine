@@ -44,7 +44,7 @@
 #include <vine/graphics/FrameStats.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -62,7 +62,7 @@ using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
-using vn::graphics::DrawDescription;
+using vn::graphics::DrawCall;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -70,7 +70,7 @@ using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -167,24 +167,24 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
 }
 
 /// @brief One scene draw of the full-screen triangle through @p program.
-[[nodiscard]] DrawDescription constantDraw(const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Geometry>& geometry)
+[[nodiscard]] DrawCall constantDraw(const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Geometry>& geometry)
 {
-    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
     command.program_description = program->description();
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
 {
     FrameDescription frame;
 

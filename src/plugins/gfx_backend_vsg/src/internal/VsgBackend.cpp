@@ -45,7 +45,7 @@
 #include <vine/backend_vsg/support/VsgSceneRules.hpp>
 #include <vine/backend_vsg/support/VsgUtils.hpp>
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/DiagnosticDraft.hpp>
 #include <vine/graphics/FrameGate.hpp>
 
@@ -565,9 +565,9 @@ struct VsgBackend::Data {
     /// device's to hold, and two drivers must resolve the same identities.
     TargetTable targets;
     /// THE DEVICE'S OWN DRIVER's frame state (the aggregate answers `executor()`); every driver handed out by
-    /// createSession() owns one of its own and SHARES @ref targets.
+    /// createFrameDriver() owns one of its own and SHARES @ref targets.
     VsgExecutor       executor{ diagnostics, targets };
-    /// The drivers createSession() handed out (the device owns them; releaseSession destroys one).
+    /// The drivers createFrameDriver() handed out (the device owns them; releaseFrameDriver destroys one).
     std::vector<std::unique_ptr<VsgDriver>> drivers;
     PassRegistry              passes;  // The SDK's pass objects, as the numbers the plan carries (see the header).
     // The content world: built with the session because its pieces belong to the session's device (see
@@ -1049,7 +1049,7 @@ vn::graphics::RenderFrameExecutor& VsgBackend::executor()
     return *this;
 }
 
-vn::graphics::RenderFrameExecutor* VsgBackend::createSession()
+vn::graphics::RenderFrameExecutor* VsgBackend::createFrameDriver()
 {
     // A DRIVER IS A FRAME'S OWN STATE (see VsgDriver): the device's own driver is the aggregate; one handed out here
     // owns its executor and SHARES the device's content and target table (S8b). The device owns what it hands out.
@@ -1067,7 +1067,7 @@ vn::graphics::RenderFrameExecutor* VsgBackend::createSession()
     return raw;
 }
 
-void VsgBackend::releaseSession(vn::graphics::RenderFrameExecutor& session)
+void VsgBackend::releaseFrameDriver(vn::graphics::RenderFrameExecutor& session)
 {
     // Releasing the device's own executor is a NO-OP (the SDK's rule), so a host may release what it borrowed
     // unconditionally. One of ours is destroyed here - the device owns it, the caller never does.
@@ -1207,11 +1207,11 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
                 (void)d->targets.observe(*input.target);
             }
         }
-        for (const vn::graphics::DrawDescription& draw : description.draws) {
+        for (const vn::graphics::DrawCall& draw : description.draws) {
             if (!draw.view.camera.present) {
-                continue; // a drawing call with no view is no call at all (see DrawDescription)
+                continue; // a drawing call with no view is no call at all (see DrawCall)
             }
-            if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
+            if (draw.kind == vn::graphics::DrawCall::Kind::Screen) {
                 // The fragment stage is content like any other: the tables must answer its two texts and their
                 // declarations when the plan records (the store's own walk covers full-screen calls' programs).
                 const vn::graphics::ShaderProgramDescriptionPtr text =
@@ -1233,9 +1233,9 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
                 continue;
             }
             // What the commands name becomes the store's live content: the IDENTITY and the DESCRIPTION are the values
-            // a frame carries (`RenderCommand::node` / `description`), and the tables must answer for them when the
+            // a frame carries (`DrawItem::node` / `description`), and the tables must answer for them when the
             // plan is recorded - including after the host has dropped its own handle (the store owns a share).
-            for (const vn::graphics::RenderCommand& command : *draw.commands) {
+            for (const vn::graphics::DrawItem& command : *draw.commands) {
                 const vn::graphics::NodeId identity =
                     !command.node.isNull() ? command.node : (command.geometry != nullptr ? command.geometry->id() : vn::graphics::NodeId{});
                 d->store->track(identity, command.geometryDescription());
@@ -1310,14 +1310,14 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
             if (description.depth_range.has_value()) {
                 announceDepthRange(scratch, *description.depth_range);
             }
-            for (const vn::graphics::DrawDescription& draw : description.draws) {
+            for (const vn::graphics::DrawCall& draw : description.draws) {
                 if (draw.light_values != nullptr) {
                     announceLights(scratch, draw.light_values->values());
                 }
                 if (!draw.view.camera.present) {
-                    continue; // a drawing call with no view is no call at all (see DrawDescription)
+                    continue; // a drawing call with no view is no call at all (see DrawCall)
                 }
-                if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
+                if (draw.kind == vn::graphics::DrawCall::Kind::Screen) {
                     collectScreenDraw(scratch, draw.source, draw.program.get(), draw.program_description, draw.view.camera);
                 }
                 else if (draw.commands != nullptr) {
@@ -1539,7 +1539,7 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
     // earn.
     if (d->assembly == nullptr || d->store == nullptr || d->images == nullptr) {
         return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::NotReady,
-                                            vn::graphics::EngineNotReady::NotInitialized };
+                                            vn::graphics::EngineNotReadyReason::NotInitialized };
     }
     // A FRAME IS OPEN ON THIS DRIVER (executeFrame between its books and its present): its plan and its recorded
     // packets belong to it, and collecting a second frame over them would corrupt both. Refused, never queued - and
@@ -2405,7 +2405,7 @@ void VsgBackend::announceClear(FrameScratch& scratch, const vn::graphics::ClearP
 }
 
 void VsgBackend::collectContentDraw(FrameScratch&                                   scratch,
-                                    const std::vector<vn::graphics::RenderCommand>& commands,
+                                    const std::vector<vn::graphics::DrawItem>& commands,
                                     const vn::graphics::CameraSnapshot&             camera,
                                     const vn::graphics::ShaderProgramDescriptionPtr& program_override)
 {
@@ -2525,10 +2525,10 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {
         return d->store->releaseProgram(program);
     }
-    if (const auto* material = vn::obj_cast<const vn::graphics::MaterialBase>(content)) {
+    if (const auto* material = vn::obj_cast<const vn::graphics::MaterialValues>(content)) {
         // A MATERIAL IS DISPATCHED AT ITS BASE, NOT AT `Material`: an asset and the instance a drawable overrides
-        // over it are two concrete types under one shading model (see MaterialBase's note - `RenderCommand::
-        // material` is a MaterialBasePtr, and nothing downstream branches on which kind it got). Casting to the
+        // over it are two concrete types under one shading model (see MaterialValues's note - `DrawItem::
+        // material` is a MaterialValuesPtr, and nothing downstream branches on which kind it got). Casting to the
         // asset missed every instance, i.e. exactly the per-object materials a host is most likely to release.
         // The ARENA SLOT is NOT freed here: a recorded plan may still read the row's block, so the slot follows the
         // same rows as the facts and the block storage returns it once no row names the identity (see

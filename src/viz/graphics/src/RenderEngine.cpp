@@ -67,10 +67,10 @@ RenderEngine::~RenderEngine()
     if (lease_cell_ != nullptr) {
         lease_cell_->target = nullptr;
     }
-    // THE FRAME DRIVER GOES BACK FIRST: the device owns it (RenderDevice::createSession) and may destroy its
+    // THE FRAME DRIVER GOES BACK FIRST: the device owns it (RenderDevice::createFrameDriver) and may destroy its
     // machinery at once, so the borrowed reference must not outlive this engine.
     if (device_ != nullptr && session_ != nullptr) {
-        device_->releaseSession(*session_);
+        device_->releaseFrameDriver(*session_);
         session_ = nullptr;
     }
     // The route this engine installed on the device goes with it: the device BORROWS it (see
@@ -96,7 +96,7 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     // RenderDevice::setDiagnosticsRoute) and is about to stop being valid for it.
     // THE OLD DRIVER GOES BACK TO THE OLD DEVICE, before that reference is replaced.
     if (device_ != nullptr && session_ != nullptr) {
-        device_->releaseSession(*session_);
+        device_->releaseFrameDriver(*session_);
     }
     session_ = nullptr;
     if (device_ != nullptr) {
@@ -110,10 +110,10 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     // the sink was installed needs nothing else done to it - the sink lives in the route, not in a copy.
     if (device_ != nullptr) {
         device_->setDiagnosticsRoute(diagnostics_);
-        // A DRIVER OF THIS ENGINE'S OWN (RenderDevice::createSession): one device may serve several engines, and this
+        // A DRIVER OF THIS ENGINE'S OWN (RenderDevice::createFrameDriver): one device may serve several engines, and this
         // is the object that drives THIS one. A device that cannot hand one out leaves the engine without a driver,
         // and its frames answer NotInitialized rather than guess one.
-        session_ = device_->createSession();
+        session_ = device_->createFrameDriver();
         // The default content program travels with the DRIVER, not with the attach: the program shades frames, and
         // the frame driver is what resolves it. A device that runs its own frames hands the same object back, so a
         // direct driver keeps the shape it had.
@@ -266,15 +266,15 @@ PrepareReport RenderEngine::prepare()
     // The two reasons nothing can be prepared are the same two answers frame() gives, and they are values rather
     // than silence: a host gating a load on this call has to be able to tell "no backend" from "not up yet".
     if (device_ == nullptr) {
-        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NoDevice };
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::NoDevice };
     }
     if (!initialized_) {
-        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::NotInitialized };
     }
     if (session_ == nullptr) {
         // A device that hands out no driver cannot be prepared through: the same answer as "not attached", because
         // there is nothing this call could build.
-        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
     // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
@@ -308,14 +308,14 @@ FrameOutcome RenderEngine::frame()
     // and drew nothing: no device to hand anything to, or a device the engine is not attached to. The caller gets
     // the reason as a value (see FrameOutcome); "ran but issued no draw" stays a FrameReport fact.
     if (device_ == nullptr) {
-        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NoDevice };
+        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NoDevice };
     }
     if (!initialized_) {
-        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NotInitialized };
+        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
     }
     if (session_ == nullptr) {
         // A device that handed out no driver has nothing to run this frame on (see setDevice).
-        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NotInitialized };
+        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
     // ONE FRAME IN FLIGHT: with a frame thread, the previous frame's engine half is finished before this frame touches

@@ -1,78 +1,78 @@
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(MaterialBase, vn::Object);
+VN_OBJECT_META_IMPL(MaterialValues, vn::Object);
 
-MaterialBase::MaterialBase()
+MaterialValues::MaterialValues()
   : id_(ContentRegistry::instance().allocate<MaterialTag>())
 {}
 
-MaterialBase::~MaterialBase()
+MaterialValues::~MaterialValues()
 {
     // The id leaves with the object: a plan or a facts row that still names it afterwards reads "gone" instead of
     // resolving to whatever the slot holds next (see ContentId.hpp).
     ContentRegistry::instance().release(id_.handle());
 }
 
-MaterialId MaterialBase::id() const noexcept
+MaterialId MaterialValues::id() const noexcept
 {
     return id_;
 }
 
-String MaterialBase::name() const
+String MaterialValues::name() const
 {
     return name_;
 }
 
-void MaterialBase::setName(const String& name)
+void MaterialValues::setName(const String& name)
 {
     // A NAME IS NOT SHADING: it never moves the revision (see revision()), so renaming a material cannot make a
     // consumer rebuild what it already answered.
     name_ = name;
 }
 
-Colorf MaterialBase::baseColor() const noexcept
+Colorf MaterialValues::baseColor() const noexcept
 {
     return resolved().base_color;
 }
 
-Colorf MaterialBase::emissive() const noexcept
+Colorf MaterialValues::emissive() const noexcept
 {
     return resolved().emissive;
 }
 
-float MaterialBase::metallic() const noexcept
+float MaterialValues::metallic() const noexcept
 {
     return resolved().metallic;
 }
 
-float MaterialBase::roughness() const noexcept
+float MaterialValues::roughness() const noexcept
 {
     return resolved().roughness;
 }
 
-float MaterialBase::occlusion() const noexcept
+float MaterialValues::occlusion() const noexcept
 {
     return resolved().occlusion;
 }
 
-float MaterialBase::alphaCutoff() const noexcept
+float MaterialValues::alphaCutoff() const noexcept
 {
     return resolved().alpha_cutoff;
 }
 
-raw_ptr<Texture> MaterialBase::texture(TextureSlot slot) const noexcept
+raw_ptr<Texture> MaterialValues::texture(TextureSlot slot) const noexcept
 {
     return resolved().textures[static_cast<std::size_t>(slot)].texture.get();
 }
 
-const Sampler& MaterialBase::sampler(TextureSlot slot) const noexcept
+const Sampler& MaterialValues::sampler(TextureSlot slot) const noexcept
 {
     return resolved().textures[static_cast<std::size_t>(slot)].sampler;
 }
 
-bool MaterialBase::hasTexture(TextureSlot slot) const noexcept
+bool MaterialValues::hasTexture(TextureSlot slot) const noexcept
 {
     return resolved().textures[static_cast<std::size_t>(slot)].texture != nullptr;
 }

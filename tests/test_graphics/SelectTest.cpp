@@ -21,9 +21,9 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/Viewport.hpp>
 
@@ -38,7 +38,7 @@ using vn::graphics::View;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Material;
 using vn::graphics::MatrixTransform;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::Scene;
 using vn::graphics::Viewport;
 using vn::graphics::detail::diffDrawLists;
@@ -184,9 +184,9 @@ TEST(SelectTest, TheKeySortsByTheBoxCentreNotTheNodeOrigin)
 {
     const Mat4d view; // identity: the camera sits at the origin and looks down its own -Z
 
-    RenderCommand near_command;
+    DrawItem near_command;
     near_command.model_matrix = vn::math::translate(0.0, 0.0, -100.0); // its origin is the FARTHEST point in the test
-    RenderCommand far_command;
+    DrawItem far_command;
     far_command.model_matrix = vn::math::translate(0.0, 0.0, 0.0);
 
     const Aabbd near_box(Point3d(-1.0, -1.0, -6.0), Point3d(1.0, 1.0, -4.0)); // centre z = -5
@@ -206,7 +206,7 @@ TEST(SelectTest, ACommandWithNoBoxFallsBackToItsOrigin)
 {
     const Mat4d view;
 
-    RenderCommand command;
+    DrawItem command;
     command.model_matrix = vn::math::translate(0.0, 0.0, -7.0);
 
     const SortKey keyed = makeSortKey(command, 1U, Aabbd::empty(), view, 1U);
@@ -236,19 +236,19 @@ TEST(SelectTest, SameInputSameList)
     const View view_b = viewFrom(Vec3d(7.0, 5.0, 12.0), Vec3d(0.0, 0.0, 0.0), Viewport{ 0, 0, 320, 240 });
 
     bool                       viewport_used = false;
-    std::vector<RenderCommand> first;
+    std::vector<DrawItem> first;
     selectSnapshot(*snapshot, view_a, first, viewport_used);
     ASSERT_FALSE(first.empty()) << "the fixture is in view: an empty list would make 'same' trivial";
 
-    std::vector<RenderCommand> again;
+    std::vector<DrawItem> again;
     selectSnapshot(*snapshot, view_a, again, viewport_used);
     const auto repeated = diffDrawLists(again, first);
     EXPECT_TRUE(repeated.same) << "same snapshot, same view: a different list at index " << repeated.index << " ("
                                << repeated.field << ")";
 
-    std::vector<RenderCommand> other_view;
+    std::vector<DrawItem> other_view;
     selectSnapshot(*snapshot, view_b, other_view, viewport_used);
-    std::vector<RenderCommand> back_to_a;
+    std::vector<DrawItem> back_to_a;
     selectSnapshot(*snapshot, view_a, back_to_a, viewport_used);
     const auto interleaved = diffDrawLists(back_to_a, first);
     EXPECT_TRUE(interleaved.same) << "a different view in between is not state (index " << interleaved.index << ")";
@@ -256,7 +256,7 @@ TEST(SelectTest, SameInputSameList)
     // THE LIVE TREE IS NOT AN INPUT: after the scene stops drawing everything, the snapshot still answers its own
     // picture. Its rows hold shares, and select never asks a Scene, a Node or a material for a value.
     scene.setRoot(nullptr);
-    std::vector<RenderCommand> from_the_value;
+    std::vector<DrawItem> from_the_value;
     selectSnapshot(*snapshot, view_a, from_the_value, viewport_used);
     const auto detached = diffDrawLists(from_the_value, first);
     EXPECT_TRUE(detached.same) << "select reads the publication, not the content it was published from (index "
@@ -275,8 +275,8 @@ TEST(SelectTest, SameInputSameList)
         workers.emplace_back([&, thread] {
             for (int round = 0; round < kRounds; ++round) {
                 const View&                view     = (round % 2 == 0) ? view_a : view_b;
-                const std::vector<RenderCommand>& expected = (round % 2 == 0) ? first : other_view;
-                std::vector<RenderCommand>        answer;
+                const std::vector<DrawItem>& expected = (round % 2 == 0) ? first : other_view;
+                std::vector<DrawItem>        answer;
                 bool                              used = false;
                 selectSnapshot(*snapshot, view, answer, used);
                 if (!diffDrawLists(answer, expected).same) {
@@ -353,13 +353,13 @@ TEST(SelectTest, OneChunkCullsEachRowOnItsOwnBox)
     EXPECT_FALSE(frustum.isOutside(inside_row.world_box)) << "the second row is in view - it must not be culled";
 
     bool                       viewport_used = false;
-    std::vector<RenderCommand> visible;
+    std::vector<DrawItem> visible;
     selectSnapshot(*snapshot, looking_at_inside, visible, viewport_used);
     ASSERT_EQ(visible.size(), 1U) << "one segment per parent and one of them in view: a whole-block skip answers none";
     EXPECT_EQ(visible.front().node, inside_geometry->id());
 
     const View          looking_at_outside = viewFrom(Vec3d(1000.0, 0.0, 10.0), Vec3d(1000.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
-    std::vector<RenderCommand> other;
+    std::vector<DrawItem> other;
     selectSnapshot(*snapshot, looking_at_outside, other, viewport_used);
     ASSERT_EQ(other.size(), 1U) << "the other camera answers the other segment - culling is still ON";
     EXPECT_EQ(other.front().node, outside_geometry->id());
@@ -368,14 +368,14 @@ TEST(SelectTest, OneChunkCullsEachRowOnItsOwnBox)
 /*
  * @brief T24's remeasure (backlog graphics section 2.2): what one select costs when the camera moves.
  *
- * The old figure (1597 us @2000 drawables) timed the DIRECT collector, `Scene::collectRenderCommands`; since W9b a
+ * The old figure (1597 us @2000 drawables) timed the DIRECT collector, `Scene::collectDrawItems`; since W9b a
  * frame selects from a published snapshot instead, where the world boxes were folded at publish time and F11 gave the
  * sort a documented key. This recipe measures that path alone at the two sizes the backlog's trigger names - 2000 for
  * continuity with the old table, 10000 for the trigger - with a view that moves before every call, so no answer may
  * come from a memo.
  *
  * It prints the pure select (`detail::selectSnapshot`, the miss path) and the production miss
- * (`SnapshotSource::collectRenderCommands`: memo lookup + select + the shared list's allocation), because the trigger
+ * (`SnapshotSource::collectDrawItems`: memo lookup + select + the shared list's allocation), because the trigger
  * ("select > 4 ms at 10k", "> 2 ms in a 60 fps budget") is judged on the frame's path, not on the helper alone. It
  * asserts the answers (every drawable selected, every moved view a miss); the times are the record, not a CI gate.
  *
@@ -417,7 +417,7 @@ TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
         }
 
         bool                       viewport_used = false;
-        std::vector<RenderCommand> selected;
+        std::vector<DrawItem> selected;
         selectSnapshot(*snapshot, views.front(), selected, viewport_used); // warm
         ASSERT_EQ(selected.size(), drawables) << "the fixture fills the view; a culled grid would time the prune";
 
@@ -434,7 +434,7 @@ TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
         const auto source_began = std::chrono::steady_clock::now();
         for (int step = 0; step < kRepetitions; ++step) {
             source.beginFrame(static_cast<std::uint64_t>(step) + 1U);
-            const auto list = source.collectRenderCommands(views[static_cast<std::size_t>(step)]);
+            const auto list = source.collectDrawItems(views[static_cast<std::size_t>(step)]);
             ASSERT_NE(list, nullptr);
             ASSERT_EQ(list->size(), drawables);
         }

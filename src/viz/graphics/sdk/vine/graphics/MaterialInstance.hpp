@@ -7,7 +7,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "Material.hpp"
-#include "MaterialBase.hpp"
+#include "MaterialValues.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -21,8 +21,8 @@ VN_GRAPHICS_NS_BEGIN
  * - WHY A SECOND TYPE instead of "a material with an optional parent": the question "does editing this change
  *   anything else?" is answered by the TYPE here, and an instance can answer "which items do I state?" -
  *   `overrideMask()`. With one class both answers become run-time data a host has to reason about.
- * - AN INSTANCE IS ALSO A DRAWABLE'S SHADING (it is a `MaterialBase`), so `RenderCommand` / `Geometry` /
- *   `Primitive` / `StateNode` hold a `MaterialBasePtr` and nothing downstream branches on which kind it got.
+ * - AN INSTANCE IS ALSO A DRAWABLE'S SHADING (it is a `MaterialValues`), so `DrawItem` / `Geometry` /
+ *   `Primitive` / `StateNode` hold a `MaterialValuesPtr` and nothing downstream branches on which kind it got.
  *
  * @note
  * - The parent is a `Material`, never another instance (C1): one hop, so resolution is one copy and "what does
@@ -30,9 +30,9 @@ VN_GRAPHICS_NS_BEGIN
  * - Resolution is CACHED: `resolved()` recomputes only when the parent's revision or this instance's own
  *   revision moved (R1), so reading a resolved instance every frame costs two number comparisons.
  * - Transparency follows the resolved value: an instance that overrides the alpha mode to `Blend` is sorted as
- *   blended even when its asset is opaque (`MaterialBase::alphaMode()`).
+ *   blended even when its asset is opaque (`MaterialValues::alphaMode()`).
  */
-class VN_GRAPHICS_API MaterialInstance : public MaterialBase {
+class VN_GRAPHICS_API MaterialInstance : public MaterialValues {
     VN_OBJECT_META_DECL;
 
   public:
@@ -100,7 +100,7 @@ class VN_GRAPHICS_API MaterialInstance : public MaterialBase {
     /**
      * @brief States an alpha mode for this instance.
      *
-     * @param mode New alpha mode (the getter is `MaterialBase::alphaMode()`).
+     * @param mode New alpha mode (the getter is `MaterialValues::alphaMode()`).
      */
     void setAlphaMode(AlphaMode mode);
 

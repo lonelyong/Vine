@@ -7,7 +7,7 @@
 #include <vector>
 
 #include <vine/graphics/Geometry.hpp>
-#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -76,7 +76,7 @@ struct VN_BACKEND_VK_API ProgramVariant {
  *
  * @param geometry  The geometry being drawn: its channel list states the colour and texcoord switches.
  * @param material  The material the drawable is shaded with, or null for the block's defaults (no texture slot).
- * @param instanced Whether the drawing call reads an instance stream (`RenderCommand::instance_count != 0`).
+ * @param instanced Whether the drawing call reads an instance stream (`DrawItem::instance_count != 0`).
  * @return The variant.
  */
 [[nodiscard]] VN_BACKEND_VK_API ProgramVariant variantOf(const vn::graphics::GeometryDescription& geometry,

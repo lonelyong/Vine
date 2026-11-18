@@ -1798,3 +1798,24 @@
   `*.md` token there must be a note name, so an ADR bullet says "the backend guide 5", not the guide's file name.
 - **Gates**: nine green (195 notes / 56 design / 138 units / 974 entries). No C++ changed, so the build and the suites
   were not re-run (B13's green build still describes the tree).
+
+## 2026-11-18 B12: the public vocabulary, renamed whole (explicit go)
+
+- **What changed** (five spellings, one batch, ~1,200 references): `RenderCommand` -> `DrawItem` (and
+  `collectRenderCommands` -> `collectDrawItems`; its header and `.cpp` renamed with it), `DrawDescription` ->
+  `DrawCall`, `MaterialBase` / `MaterialBasePtr` -> `MaterialValues` / `MaterialValuesPtr` (files renamed),  `EngineNotReady` -> `EngineNotReadyReason` (file renamed), `createSession` / `releaseSession` ->
+  `createFrameDriver` / `releaseFrameDriver`. Rationale and rejected options: ADR-2026-11-18-public-vocabulary-unification;
+  migration notes BC-17..BC-21 in `graphics-rendering.md` 2.10.
+- **No aliases kept, on purpose**: B4's deprecated shims migrated a *shape* whose in-tree callers still existed; a migrated
+  *word* has no callers left after the sweep, and an alias would restore the double spelling the batch removes.
+- **Trap 1**: the `src/` glob is not CONFIGURE_DEPENDS, so renaming a `.cpp` leaves a stale ninja rule ("missing and no known
+  rule to make it"). `cmake -B build` once, then build with the tool. (Same trap as adding a file.)
+- **Trap 2**: `check_public_docs.py` keys its baseline by declaration name - a rename shows the new names as NEW and the old
+  as stale; `python3 scripts/check_public_docs.py --update` moves them (974 entries before and after).
+- **Trap 3**: `check_ai_docs --strict` flags a record that names a unit which no longer exists, so the ADR's rename table
+  needs `<!-- drift-ok -->` on those rows - a record has to name the old file.
+- **One flake**: `SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` failed in a direct full-suite run, then passed
+  alone (111 ms) and under ctest - the recorded load-sensitive measurement case.
+- **Evidence**: `test_graphics` 618, `test_vsg` 572, `test_vk` 174, `BackendParityTest` 13, `content_seam` + `vk_exposure`
+  green; demo on vk and on vsg 0 `[error]` / 0 `[warning]`; nine gates green (196 notes / 56 design / 138 units / 974
+  public docs).

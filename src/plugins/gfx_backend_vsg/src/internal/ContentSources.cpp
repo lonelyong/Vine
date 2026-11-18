@@ -202,7 +202,7 @@ FactMiss buildMaterialFacts(vn::graphics::ContentRef                        mate
 
     // The block's MEMBERS are the payload, and `{}` is aggregate initialisation: it initialises the members
     // from their defaults (the ABI states the default material's values) and leaves the struct's tail padding
-    // alone. What decides whether a material changed is the number it reports (MaterialBase::revision), never a
+    // alone. What decides whether a material changed is the number it reports (MaterialValues::revision), never a
     // byte comparison of these bytes (which would report "changed" for a material that did not).
     // The VALUES are the caller's argument (see ContentStore::ensureMaterial): a description built from the value a
     // frame published, never a read of the live material on the thread that records the frame. The default

@@ -176,7 +176,7 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      *
      * @details
      * - A viewport must be supplied by the collection (RenderPass does it; a host calling
-     *   Scene::collectRenderCommands directly passes one). Without one the authored scale() is kept.
+     *   Scene::collectDrawItems directly passes one). Without one the authored scale() is kept.
      * - The computed scale is clamp()ed to [minimumScale(), maximumScale()] and is uniform.
      *
      * @param enabled true to derive the scale from the viewport.

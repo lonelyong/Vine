@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Viewport.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
@@ -61,7 +61,7 @@ class DrawListMemo {
         /// True when the list was built by a content that also depends on the device-pixel viewport.
         bool viewport_sensitive = false;
         /// SHARED and immutable once built: every pass of a frame hands the same list around.
-        std::shared_ptr<const std::vector<RenderCommand>> commands;
+        std::shared_ptr<const std::vector<DrawItem>> commands;
         /// The frame that asked for this list last: an entry nothing asked for in the previous frame is dropped.
         std::uint64_t last_used_frame = 0;
     };
@@ -101,7 +101,7 @@ class DrawListMemo {
                  std::uint32_t                    layer_mask,
                  bool                             viewport_sensitive,
                  std::uint64_t                    revision,
-                 std::shared_ptr<const std::vector<RenderCommand>> commands,
+                 std::shared_ptr<const std::vector<DrawItem>> commands,
                  std::uint64_t                    frame);
 
     /**

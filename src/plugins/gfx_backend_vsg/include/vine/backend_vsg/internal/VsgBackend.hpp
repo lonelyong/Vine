@@ -265,15 +265,15 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * - WHAT A DRIVER OWNS (S8b): the frame state that is one frame's - the window the frame drives, the passes it
      *   recorded, its measurement entries, its skip count - and the default content program the engine declared. What
      *   it BORROWS is the device: its content world, its target registry, its clock and park queue.
-     * - The device owns what it hands out (see RenderDevice::createSession): the pointer is valid until
-     *   releaseSession() or shutdown().
+     * - The device owns what it hands out (see RenderDevice::createFrameDriver): the pointer is valid until
+     *   releaseFrameDriver() or shutdown().
      *
      * @return The driver; never null (the device's own driver is `&executor()`).
      */
-    [[nodiscard]] vn::graphics::RenderFrameExecutor* createSession() override;
+    [[nodiscard]] vn::graphics::RenderFrameExecutor* createFrameDriver() override;
 
-    /** @brief Returns a driver handed out by @ref createSession (the device's own is a no-op, per the SDK). */
-    void releaseSession(vn::graphics::RenderFrameExecutor& session) override;
+    /** @brief Returns a driver handed out by @ref createFrameDriver (the device's own is a no-op, per the SDK). */
+    void releaseFrameDriver(vn::graphics::RenderFrameExecutor& session) override;
 
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */
     void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
@@ -491,7 +491,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * - A frame with no passes still commits: a window's opens an image that has to be handed back, and the
      *   off-screen session's graph is a valid empty submission.
      *
-     * @param executor  The DRIVER whose executor state this frame uses (see createSession).
+     * @param executor  The DRIVER whose executor state this frame uses (see createFrameDriver).
      * @param window    The window's session that owns the frame, or null when the frame names no window.
      * @param offscreen The off-screen session that owns the frame, or null when the frame belongs to a window
      *                  (exactly one of the two is non-null).
@@ -501,7 +501,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
 
     /** @brief Runs @p frame through @p executor: the body the device's own driver and every handed-out one share.
      *
-     * @param executor  The driver's executor state (see createSession).
+     * @param executor  The driver's executor state (see createFrameDriver).
      * @param frame     The frame to run, in run order.
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
      * @return What the frame did (see PresentOutcome).
@@ -512,7 +512,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
 
     /** @brief Prepares @p frame's content through @p executor (see RenderFrameExecutor::prepareFrame).
      *
-     * @param executor  The driver's executor state (see createSession).
+     * @param executor  The driver's executor state (see createFrameDriver).
      * @param frame     The frame to prepare, in execution order.
      * @param present_to Target the frame's default framebuffer resolves to, or nullptr for the off-screen form.
      * @return What the call built (see PrepareReport).
@@ -570,7 +570,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Announces the depth band the pass maps its draws into (see PassDraw::depth_range). */
     void announceDepthRange(FrameScratch& scratch, const vn::graphics::DepthRange& range);
 
-    /** @brief Announces the lights of one drawing call, as VALUES (see DrawDescription::light_values). */
+    /** @brief Announces the lights of one drawing call, as VALUES (see DrawCall::light_values). */
     void announceLights(FrameScratch& scratch, std::span<const vn::graphics::LightValue> lights);
 
     /** @brief Collects one content drawing call into the scratch (the objects it names were tracked by the head).
@@ -582,7 +582,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *                         (see PassDraw::program_override), or null for each command's own program.
      */
     void collectContentDraw(FrameScratch&                                   scratch,
-                            const std::vector<vn::graphics::RenderCommand>& commands,
+                            const std::vector<vn::graphics::DrawItem>& commands,
                             const vn::graphics::CameraSnapshot&             camera,
                             const vn::graphics::ShaderProgramDescriptionPtr& program_override);
 
@@ -724,7 +724,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
 
   private:
     friend class detail::BackendContentAccess;
-    /// The driver hands its own executor state to the device's frame body (see createSession).
+    /// The driver hands its own executor state to the device's frame body (see createFrameDriver).
     friend class VsgDriver;
 
     struct Data;

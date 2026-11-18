@@ -91,7 +91,7 @@ VN_BACKEND_VSG_NS_BEGIN
  * VERTEX stage is the engine's canonical full-screen triangle (`BuiltinShaders::fullscreenVertexProgram` -
  * three vertices generated from `gl_VertexIndex`, `vn_uv` at location 0, no vertex buffer and no
  * vertex-side constants). A vertex stage the program happens to carry is IGNORED, because that is what the
- * contract says (`DrawDescription` with `Kind::Screen`: the draw's `program` is its FRAGMENT stage - the
+ * contract says (`DrawCall` with `Kind::Screen`: the draw's `program` is its FRAGMENT stage - the
  * backend provides the fullscreen vertex stage): honouring one would compile a triangle the engine's fragment
  * stages are not written against.
  *
@@ -116,7 +116,7 @@ VN_BACKEND_VSG_NS_BEGIN
  * @details
  * - It packs the block from the value, so an asset and an instance over one are both describable (the value is the
  *   resolved set - graphics-material.md 2.2) and, more importantly, describing a row never reads the live material:
- *   what the frame published is what the row says (see `RenderCommand::materialDescription`).
+ *   what the frame published is what the row says (see `DrawItem::materialDescription`).
  *
  * @param material The identity AND revision the row answers for; a null id is the engine's default material.
  * @param values   The values to pack, or null for the default material.

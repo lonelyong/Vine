@@ -32,7 +32,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -52,8 +52,8 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawDescription;
-using vn::graphics::EngineNotReady;
+using vn::graphics::DrawCall;
+using vn::graphics::EngineNotReadyReason;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -63,7 +63,7 @@ using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::RenderCommand;
+using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ResidencyKind;
 using vn::graphics::ResidencyRow;
@@ -204,9 +204,9 @@ struct Content {
 }
 
 /// @brief A scene draw of @p content under @p material (or the default material when null).
-[[nodiscard]] DrawDescription sceneDraw(const Content& content, const intrusive_ptr<vn::graphics::Material>& material)
+[[nodiscard]] DrawCall sceneDraw(const Content& content, const intrusive_ptr<vn::graphics::Material>& material)
 {
-    RenderCommand command(content.geometry, material, vn::math::Mat4d{});
+    DrawItem command(content.geometry, material, vn::math::Mat4d{});
     command.program             = content.program;
     command.program_description = content.program->description();
     if (material != nullptr) {
@@ -214,18 +214,18 @@ struct Content {
         command.material_description = material->description();
     }
 
-    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
+    DrawCall draw;
+    draw.kind     = DrawCall::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
 {
     FrameDescription frame;
 
@@ -713,12 +713,12 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     backend->shutdown();
 
     // A DEVICE THAT IS NOT UP HAS NOTHING TO RELEASE AND NOTHING TO PREPARE - and says which
-    // (PrepareReport::Outcome::NotReady + EngineNotReady::NotInitialized), not a zero it did not earn.
+    // (PrepareReport::Outcome::NotReady + EngineNotReadyReason::NotInitialized), not a zero it did not earn.
     EXPECT_FALSE(backend->releaseContent(material.get()));
     const FrameDescription frame;
     const PrepareReport    prepared = backend->prepareFrame(frame);
     EXPECT_FALSE(prepared.prepared());
     EXPECT_EQ(prepared.outcome, PrepareReport::Outcome::NotReady);
-    EXPECT_EQ(prepared.reason, EngineNotReady::NotInitialized);
+    EXPECT_EQ(prepared.reason, EngineNotReadyReason::NotInitialized);
     EXPECT_FALSE(backend->frameReport().retention->residency.has_value()) << "a shut-down device accounts for nothing";
 }

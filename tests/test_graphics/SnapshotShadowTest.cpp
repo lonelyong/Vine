@@ -15,7 +15,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
@@ -100,8 +100,8 @@ Assembly makeAssembly()
 /// @brief Asserts the published source's list and the Scene's direct list are field-exact for @p view.
 void expectSourceAgrees(SnapshotSource& source, const Scene& scene, const View& view, const char* what)
 {
-    const auto actual   = source.collectRenderCommands(view);
-    const auto expected = scene.collectRenderCommands(view);
+    const auto actual   = source.collectDrawItems(view);
+    const auto expected = scene.collectDrawItems(view);
     ASSERT_TRUE(actual != nullptr);
     ASSERT_TRUE(expected != nullptr);
 
@@ -159,7 +159,7 @@ TEST(SnapshotSourceTest, AnEditBatchKeepsTheSourceOnTheOldPicture)
     source.beginFrame(1U);
 
     const View view = clipBoxView();
-    const auto        before = source.collectRenderCommands(view);
+    const auto        before = source.collectDrawItems(view);
     ASSERT_FALSE(before->empty());
 
     scene.beginEdit();
@@ -167,7 +167,7 @@ TEST(SnapshotSourceTest, AnEditBatchKeepsTheSourceOnTheOldPicture)
     assembly.link_geometry->setOpacity(0.25F);
     EXPECT_EQ(scene.publish().status, ScenePublishStatus::InsideBatch);
     source.beginFrame(2U);
-    const auto inside = source.collectRenderCommands(view);
+    const auto inside = source.collectDrawItems(view);
     EXPECT_TRUE(diffDrawLists(*inside, *before).same) << "a frame inside the batch keeps the batch's starting picture";
 
     scene.endEdit();
@@ -195,7 +195,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
     const View view = clipBoxView();
 
     const auto old_snapshot = SceneRows::snapshot(scene);
-    std::vector<vn::graphics::RenderCommand> old_commands;
+    std::vector<vn::graphics::DrawItem> old_commands;
     bool                                     viewport_used = false;
     selectSnapshot(*old_snapshot, view, old_commands, viewport_used);
     ASSERT_EQ(old_commands.size(), 1U);
@@ -216,7 +216,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
     leaf->setProgram(program);
 
     const auto fresh_snapshot = SceneRows::snapshot(scene);
-    std::vector<vn::graphics::RenderCommand> fresh_commands;
+    std::vector<vn::graphics::DrawItem> fresh_commands;
     selectSnapshot(*fresh_snapshot, view, fresh_commands, viewport_used);
     ASSERT_EQ(fresh_commands.size(), 1U);
     EXPECT_NE(fresh_commands.front().description.get(), old_description.get()) << "a geometry revision is a new value";
@@ -225,7 +225,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
     EXPECT_EQ(fresh_commands.front().program.get(), program.get()) << "the leaf's new program is what the row resolves";
 
     // The old snapshot is still the old picture after all three edits.
-    std::vector<vn::graphics::RenderCommand> old_again;
+    std::vector<vn::graphics::DrawItem> old_again;
     selectSnapshot(*old_snapshot, view, old_again, viewport_used);
     ASSERT_EQ(old_again.size(), 1U);
     EXPECT_EQ(old_again.front().description.get(), old_description.get());
@@ -247,11 +247,11 @@ TEST(SnapshotSourceTest, ADifferentSnapshotIsReportedAsADifference)
     source.beginFrame(1U);
 
     const View view = clipBoxView();
-    const auto        scene_list = scene.collectRenderCommands(view);
+    const auto        scene_list = scene.collectDrawItems(view);
     ASSERT_FALSE(scene_list->empty());
 
     source.setSnapshot(nullptr);
-    const auto        empty = source.collectRenderCommands(view);
+    const auto        empty = source.collectDrawItems(view);
     const DrawListDiff diff = diffDrawLists(*scene_list, *empty);
     EXPECT_FALSE(diff.same);
     EXPECT_STREQ(diff.field, "count");
