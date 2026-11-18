@@ -318,6 +318,13 @@ void VisualUserIO::Impl::setConsolePanel(ConsolePanel* console)
         escape_handler.disconnect();
     }
 
+    // The question was asked on the panel that is being replaced, so it cannot be answered any more: withdraw it and
+    // let the command see nullopt, which it can act on - re-showing the prompt would mean retaining the whole request
+    // and replaying it on a panel that may itself be on its way out. Unbinding is the same situation, so one path.
+    if (cancelInteraction()) {
+        VN_LOGW("The console panel changed while a user-input read was waiting; releasing the read");
+    }
+
     this->console = console;
     if (this->console == nullptr) {
         return;
@@ -772,7 +779,7 @@ void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
             double x    = parts[0].trimmed().toDouble(&x_ok);
             double y    = parts[1].trimmed().toDouble(&y_ok);
             double z    = parts[2].trimmed().toDouble(&z_ok);
-            if (x_ok && y_ok && z_ok) {
+            if (x_ok && y_ok && z_ok && std::isfinite(x) && std::isfinite(y) && std::isfinite(z)) {
                 math::Point3d point;
                 point.x = x;
                 point.y = y;

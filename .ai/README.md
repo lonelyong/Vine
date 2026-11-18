@@ -232,7 +232,7 @@ decision is not to do them (the reason goes into an ADR).
 - `robotics-kinematics.md` — Robotics kinematics facts.
 - `robotics-proximity.md` — Robotics proximity facts.
 
-## bugs/ — bug records (41)
+## bugs/ — bug records (43)
 
 Symptom / root cause / status / files involved / verification, one file per bug; a fixed record keeps
 its history marker, an unfixed one states its status.
@@ -268,6 +268,8 @@ its history marker, an unfixed one states its status.
 - `appfw-console-progress-reporter-sink-under-lock.md`
 - `appfw-console-answer-in-history.md` — the console recorded every submitted line, so an answer to a prompt (a file path, a number) came back through Up as a command, and a matching prefix let completion rewrite the answer into a command name; `beginInput()` / `endInput()` now bound an explicit answering mode that history, completion and the accent all follow.
 - `appfw-console-completion-refresh-off-thread.md` — `commandsChanged` fires on the thread that changed the command set, and the console's handler read the bound panel and the plugin display names there before marshalling only the final write; the handler now posts, carrying a liveness token.
+- `appfw-console-rebind-leaves-read-waiting.md` — changing (or clearing) the bound console panel left a waiting read parked on a prompt drawn on the old panel; the binding change now releases it.
+- `appfw-posted-message-outlives-application.md` — `reportToUser()` posted a borrowed `UserIO*`; the queued call now asks `Application::current()`, which is cleared before the I/O is released.
 - `vsg-depth-bias-not-declared-dynamic.md`
 - `graphics-renderengine-addpass-null-pass-crash.md`
 - `graphics-scene-memo-key-missing-view-basis.md`

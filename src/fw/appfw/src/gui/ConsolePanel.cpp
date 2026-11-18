@@ -46,6 +46,13 @@ QColor toQColor(const Color& c)
     return QColor(c.r, c.g, c.b, c.a);
 }
 
+/// Output blocks kept before the oldest are dropped.
+///
+/// The console is a log a process may write to for days, and every line holds a block: unbounded scrollback is the
+/// one place where a long-running session grows without limit. Ten thousand lines is far more than a user scrolls and
+/// still a fixed cost; `QPlainTextEdit` drops the oldest block itself when the cap is reached.
+constexpr int kScrollbackBlocks = 10000;
+
 /**
  * @brief Single-line input routing Up/Down/Tab/Esc/Ctrl+O to the panel.
  */
@@ -222,6 +229,7 @@ ConsolePanel::ConsolePanel(QWidget* parent)
 
     data->output = new QPlainTextEdit(root);
     data->output->setReadOnly(true);
+    data->output->setMaximumBlockCount(kScrollbackBlocks);
 
     data->input = new InputLine(root);
 

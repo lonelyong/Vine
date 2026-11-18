@@ -38,7 +38,9 @@ class VN_APPFW_API VisualUserIO : public UserIO {
      * @brief Binds the panel the output and the prompts go to.
      *
      * Binding a panel drops the handlers of the panel that was bound before, so binding the same panel twice does not
-     * dispatch an entered line twice.
+     * dispatch an entered line twice. A read that is waiting is released by the change as well: its prompt was shown on
+     * the panel being replaced, and re-showing it would mean retaining the whole read request - the command sees
+     * `nullopt` and may ask again.
      *
      * @param console Panel to show the output and the prompts in, or nullptr to unbind.
      */

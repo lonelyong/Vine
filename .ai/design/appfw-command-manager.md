@@ -62,7 +62,7 @@ CommandManager ── Impl ─┬─ shared_ptr<Chain> foreground
                         ├─ map<String, RegisteredCommand> registry
                         ├─ map<String, String> aliases
                         ├─ mutex (foreground/live/history/snapshot)
-                        └─ registry_mutex (registry/owner/aliases, leaf lock)
+                        └─ registry_mutex (registry/aliases, leaf lock)
 Chain ── vector<Command*> commands (the stack, innermost at the tail)
       ├─ int runs (zero = this chain is winding down)
       └─ stop_source (stopped, never replaced)
@@ -97,6 +97,14 @@ Chain ── vector<Command*> commands (the stack, innermost at the tail)
 ### 2.5 Arguments travel with the execution
 
 The name entry carries no caller data and the instance entry carries it in fields; the difference is the **source**, not two mechanisms: the framework tokenises once and hands the tokens to `context.arguments()` with the execution frame, and the meaning belongs to the command (see `appfw-command-arguments.md`).
+
+### 2.6 Aliases are names, and a name resolves to one command
+
+- An alias is a second spelling of a command name; the map is followed transitively, so an alias may point at another alias.
+- `registerAlias()` is the only place that can still explain a mistake, so it refuses the two shapes that would make a name silently unreachable: an alias whose own spelling is a registered command name (dispatch resolves the alias first, so the command would lose its own name), and an alias that closes a cycle, a self-alias being the one-hop case (`resolveName()` stops at the first repeat, so the name resolves to nothing).
+- A target that is not registered yet is *not* refused: a plugin may declare its aliases before its commands.
+- Every refusal logs why. The alternative is what the rule exists to remove: a registration that "worked" and a command that then does nothing.
+- The owner tag these commands are attributed to has **one home, the application** (`Application::registrationOwner()`, under its own lock): the manager reads it when it registers a command and keeps no copy, so a host that sets the tag straight on the application cannot end up with two answers.
 
 ## 3. Features
 
@@ -162,7 +170,7 @@ The name entry carries no caller data and the instance entry carries it in field
 
 ### 3.1.7 F7 The command manager dialog
 
-- **Behaviour**: a filter box → the command table (name / state / alias / plugin / group / description) → refresh / disable / close.
+- **Behaviour**: a filter box → the command table (name / state / alias / plugin / group / description) → refresh / disable / close. The table follows `commandsChanged` while the dialog is open, and a rebuild keeps the selected row by command name.
 - **Constraints** (C7): a disabled row is greyed and italic, never hidden; the buttons are greyed until something is selected.
 - **Requirements** (R7): the dialog offers no "unload command"; disabling is a flag.
 - **Acceptance** (T7): `CommandManagerDialogTest.*`.
@@ -174,7 +182,7 @@ The name entry carries no caller data and the instance entry carries it in field
 
 | Interface | Contract | Note |
 | --- | --- | --- |
-| `executeCommandAsync(Command*)` / `(name)` | top-level async | exceptions become `Failed` |
+| `executeCommandAsync(Command*)` / `(std::unique_ptr<Command>)` | top-level async | the pointer is borrowed for the whole execution, the `unique_ptr` is owned by the task |
 | `executeCommandAsync(name, args, target)` / `executeCommandAndWait(name, args, target)` / `executeDetached(name, args, target)` | the name entries carrying arguments | arguments are only carried |
 | `executeCommandLineAsync(line, target)` | the text entry | the only place that calls `tokenizeCommandLine` |
 | `executeCommandAndWait(...)` | blocking | tools / tests |
@@ -253,6 +261,18 @@ The name entry carries no caller data and the instance entry carries it in field
 - How to detect it: `~CommandManager` only warns when it finds a live chain.
 - How to prevent it: the host calls `cancelAllAndWait()` before destroying; `Application::shutdown()` already does.
 
+### 6.4 A message posted to an application that is gone
+
+- How it fails: `reportToUser()` hands the message to the application thread when a command finished on a worker; the application - and with it the `UserIO` - can be destroyed before the queued call runs, so a captured `UserIO*` writes into freed memory.
+- How to detect it: a command that finishes during shutdown, and a crash in the queued delivery rather than in the command.
+- How to prevent it: the queued call carries the message only and asks `Application::current()` itself. That pointer is cleared before `Application`'s data - the `UserIO` included - is released, so a message delivered too late reaches nobody instead of a dead object.
+
+### 6.5 A view that follows `commandsChanged` and also writes to it
+
+- How it fails: the dialog disables a command, which fires `commandsChanged`, the dialog's own handler refreshes the table from it, and every `QTableWidgetItem` the toggling code still holds - the row it read the name from - is deleted under it.
+- How to detect it: a crash immediately after the first toggle, in the few lines that build the confirmation message.
+- How to prevent it: take what is needed (the name, the label) out of the widgets before calling into the manager, and treat any model call as able to replace the rows.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -274,6 +294,7 @@ The name entry carries no caller data and the instance entry carries it in field
 | T4 | exclusion / cancellation / drain | `ExclusiveStopsEveryLiveChain`, `CancelAllAbortsWaitingTakeOver` |
 | T5 | disabling / persistence / the instance entry | `DisableIsAFlagAndIsPersisted`, `DisableBlocksCallerSuppliedInstance` |
 | T6 | the dialog | `CommandManagerDialogTest.*` |
+| T8 | aliases / the owning instance entry / the owner tag | `CommandManager_RejectsAnAliasThatShadowsOrLoops`, `CommandManager_OwningInstanceEntryOutlivesTheCaller`, `CommandManager_RegistrationTagLivesOnTheApplication` |
 
 ## 9. Status and Evolution
 

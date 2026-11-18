@@ -12,7 +12,17 @@ VN_APPFW_NS_BEGIN
 VN_OBJECT_META_IMPL(ConsoleUserIO, UserIO)
 
 namespace
-{} // namespace
+{
+
+/// Readers currently alive on stdin, across every ConsoleUserIO in the process.
+///
+/// stdin has one owner: a second reader competes with the first for the same lines, and both block in `getline` where
+/// nothing can reach them. One reader per process is therefore the rule, and a read that would need a second one is
+/// refused with an error instead of silently starting it. Sequential readers are ordinary - a reader ends at EOF or
+/// after the line that follows the destructor's `stopping` flag, and this counter then drops back to zero.
+std::atomic<int> s_live_readers{ 0 };
+
+} // namespace
 
 /**
  * @brief The background reader this IO owns, plus everything it shares with it.
@@ -134,12 +144,17 @@ bool ConsoleUserIO::beginRead()
         VN_LOGW("A user-input read is already waiting; refusing the new one");
         return false;
     }
-    slot_busy_ = true;
 
     {
         std::lock_guard reader_lock(reader_->mutex);
         reader_->cancelled = false;
         if (!reader_->started) {
+            if (s_live_readers.fetch_add(1) != 0) {
+                s_live_readers.fetch_sub(1);
+                VN_LOGE("stdin already has a reader (another ConsoleUserIO); refusing this read");
+                return false;
+            }
+
             reader_->started = true;
             auto reader      = reader_;
             std::thread([reader] {
@@ -147,6 +162,7 @@ bool ConsoleUserIO::beginRead()
                     std::string line;
                     if (!std::getline(std::cin, line)) {
                         reader->push(std::string(), std::cin.eof(), !std::cin.eof());
+                        s_live_readers.fetch_sub(1);
                         return;
                     }
 
@@ -154,12 +170,15 @@ bool ConsoleUserIO::beginRead()
 
                     std::lock_guard stop_lock(reader->mutex);
                     if (reader->stopping) {
+                        s_live_readers.fetch_sub(1);
                         return;
                     }
                 }
             }).detach();
         }
     }
+
+    slot_busy_ = true;
     return true;
 }
 
@@ -251,7 +270,9 @@ vn::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(con
     double x    = parts[0].trimmed().toDouble(&x_ok);
     double y    = parts[1].trimmed().toDouble(&y_ok);
     double z    = parts[2].trimmed().toDouble(&z_ok);
-    if (!x_ok || !y_ok || !z_ok) {
+    // A number the user cannot have meant is not a point: `toDouble` accepts "nan" and "inf", and a non-finite
+    // coordinate would travel into the geometry as a value that makes every later comparison false.
+    if (!x_ok || !y_ok || !z_ok || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
         co_return std::nullopt;
     }
 

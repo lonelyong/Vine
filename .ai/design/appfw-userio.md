@@ -59,6 +59,8 @@ Owner: `ApplicationData::user_io` (a `unique_ptr`, torn down before the dispatch
   queued waiter (see `../bugs/appfw-userio-destructor-pending-read.md`).
 - `ConsoleUserIO` reads `std::cin` on a background thread; a cancellation sets shared state and wakes the waiter, and an unconsumed line is left for the next read.
 - The input line has two modes, and only the caller knows which one applies: `beginInput()` starts a prompt and `endInput()` returns the line to command entry. A line submitted inside that interval is an answer, so it is not command history, opens no completion and is never rewritten into a command name; the accent underline marks the mode, which is why a text read has one too.
+- Changing the bound panel (including unbinding it) releases the read that is waiting: its prompt was shown on the old panel, and re-showing it would mean retaining the whole request for a panel that may itself be on its way out. The command sees `nullopt` and may ask again (see D6).
+- `ConsoleUserIO` keeps exactly one stdin reader per process: a read that would need a second one is refused with `nullopt` and an error, because two readers compete for the same lines and both block in `getline`. Sequential readers are ordinary - a reader ends at EOF.
 
 ### 2.4 Reading a value
 
@@ -104,8 +106,8 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 
 - **Behaviour**: the four `getXxxAsync`; one wait at a time.
 - **Constraints** (C2): a second read returns `nullopt` immediately plus a warning; the slot is released by `ReadScope`.
-- **Requirements** (R2): `getIntAsync()` only yields values in the `int` range and never wraps; `toDouble` must be finite.
-- **Acceptance** (T2): `SecondReadIsRefusedWhileOneIsPending`, `IntReadKeepsItsValueAndRepromptsOnOverflow`.
+- **Requirements** (R2): `getIntAsync()` only yields values in the `int` range and never wraps; `toDouble` must be finite, and a point read applies the same rule to each coordinate - `nan` and `inf` parse, so they have to be refused explicitly.
+- **Acceptance** (T2): `SecondReadIsRefusedWhileOneIsPending`, `IntReadKeepsItsValueAndRepromptsOnOverflow`, `UserIOTest.PointReadRefusesANonFiniteCoordinate`.
 - **Caveat** (N2): the prompt text is read and written on the application thread only.
 
 ### 3.1.3 F3 File / directory reads
@@ -134,10 +136,10 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 
 ### 3.1.6 F6 Command history
 
-- **Behaviour**: Up/Down navigate the lines submitted as commands; an empty line is dropped; an answer to a read is never recorded, and the completion popup is off while the line answers.
+- **Behaviour**: Up/Down navigate the lines submitted as commands; an empty line is dropped; an answer to a read is never recorded, and the completion popup is off while the line answers. The list keeps the newest 256 lines, so a session that runs for days does not grow one entry per command.
 - **Constraints** (C7): the panel decides membership from the mode it was given (`beginInput` / `endInput`), never from what the text looks like.
 - **Requirements** (R6): the completion refresh runs on the application thread whatever thread changed the command set.
-- **Acceptance** (T8): `UserIOTest.AnAnswerIsNotACommandLine`, `UserIOTest.CompletionRefreshFromAWorkerThreadReachesThePanel`.
+- **Acceptance** (T8): `UserIOTest.AnAnswerIsNotACommandLine`, `UserIOTest.CompletionRefreshFromAWorkerThreadReachesThePanel`, `CommandHistoryTest.DropsTheOldestEntryAtTheBound`.
 - **Caveat** (N6): the answering mode is ended by the read, not by the submission: a prompt that is never ended leaves history and completion off.
 
 ## 4. Public Interface
@@ -173,6 +175,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | C5 | Nothing is written after `stop()`; the consumer is destroyed before `output_mutex_`. |
 | C6 | An implementation's destructor releases the read that is waiting and refuses later ones; the wait state is never destroyed with a waiter queued. |
 | C7 | The panel records a line as command history only while the line is not answering a read; only `beginInput` / `endInput` set that mode. |
+| C8 | Console output and its command history are bounded (10k output blocks, 256 history entries): a session that runs for days has a fixed cost. |
 
 ### 5.2 Requirements (R#)
 
@@ -232,6 +235,12 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 - How to detect it: start a read on a worker thread and cancel it from the application thread before the prompt appears, then type a command and press Up.
 - How to prevent it: give the read an identity the prompt state can compare (a generation counter, or posting the end through the same queue as the prompt), so the queued call skips itself when its read already ended. Not done yet: the visible cost is one lost history entry, against a second source of truth next to the answer slot (G8), and the stale call also re-installs a picker, which is the older half of the same ordering question.
 
+### 6.6 A second headless reader on stdin
+
+- How it fails: two `ConsoleUserIO` instances each start a reader thread; both block in `getline(std::cin)` and whichever reads first takes the line, so one instance answers a line meant for the other - or waits forever.
+- How to detect it: the second instance's read never returns, and its prompt sits above a line that the first instance consumed.
+- How to prevent it: one reader per process. `ConsoleUserIO::beginRead()` counts the live readers and refuses a read that would start a second one, with `nullopt` and an error in the log. That is also the reason the reader thread ends at EOF rather than being cancelled: it can only be woken by a line.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -241,6 +250,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | D3 | TTY detection in `ConsoleUserIO::clear()` | It needs a platform branch; recorded and left as is. | — |
 | D4 | A "storage type" accessor on `UserIO` | `parseInt` is the only parsing logic that needs sharing. | — |
 | D5 | Merging the two backends' pending-read state machines | Their waiting mechanisms are structurally different; only about 15 lines of slot protocol are shareable. | — |
+| D6 | Re-showing a waiting prompt on the newly bound panel | It would mean retaining the whole `ReadUi` (prompt, options, picker) for a panel that may itself be going away; the read ends with `nullopt` instead, and the command decides whether to ask again. | — |
 
 ## 8. Tests and Acceptance
 
@@ -254,13 +264,14 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | T6 | the `String::toInt` range | `test_core String.NumericConversions` |
 | T7 | a waiting read is released by the destructor | `UserIOTest.DestroyingTheIoWithAPendingReadReleasesIt` |
 | T8 | an answer is not a command line; the refresh lands from any thread | `UserIOTest.AnAnswerIsNotACommandLine`, `UserIOTest.CompletionRefreshFromAWorkerThreadReachesThePanel` |
+| T9 | a rebind releases the waiting read; a non-finite point is refused | `UserIOTest.RebindingTheConsoleReleasesAReadThatWasWaiting`, `UserIOTest.PointReadRefusesANonFiniteCoordinate` |
 
 ## 9. Status and Evolution
 
 ### 9.1 Current status
 
 The two backends, the single slot, the file / directory reads, the completion refresh and the headless progress are all in place.
-The input line distinguishes a command from an answer by the mode its caller sets, so history and completion stay out of a read.
+The input line distinguishes a command from an answer by the mode its caller sets, so history and completion stay out of a read. The console's output and history are bounded, a rebind releases a waiting read, and the headless backend keeps one reader on stdin.
 
 ### 9.2 Known gaps / backlog
 

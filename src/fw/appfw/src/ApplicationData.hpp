@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 
 #include <QElapsedTimer>
 
@@ -85,7 +86,11 @@ struct ApplicationData {
     /// Tag registries record as the owner of what is being registered right now (Application::setRegistrationOwner()):
     /// the plugin loader sets it around a plugin's registration, and every registry reads it instead of keeping its own
     /// copy of the same fact.
-    String registration_owner;
+    ///
+    /// Guarded, because the loader writes it on the application thread while a registry may read it from whichever
+    /// thread it is registering on (a worker starting a document type, for instance).
+    mutable std::mutex registration_owner_mutex;
+    String             registration_owner;
 
     /// Whether the framework loads the plugins during the startup phase (AppConfig::load_plugins).
     bool load_plugins = true;

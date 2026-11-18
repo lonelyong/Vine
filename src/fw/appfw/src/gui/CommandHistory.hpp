@@ -15,6 +15,13 @@ VN_APPFWGUI_NS_BEGIN
  */
 class CommandHistory {
   public:
+    /// Entries kept; the oldest is dropped first.
+    ///
+    /// History is a convenience, not a log: a session that runs for days must not grow one entry per executed line
+    /// forever. The bound matches the console's own scrollback order of magnitude rather than the manager's command
+    /// history, because this list is only ever walked by a person pressing Up.
+    static constexpr std::size_t kMaxEntries = 256;
+
     /**
      * @brief Records a command; empty commands are ignored.
      *
@@ -24,6 +31,9 @@ class CommandHistory {
     {
         if (command.empty()) {
             return;
+        }
+        if (items_.size() >= kMaxEntries) {
+            items_.erase(items_.begin());
         }
         items_.push_back(std::move(command));
         reset();

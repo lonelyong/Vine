@@ -320,16 +320,16 @@
         <translation>邮箱</translation>
     </message>
     <message>
-        <source>Enable</source>
-        <translation>启用</translation>
-    </message>
-    <message>
         <source>Enable command</source>
         <translation>启用命令</translation>
     </message>
     <message>
         <source>Enable the plugin (takes effect after a restart)</source>
         <translation>启用插件（重启后生效）</translation>
+    </message>
+    <message>
+        <source>Enabled</source>
+        <translation>已启用</translation>
     </message>
     <message>
         <source>Enabled but not loaded: a dependency is missing or the load failed - see the log.</source>

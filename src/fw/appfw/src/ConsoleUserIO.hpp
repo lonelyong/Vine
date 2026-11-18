@@ -24,6 +24,10 @@ VN_APPFW_NS_BEGIN
  * Lines typed while nothing was waiting are buffered and handed to the next read.
  * Only one read waits at a time, like every other implementation (see UserIO).
  *
+ * One reader per process, too: stdin has a single owner, so an instance whose first read would have to start a second
+ * reader refuses that read (`nullopt` plus an error in the log) instead of competing with the first for the same
+ * lines. The reader thread itself lives until the stream ends.
+ *
  * @note Exported although the class is appfw-private (this header lives in src/, not in sdk/): the headless progress
  * test constructs it directly to check what it writes to stdout, which needs the symbols in the shared library.
  */

@@ -606,11 +606,13 @@ raw_ptr<DocumentManager> Application::documentManager() const
 
 void Application::setRegistrationOwner(String owner)
 {
+    const std::lock_guard lock(dptr()->registration_owner_mutex);
     dptr()->registration_owner = std::move(owner);
 }
 
 String Application::registrationOwner() const
 {
+    const std::lock_guard lock(dptr()->registration_owner_mutex);
     return dptr()->registration_owner;
 }
 

@@ -74,6 +74,44 @@ TEST(ProgressHostTest, SnapshotIsAValueThatOutlivesItsHost)
     EXPECT_NE(other->id, first_id);
 }
 
+// 宿主在一条线程上反复创建/销毁，观察者从另一条线程反复取样：观察者拿到的只能是值。
+// 旧实现给的是裸指针，观察者随后读它，而宿主正是这时候析构的（F-3）；这条用例在 TSAN 下才有分量，
+// 平时它也钉住"取样不依赖宿主活着"这一条。
+TEST(ProgressHostTest, SnapshotsCanBeTakenWhileHostsComeAndGo)
+{
+    std::atomic<bool> stop{ false };
+    std::atomic<int>  taken{ 0 };
+
+    std::thread observer([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            const auto foreground = ProgressHost::foregroundSnapshots();
+
+            // 另一个入口也一起取样：两个调用各取各的，之间的时间差里宿主可能已经没了，
+            // 所以这里不断言两者的关系，只看"取到了什么"。
+            static_cast<void>(ProgressHost::activeHostCount());
+
+            for (const auto& snapshot : foreground) {
+                // 拷贝出来的字段可读，取消状态也还能用（取消按钮按的就是它）。
+                static_cast<void>(snapshot.label);
+                static_cast<void>(snapshot.cancelSource.stop_requested());
+            }
+            taken.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+
+    for (int i = 0; i < 200; ++i) {
+        ProgressHost host;
+        host.setForeground(true);
+        host.setLabel(u8"并发");
+    }
+
+    stop.store(true, std::memory_order_relaxed);
+    observer.join();
+
+    EXPECT_GT(taken.load(), 0);
+    EXPECT_EQ(ProgressHost::activeHostCount(), 0u);
+}
+
 TEST(ProgressHostTest, ReportsProgressThroughScope)
 {
     ProgressHost  host;

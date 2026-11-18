@@ -301,7 +301,18 @@ void reportToUser(Application& app, const String& message)
 
     // Dropped when the event loop stops before it gets to the task, which is the
     // right outcome during a shutdown: nobody is left to read the message.
-    static_cast<void>(MainThreadDispatcher::postToMainThread([io, message] { io->putString(message); }));
+    //
+    // The call asks the live-application registry instead of carrying the pointer it captured here: the UserIO belongs
+    // to the application, which may be destroyed before the queue drains, and `Application::current()` is cleared
+    // before its data - the UserIO included - is released (see ~Application). A message that the queue delivers after
+    // the application is gone therefore reaches nobody instead of a freed object.
+    static_cast<void>(MainThreadDispatcher::postToMainThread([message = std::move(message)] {
+        if (auto* app = Application::current()) {
+            if (auto* io = app->userIO()) {
+                io->putString(message);
+            }
+        }
+    }));
 }
 
 } // namespace
@@ -633,9 +644,6 @@ struct CommandManager::Impl {
     /// Disabled commands; the fallback used when the host has no config manager.
     std::vector<String> disabled_fallback;
 
-    /// Owner tag applied to commands registered while it is non-empty.
-    String registration_owner;
-
     /// Snapshot handler invoked before an Undoable command runs (document layer).
     std::function<void()> snapshot_handler;
 
@@ -652,7 +660,7 @@ struct CommandManager::Impl {
     /// after the other, releasing the first before taking the second.
     mutable std::mutex mutex;
 
-    /// Guards registry, registration_owner and aliases.
+    /// Guards registry and aliases.
     /// Leaf lock: never taken while another lock of this manager is held, and no
     /// user code (factory, command, event handler) runs while it is held.
     mutable std::mutex registry_mutex;
@@ -1080,6 +1088,17 @@ vn::async::Task<CommandResult> CommandManager::executeCommandAsync(Command* comm
     });
 }
 
+vn::async::Task<CommandResult> CommandManager::executeCommandAsync(std::unique_ptr<Command> command, const CommandTarget& target)
+{
+    if (!command) {
+        co_return failedResult(translate("appfw", "No command was given."));
+    }
+
+    // The instance lives in this coroutine's frame, which is still alive while the borrowed-pointer entry awaits the
+    // execution: that is what turns "the pointer outlives the task" into a rule the caller does not have to follow.
+    co_return co_await executeCommandAsync(command.get(), target);
+}
+
 vn::async::Task<CommandResult> CommandManager::executeCommandAsync(const String& name, const CommandTarget& target)
 {
     // The copy happens here, while the caller's argument is still alive: the task is
@@ -1483,9 +1502,13 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
     // disabled when its plugin registers it again at the next start.
     const bool enabled = !d->isDisabled(name);
 
+    // The tag has one home, the application (see setRegistrationOwner): read before the registry lock, so this
+    // manager's leaf lock stays a leaf and no second copy has to be kept in step with it.
+    const String owner = d->app != nullptr ? d->app->registrationOwner() : String{};
+
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
-        RegisteredCommand           entry{ command_class, std::move(factory), d->registration_owner, std::move(group), std::move(description) };
+        RegisteredCommand           entry{ command_class, std::move(factory), owner, std::move(group), std::move(description) };
         entry.flags   = flags;
         entry.enabled = enabled;
         if (!d->registry.emplace(std::move(name), std::move(entry)).second) {
@@ -1498,20 +1521,18 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
 
 void CommandManager::setRegistrationOwner(String owner)
 {
-    // ONE TAG FOR EVERY REGISTRY (Application::registrationOwner()): the plugin loader sets it here once, and a
-    // document registry reads it from the application instead of every registry keeping its own copy of the same fact.
-    if (d->app != nullptr) {
-        d->app->setRegistrationOwner(owner);
+    // ONE TAG FOR EVERY REGISTRY (Application::registrationOwner()): the plugin loader sets it once, and every registry
+    // - this one included - reads it from the application instead of keeping a copy that could drift from it.
+    if (d->app == nullptr) {
+        VN_LOGW("No application owns this manager; the registration owner tag has nowhere to go");
+        return;
     }
-
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
-    d->registration_owner = std::move(owner);
+    d->app->setRegistrationOwner(std::move(owner));
 }
 
 String CommandManager::registrationOwner() const
 {
-    std::lock_guard<std::mutex> lock(d->registry_mutex);
-    return d->registration_owner;
+    return d->app != nullptr ? d->app->registrationOwner() : String{};
 }
 
 bool CommandManager::unregisterCommand(const String& name)
@@ -1632,15 +1653,40 @@ bool CommandManager::setCommandEnabled(const String& name, bool enabled)
 bool CommandManager::registerAlias(const String& alias, const String& target)
 {
     if (alias.empty() || target.empty()) {
+        VN_LOGW("Cannot register an alias without a name and a target");
         return false;
     }
 
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
-        if (!d->aliases.emplace(alias, target).second) {
+
+        // A name that is also a registered command cannot be an alias: dispatch resolves the alias first, so the alias
+        // would win and the command would become unreachable under its own name.
+        if (d->registry.find(alias) != d->registry.end()) {
+            VN_LOGW("Alias '{}' is a registered command name; refusing it", toUtf8View(alias));
+            return false;
+        }
+        if (d->aliases.find(alias) != d->aliases.end()) {
             VN_LOGW("Alias already registered, ignoring target: {} -> {}", toUtf8View(alias), toUtf8View(target));
             return false;
         }
+
+        // A cycle would make the alias resolve to itself, and resolveName() stops at the first repeat: refusing it here
+        // is the only place that can still say why. A self-alias is the one-hop case of the same walk.
+        String step = target;
+        for (std::size_t hop = 0; hop <= d->aliases.size(); ++hop) {
+            if (step == alias) {
+                VN_LOGW("Refusing alias {} -> {}: it closes a cycle", toUtf8View(alias), toUtf8View(target));
+                return false;
+            }
+            const auto next = d->aliases.find(step);
+            if (next == d->aliases.end()) {
+                break;
+            }
+            step = next->second;
+        }
+
+        d->aliases.emplace(alias, target);
     }
     fireCommandsChanged(*this);
     return true;

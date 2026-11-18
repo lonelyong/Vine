@@ -9,9 +9,13 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
+
+#include <vine/appfw/MainThreadDispatcher.hpp>
+#include <vine/Signal.hpp>
 
 #include "Convert.hpp"
 #include "GuiText.hpp"
@@ -36,6 +40,16 @@ void greyOutRow(QTableWidget* table, int row)
     }
 }
 
+/// The command name a table row holds (column 0), or an empty name for a row without one.
+String nameOfItem(const QTableWidgetItem* item)
+{
+    if (item == nullptr) {
+        return {};
+    }
+    const auto* text = item->text().utf16();
+    return String::fromUtf16(reinterpret_cast<const char16_t*>(text), item->text().size());
+}
+
 } // namespace
 
 VN_OBJECT_META_IMPL(CommandManagerDialog, Window)
@@ -46,6 +60,13 @@ struct CommandManagerDialog::Impl : public WindowData {
     QTableWidget*              table         = nullptr;
     QPushButton*               toggle_btn    = nullptr;
     QLabel*                    message_label = nullptr;
+    /// Connection on the manager's commandsChanged(), dropped by the destructor.
+    vn::Connection commands_handler{};
+
+    /// The command name the current row holds, or an empty name when nothing is selected.
+    String selectedName() const;
+    /// Selects the row of the named command, if it is listed and visible.
+    void selectByName(const String& name);
 };
 
 CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
@@ -113,16 +134,41 @@ CommandManagerDialog::CommandManagerDialog(vn::appfw::CommandManager* manager)
     QObject::connect(data->table, &QTableWidget::itemSelectionChanged, root, [this] { updateActions(); });
 
     refresh();
+
+    // The list follows the command set while the dialog is open, like the console completion does: a plugin that
+    // registers or drops a command must not need the Refresh button. The event fires on the thread that changed the
+    // set, while the rows are widgets - so off the application thread it is posted, and the queued call checks the
+    // dialog is still there (it captures the widget, not the Impl).
+    if (data->manager != nullptr) {
+        data->commands_handler = data->manager->commandsChanged.connect([this](vn::appfw::CommandManager&, vn::EventArgs&) {
+            if (MainThreadDispatcher::isMainThread()) {
+                refresh();
+                return;
+            }
+            QPointer<QDialog> alive = impl<QDialog>();
+            static_cast<void>(MainThreadDispatcher::postToMainThread([this, alive] {
+                if (!alive.isNull()) {
+                    refresh();
+                }
+            }));
+        });
+    }
 }
 
 CommandManagerDialog::~CommandManagerDialog()
 {
+    dptr()->commands_handler.disconnect();
     // d is released by UIElement
 }
 
 void CommandManagerDialog::refresh()
 {
     auto* data = dptr();
+
+    // The selection is remembered by NAME: the table is a plain projection of commandInfos() and is rebuilt from
+    // scratch, so toggling a command would otherwise drop the row the user is working on.
+    const String selected = data->selectedName();
+
     data->table->setRowCount(0);
     if (!data->manager) {
         updateActions();
@@ -134,7 +180,7 @@ void CommandManagerDialog::refresh()
         data->table->insertRow(row);
 
         data->table->setItem(row, 0, new QTableWidgetItem(Convert::toQString(info.name)));
-        data->table->setItem(row, 1, new QTableWidgetItem(info.enabled ? translate("appfw", "Enable") : translate("appfw", "Disabled")));
+        data->table->setItem(row, 1, new QTableWidgetItem(info.enabled ? translate("appfw", "Enabled") : translate("appfw", "Disabled")));
 
         QString aliases;
         bool    first = true;
@@ -160,7 +206,30 @@ void CommandManagerDialog::refresh()
     }
 
     applyFilter();
+    data->selectByName(selected);
     updateActions();
+}
+
+String CommandManagerDialog::Impl::selectedName() const
+{
+    const int row = table->currentRow();
+    return row >= 0 ? nameOfItem(table->item(row, 0)) : String{};
+}
+
+void CommandManagerDialog::Impl::selectByName(const String& name)
+{
+    if (name.empty()) {
+        return;
+    }
+
+    const QString wanted = Convert::toQString(name);
+    for (int row = 0; row < table->rowCount(); ++row) {
+        const auto* item = table->item(row, 0);
+        if (item != nullptr && item->text() == wanted && !table->isRowHidden(row)) {
+            table->selectRow(row);
+            return;
+        }
+    }
 }
 
 void CommandManagerDialog::applyFilter()
@@ -196,16 +265,18 @@ void CommandManagerDialog::toggleSelectedEnabled()
         return;
     }
 
-    const auto*  u16  = name_item->text().utf16();
-    const String name = String::fromUtf16(reinterpret_cast<const char16_t*>(u16), name_item->text().size());
+    // Taken out of the table before the manager is touched: setCommandEnabled() fires commandsChanged(), the dialog
+    // refreshes itself from it, and every item of the old rows - this one included - is gone by the time it returns.
+    const String  name  = nameOfItem(name_item);
+    const QString label = name_item->text();
 
     // Disabling is a flag on the registration, never a removal, so the command keeps
     // its metadata and its aliases and can be enabled again at any time.
     const bool enable = !data->manager->isCommandEnabled(name);
     data->manager->setCommandEnabled(name, enable);
 
-    data->message_label->setText(enable ? translate("appfw", "Enabled the command \"%1\".").arg(name_item->text())
-                                        : translate("appfw", "Disabled the command \"%1\" (it stays disabled after a restart).").arg(name_item->text()));
+    data->message_label->setText(enable ? translate("appfw", "Enabled the command \"%1\".").arg(label)
+                                        : translate("appfw", "Disabled the command \"%1\" (it stays disabled after a restart).").arg(label));
     refresh();
 }
 
@@ -221,11 +292,9 @@ void CommandManagerDialog::updateActions()
         return;
     }
 
-    const auto*  u16     = item->text().utf16();
-    const String name    = String::fromUtf16(reinterpret_cast<const char16_t*>(u16), item->text().size());
-    const bool   enabled = data->manager != nullptr && data->manager->isCommandEnabled(name);
-
-    data->toggle_btn->setText(enabled ? translate("appfw", "Disable command") : translate("appfw", "Enable command"));
+    data->toggle_btn->setText(item != nullptr && data->manager != nullptr && data->manager->isCommandEnabled(nameOfItem(item))
+                               ? translate("appfw", "Disable command")
+                               : translate("appfw", "Enable command"));
 }
 
 inline auto CommandManagerDialog::dptr() -> Impl*

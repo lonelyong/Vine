@@ -308,6 +308,10 @@ class VN_APPFW_API CommandManager {
      * caller asked for. Undoable commands notify the document snapshot handler
      * before executing.
      *
+     * @warning
+     * - The pointer is borrowed for the whole execution, which is this call: a temporary at the call site is destroyed
+     *   before the command finishes. executeCommandAsync(std::unique_ptr<Command>) is the owning shape.
+     *
      * @param command Command to execute; must not be null.
      * @param target  What the dispatch resolved for this execution; everything null when it resolved nothing.
      * @return The execution outcome; Failed when the command's name is registered
@@ -355,6 +359,11 @@ class VN_APPFW_API CommandManager {
      * foreground chain and is subject to the serialization gate; a nested child
      * goes through CommandExecutionContext::executeChild() instead.
      *
+     * @warning
+     * - The pointer is borrowed for the whole execution, not just this call: the task is lazy, so a temporary at the
+     *   call site is already destroyed when it is awaited. Keep the instance alive until the task finishes, or hand
+     *   it over with the overload below, which owns it.
+     *
      * @param command Command to execute; must not be null.
      * @param target  What the dispatch resolved for this execution; everything null when it resolved nothing.
      * @return A task yielding the execution outcome; Failed when the command's name
@@ -362,6 +371,21 @@ class VN_APPFW_API CommandManager {
      *         setCommandEnabled().
      */
     vn::async::Task<CommandResult> executeCommandAsync(Command* command, const CommandTarget& target = {});
+
+    /**
+     * @brief Executes a command the caller hands over, asynchronously.
+     *
+     * @details
+     * - The owning shape of executeCommandAsync(Command*): the task's frame owns the instance, so a caller that built
+     *   the command on the spot does not have to outlive the execution - abandoning the task destroys it without
+     *   running anything.
+     * - Same execution path otherwise: own chain, the serialization gate, and the disabled-instance rule.
+     *
+     * @param command Command to execute; null is refused with `Failed` rather than run.
+     * @param target  What the dispatch resolved for this execution; everything null when it resolved nothing.
+     * @return A lazy task yielding the execution outcome.
+     */
+    vn::async::Task<CommandResult> executeCommandAsync(std::unique_ptr<Command> command, const CommandTarget& target = {});
 
     /**
      * @brief Executes a registered command by name asynchronously.

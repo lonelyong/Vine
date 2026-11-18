@@ -96,6 +96,7 @@
 #include <vine/logging/LogSink.hpp>
 
 #include "ConsoleUserIO.hpp"
+#include "gui/CommandHistory.hpp"
 
 #include "fixtures/TestGuiApplication.hpp"
 
@@ -3583,6 +3584,86 @@ TEST_F(GuiTest, CommandManager_RegistrationOwner)
     cm->unregisterCommand(ownedName);
 }
 
+// 注册归属只有一个家：标签存在应用上，CommandManager 的两个入口读写的是同一个值。旧实现各存一份，
+// 所以直接调 app->setRegistrationOwner() 会让命令的 owner 与文档层看到的不一致。
+TEST_F(GuiTest, CommandManager_RegistrationTagLivesOnTheApplication)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vn::String(u8"tagProbe");
+    cm->unregisterCommand(name);
+
+    app->setRegistrationOwner(u8"tagPlugin");
+    EXPECT_EQ(cm->registrationOwner(), vn::String(u8"tagPlugin")) << "管理器读的是应用上的标签";
+
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
+    const auto owned = cm->commandInfosForPlugin(vn::String(u8"tagPlugin"));
+    ASSERT_EQ(owned.size(), 1u);
+    EXPECT_EQ(owned[0].name, name);
+
+    cm->setRegistrationOwner({});
+    EXPECT_TRUE(app->registrationOwner().empty()) << "经管理器设置也落在同一个家";
+
+    cm->unregisterCommand(name);
+}
+
+// 别名不能占用已注册的命令名，也不能成环：两者都会让某个名字永远解析不到，旧实现静默接受。
+TEST_F(GuiTest, CommandManager_RejectsAnAliasThatShadowsOrLoops)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name   = vn::String(u8"aliasShadowProbe");
+    const auto first  = vn::String(u8"aliasCycleFirst");
+    const auto second = vn::String(u8"aliasCycleSecond");
+    cm->unregisterCommand(name);
+    cm->unregisterAlias(first);
+    cm->unregisterAlias(second);
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
+
+    // 名字被命令占着：拒绝，否则别名会先被解析到，命令在自己的名字下就不可达了。
+    EXPECT_FALSE(cm->registerAlias(name, vn::String(u8"someOtherName")));
+
+    // 指向未注册的名字照旧合法（插件可以在命令注册前声明别名）。
+    ASSERT_TRUE(cm->registerAlias(first, second));
+    // 反向边会成环：resolveName() 走一圈回到自己，只能解析不到。
+    EXPECT_FALSE(cm->registerAlias(second, first));
+    EXPECT_FALSE(cm->registerAlias(first, first)) << "自称别名也是环";
+
+    // 指向已注册命令仍然是正常用法。
+    cm->unregisterAlias(first);
+    EXPECT_TRUE(cm->registerAlias(first, name));
+
+    cm->unregisterAlias(first);
+    cm->unregisterAlias(second);
+    cm->unregisterCommand(name);
+}
+
+// 交出去的实例由任务的帧持有：调用方可以立刻丢掉自己的 unique_ptr（借用版要求它活到任务结束）。
+TEST_F(GuiTest, CommandManager_OwningInstanceEntryOutlivesTheCaller)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    auto owned = std::make_unique<DummyCommand>();
+    auto task  = cm->executeCommandAsync(std::move(owned));
+    ASSERT_EQ(owned, nullptr) << "实例已经交给任务";
+
+    // 指针在调用方已经被丢掉：任务跑完就说明帧持有它，而不是借用一个早已销毁的对象。
+    const auto result = task.result();
+    EXPECT_EQ(result.status(), vn::appfw::CommandStatus::Success);
+
+    // 空实例：拒绝而不是解引用。
+    const auto refused = cm->executeCommandAsync(std::unique_ptr<vn::appfw::Command>{}).result();
+    EXPECT_EQ(refused.status(), vn::appfw::CommandStatus::Failed);
+}
 TEST_F(GuiTest, CommandManager_MissingTargetIsRefusedBeforeTheBodyRuns)
 {
     // 命令声明它需要哪一层，框架统一拒绝：命令体自己不再写一遍空链判断，结果里说清缺什么。
@@ -6388,10 +6469,10 @@ TEST_F(GuiTest, CommandManager_ResolvesAliasChains)
     ASSERT_NE(it, infos.end());
     EXPECT_EQ(it->aliases.size(), 2u);
 
-    // 环：不挂死，只是解析不到命令。
+    // 环：注册那条会成环的边时就拒绝（旧实现接受，之后只能靠"执行后没反应"反推）。
     ASSERT_TRUE(cm->registerAlias(loop_a, loop_b));
-    ASSERT_TRUE(cm->registerAlias(loop_b, loop_a));
-    EXPECT_FALSE(cm->isCommandEnabled(loop_a)) << "环解析不到命令";
+    EXPECT_FALSE(cm->registerAlias(loop_b, loop_a)) << "反向边成环，注册即拒绝";
+    EXPECT_FALSE(cm->isCommandEnabled(loop_a)) << "挂着一个未注册的名字，解析不到命令";
     EXPECT_EQ(cm->executeCommandAndWait(loop_a).status(), vn::appfw::CommandStatus::Failed);
 
     cm->unregisterAlias(first);
@@ -9434,6 +9515,113 @@ TEST(UserIOTest, AnAnswerIsNotACommandLine)
     cm->clearHistory();
 }
 
+// 点读与数读同一条规则：非有限值不是坐标（`toDouble` 接受 "nan"），GUI 侧原地重提示。
+TEST(UserIOTest, PointReadRefusesANonFiniteCoordinate)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    std::optional<vn::math::Point3d> point;
+    std::thread runner([&] { point = io->getPoint3dAsync(u8"点> ").result(); });
+    pump_until([&] { return output->toPlainText().contains(QStringLiteral("点> ")); });
+
+    panel.lineEntered.trigger(vn::String(u8"nan,1,2"));
+    EXPECT_FALSE(point.has_value()) << "nan 不是坐标，读要继续等";
+
+    // 拒绝要看得见：提示重新上屏，读仍在等（不靠文案，数提示出现几次）。
+    const auto prompt_count = [output] {
+        int        n  = 0;
+        const auto at = output->toPlainText();
+        for (int position = at.indexOf(QStringLiteral("点> ")); position >= 0;
+             position     = at.indexOf(QStringLiteral("点> "), position + 1)) {
+            ++n;
+        }
+        return n;
+    };
+    EXPECT_GE(prompt_count(), 2) << "非有限坐标要重新提示";
+
+    panel.lineEntered.trigger(vn::String(u8"1,2,3"));
+    runner.join();
+    ASSERT_TRUE(point.has_value());
+    EXPECT_DOUBLE_EQ(point->x, 1.0);
+    EXPECT_DOUBLE_EQ(point->z, 3.0);
+
+    bindConsole(app, nullptr);
+}
+
+// 面板被解绑（或换面板）时，挂着的读必须收尾：提示画在旧面板上，新面板里没有它可答的问题。
+TEST(UserIOTest, RebindingTheConsoleReleasesAReadThatWasWaiting)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(io, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    std::optional<vn::String> answer;
+    std::thread               runner([&] { answer = io->getStringAsync(u8"解绑> ").result(); });
+    pump_until([&] { return output->toPlainText().contains(QStringLiteral("解绑> ")); });
+
+    bindConsole(app, nullptr);
+    runner.join();
+
+    EXPECT_FALSE(answer.has_value()) << "解绑必须让读以 nullopt 收尾，而不是挂到关机";
+}
+
+// 历史有界：一个跑了很多命令的会话不能无限长（旧行为每执行一行长一条）。
+TEST(CommandHistoryTest, DropsTheOldestEntryAtTheBound)
+{
+    const auto kMax = vn::appfw::gui::CommandHistory::kMaxEntries;
+    ASSERT_GT(kMax, 4u);
+
+    vn::appfw::gui::CommandHistory history;
+    constexpr std::size_t           kExtra = 10;
+    const auto                      text_of = [](std::size_t index) {
+        return vn::String::fromUtf8(std::string("cmd") + std::to_string(index));
+    };
+    for (std::size_t i = 0; i < kMax + kExtra; ++i) {
+        history.add(text_of(i));
+    }
+
+    // 最新的仍在最后；最旧的几条已经被丢掉（前进到最早那一条就停住）。
+    EXPECT_EQ(history.previous({}), text_of(kMax + kExtra - 1));
+    vn::String oldest;
+    for (std::size_t i = 1; i < kMax; ++i) {
+        oldest = history.previous({});
+    }
+    EXPECT_EQ(oldest, text_of(kExtra));
+    EXPECT_EQ(history.previous({}), oldest) << "到头了就是最早保留的那一条";
+}
+
 // 命令管理对话框：表格是 commandInfos() 的一份视图 —— 禁用的命令仍然列出（变灰而不是消失），
 // 开关按钮改的是管理器里的启用标志，命令从不被注销。
 TEST(CommandManagerDialogTest, ListsEveryCommandAndKeepsADisabledOneListed)
@@ -9486,6 +9674,88 @@ TEST(CommandManagerDialogTest, ListsEveryCommandAndKeepsADisabledOneListed)
     EXPECT_TRUE(cm->isCommandEnabled(name)) << "按钮改的是管理器里的启用标志";
     EXPECT_TRUE(cm->isRegistered(name)) << "禁用/启用从不注销命令";
 
+    cm->unregisterCommand(name);
+}
+
+// 对话框开着时命令集合变化要自己刷新（旧实现只能手动点 Refresh：插件的注册/卸载看不到）。
+TEST(CommandManagerDialogTest, FollowsTheCommandSetWhileOpen)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vn::String(u8"dialogLiveProbe");
+    cm->unregisterCommand(name);
+
+    guifw::CommandManagerDialog dialog(cm);
+    auto* table = dialog.impl<QWidget>()->findChild<QTableWidget*>();
+    ASSERT_NE(table, nullptr);
+    const int before = table->rowCount();
+
+    // 从工作线程注册：事件把它投递给应用线程，下一次事件泵才生效。
+    std::thread registrant([&] { static_cast<void>(cm->registerCommand<DummyCommand>(name)); });
+    registrant.join();
+    EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+
+    EXPECT_EQ(table->rowCount(), before + 1) << "开着的对话框要自己跟上命令集合";
+    bool listed = false;
+    for (int row = 0; row < table->rowCount(); ++row) {
+        const auto* item = table->item(row, 0);
+        listed            = listed || (item != nullptr && fromQString(item->text()) == name);
+    }
+    EXPECT_TRUE(listed);
+
+    cm->unregisterCommand(name);
+}
+
+// 表格每次重建，但选中行按命令名跟回去：连续开关同一条命令不该让人重新找行。
+TEST(CommandManagerDialogTest, KeepsTheSelectionAcrossARebuild)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vn::String(u8"dialogSelectionProbe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<DummyCommand>(name));
+
+    guifw::CommandManagerDialog dialog(cm);
+    auto* table = dialog.impl<QWidget>()->findChild<QTableWidget*>();
+    ASSERT_NE(table, nullptr);
+
+    const auto row_of = [table](const vn::String& command) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            const auto* item = table->item(row, 0);
+            if (item != nullptr && fromQString(item->text()) == command) {
+                return row;
+            }
+        }
+        return -1;
+    };
+
+    const int row = row_of(name);
+    ASSERT_GE(row, 0);
+    table->selectRow(row);
+
+    // 关掉再开回来：两次都经过一次 refresh()，选中必须还在同一条命令上。
+    for (int i = 0; i < 2; ++i) {
+        for (auto* button : dialog.impl<QWidget>()->findChildren<QPushButton*>()) {
+            const auto text = fromQString(button->text());
+            if (text == vn::appfw::translate("appfw", "Disable command")
+                || text == vn::appfw::translate("appfw", "Enable command")) {
+                button->click();
+                break;
+            }
+        }
+
+        const int current = table->currentRow();
+        ASSERT_GE(current, 0) << "重建之后选中不能丢";
+        EXPECT_EQ(fromQString(table->item(current, 0)->text()), name);
+    }
+
+    EXPECT_TRUE(cm->isCommandEnabled(name)) << "两次点击回到启用";
     cm->unregisterCommand(name);
 }
 
