@@ -42,7 +42,7 @@ Order is by "what a reader needs first", not by directory. One batch ≈ 1–1.5
 | **M6** | geometry | 14 / 3,381 (4 batches) | independent of graphics. **Landed 2026-11-17 in one cleanup commit plus eleven translation commits** (`c6e5b3f7` cleanup, then `0d3d70c2`, `67a67dbf`, `c3f4a4ac`, `911baff4`, `aef4deec`, `d0ca643e`, `21992495`, `15371f70`, `94d0007f`, `c1578836`, `347666af`): every `geometry-*` page is English |
 | **M7** | remaining design pages | 12 / 3,206 (2 batches) | crypto, io, robotics, async, … **Landed 2026-11-18**: cleanup commits `127ccf82` (six pages) and `430fbeea` (robotics-io, async); twelve pages converted - `window-design`, `robotics-proximity-design`, `imaging-design`, `imageio-design`, `iobase-vfs-design`, `robotics-io-design`, `async-design`, `base-crash`, `math-base-layer`, `crypto`, `brep-operations`, `meshio-brepio-design` (`45b8a43f`, `283daef7`, `cd4fea8a`, `9338dc1d`, `331bf75f`, `0f1bf541`, `4c8362b6`, `3e04c759`, `51bbe237`, `e3b803ca`, `a428d281`). M7 is closed — every `.ai/design/*.md` page is English; `appfw-startup-phases` keeps four Han characters inside a code fence, because the fence quotes a UI string the source contains |
 | **M8** | `.ai/backlog/**` | 13 / 781 | **Landed 2026-11-18 in six commits** (`e75040b4`, `64083e21`, `33e2a4ad`, `cdbacb4e`, `1b78860c`, `6c9d9e28`): every `.ai/backlog/*.md` page is English. `appfw-startup` keeps 12 Han characters (`stage("正在启动")`) and `appfw-translation` 17 (the crash-report field names), both literals in the source. `graphics.md` needed a content fix first: its `T35` row had grown into a 13,477-character landing log, which the backlog rules forbid, so it was trimmed to the switch-gate evidence plus the open items in the same commit |
-| **M9** | English summaries for ADRs and bug postmortems | 125 files (89 ADRs + 36 bugs) | **Landed 2026-11-18 in nine commits** (`207e76ce`, `b3b8ea26`, `4bfb4290`, `e3e15282`, `945424b0`, `6540f494`, `098fc443`, `cb625332`, `a1ef19d6`): one `> **EN**: …` line below the front block of each file and no rewriting, so the diff is two inserted lines per file. Superseded and superseding ADRs name each other in both directions, and the documentation-language ADR states that it is already English. |
+| **M9** | English summaries for ADRs and bug postmortems | 125 files (89 ADRs + 36 bugs) | **Landed 2026-11-18 in nine commits** (`207e76ce`, `b3b8ea26`, `4bfb4290`, `e3e15282`, `945424b0`, `6540f494`, `098fc443`, `cb625332`, `a1ef19d6`): one `> **EN**: …` line below the front block of each file and no rewriting, so the diff is two inserted lines per file. Superseded and superseding ADRs name each other in both directions, and the documentation-language ADR states that it is already English. **Then converted**: the amendment of 2026-11-18 (`a9ecf45a`) narrowed decision 4, so all **36 bug postmortems were translated whole** in six commits (`0b913877`, `28e6d182`, `9107935e`, `be7464f0`, `a4d322e3`, `348b91b1`) and lost their now-redundant summary line; ADRs keep original text plus summary. `.ai/bugs/**` is English. |
 | **M10** | close-out | — | drop the Chinese chapter names from the gate, delete this plan, close the ADR |
 
 ## 3. Acceptance for every batch
@@ -77,8 +77,11 @@ A translation is **not an edit**. Each batch must pass all of these:
 
 ## 5. What is never translated
 
-- **ADRs** and **bug postmortems**: original text is the record; an `> **EN**: …` summary and dated
-  amendments are appended.
+- **ADRs**: original text is the record; an `> **EN**: …` summary and dated amendments are appended.
+  **Bug postmortems used to be on this list**: since the amendment of 2026-11-18 they are **converted
+  whole** (git holds the original), because a 30-90 line postmortem is read for its verdict and a summary
+  of it repeats the same fact (`G1`). The reason an ADR stays: its trade-offs and rejected options are the
+  argument a later session argues against, so its wording is the evidence.
 - **`.ai/research/**`**: dated, non-authoritative, deleted when converted; new ones are English.
 - **Identifiers, code blocks, tables' keys, diagnostic codes, test names**: unchanged.
 - **`docs/guides/**`**: product documentation; see open question 1.
