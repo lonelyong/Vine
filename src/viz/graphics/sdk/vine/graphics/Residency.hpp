@@ -69,11 +69,15 @@ struct ResidencyRow
  *   well: "nothing is resident" and "nobody counted" stay different answers, which is the same rule the rows
  *   follow one level down.
  * - `PROGRAMS` IS WHY THE TOTAL IS STILL SILENT, and it is a property of the APIs rather than a missing tally:
- *   neither backend can ask how many bytes a compiled pipeline occupies (Vulkan has no such query and vsg exposes
- *   none either), so that row reports a count and leaves `bytes` disengaged on BOTH sides. Every other kind is
- *   measured - vk reports a real 0 for `Materials` (nothing survives a frame) and vsg sums its resident stream
- *   bytes - so `unknown` is 1 on either backend and a host reads the ROWS it needs rather than this figure. What
- *   to do with a total no backend can ever complete is `.ai/backlog/graphics.md` T45.
+ *   no GPU API reports the memory a compiled pipeline occupies - Vulkan has no query, D3D12's allocation info covers
+ *   resources and not PSOs, Metal's `allocatedSize` likewise, and WebGPU exposes neither - so that row reports a
+ *   count and leaves `bytes` disengaged everywhere. Every other kind IS measured (vk reports a real 0 for
+ *   `Materials`, nothing surviving a frame; vsg sums its resident stream bytes), so `unknown` is 1 on either
+ *   backend and a host reads the ROWS it needs rather than this figure.
+ * - THE TOTAL IS NOT THE ANSWER TO "HOW MUCH VRAM": that figure belongs to the DEVICE (vk measures it internally,
+ *   D3D12 `QueryVideoMemoryInfo`, Metal `currentAllocatedSize`), and reaching a host is a capability plus a report
+ *   part (`.ai/backlog/graphics.md` T46). This struct stays what it is - a sum of the rows that could report -
+ *   and T45 records the decision about its two fields.
  */
 struct ResidencyTotals
 {
