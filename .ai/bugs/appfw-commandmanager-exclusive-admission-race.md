@@ -1,34 +1,32 @@
-# CommandManager Exclusive 运行期间仍接受普通顶层命令
+# CommandManager: an ordinary top-level command is still admitted while Exclusive runs
 
-- **状态**：待修复；设计文档已记录该缺口，现有测试未覆盖运行期普通命令准入。
-- **发现日期**：2026-11-02
-- **模块**：`src/fw/appfw`
-- **涉及**：`CommandManager::Impl::takeOverForeground()`、`admit()`、`exclusive_busy`
+- **Status**: Open; the design page records the gap, and existing tests do not cover ordinary admission while Exclusive runs.
+- **Found**: 2026-11-02
+- **Module**: `src/fw/appfw`
+- **Files**: `CommandManager::Impl::takeOverForeground()`, `admit()`, `exclusive_busy`
 
-> **EN**: Open finding: Exclusive raises `exclusive_busy` only after cancelling and waiting for the registered live chains, and the ordinary top-level admission branch never checks the flag, so ordinary commands can start while Exclusive runs. The takeover is a snapshot of chains rather than an admission barrier covering its whole lifetime (`G3`, `G10`).
+## Symptom and impact
 
-## 现象与影响
+A top-level Exclusive command sets `exclusive_busy` only after it has cancelled the registered live chains and waited for them. During that wait and while the Exclusive command runs, the admission branch for ordinary top-level commands never checks the state, so such a command can still start and run concurrently with the Exclusive command.
+That contradicts the intuitive meaning of Exclusive "taking over the foreground", and it can let new concurrent work appear right after the taken-over commands finish.
 
-顶层 Exclusive 命令取消并等待已登记的活链后才设置 `exclusive_busy`。等待期间及 Exclusive 命令执行期间，普通顶层命令的准入分支不检查该状态，因此仍可能启动并与 Exclusive 命令并发。
-这不符合 Exclusive “接管前台”的直观语义，也可能让被接管命令刚结束后又出现新的并发工作。
+## Root cause
 
-## 根因
+Exclusive currently implements "take a snapshot of the live chains and cancel them", not an admission barrier that lasts from the start of the takeover to the end of the command. No reservation covers the whole flow between cancelling the snapshot, waiting for the drain and admitting the Exclusive command.
 
-Exclusive 当前实现的是“取得活链快照并取消”，不是从接管开始一直持续到命令结束的准入屏障。取消快照、等待排空、Exclusive 准入之间没有一个覆盖全流程的保留状态。
+## Suggested fix
 
-## 修改建议
+1. Set a "takeover in progress" state atomically inside the manager's mutex when the takeover starts, and have ordinary top-level admission check and refuse it.
+2. Keep that reservation for the whole execution lifetime of the Exclusive command once the takeover succeeds; clear it through RAII on every path - timeout, abort by `cancelAll()`, exception and normal completion.
+3. Decide how two Exclusive requests submitted at the same time are handled; one should hold the takeover right and the other be refused explicitly, rather than each taking a different live-chain snapshot.
+4. Check the precedence between the LongRunning busy gate and the Exclusive reservation so that interleaved release does not open admission unexpectedly.
 
-1. 在开始接管时，在管理器互斥区内原子设置“接管中”状态，并让普通顶层准入检查并拒绝该状态。
-2. 在接管成功后让该保留状态覆盖 Exclusive 命令的整个执行生命周期；在超时、被 `cancelAll()` 中止、异常和正常结束等所有路径上通过 RAII 清除。
-3. 明确两个同时提交的 Exclusive 请求如何处理；建议一个持有接管权，另一个明确拒绝，而不是各自取得不一致的活链快照。
-4. 核对 LongRunning 忙碌门与 Exclusive 保留状态的优先级，避免因交错释放而意外开放准入。
+## Verification plan
 
-## 验证建议
+- Start an Exclusive request while a controllable old command runs; submit an ordinary short command during the takeover wait and verify it does not start.
+- Submit an ordinary top-level command while the Exclusive body runs and verify it is still refused.
+- Cover drain timeout, abort by `cancelAll()`, two Exclusive requests submitted together and normal completion, and verify the admission state recovers correctly in each.
 
-- 一个可控的旧命令运行时启动 Exclusive 请求；在接管等待阶段提交普通短命令，验证其不会开始执行。
-- Exclusive 命令体运行期间提交普通顶层命令，验证仍被拒绝。
-- 覆盖排空超时、`cancelAll()` 中止、同时提交两个 Exclusive 和正常收尾，验证准入状态均能正确恢复。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G3**（执行流程一致性）和 **G10**（并发状态与生命周期）。
+The finding touches **G3** (one readable execution flow) and **G10** (concurrent state and lifetime).

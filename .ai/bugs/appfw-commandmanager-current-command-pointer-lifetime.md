@@ -1,32 +1,30 @@
-# CommandManager::currentCommand 返回值无法保证并发生命周期
+# CommandManager::currentCommand cannot guarantee the lifetime of the value it returns across threads
 
-- **状态**：待修复；由 API 并发契约审查发现，尚无专用并发测试。
-- **发现日期**：2026-11-02
-- **模块**：`src/fw/appfw`
-- **涉及**：`CommandManager::currentCommand()`、`Chain::innermost()`
+- **Status**: Open; found by a review of the API concurrency contract, there is no dedicated concurrency test.
+- **Found**: 2026-11-02
+- **Module**: `src/fw/appfw`
+- **Files**: `CommandManager::currentCommand()`, `Chain::innermost()`
 
-> **EN**: Open finding from a concurrency review: `currentCommand()` reads the stack top under the chain lock and releases the lock before returning, so another thread can end the command and destroy it while the caller still holds the pointer. The mutex protects the read, not the object's lifetime (`G4`, `G10`).
+## Symptom and impact
 
-## 现象与影响
+`currentCommand()` reads the top `Command*` under the chain lock, and the lock is released before it returns. Another thread can end the command and destroy the instance afterwards; if the caller keeps calling member functions through that pointer it can reach a destroyed object.
+The documentation says the pointer "is valid only while the command runs", but a concurrent caller cannot tell from that return value when the command ends.
 
-`currentCommand()` 在链锁保护下读取栈顶 `Command*`，返回前锁即释放。另一个线程此后可以结束命令并销毁实例；调用方若继续调用该指针的成员函数，就可能访问已销毁对象。
-文档虽说明指针“只在命令运行时有效”，但并发调用者无法通过该返回值判断命令何时结束。
+## Root cause
 
-## 根因
+The mutex protects the pointer read only; it does not extend the lifetime of the command instance. `raw_ptr` is an ordinary non-owning pointer and provides neither concurrency safety nor lifetime management.
 
-互斥锁只保护了指针读取，没有延长命令实例的生命周期。`raw_ptr` 是普通非拥有指针，不提供并发安全或生命周期管理。
+## Suggested fix
 
-## 修改建议
+1. Prefer a query with value semantics - for example a snapshot of the current command name or type identity - and have the caller use `cancelCurrent()` for the control operation.
+2. If the full command object really has to be reached, introduce a shared owner or execution handle that can be held, and state its relationship to destruction and to plugin unload; do not just turn the raw pointer into a thinner wrapper.
+3. If the raw-pointer API stays for now, restrict it explicitly to diagnostic use where external synchronisation is guaranteed for the duration of the call, and do not offer it as a thread-safe query.
 
-1. 优先提供值语义查询，例如返回当前命令名、类型标识等不可变快照，并让调用方用 `cancelCurrent()` 执行控制操作。
-2. 若确实需要访问完整命令对象，应引入可持有的共享所有权/执行句柄，并明确析构与插件卸载关系；不能只把裸指针改成另一种表面包装。
-3. 若暂时保留裸指针 API，应明确限制为调用期间有外部同步保证的诊断用途，并避免其作为线程安全查询接口。
+## Verification plan
 
-## 验证建议
+- Add a test that queries concurrently with a command ending, and verify the snapshot API is still safe to read after the command has ended.
+- Check every `currentCommand()` call site in the repository and confirm none of them reaches a command through a raw pointer without a lifetime guarantee.
 
-- 增加并发查询与命令结束的测试，验证快照 API 在命令结束后仍可安全读取。
-- 检查仓库内所有 `currentCommand()` 调用点，确认不再通过未持有生命周期保证的裸指针访问命令。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G4**（返回值与生命周期语义明确）和 **G10**（并发与对象所有权）。
+The finding touches **G4** (return value and lifetime semantics stated) and **G10** (concurrency and object ownership).

@@ -1,34 +1,32 @@
-# CommandManager 并发更新禁用偏好可能互相覆盖
+# CommandManager: concurrent updates of the disabled preference can overwrite each other
 
-- **状态**：待修复；设计文档记录了该操作假定由 UI 线程调用，尚无线程约束测试。
-- **发现日期**：2026-11-02
-- **模块**：`src/fw/appfw`
-- **涉及**：`CommandManager::setCommandEnabled()`、`Impl::setDisabledPreference()`、`ConfigManager`
+- **Status**: Open; the design page records that this operation assumes it is called from the UI thread, and there is no test of that thread constraint.
+- **Found**: 2026-11-02
+- **Module**: `src/fw/appfw`
+- **Files**: `CommandManager::setCommandEnabled()`, `Impl::setDisabledPreference()`, `ConfigManager`
 
-> **EN**: Open finding: `setCommandEnabled()` updates the disabled list as a read, modify and write-back over separate config calls, so two concurrent calls can each drop the other's preference even though each single read and write is protected. The API neither declares single-thread use nor offers an atomic update (`G4`, `G6`, `G10`).
+## Symptom and impact
 
-## 现象与影响
+Two concurrent `setCommandEnabled()` calls can read the same disabled-command list, each modify it, and write it back. The later writer can overwrite the other's preference, so a user setting is lost.
+Even when the configuration manager protects the single read and the single write, the read-modify-write across two calls is not atomic.
 
-两个并发的 `setCommandEnabled()` 调用可以同时读取同一份禁用命令列表，各自修改后再写回。后写入的一方可能覆盖先写入的另一项偏好，导致用户设置丢失。
-即使配置管理器分别保护单次读取和写入，这个跨两次调用的读—改—写仍不是原子操作。
+## Root cause
 
-## 根因
+Updating the disabled preference depends on several steps - read the list, modify a copy, write the list back - while the public API neither declares that it must be called from a single thread nor offers an atomic update.
 
-禁用偏好的更新依赖“读取列表 → 修改副本 → 写回列表”多个步骤，而公开 API 没有声明必须在单一线程调用，也没有提供原子更新接口。
+## Suggested fix
 
-## 修改建议
+1. Decide the contract first: if the operation may only be called from the application thread, state the thread affinity in the public documentation and add a thread assertion where that is feasible.
+2. If concurrent calls are supported, offer an atomic update of the configuration array, or use a synchronisation mechanism that covers the whole update and does not fire re-entrant callbacks while the lock is held.
+3. Keep the registry state and the persisted preference consistent; state which result the runtime `enabled` flag takes when the configuration write fails.
+4. Do not just lock the single `ConfigManager` getter and setter - that does not fix a lost update between two calls.
 
-1. 先决定接口契约：若该操作只能在应用线程调用，应在公开文档明确线程亲和性，并在可行处加入线程断言。
-2. 若支持多线程调用，应提供配置数组的原子更新操作，或使用能涵盖完整更新且不会在锁内触发重入回调的同步机制。
-3. 保持 registry 状态更新和持久化偏好的一致性；明确配置写入失败时，执行期的 `enabled` 标志应采用何种结果。
-4. 不要只给 `ConfigManager` 单次 getter/setter 加锁，那不能解决两个调用之间的丢失更新。
+## Verification plan
 
-## 验证建议
+- Enable and disable two different commands concurrently, using a barrier so both write back after reading the old list, and verify both preferences survive.
+- If application-thread affinity is chosen, verify that a call from the wrong thread is rejected or diagnosed explicitly instead of racing silently.
+- Cover the expected behaviour of the registry enable state and of the persisted state when the configuration write fails.
 
-- 并发启用/禁用两个不同命令，使用屏障让两边在读出旧列表后再写回；验证两项最终偏好都保留。
-- 若采用应用线程限定，则验证错误线程调用会被明确拒绝或诊断，而不是悄悄竞争。
-- 覆盖配置写入失败时注册表启用状态与持久化状态的预期行为。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G4**（线程与失败契约明确）、**G6**（错误处理一致）和 **G10**（并发状态）。
+The finding touches **G4** (thread and failure contract stated), **G6** (consistent error handling) and **G10** (concurrent state).

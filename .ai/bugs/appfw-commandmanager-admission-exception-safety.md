@@ -1,39 +1,37 @@
-# CommandManager 链准入及激活异常时状态未回滚
+# CommandManager: chain admission and activation do not roll back state on an exception
 
-- **状态**：待修复；由控制流审查发现，尚无分配失败注入测试。
-- **发现日期**：2026-11-02
-- **模块**：`src/fw/appfw`
-- **涉及**：`CommandManager::Impl::admit()`、`executeCommandAsyncImpl()`、`ChainGuard`
+- **Status**: Open; found by a control-flow review, there is no allocation-failure injection test yet.
+- **Found**: 2026-11-02
+- **Module**: `src/fw/appfw`
+- **Files**: `CommandManager::Impl::admit()`, `executeCommandAsyncImpl()`, `ChainGuard`
 
-> **EN**: Open finding from a control-flow review: chain admission sets `exclusive_busy` before the chain is registered, and `ChainGuard` is constructed before `chain->enter()` succeeds, so an allocation failure can leave Exclusive latched forever or make `leaveChain()` underflow the run count. The fix is one commit point for the flag and the registrations, with RAII covering only established state (`G10`, `G11`); no allocation-failure injection test exists yet.
+## Symptom and impact
 
-## 现象与影响
+If an allocation or a container operation throws while a chain is admitted or a command is activated, a busy state can be left behind or the chain's run count can be broken:
 
-链准入和命令激活过程中若分配或容器操作抛出异常，可能遗留忙碌状态或破坏链的运行计数：
+- `admit()` sets `exclusive_busy` before it creates the chain and registers it in the live chain set. A later allocation failure can leave Exclusive occupied forever.
+- `ChainGuard` is constructed before the progress host is created and before `chain->enter()`; if an earlier step throws it still calls `leaveChain()` while `runs` has not been incremented. Debug builds may trip the assertion, other builds may underflow the count.
+- `chain->enter()` itself can fail when the stack container grows; that path must also avoid calling `leaveChain()` for a run that was never registered.
 
-- `admit()` 在创建链、登记 live chain 之前设置 `exclusive_busy`。后续分配失败可能令 Exclusive 永久占用。
-- `ChainGuard` 在进度宿主创建和 `chain->enter()` 之前构造；若前置步骤抛异常，它仍会调用 `leaveChain()`，而 `runs` 尚未增加。Debug 构建可能触发断言，其他构建可能令计数下溢。
-- `chain->enter()` 本身也可能因栈容器扩容失败；该路径同样需要避免对未成功登记的运行执行 `leaveChain()`。
+These are exception-safety path risks, not a claim that the normal successful path has the same problem.
 
-这些是异常安全路径风险，不代表常规成功执行路径存在同样问题。
+## Root cause
 
-## 根因
+The admission flag, the chain registration, the stack registration and the RAII cleanup have no single commit point; the guard assumes every earlier step succeeded, but its scope covers invariants that are not established yet.
 
-准入标志、链登记、栈登记和 RAII 清理没有统一的提交点；guard 假设所有前置步骤已成功，但其作用域覆盖了尚未建立的不变量。
+## Suggested fix
 
-## 修改建议
+1. Design chain creation and live-registry registration as an admission transaction with the strong exception-safety guarantee; commit shared state such as `foreground` and `exclusive_busy` only after those steps succeed.
+2. Make the cleanup guard record explicitly which resources and counts it actually acquired, and release only those; do not rely on the destruction order of local variables to imply "already in the chain".
+3. Make the pairing between a successful `chain->enter()` and `leaveChain()` explicit; a failed stack registration must not decrement the run count.
+4. Avoid work that can allocate while holding the admission lock; where that is impossible, make the exception path roll back every state change.
 
-1. 把链创建和 live registry 登记设计为具备强异常安全保证的准入事务；只在这些步骤成功后提交 `foreground`、`exclusive_busy` 等共享状态。
-2. 让清理 guard 显式记录哪些资源/计数已成功取得，且只释放已取得的状态；不要依赖局部变量的析构顺序暗示“已入链”。
-3. 将 `chain->enter()` 的成功与 `leaveChain()` 的配对关系显式化；栈登记失败时不得减少运行计数。
-4. 避免在持锁的准入阶段执行可能分配的工作；若无法避免，确保异常路径可回滚所有已修改状态。
+## Verification plan
 
-## 验证建议
+- Add controllable failure injection at chain allocation, at live-chain container growth, at command-stack growth and at progress-host creation.
+- After each failure point verify that `runningCount()`, `currentCommand()`, the busy / Exclusive admission state and the admission of later commands are all back to normal.
+- Run the regression cases in a Debug build and confirm the `runs > 0` assertion does not fire.
 
-- 在链分配、live chain 容器扩容、命令栈扩容和进度宿主创建步骤加入可控失败注入。
-- 每个失败点后验证 `runningCount()`、`currentCommand()`、忙碌/Exclusive 准入状态和后续命令准入均恢复正常。
-- Debug 构建运行回归用例，确保不会触发 `runs > 0` 断言。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G10**（异常安全、分配及生命周期）和 **G11**（状态应可观测、可单独测试）。
+The finding touches **G10** (exception safety, allocation and lifetime) and **G11** (state should be observable and testable on its own).

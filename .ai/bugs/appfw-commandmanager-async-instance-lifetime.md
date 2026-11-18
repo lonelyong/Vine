@@ -1,34 +1,32 @@
-# CommandManager 异步按实例入口未说明实例借用期限
+# CommandManager: the per-instance async entry point does not state how long it borrows the instance
 
-- **状态**：待修复；由公开 API 生命周期契约审查发现，尚无专用回归用例。
-- **发现日期**：2026-11-02
-- **模块**：`src/fw/appfw`
-- **涉及**：`CommandManager::executeCommandAsync(Command*)`
+- **Status**: Open; found by a review of the public API lifetime contract, there is no dedicated regression case yet.
+- **Found**: 2026-11-02
+- **Module**: `src/fw/appfw`
+- **Files**: `CommandManager::executeCommandAsync(Command*)`
 
-> **EN**: Open finding from an API lifetime review: `executeCommandAsync(Command*)` documents only that the pointer must not be null, not that the instance must outlive the returned lazy task, so a caller that destroys the command before the task is driven leaves the coroutine with a dangling pointer. The contract has to connect the two lifetimes (`G4`, `G10`).
+## Symptom and impact
 
-## 现象与影响
+The per-instance call returns a lazy Task, and the command is reached through the raw pointer once the Task is driven. If the caller destroys the instance before the Task completes, execution can dereference a dangling pointer.
+The current comment says the argument must not be null, but not that the caller must keep the instance alive until the task completes.
 
-按实例调用返回的是惰性 Task，命令会在 Task 被驱动后访问传入的裸指针。若调用者在 Task 完成前销毁实例，执行过程可能解引用悬空指针。
-当前注释说明参数不得为 null，却没有说明调用者必须让实例存活到任务完成。
+## Root cause
 
-## 根因
+The interface takes the command as a non-owning raw pointer, while the returned async task may start or finish later than the call returns; the interface documentation does not connect the two lifetimes.
 
-接口通过非拥有裸指针接收命令，但返回的异步任务可能晚于调用返回才开始或结束；接口文档没有把这两个生命周期连接起来。
+## Suggested fix
 
-## 修改建议
+1. State an explicit contract on the existing overload: the instance must stay valid until the returned Task completes or is safely destroyed, and the caller must not destroy it concurrently.
+2. If the manager is meant to take over the lifetime, add an async overload taking `std::unique_ptr<Command>` and hold the instance in the coroutine frame until execution ends.
+3. Keep the raw-pointer overload for existing callers but position it explicitly as a borrowing API; state separately for the synchronous entry point that its borrow only has to cover the synchronous call.
+4. Add an ownership test that can be verified, so "destroy the Task" is not mistaken for a guarantee that the command ran or that a running command is cancelled.
 
-1. 为现有重载补充明确契约：实例必须保持有效，直到返回的 Task 完成或被安全销毁；调用者不得并发销毁实例。
-2. 若希望管理器接管生命周期，新增接收 `std::unique_ptr<Command>` 的异步重载，并在协程帧中持有实例直至执行结束。
-3. 保留裸指针重载以兼容现有调用方，但把它明确定位为借用 API；同步入口另行说明其借用仅需覆盖同步调用期间。
-4. 增加可验证的所有权测试，避免把“销毁 Task”误当成必然会执行命令或必然会自动取消已运行命令。
+## Verification plan
 
-## 验证建议
+- For the owning overload, verify the command lives during execution and is destroyed afterwards.
+- For the borrowing overload, verify the documentation/API test states that the caller holds the instance until the task completes.
+- Check `executeCommandAndWait(Command*)` and the other call sites against the borrow scope that applies to them.
 
-- 对拥有式重载验证命令在执行期间存活、完成后析构。
-- 对借用式重载验证文档/API 测试明确调用者持有实例直至任务完成。
-- 检查 `executeCommandAndWait(Command*)` 和其他调用点，确保它们符合相应借用期限。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G4**（所有权、生命周期及失败语义）和 **G10**（对象生命周期）。
+The finding touches **G4** (ownership, lifetime and failure semantics) and **G10** (object lifetime).
