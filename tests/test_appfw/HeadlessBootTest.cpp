@@ -53,6 +53,8 @@
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/appfw/UserIO.hpp>
 
+#include <vine/Exception.hpp>
+
 #include <vine/logging/Log.hpp>
 #include <vine/logging/LogSink.hpp>
 
@@ -312,6 +314,173 @@ TEST(HeadlessBootTest, AFailingStartupWorkEndsTheProcess)
     EXPECT_EQ(code, 1) << "启动期的异常是致命的：进程以非零码退出";
     EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "上报口照样要收掉（不该继续往一个死掉的启动里报）";
     EXPECT_FALSE(app->isBusy());
+}
+
+/// A host whose second phase waits on something that observes this boot's token.
+///
+/// The async library spells "the user asked to stop" as `TaskCancelledException` (see async::sleepFor()), so this is
+/// the shape of a host that honours `StartupProgress::stopToken()` instead of polling it: the cancellation arrives as
+/// an exception, and the boot has to treat that as a cancellation - not as a failure.
+class TokenWaitingHostApplication : public vn::appfw::Application {
+  public:
+    using Application::Application;
+
+    /// Whether the last phase ran (read by the test).
+    bool end_phase_ran = false;
+
+    vn::async::Task<void> startup() override
+    {
+        co_await Application::startup();
+
+        // The token of this boot: a plugin gets the same one through PluginLoadContext::stopToken().
+        const auto* const       boot  = vn::appfw::StartupProgress::current();
+        const std::stop_token   token = boot != nullptr ? boot->stopToken() : std::stop_token{};
+        constexpr auto          wait  = std::chrono::seconds(5);
+        co_await vn::async::sleepFor(wait, token);
+    }
+
+    vn::async::Task<void> startupEnd() override
+    {
+        end_phase_ran = true;
+        co_await Application::startupEnd();
+    }
+};
+
+/// A cancellation that reaches the driver as an exception is a cancellation: exit code 0, and no last phase.
+TEST(HeadlessBootTest, ACancelledWaitEndsTheBootWithoutCallingItAFailure)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = u8"test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false; // this case is about the host's own phase being cancelled
+
+    auto app = std::make_unique<TokenWaitingHostApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    // Cancel from "somewhere else", which is how a host or a tool asks (the startup frame has no cancel button).
+    QTimer::singleShot(20, qApp, [] {
+        if (auto* boot = vn::appfw::StartupProgress::current()) {
+            boot->requestCancel();
+        }
+    });
+
+    // Backstop: 2 is not a code this boot may return, so a hang-based regression fails instead of passing as "0".
+    QTimer::singleShot(3000, qApp, [] { QCoreApplication::exit(2); });
+
+    const int code = app->run();
+
+    EXPECT_EQ(code, 0) << "a cancellation delivered as an exception is not a failure (that path exits with 1)";
+    EXPECT_FALSE(app->end_phase_ran) << "a cancelled boot does not run its last phase";
+    EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr);
+    EXPECT_FALSE(app->isBusy());
+}
+
+/// A host whose second phase parks on a wait the loop can end under it.
+class AbandonedBootApplication : public vn::appfw::Application {
+  public:
+    using Application::Application;
+
+    /// Whether the second phase was entered (the loop must stop after that, not before).
+    std::atomic<bool> phase_started{ false };
+    /// Whether that phase's wait ran to completion (i.e. it was still parked when the loop stopped).
+    std::atomic<bool> wait_finished{ false };
+    /// Whether the last phase ran (read by the test).
+    bool end_phase_ran = false;
+
+    vn::async::Task<void> startup() override
+    {
+        co_await Application::startup();
+        phase_started.store(true);
+        co_await vn::async::sleepFor(std::chrono::milliseconds(150));
+        wait_finished.store(true);
+    }
+
+    vn::async::Task<void> startupEnd() override
+    {
+        end_phase_ran = true;
+        co_await Application::startupEnd();
+    }
+};
+
+/// The loop stops while a phase is waiting: the boot is abandoned - its reporting door is closed by shutdown() and the
+/// phases still to come are skipped, so no main window goes up in an application that is being torn down.
+TEST(HeadlessBootTest, ALoopStopDuringAPhaseLeavesNoReportingDoorAndSkipsTheRest)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = u8"test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false;
+
+    auto app = std::make_unique<AbandonedBootApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    // The loop is stopped from outside the boot (a plugin calling quit(), a host calling exit(), the last window
+    // closing) while the second phase is still parked on its wait.
+    QTimer::singleShot(10, qApp, [] { QCoreApplication::exit(0); });
+
+    const int code = app->run();
+
+    EXPECT_EQ(code, 0);
+    ASSERT_TRUE(app->phase_started.load()) << "the boot must have reached its second phase before the loop stopped";
+    ASSERT_FALSE(app->wait_finished.load()) << "this case needs the phase to still be waiting when the loop stops";
+
+    // Closing the door is shutdown()'s job: left open, isBusy() would stay true and every top-level command would be
+    // refused for the rest of the process.
+    EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "an abandoned boot must not leave its door open";
+    EXPECT_FALSE(app->isBusy());
+
+    // Let the phase's wait finish: the coroutine then posts its way back to the application thread, and delivering that
+    // call is what shows the abandoned check working.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    ASSERT_TRUE(app->wait_finished.load()) << "the wait should have finished by now, or the assertions below prove nothing";
+    ASSERT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+
+    EXPECT_FALSE(app->end_phase_ran) << "an abandoned boot skips its last phase: the window must not go up now";
+    EXPECT_EQ(vn::appfw::StartupProgress::current(), nullptr) << "a late resumption must not reopen the door";
+    EXPECT_FALSE(app->isBusy());
+}
+
+/// One Application per process: the managers and the static registries reach it through `Application::current()`, so a
+/// second one would make every one of those reads ambiguous - and the refusal has to say that, not hand out a bare code.
+TEST(HeadlessBootTest, ASecondApplicationInOneProcessIsRefusedWithAReadableReason)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = u8"test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false;
+
+    auto first = std::make_unique<vn::appfw::Application>(config, 1, argv);
+    ASSERT_NE(first, nullptr);
+
+    bool refused = false;
+    try {
+        const vn::appfw::Application second(config, 1, argv);
+        ADD_FAILURE() << "a second Application in one process must be refused";
+    }
+    catch (const vn::Exception& error) {
+        refused = true;
+        EXPECT_EQ(error.code(), vn::Exception::INVALID_OPERATION) << "the refusal must name the rule, not carry a bare code";
+        EXPECT_NE(std::string(error.what()).find("one Application"), std::string::npos) << "the message must say what the rule is";
+    }
+    EXPECT_TRUE(refused);
+
+    // The refusal must not disturb the one that is alive.
+    EXPECT_EQ(vn::appfw::Application::current(), first.get());
 }
 
 /// 叶子自己收场的宿主：取消的启动**不该**跑到最后一拍（那一拍是"撤掉启动的脸、把主窗端出来"）。

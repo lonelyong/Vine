@@ -1,6 +1,6 @@
 # appfw notes (`src/fw/appfw`)
 
-> **Last verified**: 2026-10-28.
+> **Last verified**: 2026-11-19.
 > The current design is split by module across the appfw pages under `.ai/design/`; this file holds only
 > the cross-module rules a working session must recall immediately.
 > History, rejected options and round-by-round review records are in git; open items are in
@@ -24,6 +24,18 @@
 - Startup is cancellable: `StartupProgress::stopToken()` / `requestCancel()`; `cancelStartup()` unloads the
   installed plugins + closes the progress reporter + `exit(0)`; a cancel is not a failure and the main window
   never goes on screen.
+- A cancellation that arrives as an exception is the same cancellation: `vn::async::CancellationToken` *is*
+  `std::stop_token`, so token-aware work (`sleepFor(d, token)`, `whenAll(…, token)`, `withCancellation`) throws
+  `TaskCancelledException` (`Exception::CANCELLED`). The driver maps it to `cancelStartup()` (exit 0); a plain
+  exception is still `failStartup()` (exit 1). `CommandManager` and `PluginManager::loadAllAsync()` classify the
+  same exception the same way.
+- The loop can stop while a phase is waiting: `shutdown()` closes a reporting door it still finds open, sets the
+  abandoned flag, and every suspension point of `startupSequence()` (plus the end of the plugin load) returns on
+  `bootAbandoned()` - otherwise `isBusy()` would stay true forever and the main window would go up in a torn-down
+  application. `run()` is one per Application (it ends with `shutdown()`).
+- One `Application` per process: a second construction throws `vn::Exception(INVALID_OPERATION, "only one
+  Application may exist per process")`, and the process-wide slot is withdrawn again if the constructor itself
+  throws.
 - Progress updates per phase; there is no continuous animation or heartbeat. The splash has only a status
   line and a spinner, never a percentage or a progress bar.
 - During startup the splash is the only thing on screen; the main window `show()`s for the first time in

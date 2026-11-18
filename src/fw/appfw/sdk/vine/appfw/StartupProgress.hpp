@@ -34,8 +34,9 @@ VN_APPFW_NS_BEGIN
  *
  * Lifetime: at most one per process, owned by the application and reached through StartupProgress::current().
  * The framework that drives a boot creates it just before the first phase (Application::beginStartupProgress()) and
- * destroys it right after the last one (Application::endStartupProgress(), on the paths out of a boot that succeeded,
- * was cancelled and failed alike) - so the last phase still reports into it. Without a sink
+ * destroys it right after the last one (Application::endStartupProgress(), on every path out of a boot: one that
+ * succeeded, was cancelled, failed, or was abandoned because the loop stopped while a phase was waiting). So the last
+ * phase still reports into it. Without a sink
  * (StartupProgress::current() == nullptr) every call is a no-op, so boot code may report unconditionally.
  *
  * Thread contract: stage()/setDone()/setLabel()/complete() are called by the reporting thread (the application thread

@@ -18,6 +18,7 @@
 #    include <unistd.h>
 #endif // __linux__
 
+#include <vine/Exception.hpp>
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigManager.hpp>
@@ -1598,6 +1599,19 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
             // objects), and the caller reports a cancelled boot as such.
             unloadLoadedPlugins(created);
         }
+    }
+    catch (const Exception& e) {
+        // The hooks run inside the boot's token (async::withStopToken()), so a plugin that awaits something
+        // token-aware throws TaskCancelledException - the async library's spelling of "the user asked to stop". That
+        // is a cancelled load, not a failed one: the batch is released the same way, but the log does not blame the
+        // plugins for a shutdown.
+        if (e.code() == Exception::CANCELLED) {
+            VN_LOGI("The plugin load was cancelled, releasing the instances created by this call");
+        }
+        else {
+            VN_LOGE("Plugin loading failed, releasing the instances created by this call: {}", e.what());
+        }
+        unloadLoadedPlugins(created);
     }
     catch (const std::exception& e) {
         VN_LOGE("Plugin loading failed, releasing the instances created by this call: {}", e.what());

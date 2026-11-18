@@ -103,6 +103,11 @@ struct ApplicationData {
     /// the caller to know - it cannot tell "the loop is running" any other way.
     bool loop_running = false;
 
+    /// Set by shutdown() when it finds a boot still in flight: the loop stopped while one of its phases was waiting, so
+    /// the phases still to come are skipped (see Application::bootAbandoned()) instead of putting a main window on
+    /// screen in an application that is already being torn down.
+    bool boot_abandoned = false;
+
     virtual ~ApplicationData();
 };
 

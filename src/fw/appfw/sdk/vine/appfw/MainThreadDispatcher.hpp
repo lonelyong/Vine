@@ -61,7 +61,9 @@ class VN_APPFW_API MainThreadDispatcher {
      * dropped if the event loop stops before that.
      *
      * @param task Task to run on the application thread.
-     * @return true if the task was queued, false if it was dropped without running.
+     * @return true when the task was queued; false when there is no event loop to queue it on. Queueing cannot promise
+     *         delivery: a task queued just before the loop stops is dropped unrun, so a caller that needs the work to
+     *         have happened must not read this answer as "it will run".
      */
     static bool postToMainThread(std::function<void()> task);
 

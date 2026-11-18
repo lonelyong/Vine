@@ -1,7 +1,7 @@
 # appfw's three startup beats and the startup work thread
 
 > **Status**: current
-> **Last verified**: 2026-10-23
+> **Last verified**: 2026-11-19
 > **Scope**: the three beats, the thread contract, failure / cancellation / exit; the splash is in `appfw-startup-splash.md`.
 > **Sources**: `Application.hpp`, `PluginManager.hpp`, `tests/test_appfw`.
 > **Backlog**: `../backlog/appfw-startup.md`
@@ -51,17 +51,29 @@ class Application {
 `startupSequence()` is a member coroutine (`DetachedTask`, eager) that lays the three beats out flat:
 
 ```cpp
-beginStartupProgress()->stage("正在启动");
-bool ok = true;
+beginStartupProgress()->stage(translate("appfw", "Starting"));
+bool ok = true, cancelled = false;
 try {
-    co_await startupStart();
+    co_await startupStart();  co_await MainThreadDispatcher::resumeOnMainThread();
+    if (bootAbandoned()) co_return;                    // the loop stopped while this phase waited
+    if (startupCancelled()) { cancelStartup(); co_return; }
+    co_await startup();       co_await MainThreadDispatcher::resumeOnMainThread();
+    if (bootAbandoned()) co_return;
+    if (startupCancelled()) { cancelStartup(); co_return; }
+    co_await startupEnd();    co_await MainThreadDispatcher::resumeOnMainThread();
+}
+catch (const Exception& error) {                       // TaskCancelledException carries CANCELLED
+    cancelled = error.code() == Exception::CANCELLED;
+    ok        = cancelled;
+}
+catch (const std::exception&) { ok = false; }
+catch (...) { ok = false; }
+if (!ok || cancelled) {
     co_await MainThreadDispatcher::resumeOnMainThread();
-    co_await startup();
-    co_await MainThreadDispatcher::resumeOnMainThread();
-    co_await startupEnd();
-    co_await MainThreadDispatcher::resumeOnMainThread();
-} catch (...) { ok = false; }
-if (!ok) { co_await MainThreadDispatcher::resumeOnMainThread(); failStartup(); co_return; }
+    if (bootAbandoned()) co_return;                    // no loop left to stop
+    if (cancelled) { cancelStartup(); } else { failStartup(); }
+    co_return;
+}
 endStartupProgress();
 ```
 
@@ -77,6 +89,15 @@ endStartupProgress();
 - An exception: any beat throwing → log it → `failStartup()` (closes the reporting door + `exit(1)`), without `startupEnd()`.
 - A plugin `loadAll()` returning false only means "one plugin did not load": log a warning and start normally.
 - Cancellation: `StartupProgress::stopToken()` / `requestCancel()`; `cancelStartup()` unloads the loaded plugins + closes the reporting door + `exit(0)`, and is not a failure.
+- A cancellation that arrives as an exception is the same cancellation: `vn::async::CancellationToken` *is* `std::stop_token`, so
+the work a phase awaits (`sleepFor(d, token)`, `whenAll(…, token)`, `withCancellation`) throws `TaskCancelledException`
+(`Exception::CANCELLED`). The driver classifies it as `cancelStartup()`, never as `failStartup()`, because that is what the
+command layer does with the same exception. `PluginManager::loadAllAsync()` classifies it the same way: the batch is
+released, but the log says "cancelled", not "failed".
+- Abandonment: the loop can stop while a phase is waiting (`exit()` from a plugin, a host, the last window closing).
+`shutdown()` then closes the reporting door, marks the boot abandoned, and the phases still to come return instead of running
+- otherwise the main window would go up in an application that is already being torn down, and `isBusy()` would stay true for
+the rest of the process.
 - The framework has no startup wrap-up wait; `shutdown()` does not manage the host's own background work.
 
 ## 3. Features
@@ -114,17 +135,17 @@ endStartupProgress();
 - **Behaviour**: `loadAllAsync()` is the startup door (a coroutine; the manager does not turn the loop); `loadAll()` is the synchronous door
   (`runToCompletion(task, pump)`, where the pump only dispatches `deliverPostedCalls()`).
 - **Constraints** (C3): the synchronous door must not use `Task::result()` — it blocks without dispatching, so a hook coming back to the main thread deadlocks.
-- **Requirements** (R3): every exit of a plugin hook writes `co_return;`; the ABI is currently 8u.
+- **Requirements** (R3): every exit of a plugin hook writes `co_return;`; the ABI revision the boot runs under is in §9.3.
 - **Acceptance** (T3): `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread`.
 - **Caveat** (N3): the manager does not pump the queue or post a 0 ms timer itself, or it would run other people's timers.
 
 ### 3.1.4 F4 Cancellation
 
-- **Behaviour**: `StartupProgress::stopToken()` / `requestCancel()`; the framework looks at it after every beat and before every plugin.
+- **Behaviour**: `StartupProgress::stopToken()` / `requestCancel()`; the framework looks at it after every beat and before every plugin, and a `TaskCancelledException` thrown by work a phase awaits is the same request.
 - **Constraints** (C4): cancellation is not a failure; `cancelStartup()` goes through `exit(0)` and the main window never appears.
 - **Requirements** (R4): a plugin takes the same token from `PluginLoadContext::stopToken()`.
-- **Acceptance** (T4): `test_appfw`'s cancellation cases.
-- **Caveat** (N4): a plugin outside startup gets a token that never stops.
+- **Acceptance** (T4): `test_appfw`'s cancellation cases, and `ACancelledWaitEndsTheBootWithoutCallingItAFailure` for the exception spelling.
+- **Caveat** (N4): a plugin outside startup gets a token that never stops. The startup frame has no cancel affordance (`BootSplash` refuses to be closed): a host or a tool asks through the sink.
 
 ### 3.1.5 F5 The occupancy gate
 
@@ -147,19 +168,19 @@ endStartupProgress();
 
 ### 4.1 `Application`
 
+The host's half is the public `run()` and the three protected hooks. Everything else this page names - `beginStartupProgress()`, `endStartupProgress()`, `startupCancelled()`, `bootAbandoned()`, `failStartup()`, `cancelStartup()` - is private to the class and belongs to the driver: a host does not open, close or fail a boot from outside; it overrides the phases.
+
 | Interface | Contract | Notes |
 | --- | --- | --- |
-| `run()` | the startup loop + the three beats | blocks until exit |
-| `startupStart()` / `startup()` / `startupEnd()` | protected asynchronous hooks | declared at the end of the class |
-| `beginStartupProgress()` / `endStartupProgress()` | open / close the reporting door | called by the driver |
-| `failStartup()` / `cancelStartup()` | failure / cancellation | `exit(1)` / `exit(0)` |
+| `run()` | the startup loop + the three beats | blocks until exit; one run per Application |
+| `startupStart()` / `startup()` / `startupEnd()` | the hooks a leaf overrides | protected, declared at the end of the class |
 
 ### 4.2 `MainThreadDispatcher`
 
 | Interface | Contract | Notes |
 | --- | --- | --- |
 | `isMainThread()` / `hasEventLoop()` | queries | application-thread tests |
-| `postToMainThread()` / `invokeOnMainThread()` | post / borrow synchronously | returns false once the loop has stopped |
+| `postToMainThread()` / `invokeOnMainThread()` | post / borrow synchronously | `true` means queued: a queued call is dropped if the loop stops before it runs |
 | `resumeOnMainThread()` | resume a coroutine | a no-op when already on the main thread |
 | `deliverPostedCalls()` | the synchronous door's pump | dispatches `QEvent::MetaCall` only |
 
@@ -175,6 +196,7 @@ endStartupProgress();
 | C4 | Cancellation is not a failure; `cancelStartup()` goes through `exit(0)`. |
 | C5 | The occupancy gate defaults to 150 ms; moving work back onto the application thread goes red outright. |
 | C6 | `initAsync()` neither suspends nor goes to the pool. |
+| C7 | A cancellation that arrives as `TaskCancelledException` is a cancellation: it takes `cancelStartup()`, never `failStartup()`. |
 
 ### 5.2 Requirements (R#)
 
@@ -182,7 +204,7 @@ endStartupProgress();
 | --- | --- |
 | R1 | The three beats are protected and declared at the end of the class. |
 | R2 | The host calls `resumeOnMainThread()` before touching the UI from a worker thread. |
-| R3 | Every exit of a plugin hook writes `co_return;`; the ABI is 8u. |
+| R3 | Every exit of a plugin hook writes `co_return;`; the ABI revision is stated in §9.3. |
 | R4 | A plugin takes the same stop token; one outside startup gets a token that never stops. |
 | R5 | A missing gate log line counts as red too. |
 | R6 | During attach the host must not change the scene from another thread. |
@@ -195,6 +217,7 @@ endStartupProgress();
 | N2 | The reporting door opens before the first beat and closes after the last. |
 | N3 | Neither a startup exception nor a cancellation goes through `startupEnd()`. |
 | N4 | The main thread never blocks waiting for a worker. |
+| N5 | A boot the loop abandoned closes its reporting door in `shutdown()` and runs none of its remaining phases. |
 
 ## 6. Caveats and Traps
 
@@ -209,6 +232,16 @@ endStartupProgress();
 - How it fails: the step where a hook "comes back to the application thread" never gets dispatched → deadlock.
 - How to detect it: `loadAll()` hangs.
 - How to prevent it: use `MainThreadDispatcher::runToCompletion()` (the pump being `deliverPostedCalls()`).
+
+### 6.3 Stopping the loop while a phase is waiting
+
+- How it fails: the boot's coroutine is still parked when `exec()` returns, so nothing closes the reporting door; `isBusy()`
+  stays true and every top-level command is refused for the rest of the process. Without the abandonment check the parked
+  phase would also resume later and run `startupEnd()` - showing a main window for a loop that is gone.
+- How to detect it: `Application::shutdown()` logs "the boot still in flight" and the next `isBusy()` call answers true.
+- How to prevent it: `shutdown()` closes a door it finds open and sets the abandoned flag; every suspension point of
+  `startupSequence()` and the end of the plugin load ask `bootAbandoned()` and return. The application has to outlive its
+  boot either way - the boot's frames are detached and cannot be joined.
 
 ## 7. Rejected Options
 
@@ -229,6 +262,8 @@ endStartupProgress();
 | T4 | the cancellation / failure paths | `test_appfw` cancellation / failure cases |
 | T5 | the occupancy gate | `scripts/vsg_rewrite_gate.sh`'s app stage |
 | T6 | `initAsync()` does not suspend | `RenderControlTest.InitAsyncCompletesWithoutSuspending` |
+| T7 | a cancellation delivered as `TaskCancelledException` exits 0 and skips the last phase | `HeadlessBootTest.ACancelledWaitEndsTheBootWithoutCallingItAFailure` |
+| T8 | a loop stop during a phase closes the door and skips the rest | `HeadlessBootTest.ALoopStopDuringAPhaseLeavesNoReportingDoorAndSkipsTheRest` |
 
 ## 9. Status and Evolution
 
@@ -245,7 +280,8 @@ The three beats, the asynchronous plugin door, cancellation, the occupancy gate 
 ### 9.3 Compatibility / migration
 
 The old names `beginStartup` / `finishStartup` / `runStartup` and the `run(work)` overload exist only in git history; new code is written against the three beats
-`startupStart` / `startup` / `startupEnd`.
+`startupStart` / `startup` / `startupEnd`. `VN_APPFW_PLUGIN_ABI_VERSION` is **10u**; the number itself lives in `Plugin.hpp` and
+`appfw-plugin-system.md` §9.3 owns its history - this page only says which revision the boot's hooks require.
 
 ## 10. References
 

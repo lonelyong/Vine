@@ -91,9 +91,49 @@ QString applicationNameOrFallback()
     return name.isEmpty() ? QString::fromUtf8(kFallbackAppName) : name;
 }
 
-/// 启动失败时进程的退出码：启动期的异常是致命的（见 startupSequence()），run() 带着它返回，
-/// 进程随之退出。
+/// Exit code of a failed boot: a startup exception is fatal (see startupSequence()), so run() returns this code and
+/// the process exits with it.
 constexpr int kStartupFailureExitCode = 1;
+
+/**
+ * @brief Holds the process-wide Application slot open while an Application is being constructed.
+ *
+ * A constructor that throws never runs its class destructor, so storing `this` and then building the managers would
+ * leave the slot pointing at an object that was destroyed member by member: Application::current() would hand out a
+ * dangling pointer for the rest of the process. The constructor commits the slot as its last statement; until then an
+ * exception withdraws it again.
+ */
+class CurrentApplicationSlot {
+  public:
+    /**
+     * @brief Takes responsibility for the slot the caller has just filled.
+     *
+     * @param application The Application the slot points at.
+     */
+    explicit CurrentApplicationSlot(Application* application) noexcept
+      : application_(application)
+    {}
+
+    ~CurrentApplicationSlot()
+    {
+        if (application_ != nullptr) {
+            s_current_app.store(nullptr, std::memory_order_release);
+        }
+    }
+
+    CurrentApplicationSlot(const CurrentApplicationSlot&)            = delete;
+    CurrentApplicationSlot& operator=(const CurrentApplicationSlot&) = delete;
+
+    /// Keeps the slot: the object was constructed.
+    void commit() noexcept
+    {
+        application_ = nullptr;
+    }
+
+  private:
+    /// What to withdraw again when construction does not complete; null once committed.
+    Application* application_;
+};
 
 } // namespace
 
@@ -119,8 +159,16 @@ Application::Application(const AppConfig& config, int argc, char** argv)
     // data, where it is a private detail, and then calls initialize() - which is why no Qt type appears in the
     // framework's public headers. Owning it is what lets a process run one host after another: the object goes away with
     // the Application that made it.
+    //
+    // A throw in this body (the Qt object, initialize()) leaves a partially built object, and whether a delegating
+    // constructor's destructor runs in that case is a language subtlety - so the process-wide slot is withdrawn here as
+    // well. Clearing it twice is harmless; leaving it set would hand out a dangling Application for the rest of the
+    // process.
+    CurrentApplicationSlot slot(this);
     dptr()->app = std::make_unique<QCoreApplication>(dptr()->argc, dptr()->argv);
     initialize(config);
+
+    slot.commit();
 }
 
 Application::Application(int argc, char** argv)
@@ -131,10 +179,16 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
   : d(data)
 {
     if (s_current_app.load(std::memory_order_acquire) != nullptr) {
-        throw Exception(-1);
+        // One Application per process: the managers and the static registries reach it through Application::current(),
+        // and a second one would make every one of those reads ambiguous. Name the rule - a host that trips over it has
+        // to be able to read why, which a bare code cannot say.
+        throw Exception(Exception::INVALID_OPERATION, u8"only one Application may exist per process");
     }
 
+    // Published before the managers are built (they read it while they are constructed) and withdrawn again if one of
+    // them throws: see CurrentApplicationSlot.
     s_current_app.store(this, std::memory_order_release);
+    CurrentApplicationSlot slot(this);
 
     dptr()->argc = argc;
     dptr()->argv = argv;
@@ -171,6 +225,8 @@ Application::Application(ApplicationData* data, const AppConfig& config, int arg
     // The marshaller is injected and outlives the bus (ApplicationData declares it
     // before the bus, so it is destroyed after it).
     dptr()->event_bus        = std::make_unique<EventBus>(dptr()->main_dispatcher.get());
+
+    slot.commit();
 }
 
 Application::~Application()
@@ -221,6 +277,8 @@ void Application::setupUserIO()
 
 StartupProgress* Application::beginStartupProgress()
 {
+    // A boot starts un-abandoned: the flag belongs to one boot, and shutdown() sets it for the boot it interrupted.
+    dptr()->boot_abandoned = false;
     if (dptr()->startup_progress == nullptr) {
         dptr()->startup_progress = std::make_unique<StartupProgress>();
     }
@@ -234,29 +292,43 @@ UserIO* Application::createUserIO()
 
 vn::async::Task<void> Application::startupStart()
 {
-    co_return; // 默认什么都不摆：无头宿主没有"启动期的脸"，叶子（GUI）在这里上屏、等首帧。
+    co_return; // Nothing to put up by default: a headless host has no face for the boot; a leaf (the GUI) shows its
+               // frame here and waits for the first paint.
 }
 
 vn::async::Task<void> Application::startup()
 {
     auto* const d = dptr();
 
-    // 框架自己的启动工作先来：插件是宿主的活最容易依赖的东西（命令、服务、界面都是它们注册的），而且
-    // "加载插件"每个应用都要做一遍，不该由每个 main 重写（AppConfig::load_plugins 关掉就能自管）。
-    // 时机是契约：这一段跑在启动画面画出首帧之后（由 startupStart() 那一拍等出来）——插件里建窗口、建渲染
-    // 表面时，窗口系统已经能派发通知了（X11 上不派发就只是一个空窗口）。它也必须在主线程：插件正是在
-    // load() 里建窗口与视图。
+    // The framework's own startup work comes first: the plugins are what the host's work most easily depends on
+    // (commands, services and UI are what they register), and "load the plugins" is a step every application has to
+    // take - it should not have to be rewritten in every main (turn AppConfig::load_plugins off to manage it).
+    // The timing is the contract: this runs after the startup frame painted its first frame (waited for by
+    // startupStart()), so a plugin that builds windows and render surfaces finds a window system able to dispatch its
+    // notices already (on X11, no dispatch means an empty window). It also has to run on the main thread: a plugin
+    // builds its windows and views in load().
     if (d->load_plugins && d->plugin_manager != nullptr) {
-        // 异步门（loadAllAsync()）：插件生命周期必须跑在应用线程上（插件正是在 load() 里建窗口与视图），所以
-        // "耗时操作不阻塞事件循环"只能靠切：插件把与界面无关的那一半丢到池上（`vn::async::run`），回来之前
-        // 事件循环照跑——启动框的进度也正是这样从池上那一半报上来的。
-        // 进度是按**相位**更新的：管理器在每段之前报一次阶段名、每个插件换一次标签（查找/创建/加载/收尾），
-        // 启动框每收到一次上报就同步重画一次（见 BootSplash::onStartupChanged()）——所以相位边界一定看得见，
-        // 而相位**内部**那段连续占用（例如会话 init() 的两百多毫秒）期间画面不动，这是有意接受的：
-        // 不为此在启动期回转事件循环（会把别人的定时器也跑起来，见 PluginManager::loadAllAsync() 的注释）。
+        // The asynchronous door (loadAllAsync()): the plugin lifecycle has to run on the application thread (a plugin
+        // builds windows and views in load()), so "a long operation does not block the event loop" can only come from
+        // splitting the work - the plugin sends the half that does not touch the UI to the pool (`vn::async::run`),
+        // and the loop keeps turning until it comes back, which is also how the boot's progress is reported from that
+        // half.
+        // Progress is per PHASE: the manager names a stage before each pass and relabels for each plugin (finding /
+        // creating / loading / finishing), and the startup frame repaints itself synchronously on every report (see
+        // BootSplash::onStartupChanged()) - so a phase boundary is always visible, while the continuous occupancy
+        // INSIDE a phase (the session init() takes a couple of hundred milliseconds) leaves the picture still. That is
+        // deliberate: the startup phase does not turn the event loop for it (that would run everyone else's timers
+        // too, see the comment on PluginManager::loadAllAsync()).
         const bool loaded = co_await d->plugin_manager->loadAllAsync();
+
+        // The loop may have stopped while the load was running: the boot is abandoned then, and "some plugins failed"
+        // would blame the plugins for a shutdown (see bootAbandoned()).
+        if (bootAbandoned()) {
+            co_return;
+        }
         if (!loaded && !startupCancelled()) {
-            // 取消不是失败：取消时管理器提前收工也返回 false，别拿"插件没装上"去吓人。
+            // A cancellation is not a failure: the manager also returns false when it stops early. And a plugin that
+            // merely failed to load is not one either - the application starts without it.
             VN_LOGW("Some plugins failed to load; the application starts without them");
         }
     }
@@ -270,11 +342,22 @@ bool Application::startupCancelled() const
     return progress != nullptr && progress->stopToken().stop_requested();
 }
 
+bool Application::bootAbandoned() const
+{
+    // Two ways a boot stops being this application's business: shutdown() found it in flight and closed the reporting
+    // door while the application is still alive, or the application is already gone and one of the boot's detached
+    // frames is running here. The identity is checked first, because reading anything off a destroyed Application would
+    // be a use-after-free while comparing the pointer is not.
+    return Application::current() != this || dptr()->boot_abandoned;
+}
+
 void Application::cancelStartup()
 {
-    // 用户（或宿主）不想等这次启动了：这不是失败，所以不走 failStartup() 那条非零退出的路，但也不能装作启动
-    // 成功——主窗永远不上屏，已经装上的插件按依赖反序卸掉（插件写在 load() 里的东西不能留在进程里），上报口收起，
-    // 主循环以 0 停掉：run() 随即返回，shutdown() 照常跑完（那时候插件表已经是空的）。
+    // The user (or the host) does not want to wait for this boot: that is not a failure, so it does not take
+    // failStartup()'s non-zero exit - but it must not pretend the boot succeeded either. The main window never goes up,
+    // the plugins that were installed are unloaded in reverse dependency order (what a plugin built in load() must not
+    // stay in the process), the reporting door is closed, and the loop stops with 0: run() returns, shutdown() runs as
+    // usual (by then the plugin list is empty).
     VN_LOGI("startup cancelled: the application stops without finishing the boot");
 
     if (auto* const plugins = dptr()->plugin_manager.get(); plugins != nullptr) {
@@ -283,8 +366,8 @@ void Application::cancelStartup()
 
     endStartupProgress();
 
-    // 以 0 停主循环（不是失败）：run() 随即返回，shutdown() 照常跑完。限定名是有意的：这里的 exit() 必须是
-    // 本类的那个（它会把非主线程的调用改道），不是 ::exit()。
+    // Stop the loop with 0 (not a failure): run() returns at once and shutdown() runs as usual. The qualification is
+    // deliberate - this exit() has to be this class's (which reroutes a call from another thread), not ::exit().
     Application::exit(0);
 }
 
@@ -292,11 +375,12 @@ void Application::failStartup()
 {
     VN_LOGE("startup failed: the application exits with code {}", kStartupFailureExitCode);
 
-    // 上报口先收：不让任何人继续往一个死掉的启动里报（presenter 也随之回到"跟下一步干什么"）。
+    // Close the reporting door first: nobody may keep reporting into a dead boot (the presenters go back to "what is
+    // next" with it).
     endStartupProgress();
 
-    // 以非零码停主循环：run() 随即返回，进程带着这个码退出，shutdown() 照常跑完（命令、插件、配置都干净收尾）。
-    // 限定名是有意的：这里的 exit() 必须是本类的那个（它会把非主线程的调用改道），不是 ::exit()。
+    // Stop the loop with a non-zero code: run() returns at once, the process exits with it, and shutdown() still runs
+    // to the end (commands, plugins and the configuration are torn down cleanly).
     Application::exit(kStartupFailureExitCode);
 }
 
@@ -312,27 +396,38 @@ void Application::endStartupProgress()
 
 vn::async::Task<void> Application::startupEnd()
 {
-    co_return; // 默认没有"脸"要收：叶子（GUI）在这里收框、把主窗第一次上屏。
+    co_return; // Nothing to put away by default: a leaf (the GUI) takes its frame down and shows the main window here.
 }
 
 int Application::run()
 {
     auto* const d = dptr();
 
-    // 计时从“被要求运行”算起，给启动期的诊断一个统一起点（无头宿主没有读者，但多算一次也不花钱）。
+    // The clock starts when the host asked the application to run, so the boot's diagnostics share one origin (a
+    // headless host has no reader, but reading the clock once more costs nothing).
     d->startup_requested_at.start();
 
-    // 语言是在 initialize() 里定的，那时宿主的日志接收器还没装（它们一般在构造之后才接上），所以再报一次：
-    // 启动日志要能回答“界面为什么是这种语言”——`system` 只有在旁边给出解析出的标签时才有意义。
+    // The language was resolved in initialize(), when the host's log sink was usually not installed yet (hosts install
+    // it after the constructor), so it is reported again here: the startup log has to answer "why is the UI in this
+    // language", and `system` only means something next to the tag it resolved to.
     VN_LOGI("UI language '{}' for setting '{}'", d->language_tag.as_std_str(), d->language_setting.as_std_str());
 
-    // 先让循环跑起来，启动阶段再从队列里推：窗口系统那一半（X11 的 expose、Windows 的 WM_PAINT）本来就靠循环派发，
-    // 循环起来之前 show() 出来的窗口一个像素都没有；而启动阶段的第一道门就是“启动画面真的在屏上”。
-    // 两个好处：无头与有窗口的启动阶段走同一条时间轴（同一个事件队列），差别只剩“上不上屏”；
-    // 宿主的活跑在池里，循环不必为它停。
-    QMetaObject::invokeMethod(d->app.get(), [this] { static_cast<void>(startupSequence()); }, Qt::QueuedConnection);
+    // Let the loop run first and push the startup phase onto it: the window system's half (X11's expose, Windows'
+    // WM_PAINT) is dispatched by the loop anyway, and a window shown before the loop runs has not a single pixel -
+    // while the boot's first door is "the startup frame really is on screen". Two things follow: the headless and the
+    // windowed boot walk one time line (one event queue) and differ only in what goes on screen, and the host's work
+    // runs on the pool so the loop never has to stop for it.
+    //
+    // The step has to be queued: without it the loop would serve the host with nothing on screen and nothing loaded,
+    // and no phase would ever run. Only a leaf that used the protected constructor and did not store the Qt
+    // application object can get here without one, which is what this check reports.
+    if (d->app == nullptr
+        || !QMetaObject::invokeMethod(d->app.get(), [this] { static_cast<void>(startupSequence()); }, Qt::QueuedConnection)) {
+        VN_LOGE("the startup step could not be queued: the application has no Qt application object");
+        return kStartupFailureExitCode;
+    }
 
-    // 循环跑着的时候收尾是用法错误（见 shutdown()）：这一位就是那句话的判据。
+    // Tearing down while the loop still runs is a usage error (see shutdown()): this flag is what that line reads.
     d->loop_running = true;
     const int code  = d->app->exec();
     d->loop_running = false;
@@ -343,31 +438,58 @@ int Application::run()
 
 vn::async::DetachedTask Application::startupSequence()
 {
-    // 三拍平铺（startupStart() → startup() → startupEnd()），像顺序代码一样读。
+    // The three phases laid out flat (startupStart() → startup() → startupEnd()), readable like sequential code.
     //
-    // 三拍不能是三个裸调用：一拍返回不等于它做完了（GUI 的第一拍要等启动框真的画出首帧）。协程把“等下一拍”
-    // 拉直成 `co_await`：挂起期间控制权回到事件循环——这就是“等它，但不占住消息循环”。
+    // They cannot be three bare calls: a phase returning is not a phase being done (the GUI's first one waits for the
+    // startup frame to really paint). The coroutine straightens "wait for the next phase" into `co_await`: the event
+    // loop gets the control back while the boot waits - which is what "wait for it without holding the message loop"
+    // means.
     //
-    // 每拍之后垫一次 `resumeOnMainThread()`：一拍可能在别的线程上结束（定时器、IO、宿主自己丢到池上的活），
-    // 而下一拍与这次启动的收尾都必须在应用线程上。已经在主线程时它是空操作。
+    // After every phase comes a `resumeOnMainThread()`: a phase may finish on another thread (a timer, I/O, the host's
+    // own work posted to the pool), and both the next phase and the end of this boot belong on the application thread.
+    // On the application thread it is a no-op, so the fast path pays nothing.
+    //
+    // Two things end a boot before its last phase without it being a failure: a cancellation (asked for through the
+    // sink, or thrown by token-aware work as TaskCancelledException) and abandonment (the loop stopped while a phase was
+    // waiting). Only a real exception takes failStartup().
     beginStartupProgress()->stage(translate("appfw", "Starting"));
 
-    bool ok = true;
+    bool ok        = true;
+    bool cancelled = false;
     try {
         co_await startupStart();
         co_await MainThreadDispatcher::resumeOnMainThread();
+        if (bootAbandoned()) {
+            co_return;
+        }
         if (startupCancelled()) {
             cancelStartup();
             co_return;
         }
         co_await startup();
         co_await MainThreadDispatcher::resumeOnMainThread();
+        if (bootAbandoned()) {
+            co_return;
+        }
         if (startupCancelled()) {
             cancelStartup();
             co_return;
         }
         co_await startupEnd();
         co_await MainThreadDispatcher::resumeOnMainThread();
+    }
+    catch (const Exception& error) {
+        // A cancellation can reach here as an exception: the async library spells "the user asked to stop" as
+        // TaskCancelledException (code CANCELLED), and a host that hands the boot's token to sleepFor()/whenAll()/
+        // withCancellation() gets exactly that. Classifying it as a failure would turn a cancel into exit(1), which is
+        // the one thing this shape must not do - the command layer classifies the same exception the same way.
+        if (error.code() == Exception::CANCELLED) {
+            cancelled = true;
+        }
+        else {
+            VN_LOGE("the startup phase failed: {}", error.what());
+            ok = false;
+        }
     }
     catch (const std::exception& error) {
         VN_LOGE("the startup phase failed: {}", error.what());
@@ -378,17 +500,31 @@ vn::async::DetachedTask Application::startupSequence()
         ok = false;
     }
 
-    // 启动期异常**不吞**：任一拍（含宿主启动工作带上来的异常）失败就收起上报口、以非零码停掉主循环（见
-    // failStartup()）——启动失败不该留下一个半启动的应用在跑。取消走另一条路（cancelStartup()：没失败，也没
-    // 启动成功）。收尾也要在应用线程上，而 `co_await` 不能写在 catch
-    // 处理块里（失败那一拍也可能是在别的线程上抛的）⇒ 两条路都在 try 之后合并。
-    if (!ok) {
+    // A startup exception is NOT swallowed: a failure in any phase (including one the host's own startup work carries
+    // up) closes the reporting door and stops the loop with a non-zero code (see failStartup()) - a failed boot must
+    // not leave a half-started application running. A cancellation takes the other exit (cancelStartup(): not a
+    // failure, but not a finished boot either). The teardown belongs on the application thread as well, and `co_await`
+    // cannot be written inside a catch handler (the failing phase may have thrown on another thread), so both paths
+    // rejoin after the try.
+    if (!ok || cancelled) {
         co_await MainThreadDispatcher::resumeOnMainThread();
-        failStartup();
+        if (bootAbandoned()) {
+            // The loop is gone and shutdown() has already closed the door: there is nothing left to stop, and both
+            // exits below would only try to stop a loop that no longer runs.
+            co_return;
+        }
+        if (cancelled) {
+            VN_LOGI("the startup phase was cancelled by the work it was waiting for");
+            cancelStartup();
+        }
+        else {
+            failStartup();
+        }
         co_return;
     }
 
-    // 三拍都过了：这次启动结束，上报口最后收（presenter 随之回到“跟下一步干什么”）。
+    // The three phases are through: the boot is over, and the reporting door closes last (so the presenters go back to
+    // following whatever runs next).
     endStartupProgress();
 }
 
@@ -406,6 +542,17 @@ void Application::shutdown()
     if (MainThreadDispatcher::hasEventLoop() && !MainThreadDispatcher::isMainThread()) {
         VN_LOGW("Application::shutdown() was called from a thread that is not the application thread: plugin unload() runs "
                 "here, and a plugin takes its windows and graphics objects down there");
+    }
+
+    // A boot still in flight here was abandoned: the loop stopped while one of its phases was waiting. Its reporting
+    // door is closed here, or it would stay open for the rest of the process (isBusy() true, so every top-level command
+    // would be refused), and the phases still to come are skipped (see bootAbandoned()): a teardown is not where a main
+    // window should still go up.
+    if (dptr()->startup_progress != nullptr) {
+        VN_LOGW("Application::shutdown() was called with the boot still in flight (the loop stopped while a phase was "
+                "waiting): the reporting door is closed and the rest of the boot is skipped");
+        dptr()->boot_abandoned = true;
+        endStartupProgress();
     }
 
     // Commands go first: their frames hold the manager, the user IO and plugin

@@ -165,6 +165,10 @@ class VN_APPFW_API Application : public Object {
      * making the call - so a command doing this sits out the whole bound and then tears
      * the application down under a frame that is still running, and a plugin unloading
      * would stop the event bus before the remaining plugins have been unloaded.
+     *
+     * A boot still in flight ends here too, because this is the teardown of the run that owned it: the loop stopped
+     * while a phase was waiting, so the reporting door is closed and the phases still to come are skipped - they would
+     * otherwise put a main window on screen in an application that is already being torn down.
      */
     void shutdown();
 
@@ -195,6 +199,11 @@ class VN_APPFW_API Application : public Object {
      *
      * The boot also loads the plugins (AppConfig::load_plugins) as the first thing its second phase does, which is what
      * lets a host call run() and nothing else.
+     *
+     * One run() per Application, because run() owns the teardown: it ends with shutdown(), which unloads the plugins and
+     * stops the event bus, so a second run() would boot an application whose services are already down. A boot that
+     * cannot be queued (a leaf that never stored the Qt application object) fails at once with a non-zero code instead
+     * of running a loop that would never boot.
      *
      * @return The application's exit code.
      */
@@ -613,6 +622,11 @@ class VN_APPFW_API Application : public Object {
     /// as well, and `co_await` cannot be written inside a catch handler, so the failing path is padded first and the two
     /// paths rejoin after the `try`.
     ///
+    /// A cancellation is not a failure, and both spellings are recognised: the sink's stop token (checked after every
+    /// phase) and the TaskCancelledException the async library throws when work a phase awaits observes that same
+    /// token. An abandoned boot - the loop stopped while a phase was waiting, see bootAbandoned() - stops here without
+    /// calling either exit, because there is no loop left to stop.
+    ///
     /// `DetachedTask` is not a return value in the usual sense: it is the marker that says "this is a coroutine" (C++
     /// requires a coroutine function's return type to be a coroutine type) and holds nothing - no value, nothing to
     /// await. Calling it starts it (eager start) and the frame destroys itself past the last line, which is why it is
@@ -632,8 +646,22 @@ class VN_APPFW_API Application : public Object {
     /// Cancellation is not a failure: the framework looks at it after every phase and before it instantiates each
     /// plugin, and takes cancelStartup() when it is set.
     ///
+    /// A phase may also observe the same token through the async library, which reports a stop as a
+    /// TaskCancelledException (`vn::Exception::CANCELLED`); startupSequence() takes that exception as this answer.
+    ///
     /// @return true when this boot should stop.
     bool startupCancelled() const;
+
+    /// Whether this boot was abandoned: shutdown() found it in flight (the loop stopped while a phase was waiting), or
+    /// the application it belongs to is already gone.
+    ///
+    /// Read after every suspension of startupSequence() and after the plugin load: the phases of an abandoned boot must
+    /// not run, because they would report into a closed door and put the main window on screen in an application that is
+    /// being torn down. The identity is compared first, so a detached boot frame that outlived its application reads
+    /// nothing off it - and a use-after-free is exactly what that would be.
+    ///
+    /// @return true when the boot must not go on.
+    bool bootAbandoned() const;
 
     /// Cancels this boot: logs it, unloads the plugins that were already loaded, tears the progress sink down and stops
     /// the main loop with 0 (cancelling is not failing). The main window never goes up - this is not startupEnd()'s

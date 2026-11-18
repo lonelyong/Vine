@@ -1,7 +1,7 @@
 # appfw's splash and startup progress (`BootSplash` / `StartupProgress`)
 
 > **Status**: current
-> **Last verified**: 2026-10-23
+> **Last verified**: 2026-11-19
 > **Scope**: the splash, startup progress and its presentation; the three beats, the thread contract and the failure / cancellation paths are in `appfw-startup-phases.md`.
 > **Sources**: `StartupProgress.hpp`, `gui/BootSplash.hpp`, `AppConfig.hpp`, `tests/test_gui/BootSplashTest`.
 > **Backlog**: `../backlog/appfw-startup.md`
@@ -67,7 +67,7 @@ foreground `ProgressHost` of its own, so startup progress is naturally shared by
 | F2 | Phase progress | one report at the start of each phase, repainting on every report | landed |
 | F3 | The first-frame door | startup work runs only after the splash has painted its first frame; a 300 ms fallback | landed |
 | F4 | The main window appears | `startupEnd()` takes the splash down, the main window `show()`s for the first time, `raise()` / `activate()` | landed |
-| F5 | Cancellation | the splash' `✕` / `startupStart`'s token; cancellation is not a failure | landed |
+| F5 | Cancellation | the boot's token (`StartupProgress::requestCancel()`), not the frame; cancellation is not a failure | landed |
 | F6 | The reporting door's lifetime | opened before the first beat, closed after the last; every call is a no-op without it | landed |
 
 ### 3.1.1 F1 Splash presentation
@@ -108,10 +108,10 @@ foreground `ProgressHost` of its own, so startup progress is naturally shared by
 
 ### 3.1.5 F5 Cancellation
 
-- **Behaviour**: the `✕` in the splash' top-right corner writes to `StartupProgress::stopToken()`; the framework looks at it after every beat and before every plugin.
+- **Behaviour**: the framework looks at `StartupProgress::stopToken()` after every beat and before every plugin. The frame itself offers no cancel affordance and ignores a close request (`SplashWindow::closeEvent`): taking the boot's face down is the framework's move, and a frame the user dismissed mid-load would leave the screen empty. A host or a tool that wants to cancel asks through `StartupProgress::requestCancel()`; boot code observes it through the same token (a stop thrown by token-aware work, `TaskCancelledException`, is classified as a cancellation - see `appfw-startup-phases.md` §2.3).
 - **Constraints** (C5): cancellation is not a failure; `cancelStartup()` unloads the loaded plugins + closes the reporting door + `exit(0)`, and the main window never appears.
 - **Requirements** (R5): a plugin takes the same token from `PluginLoadContext::stopToken()`; one outside startup gets a token that never stops.
-- **Acceptance** (T5): `test_appfw`'s cancellation cases.
+- **Acceptance** (T5): `test_appfw`'s cancellation cases, and `BootSplashTest.TheFrameRefusesToCloseWhileTheBootRuns` for the frame's half.
 - **Caveat** (N5): a cancellation goes through neither `startupEnd()` nor `failStartup()`.
 
 ### 3.1.6 F6 The reporting door's lifetime
