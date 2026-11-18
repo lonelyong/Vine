@@ -1,45 +1,35 @@
-# Bug: 销毁挂起的 AsyncConditionVariable::wait 会使 RAII 锁重复解锁
+# Bug: destroying a parked `AsyncConditionVariable::wait` unlocks a RAII guard twice
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `AsyncConditionVariable.hpp`、`AsyncMutex.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `AsyncConditionVariable.hpp`, `AsyncMutex.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: destroying a waiter parked in `AsyncConditionVariable::wait(mutex)` left the caller's `AsyncLockGuard` believing it owned the lock, so its destructor unlocked a second time and tripped the debug assertion. The fix adds `wait(AsyncLockGuard&)`, which clears the guard while waiting and re-arms it with the same mutex before returning, adds `AsyncLockGuard::mutex()`, and documents that `wait(AsyncMutex&)` must not be used while a guard is held.
+## Symptom
 
-## 现象
+A coroutine that holds an `AsyncLockGuard` and calls `AsyncConditionVariable::wait(mutex)` is destroyed before the notification by a combinator such as `whenAny`; the guard's destructor then calls `unlock()` on a mutex it has already unlocked, and Debug builds trip the `locked_` assertion.
 
-持有 `AsyncLockGuard` 的协程调用 `AsyncConditionVariable::wait(mutex)` 后，在通知前被组合子
-（例如 `whenAny`）销毁，guard 析构会对已经解锁的 mutex 再次调用 `unlock()`，Debug 构建触发 `locked_` 断言。
+## Root cause
 
-## 根因
+`wait()` calls `mutex.unlock()` directly before suspending and re-acquires the mutex after the notification, but it cannot update the `AsyncLockGuard` the caller still holds. If the coroutine frame is destroyed during the wait, the guard still believes it owns the lock and releases it again. The "give up the wait" path the CV allows therefore disagrees with the ownership state of the RAII lock.
 
-`wait()` 在挂起前直接调用 `mutex.unlock()`，通知后再重新获取 mutex；但它无法更新调用方仍持有的
-`AsyncLockGuard`。若等待期间协程帧被销毁，guard 仍以为自己拥有锁并再次释放。
-因此，CV 等待允许的“放弃等待”路径与 RAII 锁的所有权状态不一致。
+## Impact and verification
 
-## 影响与验证
+- Standalone reproduction: acquire a guard with `co_await lockAsync(mutex)`, then `co_await cv.wait(mutex)`; use a short timer task as the `whenAny` winner that destroys the CV waiter before the notification.
+- A Debug probe trips `assert(locked_)` inside `AsyncMutex::unlock()`.
+- The existing `WaiterDestroyedWhileWaiting` case tests the manual `lock()` / `unlock()` form and keeps no RAII guard across the cancellation, so it never covered this ownership mismatch.
 
-- 独立复现：使用 `co_await lockAsync(mutex)` 获取 guard，随后 `co_await cv.wait(mutex)`；
-  以短定时任务作为 `whenAny` 赢家，在通知前销毁 CV waiter。
-- Debug 探针触发 `AsyncMutex::unlock()` 中 `assert(locked_)`。
-- 既有 `WaiterDestroyedWhileWaiting` 用例以手动 `lock()/unlock()` 方式测试，没有在取消时保留 RAII guard，
-  因而没有覆盖此所有权失配路径。
+## Fix direction
 
-## 修复方向
+Make the release, wait and re-acquisition of the CV wait agree with the guard's ownership state; or state that abandoning a CV wait while holding a RAII guard is unsupported, and make the interface prevent or detect that use. Add a regression test that destroys the waiter through `lockAsync` + `whenAny`.
 
-让 CV wait 的释放、等待、重获与 guard 的所有权状态保持一致；或者明确不支持持有 RAII guard 时放弃 CV 等待，
-并使接口能阻止/检测该用法。补充 `lockAsync` + `whenAny` 销毁 waiter 的回归测试。
+## Fix
 
-## 修复
+- New `AsyncConditionVariable::wait(AsyncLockGuard&)`: the guard is cleared for the duration of the wait, and the same mutex is re-locked and re-armed into it before returning. When the coroutine is destroyed while waiting, the guard is empty, so its destructor does not `unlock()` a second time.
+- New `AsyncLockGuard::mutex()`, so `wait()` can remember the mutex before clearing the guard.
+- `wait(AsyncMutex&)` stays for callers that lock and unlock by hand, and its documentation says not to use it while a guard is held.
 
-- 新增 `AsyncConditionVariable::wait(AsyncLockGuard&)`：等待期间清空 guard，返回前重新加锁并重新装填同一个
-  mutex。协程在等待中被销毁时 guard 为空，析构不会二次 `unlock()`。
-- 新增 `AsyncLockGuard::mutex()`，让 `wait()` 在清空前记下 mutex。
-- `wait(AsyncMutex&)` 保留给手动 `lock()/unlock()` 的调用者，文档写明“持有 guard 时不要用它”。
+## Verification
 
-## 验证
-
-- `AsyncConditionVariableTest.GuardWaitReacquiresAndReleasesOnce`：等待结束后 guard 重新持有锁，析构只释放一次。
-- `AsyncConditionVariableTest.AbandonedGuardWaitDoesNotUnlockTwice`：`whenAny` 销毁等待者后 mutex 仍可加锁，
-  Debug 构建不再触发 `AsyncMutex::unlock()` 的 `assert(locked_)`。
-- `test_async` Debug 与 ASan 全量通过。
+- `AsyncConditionVariableTest.GuardWaitReacquiresAndReleasesOnce`: after the wait the guard holds the lock again and the destructor releases it exactly once.
+- `AsyncConditionVariableTest.AbandonedGuardWaitDoesNotUnlockTwice`: after `whenAny` destroys the waiter the mutex can still be locked, and Debug builds no longer trip `assert(locked_)` in `AsyncMutex::unlock()`.
+- The full `test_async` suite passes in Debug and under ASan.

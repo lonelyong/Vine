@@ -1,42 +1,33 @@
-# Bug: TaskCompletionSource 多个 value task 会移动同一份结果
+# Bug: several value tasks from one `TaskCompletionSource` move the same result
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `TaskCompletionSource.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `TaskCompletionSource.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: `TcsState` holds one `std::optional<T>` and every `await_resume()` moved out of it, so a second task from the same `TaskCompletionSource` read an already-moved value (and concurrent completed tasks raced) although the contract promised every waiter the result. Copy-constructible `T` is now copied per waiter (concurrent awaits included) and move-only `T` is documented as single-consumer in the class, `task()` and `setResult()` comments.
+## Symptom
 
-## 现象
+When several `task()`s are taken from the same `TaskCompletionSource<T>` and awaited, only the first consumer gets the full result; later consumers read an object that has already been moved from. If several completed tasks read it from different threads at the same time, the result object can also be a data race.
 
-从同一个 `TaskCompletionSource<T>` 获取多个 `task()` 并等待时，只有第一个消费者取得完整结果；
-后续消费者读取的是已被移动的对象。若多个已完成任务从不同线程同时读取，结果对象还可能发生数据竞争。
+## Root cause
 
-## 根因
+`TcsState<T>` stores a single `std::optional<T>`, and every `TcsAwaiter::await_resume()` performs `std::move(*state_->value)`. Yet the public contract allows several independent tasks to be taken from one source and says they complete together, and the `setResult` documentation says the result is delivered to every waiting task; the implementation moves it as if for a single consumer.
 
-`TcsState<T>` 只保存一个 `std::optional<T>`，而每个 `TcsAwaiter::await_resume()` 都执行
-`std::move(*state_->value)`。但公开契约同时允许从同一 source 获取多个独立任务，并称它们会一起完成，
-且 setResult 文档称结果交付给每个等待任务；实现却按单消费者移动。
+## Impact and verification
 
-## 影响与验证
+- A standalone probe creates two `task()`s from one `TaskCompletionSource<std::string>` and reads them one after the other after setting the result to `"payload"`; the output is `payload|`, the second result empty.
+- The existing `MultipleWaiters` case uses `TaskCompletionSource<int>` (moving an `int` is copying, which happens to hide the defect) and the void case is called `VoidSource`; neither checks whether several consumers read a complete value.
+- No TSan run has covered concurrent `await_resume()` on tasks that are already ready; the current lock-free implementation of sharing one moved result carries that risk.
 
-- 独立探针创建两个 `TaskCompletionSource<std::string>::task()`，设置结果为 `"payload"` 后依次读取，
-  输出为 `payload|`，第二个结果为空。
-- 现有 `MultipleWaiters` 用例用的是 `TaskCompletionSource<int>`（`int` 的移动等于拷贝，恰好掩盖了该缺陷），
-  void source 的用例叫 `VoidSource`；两者都没有检查多消费者读到的值是否完整。
-- 尚未对并发 await-ready 后同时 `await_resume()` 的路径运行 TSan；现有无锁移动共享结果的实现存在该风险。
+## Fix direction
 
-## 修复方向
+Decide the result contract first: several consumers sharing one read-only value, a copy per consumer for copyable types, or a value-bearing source defined as single-consumer. Then make the state type, `await_resume`, the API documentation and the move-only constraint agree, and add sequential and concurrent tests with several value tasks.
 
-先明确结果契约：多消费者共享只读值、对可复制类型复制、或将有值 source 定义为单消费者。
-随后使状态类型、await_resume、API 文档及 move-only 类型约束一致，并为多个 value task 添加顺序与并发测试。
+## Fix
 
-## 修复
+- `TcsAwaiter::await_resume()` returns `T`: a copy-constructible `T` is copied per consumer, so several tasks (concurrent awaits included) all read the complete value; a move-only `T` keeps the single-consumer move, and that limitation is stated in the class comment, in `task()` and in `setResult()`.
+- The comment on `TcsState<T>` says the same: copied to every waiter, a move-only value can be taken once.
 
-- `TcsAwaiter::await_resume()` 返回 `T`：可拷贝构造的 `T` 每次拷贝一份，多个任务（含并发 await）都读到完整值；
-  只可移动的 `T` 仍接单消费者移动，并在类注释 / `task()` / `setResult()` 文档里写明这一限制。
-- `TcsState<T>` 的注释同步改为“拷贝给每个等待者；move-only 只能取一次”。
+## Verification
 
-## 验证
-
-- `TaskCompletionSourceTest.EveryValueTaskReceivesItsOwnCopy`：两个 `std::string` 任务都读到 `"payload"`。
-- 既有 `MultipleWaiters` / `VoidSource` / 并发 `setResult` 用例仍通过。
+- `TaskCompletionSourceTest.EveryValueTaskReceivesItsOwnCopy`: both `std::string` tasks read `"payload"`.
+- The existing `MultipleWaiters`, `VoidSource` and concurrent `setResult` cases still pass.

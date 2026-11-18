@@ -1,40 +1,32 @@
-# Bug: Scope 停止后重新添加任务仍收到已停止的令牌
+# Bug: a task added to a stopped `Scope` still receives the stopped token
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `Scope.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `Scope.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: `Scope::add()` began a new batch by resetting the done event and the exception state but not the stop source, so children added after a stop inherited an already-stopped token. `add()` now rebuilds `source_` together with the batch, which is what `requestStop()` documents: a stop request applies to the batch it was raised in.
+## Symptom
 
-## 现象
+After the current batch of a `Scope` is stopped, a new batch begun by a later `add()` still receives a stop token that has already been asked to stop. A child reading `currentStopToken()` when it starts finds the token stopped, even though the new batch was never asked to stop.
 
-`Scope` 的当前批次停止后，后续 `add()` 开始的新批次仍收到已请求停止的 stop token。
-孩子在开始运行时读取 `currentStopToken()`，会发现令牌已经停止，即使新批次并未被请求停止。
+## Root cause
 
-## 根因
+`Scope::add()` resets the completion event and the exception state when `pending == 0` and treats that as the start of a new batch, but it does not rebuild `source_`. The stopped state `requestStop()` left on `source_` is persistent, so the new children are still injected with a stopped token.
 
-`Scope::add()` 在 `pending == 0` 时重置完成事件和异常状态，将其作为新批次开始；但它没有重建
-`source_`。此前 `requestStop()` 对 `source_` 的停止状态是持久的，故新孩子注入的仍是已停止令牌。
+## Impact and verification
 
-## 影响与验证
+- Reproduction: add and complete a batch of tasks, call `requestStop()`, then add more tasks and read `currentStopToken()`; the second batch observes `stop_requested() == true`.
+- A standalone minimal probe reproduced it, and the existing `test_async` cases do not cover reusing the scope after a stop.
+- The "new batch" therefore resets the completion state but not the cancellation state; a caller cannot tell from the current behaviour of `add()` whether the new batch is still affected by the old stop request.
 
-- 复现步骤：添加并完成一批任务，调用 `requestStop()`，再添加任务并读取 `currentStopToken()`；
-  第二批任务观察到 `stop_requested() == true`。
-- 独立最小探针已复现；`test_async` 现有测试未覆盖停止后的批次重用。
-- 这使“新批次”重置了完成状态，却没有重置取消状态；调用者无法仅凭 `add()` 的现有行为区分新批次是否仍受旧停止请求影响。
+## Fix direction
 
-## 修复方向
+State the contract between `requestStop()` and batch reuse: if a new batch is meant to run independently, give that batch a new stop source; if stopping is irreversible for the whole lifetime of the `Scope`, refuse `add()` after a stop explicitly instead of quietly starting an already-cancelled child. Add a regression test covering the token state of an `add()` after a stop.
 
-明确 `requestStop()` 与批次重用的契约：若新批次应独立运行，则为该批次提供新的 stop source；
-若停止是整个 `Scope` 生命周期不可逆的，则应明确拒绝停止后的 `add()`，而不是悄然启动一个已取消的孩子。
-补充回归测试覆盖停止后再次 `add()` 的令牌状态。
-## 修复
+## Fix
 
-- `Scope::add()` 在 `pending == 0` 开启新批次时一并执行 `source_ = std::stop_source{}`，与 `done` /
-  `first_exception` 一起重置。停止请求从此只作用于它被提出的那个批次，也是 `requestStop()` 文档写的语义。
+- `Scope::add()` performs `source_ = std::stop_source{}` together with resetting `done` / `first_exception` when `pending == 0` opens a new batch. A stop request now applies only to the batch it was raised in, which is what the `requestStop()` documentation says.
 
-## 验证
+## Verification
 
-- `ScopeTest.ABatchAfterRequestStopGetsAFreshUnrequestedToken`：新批次仍拿到 scope 的令牌
-  （`stop_possible()`），但 `stop_requested()` 为 false。
-- 既有 `ChildrenRunInTheScopesEnvironment...`、`JoinStopAndWait...`、`ADetachedScope...` 仍通过。
+- `ScopeTest.ABatchAfterRequestStopGetsAFreshUnrequestedToken`: the new batch still receives the scope's token (`stop_possible()`) while `stop_requested()` is false.
+- The existing `ChildrenRunInTheScopesEnvironment...`, `JoinStopAndWait...` and `ADetachedScope...` cases still pass.

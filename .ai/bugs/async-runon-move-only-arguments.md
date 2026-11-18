@@ -1,39 +1,33 @@
-# Bug: runOn 无法转发 move-only 值参数
+# Bug: `runOn` cannot forward move-only value arguments
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `ThreadPoolScheduler.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `ThreadPoolScheduler.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: `runOn()` stored the callable and arguments by value but invoked the named locals as lvalues, so a move-only argument did not compile even though the return type was deduced from by-value `std::invoke_result_t<F, Args...>`. The call now moves the frame's copies into the callable, and `run()` shares the same implementation, so the default-pool overload is fixed too.
+## Symptom
 
-## 现象
+Passing a move-only value argument, such as a `std::unique_ptr`, to `runOn()` does not compile, even though the callable can take the argument by value.
 
-将 move-only 值参数（例如 `std::unique_ptr`）传给 `runOn()` 时，调用无法编译，即使 callable 能按值接收该参数。
+## Root cause
 
-## 根因
+`runOn(vn::ThreadPool&, F f, Args... args)` stores the callable and the arguments by value but, once the coroutine resumes, invokes them as `std::invoke(f, args...)`. The named locals are lvalues, so nothing can be moved into a callable that takes a move-only object by value. The return type is deduced as `std::invoke_result_t<F, Args...>` all the same, so the deduction and the actual value category disagree.
 
-`runOn(vn::ThreadPool&, F f, Args... args)` 按值保存 callable 和参数，但在协程恢复后以
-`std::invoke(f, args...)` 调用。具名局部变量是左值，因而不能移动到需要按值接收 move-only 对象的 callable。
-返回类型却以 `std::invoke_result_t<F, Args...>` 推导，形成了类型推导与实际调用类别不一致。
+## Impact and verification
 
-## 影响与验证
+- A standalone minimal compile probe with a `std::unique_ptr` value argument confirms that the `runOn()` call fails to compile.
+- The existing `runOn` tests do not cover a move-only value argument.
+- The default-thread-pool overload has the same defect, because it forwards to the same invocation implementation.
 
-- 独立最小编译探针以 `std::unique_ptr` 作为值参数，确认调用 `runOn()` 编译失败。
-- 现有 `runOn` 测试未覆盖 move-only 值参数。
-- 同一问题也影响默认线程池重载，因为它转发到相同的调用实现。
+## Fix direction
 
-## 修复方向
+Invoke the stored callable and arguments with the value category the by-value API implies, add a regression test with a move-only argument, and verify ordinary value arguments, reference wrappers and both the void and non-void return paths.
 
-以与 API 按值接收语义一致的值类别调用保存的 callable 和参数，并补充 move-only 参数回归测试；
-同时验证普通值参数、引用包装及 void/非 void 返回路径。
+## Fix
 
-## 修复
+- `runOn()` invokes the frame's copies as `std::move(f), std::move(args)...`, matching the by-value semantics `std::invoke_result_t<F, Args...>` describes.
+- `run()` forwards to the same implementation, so the default-thread-pool overload is fixed with it.
 
-- `runOn()` 以 `std::move(f), std::move(args)...` 调用任务帧里的副本，与 `std::invoke_result_t<F, Args...>`
-  描述的值传递语义一致。
-- `run()` 转发到同一实现，默认线程池重载因而一并修复。
+## Verification
 
-## 验证
-
-- `ThreadPoolSchedulerTest.RunOnMovesMoveOnlyArgumentsIntoTheCallable`：`std::unique_ptr` 值参数可编译并运行。
-- 既有 `RunOnPool` / `RunOnPoolVoid` / `RunUsesDefaultPool` / `RunVoidUsesDefaultPool` 仍通过。
+- `ThreadPoolSchedulerTest.RunOnMovesMoveOnlyArgumentsIntoTheCallable`: a `std::unique_ptr` value argument compiles and runs.
+- The existing `RunOnPool` / `RunOnPoolVoid` / `RunUsesDefaultPool` / `RunVoidUsesDefaultPool` cases still pass.

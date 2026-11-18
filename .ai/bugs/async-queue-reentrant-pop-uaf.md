@@ -1,53 +1,37 @@
-# Bug: AsyncQueue::pop 唤醒生产者后可被重入销毁（use-after-free）
+# Bug: `AsyncQueue::pop` can be destroyed re-entrantly after it wakes the producer (use-after-free)
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `AsyncQueue.hpp`、`When.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `AsyncQueue.hpp`, `When.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: `pop()` woke the waiting producer before it returned, and that wake could re-enter through a `whenAny` completion and destroy the still-running `pop()` frame (ASan use-after-free). The hand-off rule now suspends the handing-off operation first (`detail::WakePeerAndContinue`) and only then wakes the peer, so a winning `whenAny` destroys a suspended frame; waiters re-check and re-register, and `tryPush` / `tryPop` / `close` can only post the wake.
+## Symptom
 
-## 现象
+When a bounded queue is full, a producer waits in `push()`; another task `pop()`s from the queue and the waiting producer is resumed synchronously. If the producer wins in `whenAny`, `whenAny` destroys the task frame that is still executing `pop()`, which then keeps accessing a freed coroutine frame.
 
-有界队列已满时，一个生产者等待 `push()`；另一个任务从队列 `pop()` 后，等待的生产者被同步恢复。
-如果生产者在 `whenAny` 中获胜，`whenAny` 会销毁仍在执行 `pop()` 的任务帧，随后 `pop()` 继续访问已释放的协程帧。
+## Root cause
 
-## 根因
+`detail::popOne()` removes the element and resumes the waiting producer before returning the value. That resume can re-enter through `whenAny`'s completion path and destroy the current `AsyncQueue::pop()` coroutine frame; the code following `co_return co_await` in `pop()` then runs inside a destroyed frame. Resuming any waiter before the consuming operation has returned therefore lets the current coroutine on the call stack be destroyed indirectly.
 
-`detail::popOne()` 移除队列元素后，在返回值之前恢复等待中的生产者。该恢复可以沿 `whenAny` 完成路径重入并销毁
-当前 `AsyncQueue::pop()` 协程帧；`pop()` 的 `co_return co_await` 后续代码仍会在已销毁的帧中运行。
-在消费操作返回前恢复任意等待者，因而允许调用栈上的当前协程被其间接销毁。
+## Impact and verification
 
-## 影响与验证
+- Minimal reproduction: a queue of capacity 1 is filled with one element; `whenAny` waits on both a `push()` blocked by the full queue and a `pop()` that runs after a delay.
+- A standalone probe under Clang 23 + ASan reproduces the heap-use-after-free, with the read in `AsyncQueue::pop()` and the free on the path where `whenAny` destroys the still-running pop task.
+- The 158 cases of `test_async` passed at the time, but none covered "pop wakes the producer, the producer wins the composition, and the pop task is destroyed at the same moment".
 
-- 最小复现：容量为 1 的队列先放入一个元素；`whenAny` 同时等待一个被队列满状态阻塞的 `push()`，
-  以及延迟后执行的 `pop()`。
-- Clang 23 + ASan 独立探针复现 heap-use-after-free，读发生于 `AsyncQueue::pop()`，
-  释放路径经 `whenAny` 销毁仍在执行的 pop 任务。
-- 当前 `test_async` 的 158 项通过，但没有覆盖“pop 唤醒生产者、生产者赢得组合、pop 任务同时被销毁”的场景。
+## Fix direction
 
-## 修复方向
+Do not resume the producer before `pop()` has finished its own state transition and returned its result; design a wake ordering that cannot destroy the coroutine of an operation that is still executing, and add the `whenAny` + bounded-queue regression test described above together with ASan verification.
 
-避免在 `pop()` 尚未完成自身状态转换和返回结果前恢复生产者；设计一个不会在当前操作仍执行时销毁该操作协程的唤醒时序，
-并增加上述 `whenAny` + 有界队列回归测试及 ASan 验证。
+## Fix
 
-## 修复
+- Hand-off rule: an operation that gives away a slot or an element **suspends itself first** (`detail::WakePeerAndContinue`), and then an action on the timer thread wakes the peer before resuming the operation. When the peer wins `whenAny`, `Destroy` destroys a **suspended** coroutine frame (and equally suspended ancestors), which is a legal destruction point.
+- Merely posting the wake to the timer thread is not enough: the operation is still executing on its own thread, and the peer's `Destroy` would destroy a running frame (re-verified 2026-11-02: the worker thread runs `pop()`, the producer is woken by the timer, ASan reports `heap-use-after-free`).
+- A waiter re-checks the condition when it wakes and re-registers if the condition does not hold (`QueuePopAwaiter` / `QueuePushAwaiter` can be awaited repeatedly).
+- `WakePeerAndContinue`'s destructor deregisters its own handle: when the operation is destroyed first, the action only wakes the peer and does not resume the dead frame. The remaining `tryPush` / `tryPop` / `close`, which cannot suspend themselves, can only post the wake, and the header says so.
 
-- 交接规则：交出一个槽位/一个元素的操作**先挂起自己**（`detail::WakePeerAndContinue`），再由 timer 线程上的
-  一个动作先唤醒同伴、后恢复自己。同伴赢得 `whenAny` 时，`Destroy` 销毁的是一个**已挂起**的协程帧
-  （以及同样挂起的祖先帧），这是合法销毁点。
-- 只把唤醒投递给 timer 线程不够：操作自己仍在它的线程上执行，同伴的 `Destroy` 会销毁一个正在运行的帧
-  （2026-11-02 复验：worker 线程执行 `pop()`、生产者由 timer 唤醒，ASan 报 `heap-use-after-free`）。
-- 等待者醒来后重新检查条件，不满足就重新登记（`QueuePopAwaiter` / `QueuePushAwaiter` 可重复 await）。
-- `WakePeerAndContinue` 的析构会注销自己的 handle：操作先被销毁时，动作只唤醒同伴、不恢复已亡的帧。
-  剩下无法自我挂起的 `tryPush` / `tryPop` / `close` 只能投递唤醒，头文件写明了这一点。
+## Verification
 
-## 验证
-
-- `AsyncQueueTest.PopWakingAProducerDoesNotDestroyTheExecutingPop`：容量 1、满队列的 `push` 与延迟 `pop`
-  在 `whenAny` 中竞争（50 轮）；ASan 下不再报错，修复前同场景（worker 线程 + `AsyncEvent` 唤醒 popper）
-  报 `heap-use-after-free`，读发生在 popper 的 resume 上。
-- `AsyncQueueTest.PopHandsAFreedSlotOverBeforeItReturns` / `PushHandsTheItemOverBeforeItReturns`：交接是
-  有顺序的——`pop()` / `push()` 返回时，被唤醒的同伴已经运行过。
-- `test_async` 在 Debug 与 ASan 下全量通过。
-- 语义变化（已写进头文件）：`pop()` / `push()` 要等同伴先跑完才返回；若它在 `Destroy` 组合里是落败者，
-  会在这个挂起点被销毁（`pop()` 已取走的值随之丢弃）。
+- `AsyncQueueTest.PopWakingAProducerDoesNotDestroyTheExecutingPop`: a `push` on a full queue of capacity 1 and a delayed `pop` race in `whenAny` (50 rounds); ASan is clean, while before the fix the same scenario (worker thread plus an `AsyncEvent` waking the popper) reported `heap-use-after-free` with the read on the popper's resume.
+- `AsyncQueueTest.PopHandsAFreedSlotOverBeforeItReturns` / `PushHandsTheItemOverBeforeItReturns`: the hand-off is ordered - by the time `pop()` / `push()` returns, the peer it woke has already run.
+- The full `test_async` suite passes in Debug and under ASan.
+- Semantic change (written into the header): `pop()` / `push()` return only after the peer has run; if the caller is the loser in a `Destroy` composition it is destroyed at that suspension point (the value `pop()` had already taken is discarded with it).

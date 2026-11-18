@@ -1,44 +1,37 @@
-# Bug: AsyncQueue 的 noexcept 路径遇到分配或元素移动异常会 terminate
+# Bug: the `noexcept` paths of `AsyncQueue` terminate on an allocation or element-move failure
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `AsyncQueue.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `AsyncQueue.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: three `noexcept` declarations were not true - the queue constructor's `std::make_shared`, the push awaiter's by-value move, and bounded `await_suspend`'s enqueue - so a `bad_alloc` or a throwing move terminated the process. The two constructors dropped `noexcept`; `await_suspend` keeps it and captures the failure for `await_resume()` to rethrow on the coroutine's own stack.
+## Symptom
 
-## 现象
+If allocation fails while `AsyncQueue` creates its shared state or enqueues, or if an element's move constructor throws, the exception can cross a `noexcept` boundary and terminate the process instead of being reported as a failed operation.
 
-AsyncQueue 创建共享状态或入队时若分配失败，或者元素移动构造抛异常，异常可能越过 `noexcept` 边界并终止进程，
-而不是作为操作失败传播。
+## Root cause
 
-## 根因
+- The `AsyncQueue` constructor is declared `noexcept`, but its members are initialised with `std::make_shared`, and an allocation failure throws `std::bad_alloc`.
+- The `QueuePushAwaiter` constructor is declared `noexcept`, but storing `T` by value can throw from its move constructor.
+- `await_suspend()` of a bounded push is declared `noexcept` and calls `enqueueLocked()` from inside it; the queue's `deque::push_back` allocation or `T`'s move constructor can throw.
 
-- `AsyncQueue` 构造函数声明 `noexcept`，但成员初始化使用 `std::make_shared`，分配失败会抛 `std::bad_alloc`。
-- `QueuePushAwaiter` 构造函数声明 `noexcept`，但按值保存 `T` 时移动构造可能抛异常。
-- 有界 push 的 `await_suspend()` 声明 `noexcept`，并在其中调用 `enqueueLocked()`；队列的
-  `deque::push_back` 分配或 `T` 移动构造可能抛异常。
+## Impact and verification
 
-## 影响与验证
+- This is a code review finding based on the exception specifications and the call paths; it was not verified by allocation-failure injection or by a runtime throwing-move probe.
+- The public constraints on `T` do not require a nothrow move constructor, and the constructors do not say that an allocation failure terminates.
+- Enqueueing from `await_resume()` on the ordinary non-suspending path has no such `noexcept` boundary, but it can still terminate when the awaiter's construction fails.
 
-- 这是基于异常规格和调用路径的代码审查发现，未通过分配故障注入或 throwing-move 运行时探针验证。
-- `T` 的公开约束没有要求 nothrow 移动构造；构造函数也没有说明分配失败会终止。
-- 普通非挂起路径 `await_resume()` 中的入队没有相同的 `noexcept` 边界，但仍可能因 awaiter 构造失败而终止。
+## Fix direction
 
-## 修复方向
+Make the queue's failure contract uniform: remove the `noexcept` that does not hold, or turn the enqueue that can fail into an error channel the awaiter reports normally; and state whether `T` must be nothrow-movable. Add tests or compile-time constraints for the allocation-failure and throwing-move paths.
 
-统一队列的失败契约：移除不成立的 `noexcept`，或将可能失败的入队操作改成可从 awaiter 正常报告的错误通道；
-同时明确是否要求 `T` 为 nothrow-movable。对分配失败和 throwing-move 路径增加测试或编译期约束。
+## Fix
 
-## 修复
+- The `AsyncQueue` constructor loses `noexcept`: an allocation failure in `make_shared` now throws to the caller.
+- The `QueuePushAwaiter` constructor loses `noexcept`: `T`'s move constructor may throw.
+- `QueuePushAwaiter::await_suspend` must keep `noexcept`: a failed enqueue (a throwing move or a failed deque allocation) is captured into `failure_` and rethrown by `await_resume()` on the coroutine's own stack, the same convention as `detail::tryRegisterWaiter`.
+- `T` is not required to be nothrow-movable; a throwing move is reported as the task's error.
 
-- `AsyncQueue` 构造函数去掉 `noexcept`：`make_shared` 的分配失败可以正常抛给调用者。
-- `QueuePushAwaiter` 构造函数去掉 `noexcept`：`T` 的移动构造可以抛。
-- `QueuePushAwaiter::await_suspend` 仍必须 `noexcept`：入队失败（移动抛、deque 分配失败）捕获进 `failure_`，
-  由 `await_resume()` 在协程自己的栈上重抛，与 `detail::tryRegisterWaiter` 的约定一致。
-- `T` 不要求 nothrow-movable；移动抛异常会作为 task 的错误报告。
+## Verification
 
-## 验证
-
-- `AsyncQueueTest.AThrowingMoveFailsThePushInsteadOfTerminating`：把 `T` 的每一次移动依次设为抛异常，
-  每次都必须作为 task 的错误交给调用者（修复前会 `std::terminate`）。
-- `test_async` Debug 与 ASan 全量通过。
+- `AsyncQueueTest.AThrowingMoveFailsThePushInsteadOfTerminating`: each move of `T` is made to throw in turn, and every one must reach the caller as the task's error (before the fix it was `std::terminate`).
+- The full `test_async` suite passes in Debug and under ASan.

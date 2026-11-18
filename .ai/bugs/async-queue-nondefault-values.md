@@ -1,39 +1,31 @@
-# Bug: AsyncQueue::pop 隐式要求元素可默认构造且可赋值
+# Bug: `AsyncQueue::pop` implicitly requires a default-constructible, assignable element
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `AsyncQueue.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `AsyncQueue.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: `pop()` implicitly required `T` to be default-constructible and move-assignable because `popOne()` default-built a local and move-assigned the front into it. It now returns `std::optional<T>` emplaced from the front, so the contract is move-constructible only, while `tryPop(T&)` still needs move assignment because it writes into the caller's sink.
+## Symptom
 
-## 现象
+`AsyncQueue<T>::pop()` fails to compile for a legitimate non-default-constructible, movable type, even though the queue only has to move one enqueued element out.
 
-对合法的非默认构造、可移动类型使用 `AsyncQueue<T>::pop()` 会编译失败，即使队列中只需移动出一个已入队元素。
+## Root cause
 
-## 根因
+`detail::popOne()` declares `T value;` and move-assigns the front element into it, which additionally requires `T` to be default-constructible and move-assignable. The template and API documentation of `AsyncQueue` never states those constraints, and the other queue operations pass values by move construction and move enqueue.
 
-`detail::popOne()` 声明 `T value;` 并将队首元素 move-assign 给它，额外要求 `T` 可默认构造且可移动赋值。
-AsyncQueue 的模板/API 文档没有声明这些约束；其余队列操作主要以移动构造/移动入队表达值传递。
+## Impact and verification
 
-## 影响与验证
+- A compile probe instantiates `AsyncQueue<T>::pop()` with a type whose default constructor is deleted and which provides a move constructor and move assignment; it fails at the default construction in `popOne()`.
+- That type has the movable semantics a queue element needs, yet the pop API cannot be used with it.
 
-- 编译探针使用删除默认构造函数、提供移动构造和移动赋值的类型实例化 `AsyncQueue<T>::pop()`，
-  在 `popOne()` 的默认构造处失败。
-- 该类型满足常见队列元素所需的可移动语义，但无法使用 pop API。
+## Fix direction
 
-## 修复方向
+Construct the return value from the front element, so the unnecessary default construction and assignment requirement disappears; add compile-time and runtime tests for the element types that are supported, including one that is not default-constructible but is move-constructible.
 
-从队首构造返回值，避免无必要的默认构造和赋值要求；对支持的元素类型补充编译期/运行期测试，
-包括不可默认构造且可移动构造的类型。
+## Fix
 
-## 修复
+- `detail::popOne()` and `QueuePopAwaiter::await_resume()` use `std::optional<T>` plus `emplace(std::move(front))`: only move construction of `T` is required.
+- The contract of `pop()` is narrowed to "`T` is move-constructible"; `tryPop(T&)` still needs move assignment because the value is written into the caller's sink, and the class comment now says so.
 
-- `detail::popOne()` 与 `QueuePopAwaiter::await_resume()` 改为 `std::optional<T>` +
-  `emplace(std::move(front))`：只需要 `T` 可移动构造。
-- `pop()` 的契约收紧为“`T` 可移动构造”；`tryPop(T&)` 仍需要移动赋值，因为值被写进调用方的 sink，
-  这一点已写进类注释。
+## Verification
 
-## 验证
-
-- `AsyncQueueTest.PopSupportsAMoveOnlyTypeWithoutDefaultConstruction`：默认构造与移动赋值都删除的类型
-  照样能 `push` / `pop`。
+- `AsyncQueueTest.PopSupportsAMoveOnlyTypeWithoutDefaultConstruction`: a type with both the default constructor and move assignment deleted can still `push` and `pop`.

@@ -1,43 +1,34 @@
-# Bug: withCancellation 未将 token 传给被包装任务
+# Bug: `withCancellation` does not pass its token to the wrapped task
 
-- **模块**: `src/base/async`
-- **状态**: 已修复
-- **涉及**: `Cancellation.hpp`、`StopToken.hpp`、`tests/test_async/AsyncTest.cpp`
+- **Module**: `src/base/async`
+- **Status**: Fixed
+- **Files**: `Cancellation.hpp`, `StopToken.hpp`, `tests/test_async/AsyncTest.cpp`
 
-> **EN**: Fixed: `withCancellation()` only called `throwIfCancelled()` and then awaited the task, so the wrapped task could not see the token through `currentStopToken()` and a stop requested mid-run never reached it, although the comment said the token was "passed down". It now injects the token with `detail::TaskEnvironment::setToken()` like `withStopToken()` and the combinators do, and the comment states that mid-run cancellation is cooperative.
+## Symptom
 
-## 现象
+`withCancellation(token, task)` only checks the token when the wrapper task starts; the wrapped task cannot read that token through `currentStopToken()`, and a stop requested while it runs does not reach it.
 
-`withCancellation(token, task)` 只在包装任务开始时检查 token；被包装任务无法从
-`currentStopToken()` 读取该 token，运行中请求停止也不会自动到达被包装任务。
+## Root cause
 
-## 根因
+The wrapper calls `throwIfCancelled(token)` and then awaits the original task directly, without injecting the token into its promise through `TaskEnvironment::setToken()` or `withStopToken()`. The function comment says the token is "passed down", but the implementation only checks before the start.
 
-包装函数调用 `throwIfCancelled(token)` 后直接 await 原任务，没有通过 `TaskEnvironment::setToken()` 或
-`withStopToken()` 将 token 注入其 promise。函数注释称 token 会“passed down”，但实现只提供启动前检查。
+## Impact and verification
 
-## 影响与验证
+- A standalone probe wraps a task that reads `currentStopToken()` with a cancellable token; the task observes `stop_possible() == false`.
+- The existing `WithCancellation` cases only test refusing to start when already cancelled and completing normally with an empty token; they do not test whether the token reaches the child task or a mid-run cancellation.
+- A caller that believes the combinator propagates cancellation therefore leaves the child running unless it opens an explicit token channel of its own.
 
-- 独立探针用可取消 token 包装一个读取 `currentStopToken()` 的任务；任务观察到
-  `stop_possible() == false`。
-- 现有 `WithCancellation` 用例只测试已取消时拒绝启动及空 token 时正常完成，未测试 token 是否进入子任务或运行中取消。
-- 因此调用者若认为该组合子会传播取消，子任务将继续运行，除非另有显式 token 通道。
+## Fix direction
 
-## 修复方向
+State and unify the API semantics: if it is an environment wrapper, it must inject the token before the child starts and define how a mid-run cancellation behaves; if it only checks before the start, rename or re-document it so it does not imply propagation. Add tests for environment visibility and for a stop requested while running.
 
-明确并统一 API 语义：若它是环境包装器，应在子任务启动前注入 token，并定义运行中取消如何表现；
-若只负责启动前检查，则改名/改文档，避免暗示传递取消。补充环境可见性和运行中请求停止的测试。
+## Fix
 
-## 修复
+- `withCancellation()` calls `detail::TaskEnvironment::setToken(task, token)` after `throwIfCancelled()`, the same way `withStopToken()` and the combinators inject it, and then awaits the original task.
+- The comment now says the token becomes the task's environment and that a mid-run stop is observed only by code that reads the token (cooperative).
 
-- `withCancellation()` 在 `throwIfCancelled()` 之后调用 `detail::TaskEnvironment::setToken(task, token)`，
-  与 `withStopToken()` 和组合子的注入方式一致；随后 await 原任务。
-- 注释改为：token 成为任务的运行环境，运行中停止只能被读过该令牌的代码观察到（协作式）。
+## Verification
 
-## 验证
-
-- `TaskTest.WithCancellationHandsItsTokenToTheTaskEnvironment`：任务体内 `currentStopToken()` 的
-  `stop_possible()` 为 true。
-- `TaskTest.WithCancellationCancelsTheTaskWhileItRuns`：任务在 sleep 中，外部 request_stop 后 1 s 内醒来
-  （未注入时会跑满 2 s 的 deadline）。
-- 既有 `WithCancellationThrowsWhenCancelled` / `WithCancellationRunsTask` 仍通过。
+- `TaskTest.WithCancellationHandsItsTokenToTheTaskEnvironment`: inside the task body, `stop_possible()` of `currentStopToken()` is true.
+- `TaskTest.WithCancellationCancelsTheTaskWhileItRuns`: while the task sleeps, an outside `request_stop()` wakes it within 1 s (without the injection it runs the full 2 s deadline).
+- The existing `WithCancellationThrowsWhenCancelled` / `WithCancellationRunsTask` cases still pass.
