@@ -145,6 +145,9 @@ struct VisualUserIO::Impl {
 
     void setConsolePanel(ConsolePanel* console);
     void setCommandManager(vn::appfw::CommandManager* manager);
+    /// Recomputes the completion list from any thread; refreshCompletion() does the work on the application thread.
+    void requestCompletionRefresh();
+    /// Recomputes the completion list; must run on the application thread.
     void refreshCompletion();
     void putString(const String& str);
     void clear();
@@ -273,6 +276,15 @@ struct VisualUserIO::Impl {
     /// Connection on the command manager's commandsChanged().
     vn::Connection commands_handler{};
 
+    /// Token a posted completion refresh checks before it touches this object.
+    ///
+    /// The refresh is posted from whatever thread changed the command set, and the call may run after this object is
+    /// gone; the token turns that into a no-op. The Impl holds the only strong reference, the posted call a weak one -
+    /// the shape CommandBinding::requestRefresh() uses.
+    struct Lifetime
+    {};
+    std::shared_ptr<Lifetime> lifetime{ std::make_shared<Lifetime>() };
+
     /// Prompt bookkeeping of the current read; see PromptState.
     std::shared_ptr<PromptState> prompt_state{ std::make_shared<PromptState>() };
 };
@@ -331,9 +343,28 @@ void VisualUserIO::Impl::setCommandManager(vn::appfw::CommandManager* manager)
     if (manager != nullptr && !commands_handler.isActive()) {
         // The completion list is a snapshot: follow the command set so commands of
         // plugins that register after the console was bound still show up.
-        commands_handler = manager->commandsChanged.connect([this](vn::appfw::CommandManager&, vn::EventArgs&) { refreshCompletion(); });
+        commands_handler = manager->commandsChanged.connect([this](vn::appfw::CommandManager&, vn::EventArgs&) { requestCompletionRefresh(); });
     }
     refreshCompletion();
+}
+
+void VisualUserIO::Impl::requestCompletionRefresh()
+{
+    // commandsChanged() fires on the thread that changed the command set, while the refresh reads the bound panel and
+    // asks the plugin manager for display names: it belongs on the application thread.
+    if (MainThreadDispatcher::isMainThread()) {
+        refreshCompletion();
+        return;
+    }
+
+    // Dropped when the event loop is already gone - nobody is left to read the panel - and skipped when this object did
+    // not survive the queue: the handler is attached to it, the posted call is not.
+    const std::weak_ptr<Lifetime> alive = lifetime;
+    static_cast<void>(MainThreadDispatcher::postToMainThread([this, alive] {
+        if (!alive.expired()) {
+            refreshCompletion();
+        }
+    }));
 }
 
 void VisualUserIO::Impl::refreshCompletion()
@@ -450,12 +481,13 @@ void VisualUserIO::Impl::endRead() noexcept
         pending = PendingRead::None;
     }
 
-    // The picker belongs to the read that asked for it: dropping it here keeps the button from outliving its prompt (and
-    // from being clicked for a read that is over). Reads end on the thread that completed them - for a console read that
-    // is the application thread, where this call runs inline - so this cannot overtake the next read's own setup.
+    // The prompt belongs to the read that asked for it: ending it here returns the line to command entry and drops the
+    // picker, so neither the button nor an answer left behind can outlive its prompt. Reads end on the thread that
+    // completed them - for a console read that is the application thread, where this call runs inline - so this cannot
+    // overtake the next read's own setup.
     if (console != nullptr) {
         auto* panel = console;
-        onConsolePanel(panel, [](ConsolePanel* target) { target->setInputAction(ConsoleInputAction{}); });
+        onConsolePanel(panel, [](ConsolePanel* target) { target->endInput(); });
     }
 }
 

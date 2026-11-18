@@ -58,6 +58,7 @@ Owner: `ApplicationData::user_io` (a `unique_ptr`, torn down before the dispatch
 - An implementation's destructor marks the I/O closed and then cancels: a read that the cancellation resumes cannot park again, and the wait state is never destroyed with a
   queued waiter (see `../bugs/appfw-userio-destructor-pending-read.md`).
 - `ConsoleUserIO` reads `std::cin` on a background thread; a cancellation sets shared state and wakes the waiter, and an unconsumed line is left for the next read.
+- The input line has two modes, and only the caller knows which one applies: `beginInput()` starts a prompt and `endInput()` returns the line to command entry. A line submitted inside that interval is an answer, so it is not command history, opens no completion and is never rewritten into a command name; the accent underline marks the mode, which is why a text read has one too.
 
 ### 2.4 Reading a value
 
@@ -69,6 +70,7 @@ Owner: `ApplicationData::user_io` (a `unique_ptr`, torn down before the dispatch
 
 - `putString` writes one line, `clear` clears the screen; `ConsoleUserIO::clear()` emits the ANSI sequence unconditionally (redirected output collects control characters; recorded and left as is).
 - The `VisualUserIO` completion list is a snapshot: it is refreshed when the console is bound and follows command-set changes by subscribing to `CommandManager::commandsChanged`.
+- The refresh belongs to the application thread, because it reads the bound panel and asks the plugin manager for display names; `commandsChanged` may fire anywhere, so the handler posts (carrying a liveness token) instead of computing on the firing thread.
 - Rebinding a panel detaches the old handler first; binding the same panel twice does not run a line twice.
 
 ### 2.6 Headless progress
@@ -88,6 +90,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | F3 | File / directory reads | four separate interfaces; `;` separates several paths; a browse button | landed |
 | F4 | Completion | the snapshot is refreshed when the command set changes | landed |
 | F5 | Headless progress | `ConsoleProgressReporter`, one line per update | landed |
+| F6 | Command history | Up/Down recall the lines that ran as commands; an answer is not one | landed |
 
 ### 3.1.1 F1 Output
 
@@ -129,6 +132,14 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 - **Acceptance** (T5): `ConsoleProgressReporterTest.*`.
 - **Caveat** (N5): the virtual `putString` must not be called during destruction; the sink goes through the non-virtual `writeLine`.
 
+### 3.1.6 F6 Command history
+
+- **Behaviour**: Up/Down navigate the lines submitted as commands; an empty line is dropped; an answer to a read is never recorded, and the completion popup is off while the line answers.
+- **Constraints** (C7): the panel decides membership from the mode it was given (`beginInput` / `endInput`), never from what the text looks like.
+- **Requirements** (R6): the completion refresh runs on the application thread whatever thread changed the command set.
+- **Acceptance** (T8): `UserIOTest.AnAnswerIsNotACommandLine`, `UserIOTest.CompletionRefreshFromAWorkerThreadReachesThePanel`.
+- **Caveat** (N6): the answering mode is ended by the read, not by the submission: a prompt that is never ended leaves history and completion off.
+
 ## 4. Public Interface
 
 ### 4.1 `UserIO`
@@ -161,6 +172,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | C4 | The completion list is a snapshot; the per-key path never touches the registry lock. |
 | C5 | Nothing is written after `stop()`; the consumer is destroyed before `output_mutex_`. |
 | C6 | An implementation's destructor releases the read that is waiting and refuses later ones; the wait state is never destroyed with a waiter queued. |
+| C7 | The panel records a line as command history only while the line is not answering a read; only `beginInput` / `endInput` set that mode. |
 
 ### 5.2 Requirements (R#)
 
@@ -171,6 +183,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | R3 | The headless side does not re-prompt; a bad path returns `nullopt`. |
 | R4 | Rebinding a panel detaches the old handler first. |
 | R5 | Progress wakes up zero times while idle; `poll()` needs no preceding `start()`. |
+| R6 | The completion refresh runs on the application thread, whichever thread changed the command set. |
 
 ### 5.3 Invariants (N#)
 
@@ -181,6 +194,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | N3 | Completion agrees with `CommandManager::commandInfos()`. |
 | N4 | While a foreground progress exists, the headless output carries a progress line. |
 | N5 | A cancellation never discards an answer that arrived first. |
+| N6 | Up/Down only recall commands: a submitted answer never becomes one. |
 
 ## 6. Caveats and Traps
 
@@ -206,6 +220,18 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 - How to detect it: `static_cast<int8_t>(1000)`; a value beyond `int` wraps.
 - How to prevent it: `UserIO::parseInt()` range-checks, and `toDouble` checks for finite.
 
+### 6.4 A prompt that is never ended
+
+- How it fails: a host calls `beginInput()` and never `endInput()`, so every later line is treated as an answer - it is not recorded in history and offers no completion.
+- How to detect it: Up stays empty although commands ran, and typing a command prefix shows no popup.
+- How to prevent it: end the prompt when the read ends, answered or cancelled - `VisualUserIO` does it in `endRead()`, which runs from the read's RAII scope.
+
+### 6.5 A cancelled read can re-arm the line one turn later
+
+- How it fails: `showPrompt()` is posted from the thread that started the read, while a cancellation issued on the application thread ends the read inline; the queued "show the prompt" call then runs after the end and puts the line back into answering mode for a read nobody waits on, so the next command is neither recorded in history nor completed.
+- How to detect it: start a read on a worker thread and cancel it from the application thread before the prompt appears, then type a command and press Up.
+- How to prevent it: give the read an identity the prompt state can compare (a generation counter, or posting the end through the same queue as the prompt), so the queued call skips itself when its read already ended. Not done yet: the visible cost is one lost history entry, against a second source of truth next to the answer slot (G8), and the stale call also re-installs a picker, which is the older half of the same ordering question.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -227,12 +253,14 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | T5 | headless progress | `ConsoleProgressReporterTest.*` (3 cases) |
 | T6 | the `String::toInt` range | `test_core String.NumericConversions` |
 | T7 | a waiting read is released by the destructor | `UserIOTest.DestroyingTheIoWithAPendingReadReleasesIt` |
+| T8 | an answer is not a command line; the refresh lands from any thread | `UserIOTest.AnAnswerIsNotACommandLine`, `UserIOTest.CompletionRefreshFromAWorkerThreadReachesThePanel` |
 
 ## 9. Status and Evolution
 
 ### 9.1 Current status
 
 The two backends, the single slot, the file / directory reads, the completion refresh and the headless progress are all in place.
+The input line distinguishes a command from an answer by the mode its caller sets, so history and completion stay out of a read.
 
 ### 9.2 Known gaps / backlog
 

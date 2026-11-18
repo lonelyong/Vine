@@ -74,6 +74,9 @@ Chain ── vector<Command*> commands (the stack, innermost at the tail)
 - Allocation failure is not modelled on the admission path, or anywhere else in this manager: the only exception a chain allocation, the live-registry push, the stack push
   or the `ProgressHost` constructor can raise is `std::bad_alloc`, and it is not turned into a command outcome. Everything after the entry - including the `changed()`
   handlers the progress host fires - runs inside the guard and is therefore released normally.
+- `executeCommandLineAsync()` is not a coroutine for the same reason it cannot be lazy: it splits the line before it hands the tokens over, because a lazy task cannot
+  own the caller's reference. A `std::bad_alloc` from the tokeniser therefore leaves the function as an exception instead of becoming a `Failed` result - the same policy
+  as above, not a second one, and the result language (`Failed` is for the line or the name, not for the machine) stays honest.
 
 ### 2.3 The serialisation gate and exclusion
 
@@ -110,7 +113,7 @@ The name entry carries no caller data and the instance entry carries it in field
 ### 3.1.1 F1 Top-level execution
 
 - **Behaviour**: the four entries create a new chain and write `foreground`; `nested=true` uses the parent chain.
-- **Constraints** (C1): the top-level entries turn every escaping exception (factory, allocation, command body) into `Failed`.
+- **Constraints** (C1): the top-level entries turn an exception that escapes the command body or the factory into `Failed`; allocation failure is not modelled (§2.2), so a throw from the call itself - copying into the frame, splitting the line - is not a command outcome.
 - **Requirements** (R1): a snapshot callback that throws ⇒ the command does not run; a throwing `executing` / `executed` callback is logged only.
 - **Acceptance** (T1): the `CommandManager_*` top-level execution cases.
 - **Caveat** (N1): an uncaught exception in a `DetachedTask` is `terminate`, so the containment is not optional.
@@ -197,7 +200,7 @@ The name entry carries no caller data and the instance entry carries it in field
 
 | # | Constraint |
 | --- | --- |
-| C1 | The top-level entries turn an escaping exception into `Failed`. |
+| C1 | The top-level entries turn an exception that escapes the command body or the factory into `Failed`; allocation failure is not modelled (§2.2). |
 | C2 | Nesting depth ≤64; the instance overload refuses `nullptr` and a disabled instance. |
 | C3 | `NotApplicable` is not a failure; `succeeded()` is still `Success`. |
 | C4 | A chain's `runs` reaches zero only after the stack is popped and the host destroyed; the wait polls. The entry and every release are one RAII object, constructed after the entry. |
@@ -280,6 +283,7 @@ The four entries, the chain model, exclusion, cancel / drain, history, disabling
 
 - Arguments are tokens only: no declarations, types, defaults or required flags, and an unknown or repeated argument is reported by the command itself; see `.ai/backlog/appfw-command-arguments.md`.
 - Exclusion is not an entry lock; an ordinary top-level command admitted while it runs can still coexist with it.
+- `CommandExecutionContext::executeChild(name)` carries no arguments: a parent that has to pass tokens constructs the child instance itself (`executeChild(unique_ptr<Command>)`). A name overload appends a vtable slot and has no consumer yet; see `.ai/backlog/appfw-command-arguments.md` (T7).
 - The read-modify-write of the disable preference is not atomic (only the UI thread calls it, so there is no mutex); disabling or unregistering a command does not change the registry layout, and a plugin that registers again comes back with its preference.
 
 ### 9.3 Compatibility / migration

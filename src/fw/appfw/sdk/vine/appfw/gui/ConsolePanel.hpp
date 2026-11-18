@@ -83,13 +83,28 @@ class VN_APPFW_API ConsolePanel : public Control {
     void clear();
 
     /**
-     * @brief Shows a prompt, clears the input line and focuses it.
+     * @brief Starts a prompt: shows the prompt text, sets the input line and focuses it.
+     *
+     * @details
+     * - The line answers something until endInput(), so what it submits is neither command history nor a command to
+     *   complete: a recalled file path would otherwise come back through Up as if it were something to run.
+     * - Only the caller knows this, and it says so by calling this function; the panel never infers it from the text.
      *
      * @param prompt       Prompt text to show in the output view.
      * @param initial_text Text to put into the input line; a re-prompt passes what the user just typed, so a rejected
      *                     answer does not have to be typed again.
      */
     void beginInput(const String& prompt, const String& initial_text = {});
+
+    /**
+     * @brief Ends the prompt: the input line is a command line again.
+     *
+     * @details
+     * - beginInput() and this function bound the answering state, so history, completion and the picker belong to the
+     *   read that asked and never outlive it.
+     * - Called when that read ends, whether it was answered or cancelled.
+     */
+    void endInput();
 
     /**
      * @brief Clears the input line only.

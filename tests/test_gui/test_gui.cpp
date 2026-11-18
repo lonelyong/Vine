@@ -9330,6 +9330,109 @@ TEST(UserIOTest, CommandsChangedReportsRegistryAndAliasEdits)
     cm->clearHistory();
 }
 
+// 命令集合从工作线程变化：刷新必须落到应用线程（commandsChanged() 的契约就是"可能在任意线程触发"，
+// 而刷新要读面板与插件的显示名）。这里用一个工作线程注册命令，再让补全真的把它补出来。
+TEST(UserIOTest, CompletionRefreshFromAWorkerThreadReachesThePanel)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* input = panel.impl<QWidget>()->findChild<QLineEdit*>();
+    ASSERT_NE(input, nullptr);
+
+    const auto name = vn::String(u8"workerCompletionProbe");
+    cm->unregisterCommand(name);
+
+    std::thread registrant([&] { static_cast<void>(cm->registerCommand<IntReadCommand>(name)); });
+    registrant.join();
+
+    // 事件只把刷新投递过来：下一次事件泵才生效。
+    EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+
+    // 先解绑：下面的回车只为读面板的补全列表，不该真的执行命令。
+    bindConsole(app, nullptr);
+
+    vn::String entered;
+    auto       handler = panel.lineEntered.connect([&entered](const vn::String& text) { entered = text; });
+
+    input->setText(QStringLiteral("workerCompletion"));
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(input, &enter);
+
+    // 补全列表里有这个名字，回车取的是它，而不是原样提交那个前缀。
+    EXPECT_EQ(entered, vn::String(u8"workerCompletionProbe")) << "工作线程注册的命令也要进补全";
+
+    handler.disconnect();
+    cm->unregisterCommand(name);
+}
+
+// 提示的回答不是命令：读等待期间回车的那一行既不能进 ↑ 历史，也不能被补全改名（旧行为两者都做：
+// 文件路径被当成命令召回，而"不是精确匹配"的回答会被替换成高亮的命令名）。
+TEST(UserIOTest, AnAnswerIsNotACommandLine)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    auto* io = vn::obj_cast<guifw::VisualUserIO>(app->userIO());
+    ASSERT_NE(cm, nullptr);
+    ASSERT_NE(io, nullptr);
+
+    // 补全里有一个以回答开头、但不等于回答的命令名：它正是"回答被改名"的诱饵。
+    const auto name = vn::String(u8"answerProbe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<ThrowingCommand>(name));
+
+    guifw::ConsolePanel panel;
+    bindConsole(app, &panel);
+    auto* input  = panel.impl<QWidget>()->findChild<QLineEdit*>();
+    auto* output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(input, nullptr);
+    ASSERT_NE(output, nullptr);
+
+    const auto press = [input](int key) {
+        QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(input, &event);
+    };
+
+    // 一行命令：走真实的回车路径，历史由面板自己记。
+    input->setText(QStringLiteral("historyProbe"));
+    press(Qt::Key_Return);
+    EXPECT_TRUE(input->text().isEmpty()) << "回车后输入行清空";
+
+    // 一个读在等，它的回答也从同一条回车路径进来；回答恰好是那个命令名的前缀。
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    std::optional<vn::String> answer;
+    std::thread               runner([&] { answer = io->getStringAsync(u8"答案> ").result(); });
+    pump_until([&] { return output->toPlainText().contains(QStringLiteral("答案> ")); });
+
+    input->setText(QStringLiteral("answerProb"));
+    press(Qt::Key_Return);
+    runner.join();
+
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(*answer, vn::String(u8"answerProb")) << "回答不能被补全替换成命令名";
+
+    // ↑ 回到的是命令，不是回答。
+    press(Qt::Key_Up);
+    EXPECT_EQ(input->text(), QStringLiteral("historyProbe"));
+
+    bindConsole(app, nullptr);
+    cm->unregisterCommand(name);
+    cm->clearHistory();
+}
+
 // 读可以从任意线程发起：命令在定时器/IO 线程上恢复后调用 getXxxAsync，所以提示的
 // 记帐（currentPrompt_）不能由发起线程直接写。这里让命令先 sleepFor 再读，断言
 // 那条路径确实不在应用线程上，并且整条链路（提示、重新提示、取值）照常工作。

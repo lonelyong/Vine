@@ -147,9 +147,13 @@ struct ConsolePanel::Impl : public ControlData {
     QPlainTextEdit* output = nullptr;
     InputLine*      input  = nullptr;
 
-    /// Two-pixel line under the input line, shown while a read offers a picker: it marks "this line is answering
+    /// Two-pixel line under the input line, shown while the line answers a read: it marks "this line is answering
     /// something" without the panel growing a border of its own.
     QWidget* accent = nullptr;
+
+    /// True between beginInput() and endInput(): the line answers a read, so it is not command history and offers no
+    /// completion.
+    bool answering = false;
 
     /// Picker the input line offers; kind == None while the line is a plain command line.
     ConsoleInputAction action;
@@ -190,6 +194,8 @@ struct ConsolePanel::Impl : public ControlData {
     void onTab();
     /// Applies the stored ConsoleInputAction to the input line (button, highlight, shortcut).
     void applyInputAction();
+    /// Shows the accent while the line answers a read and hides it otherwise.
+    void updateAccent();
     /// Opens the dialog the current action asks for and writes what was picked into the input line.
     void openPicker();
     /// Writes picked paths into the input line: replacing it for a single answer, appending with ';' for several.
@@ -219,8 +225,8 @@ ConsolePanel::ConsolePanel(QWidget* parent)
 
     data->input = new InputLine(root);
 
-    // The pending underline: it marks the input line as "answering something" while a read offers a picker. Hidden by
-    // default and never visible for a plain command line (see applyInputAction()).
+    // The pending underline: it marks the input line as "answering something". Hidden by default and never visible for
+    // a plain command line (see updateAccent()).
     data->accent = new QWidget(root);
     data->accent->setFixedHeight(2);
     data->accent->setAutoFillBackground(true);
@@ -283,10 +289,27 @@ void ConsolePanel::clear()
 
 void ConsolePanel::beginInput(const String& prompt, const String& initial_text)
 {
-    auto* data = dptr();
+    auto* data      = dptr();
+    data->answering = true;
+    data->updateAccent();
+
+    // The matches and the popup belong to command entry, and the line is about to hold an answer.
+    data->matches.clear();
+    data->suggest->hide();
+
     data->appendFormatted(ConsoleMessageType::Prompt, prompt);
     data->input->setText(Convert::toQString(initial_text));
     data->input->setFocus();
+}
+
+void ConsolePanel::endInput()
+{
+    auto* data      = dptr();
+    data->answering = false;
+    data->updateAccent();
+
+    // The picker belongs to the read that offered it; dropping it here keeps the button from outliving its prompt.
+    setInputAction(ConsoleInputAction{});
 }
 
 void ConsolePanel::clearInput()
@@ -337,6 +360,17 @@ void ConsolePanel::Impl::updateAccentColor()
     accent->setPalette(palette);
 }
 
+void ConsolePanel::Impl::updateAccent()
+{
+    // The accent says "this line is answering", which beginInput()/endInput() decide; it is not the picker's shadow.
+    if (answering) {
+        accent->show();
+    }
+    else {
+        accent->hide();
+    }
+}
+
 void ConsolePanel::Impl::applyInputAction()
 {
     const bool offered = action.kind != ConsoleInputKind::None;
@@ -349,7 +383,6 @@ void ConsolePanel::Impl::applyInputAction()
     input->onBrowse = nullptr;
 
     if (!offered) {
-        accent->hide();
         return;
     }
 
@@ -364,7 +397,6 @@ void ConsolePanel::Impl::applyInputAction()
     input->addAction(pick, QLineEdit::TrailingPosition);
     pick_action     = pick;
     input->onBrowse = [this] { openPicker(); };
-    accent->show();
 }
 
 void ConsolePanel::Impl::openPicker()
@@ -492,6 +524,13 @@ void ConsolePanel::Impl::appendFormatted(ConsoleMessageType type, const String& 
 
 void ConsolePanel::Impl::onTextChanged()
 {
+    if (answering) {
+        // What is typed here is an answer, so no command can start with it.
+        matches.clear();
+        suggest->hide();
+        return;
+    }
+
     const String current = Convert::fromQString(input->text());
     if (current.empty()) {
         // An empty prompt hides the popup; otherwise clearing the input after
@@ -611,7 +650,11 @@ void ConsolePanel::Impl::onReturnPressed()
     }
     suggest->hide();
     input->clear();
-    history.add(text);
+
+    // An answer is not a command: recalling a typed path with Up would offer it for execution.
+    if (!answering) {
+        history.add(text);
+    }
     panel->lineEntered.trigger(text);
 }
 
