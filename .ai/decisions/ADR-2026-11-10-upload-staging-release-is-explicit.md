@@ -1,100 +1,104 @@
-# ADR-2026-11-10：上传暂存的回收是显式入口，由宿主（或用户命令）触发
+# ADR-2026-11-10: releasing upload staging is an explicit entry point, triggered by the host (or a user command)
 
-> **状态**：已取代（同日的 [ADR-2026-11-10-upload-staging-is-not-retained.md](ADR-2026-11-10-upload-staging-is-not-retained.md)
-> 把它改成了“传完即还、帧边界自动”：显式入口在“载入后不再出帧”的宿主上没人调，而 park 到期又得靠“再问一次”才落地）
-> **日期**：2026-11-10
-> **影响范围**：`src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`、`RenderEngine.hpp`、
-> `src/viz/graphics/src/RenderEngine.cpp`、`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（与同名头文件）、
-> `tests/test_graphics/HeadlessBackendTest.cpp`、`tests/test_vsg/UploadScratchTest.cpp`、
-> `.ai/design/graphics-content-lifecycle.md`、`.ai/design/vsg-backend.md`、`docs/guides/graphics.md`
+> **Status**: Superseded (the same day's [ADR-2026-11-10-upload-staging-is-not-retained.md](ADR-2026-11-10-upload-staging-is-not-retained.md)
+> changed it to "release once it is done, at the frame boundary, automatically": nobody called the explicit entry point on a host that stops producing frames after loading,
+> and an expiring park only landed through "ask again")
+> **Date**: 2026-11-10
+> **Scope**: `src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`, `RenderEngine.hpp`,
+> `src/viz/graphics/src/RenderEngine.cpp`, `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` (and the header of the same name),
+> `tests/test_graphics/HeadlessBackendTest.cpp`, `tests/test_vsg/UploadScratchTest.cpp`,
+> `.ai/design/graphics-content-lifecycle.md`, `.ai/design/vsg-backend.md`, `docs/guides/graphics.md`
 
-> **EN**: Record of a decision since replaced: made upload-staging release an explicit `RenderDevice::releaseUploadStaging()` the host or a user command calls, with the swap immediate and destruction deferred to evidence (timeline, park queue, or one counted `deviceWaitIdle`), on the ground that only the host knows when the memory is no longer needed. Superseded the same day by `ADR-2026-11-10-upload-staging-is-not-retained`: the most common host never calls it, and the park never matures without a later frame.
+## Background
 
-## 背景
+When vsg uploads a static array, it first copies the whole upload's bytes into a `HOST_VISIBLE|HOST_COHERENT` staging block (`TransferBlock::staging` of the
+`TransferTask`), and only then `vkCmdCopyBuffer`s them into device-local memory. That staging block only ever grows, is never given back after the copy, and never goes through any pool,
+so `releaseUnusedPools()` cannot reach it: one upload of a 14M-triangle model adds 1.2 GB of working set to the process (the same number is readable from the GPU counter's
+`SharedUsage`).
 
-vsg 上传静态数组时，先把整次上传的字节拷进一块 `HOST_VISIBLE|HOST_COHERENT` 的暂存（`TransferTask` 的
-`TransferBlock::staging`），然后才 `vkCmdCopyBuffer` 到 device-local。这块暂存只增不减、传完不还，也不经过任何 pool，
-所以 `releaseUnusedPools()` 碰不到它：14M 三角形的模型上传一次，进程里就多出 1.2 GB 工作集（GPU 计数器的
-`SharedUsage` 上也读得到同一个数字）。
+The mechanism had already landed and been measured: replacing that `TransferTask` gives the staging back to the system (`detail::replaceTransferTask`, see
+F16.2 of `vsg-backend.md`), at the cost of a 16 MB reallocation on the next upload. What had to be decided this time is **who calls it and when**, since it was then written into
+`VsgBackend`'s frame driver, switched by the environment variable `VN_VSG_KEEP_UPLOAD_SCRATCH`. Three problems:
 
-机制已经落地且被测量过：换掉那个 `TransferTask` 就能把暂存还给系统（`detail::replaceTransferTask`，见
-`vsg-backend.md` F16.2），代价是下一次上传重新分配 16 MB。这次要定的是**谁在什么时候调它**，而当时它写在
-`VsgBackend` 的帧驱动里，且由环境变量 `VN_VSG_KEEP_UPLOAD_SCRATCH` 开关。三个问题：
+1. **The timing lives inside one backend.** Neither `RenderEngine` nor the SDK knows it exists; a second backend (D3D12/WebGPU have their own upload heaps / staging too)
+   would have to reinvent it, and forgetting it means holding the memory forever while the picture looks perfectly fine (`G2`: the layering is broken; `G5`: the same thing has to be rewritten per backend).
+2. **The host has no entry point.** An environment variable cannot be decided in production code, and it has global semantics.
+3. **The original trigger condition was itself wrong (measured).** What was hung on it was a "wave": after a frame with an upload, reclaim on **the first frame with no new upload**. But a host redraws on demand
+   — a viewer goes still once the model is loaded, and that frame **does not exist**. Measured: after `Vine.exe` loads a model, the process sits at 1% of one core / 0% GPU with the 1.2 GB of staging resident for minutes,
+   and `device_waits` never moved: the feature looked implemented and never ran once.
 
-1. **时机写在一个后端里**。`RenderEngine` 和 SDK 都不知道有这回事；第二个后端（D3D12/WebGPU 也有自己的 upload heap / staging）
-   要重新发明一遍，忘了写就永久占着内存，而画面完全正常（`G2`：分层破了；`G5`：同一件事要在每个后端重写）。
-2. **宿主没有入口**。环境变量在产码里无法决定，而且有全局语义。
-3. **原来的触发条件本身是错的（实测）**。当时挂的是“波”：上传过一帧之后，**第一帧没有新上传**时回收。但宿主按需重绘
-   ——模型加载完就静止了，那一帧**不存在**。实测：`Vine.exe` 加载模型后进程 1% 单核 / GPU 0%，1.2 GB 暂存常驻数分钟，
-   `device_waits` 一次没涨：功能看着实现了，一次也没跑。
+## Decision
 
-## 决定
+1. **The mechanism enters the SDK, with one verb**: `RenderDevice::releaseUploadStaging()` (returning false by default, meaning "this backend has no staging to give back").
+   Contract: call it between frames, it returns whether this call swapped the staging out, and it **does not block** (see 5).
+2. **The engine does not forward it**: there is no `RenderEngine::releaseUploadStaging()`. The host can already reach the device (`RenderEngine::device()`),
+   and a one-hop entry point would only give one thing two names (`G4`).
+3. **The timing belongs to the host / user**: the SDK provides **no** automatic timing and no switch. The host calls it where it belongs: at the end of a load, on closing a document,
+   when the window is minimised, from a user command, on a memory-pressure signal - only the host / product knows those.
+4. **The backend only answers "can it"**: `VsgBackend` deletes its own timer and wave state and the environment-variable read, and becomes an implementation of this verb
+   (ask **the session's own upload task** whether it holds staging → swap the task if needed; no longer comparing a device-level upload counter, see 7).
+5. **No blocking: the swap is immediate, destruction waits for evidence.** Swapping the `TransferTask` is one pointer exchange, and the old task is handed back; when its staging
+   may be destroyed is decided by evidence - a timeline proving no frame is in flight (`submittedFrame() == completedFrame()`) destroys it right away, otherwise it is **parked into the
+   retirement queue** and released by the frame that completes that slot (the same path as `releaseContent()`). Only when the queue cannot park (the session never learned its in-flight
+   frame count) does it degrade to one counted device idle.
+6. **Asking again means "now".** A park's retirement point is `slots + 1` frames after the submission point, and the completion watermark lags the submission by another `slots`, so it only expires after
+   `2 × slots + 1` frames (vsg's 3 slots = 7 frames) - a host that produces no more frames after loading never gets there. So a later call does: one counted
+   `deviceWaitIdle()` (that is the evidence) → `RetirementQueue::drain()` runs every remaining park → returns true. A host that keeps producing frames pays nothing.
+7. **"Is there anything left to give back" is answered by each session's own task, not by a device-level counter.** When a session starts it installs `detail::StagingTask`
+   (derived from `vsg::TransferTask`, reading the protected `TransferBlock::staging` to report the byte count). The old approach compared
+   `ContentAssembly::uploads().uploads()` with `MaterialImages::count()`: that is the **device's** accounting, not the session being asked -
+   with several sessions, the one whose swap succeeded advances the count, and the other ("the copy is still queued, this call did not swap") is never told again; its staging waits for the
+   next upload to be reclaimed (a narrow, self-healing trigger, but what is missed is one whole model's staging). Deriving is the only way to read it without patching vsg, at the cost of depending
+   on three protected names: an upstream rename is a compile error, and a semantic change is caught by the tests' direct byte-count assertions (`vsg-pitfalls.md` P42.2).
 
-1. **机制进 SDK，动词只有一个**：`RenderDevice::releaseUploadStaging()`（默认返回 false，表示“这个后端没有暂存可还”）。
-   契约：帧之间调用、返回“这次有没有把暂存换下来”、**不阻塞**（见 5）。
-2. **引擎不转发**：没有 `RenderEngine::releaseUploadStaging()`。宿主已经能拿到设备（`RenderEngine::device()`），多一个一跳入口只会把同一件事叫两个名字（`G4`）；
-3. **时机归宿主/用户**：SDK **不**提供自动时机，也不提供开关。宿主在该调的地方调：一次载入结束、文档关闭、
-   窗口最小化、一条用户命令、一次内存压力信号——这些只有宿主/产品知道。
-4. **后端只回答“能不能”**：`VsgBackend` 删掉自己的计时与波状态、删掉环境变量读取，改成这个动词的实现
-   （问**该会话自己的上传任务**手里有没有暂存 → 需要时换任务；不再比较设备级上传计数，见 7）。
-5. **不阻塞：换下来是当场，销毁等证据。** 换 `TransferTask` 只是一次指针交换，旧任务被交回；它的暂存什么时候可以
-   销毁由证据决定——时间线证明没有在飞帧（`submittedFrame() == completedFrame()`）就当场销毁，否则 **park 进退役队列**，
-   由“完成覆盖那一槽”的帧释放（与 `releaseContent()` 同一条路）。只有队列无法 park（会话没学会在飞帧数）才退化为一次**计数**
-   设备空闲。
-6. **再请求一次就是“现在”。** park 的退役点在提交点之后 `slots + 1` 帧，完成水位又落后提交 `slots`，所以它要
-   `2 × slots + 1` 帧才到期（vsg 3 槽 = 7 帧）——加载后不再出帧的宿主永远等不到。因此一次后来的调用会：一次计数
-   `deviceWaitIdle()`（这就是证据）→ `RetirementQueue::drain()` 把还挂着的 park 全部跑掉 → 返回 true。持续出帧的宿主零代价。
-7. **“还有没有东西可还”由每个会话自己的任务回答，不是设备级计数。** 会话起来时装的是 `detail::StagingTask`
-   （派生自 `vsg::TransferTask`，读 protected 的 `TransferBlock::staging` 报字节数）。原来的做法比较
-   `ContentAssembly::uploads().uploads()` 与 `MaterialImages::count()`：那是**设备**的计量，不是被问的那个会话的——
-   多会话时，换成功的那个推进了计数，另一个“拷贝还在队列里、这次没换成”的会话再也不会被告知，它那块暂存要等下一次
-   上传才回收（触发窄、会自愈，但漏的量级是一整个模型的暂存）。派生是唯一不 patch vsg 的读法，代价是依赖三个 protected
-   名字：上游改名 = 编译错，改语义则由测试直接断言字节数兜住（`vsg-pitfalls.md` P42.2）。
+## Rationale
 
-## 理由
+- `G1` / `G6`: staging reclaim and `releaseContent()` follow **one rule** - an explicit entry point, where whoever owns the object decides its lifetime. Inventing a separate automatic policy for it
+  would set a second precedent for what "release" means.
+- `G2` / `G5`: the backend is the only party that knows whether there is anything left to give back at the moment of the call, and there is no third place that can drift; the engine does not take part,
+  so the resource question has one name.
+- `G8`: no consumer has ever **asked for** an automatic policy - a host can write one line itself for the same effect, while defaulting it on would make every uploading frame pay a device idle for nothing.
+- `G4`: the verb returns a bool meaning "did this call give it back" (the same reading as `releaseContent()`); there is no switch to understand.
+- `G10`: it does not block the caller. One `deviceWaitIdle` on the UI thread freezes the interface, while correctness only needs "evidence before destruction" - evidence that a timeline /
+  park provides for free, paying one counted idle only when the in-flight frame count is unavailable.
 
-- `G1` / `G6`：暂存回收与 `releaseContent()` 用**同一条规则**——显式入口，谁的对象谁决定寿命。为它单独发明一套自动政策，
-  等于给“释放”这件事开第二个先例。
-- `G2` / `G5`：后端是唯一知道“这次调用时还有没有东西可还”的一方，没有第三处可以偏离；引擎不参与，资源问题就只有一个名字。
-- `G8`：自动政策今天没有**表达过要它**的消费者——宿主自己写一行就能得到同样效果，而默认开会让每个上传帧白付一次设备空闲。
-- `G4`：动词返回 bool，语义是“这次还了没有”（与 `releaseContent()` 同口径）；没有开关需要理解。
-- `G10`：不阻塞调用方。UI 线程上的一次 `deviceWaitIdle` 会把界面卡住，而正确性只需要“销毁前有证据”——证据用时间线/park 就能免费取得，只有学不到在飞帧数时才付一次计数 idle。
+## Rejected options
 
-## 否决的选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 政策留在后端的帧驱动里 | 引擎与 SDK 都看不见它；第二个后端要重写一遍（`G2`/`G5`）。环境变量开关也没法从产码里决定。 |
-| “波”：等一帧没有新上传再回收 | 实测没有那一帧（宿主按需重绘，1% 单核 / 0% GPU）；在最该回收的时刻永远不跑。 |
-| 引擎每帧自动调一次（默认开 + 可关） | 宿主在帧循环旁写一行就有同样效果；默认开让每个上传帧白付一次设备空闲，而宿主没有表达过要付（`G8`）。 |
-| 给引擎加一个转发入口 | 宿主已经有 `engine->device()`；多一个只做一跳的入口，等于给同一件事起两个名字（`G4`）。 |
-| 让引擎读每帧上传计数来决定 | 只把“要不要调”从一次计数比较变成一次计数比较，却多一个没人读的 SDK 字段（`G8`）。每帧上传数作为**观测**指标进 backlog T25。 |
-| 后端在 `executeFrame()` 内部自己回收 | 后端的帧路径不该有资源政策；它也看不见宿主是否还需要那块内存。 |
-| 另一个线程/定时器异步回收 | 销毁暂存要动 Vulkan 对象与命令缓冲，帧线程之外做要么加锁要么竞态；一次 idle 已经足够。 |
-| 请求式：只登记“待清理”，真正清理留给下一帧 | “下一帧”可能永不发生（宿主按需重绘）：登记了不等于还了，而这正是本功能最早的失败方式。实际采用的是**交换当场 + park 等证据**：既不阻塞，也不把“还没还”藏在状态里。 |
-| 环境变量作为入口或开关 | 产品里无法从代码或用户操作决定，且有全局语义。环境变量不再被引擎/后端读取。 |
-| 用设备级上传计数判断“还有没有东西可还” | 计数答的是设备，不是被问的会话（见决定 7）：一个会话换成功就把另一个的答案盖成“没有”，漏掉的是它那一整个模型的暂存。 |
-| 给每个会话存一份计数快照，代替问任务 | 同样不漏，但答的是“设备上的上传动过没有”而不是“我手里有没有块”：会白换一次（新建一个没人需要的任务），也拿不到字节数。问任务是一句真话，快照是近似。 |
+| Leave the policy in the backend's frame driver | Neither the engine nor the SDK can see it; a second backend would rewrite it (`G2`/`G5`). An environment-variable switch also cannot be decided from production code. |
+| The "wave": reclaim once a frame has no new upload | Measured: that frame does not exist (the host redraws on demand, 1% of one core / 0% GPU); it never runs at the moment reclaim matters most. |
+| The engine calls it once per frame automatically (on by default, can be turned off) | A host writing one line beside its frame loop gets the same effect; on by default makes every uploading frame pay a device idle that the host never asked to pay (`G8`). |
+| Add a forwarding entry point on the engine | The host already has `engine->device()`; a one-hop entry point is two names for one thing (`G4`). |
+| Let the engine read the per-frame upload count and decide | It turns "should we call it" from one counter comparison into one counter comparison, and adds an SDK field nobody reads (`G8`). The per-frame upload count goes into backlog T25 as an **observation** metric. |
+| The backend reclaims inside `executeFrame()` itself | A backend's frame path should carry no resource policy; and it cannot see whether the host still needs that memory. |
+| Reclaim asynchronously from another thread / a timer | Destroying staging touches Vulkan objects and command buffers, and doing it off the frame thread needs either a lock or accepts a race; one idle is already enough. |
+| Request-style: only record "to be cleaned", leave the real cleaning to the next frame | "The next frame" may never happen (a host redraws on demand): recording is not releasing, and that was this feature's earliest failure mode. What was actually adopted is **swap immediately + park for evidence**: it neither blocks nor hides "not released yet" in state. |
+| The environment variable as the entry point or switch | It cannot be decided in the product from code or a user action, and it has global semantics. The engine / backend no longer read it. |
+| Use the device-level upload count to decide "is there anything left to give back" | The count answers about the device, not about the session being asked (see decision 7): one session's successful swap overwrites another's answer to "nothing", and what is missed is that whole model's staging. |
+| Keep a count snapshot per session instead of asking the task | It does not miss anything either, but it answers "did the device's uploads move" rather than "do I hold a block": it swaps for nothing (creating a task nobody needs) and cannot obtain the byte count. Asking the task is a true statement, a snapshot is an approximation. |
 
-## 后果
+## Consequences
 
-- **内存**：宿主调用一次就回落（14M 三角形实测：这份 1.2 GB 不再常驻）。**不调就继续占着**——这是显式入口的代价，
-  也是这次决定的边界（`graphics-content-lifecycle.md` F18 / 6.3）。
-- **性能**：请求本身不阻塞（一次指针交换 + 一次“任务手里有没有块”的读）；销毁要么当场（无在飞帧）、要么在下一帧的退役队列里完成。
-  只有学不到在飞帧数的会话会付一次计数 idle，以及“再请求一次”时那一次用来排空 park 的计数 idle。
-- **ABI**：`RenderDevice` 多一个**非纯虚**函数（追加在接口虚函数列表的**末尾**，既有槽位编号不变），`RenderEngine` 不变。
-  插件与 SDK 必须同一次构建（本仓库一直如此）；安装树里旧的 `gfx_backend_vsg.dll` 要重编，否则虚表对不上。
-- **行为**：不实现该动词的后端，`releaseUploadStaging()` 返回 false；宿主不需要区分“后端没有暂存”和“这次没东西可还”。
-- **测试**：`UploadScratchTest`（帧不 idle；显式调一次 → true 且不涨（park）；再调 → true 且恰好 +1（`drain()`）；再调 → false 不涨；
-  新上传后再调 → true；连续 10 帧 → park 免费排空）、
-  `HeadlessBackendTest.TheUploadStagingIsReleasedThroughTheDeviceTheEngineBorrows`（引擎不转发，经 `engine->device()` 调），
-  机制层是 `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`（含 `stagedBytes()` 的字节数断言）
-  与 `AReplacedTransferTaskLeavesTheSessionSubmitting`（起来就装好可问的任务，没上传就问 → false 且不涨 idle）。
-- **文档**：`graphics-content-lifecycle.md` 2.8 / F16–F22 / C4 / R4 / N7–N11 / 6.3 / D6–D15 / T5–T8；
-  `vsg-backend.md` F16.2 改成“后端实现动词、时机在宿主、判据问任务”；`vsg-pitfalls.md` P42.2；`docs/guides/graphics.md` 删掉环境变量行。
+- **Memory**: one host call brings it back down (measured on 14M triangles: that 1.2 GB no longer stays resident). **Not calling leaves it resident** - that is the cost of an explicit entry point,
+  and the boundary of this decision (F18 / 6.3 of `graphics-content-lifecycle.md`).
+- **Performance**: the request itself does not block (one pointer exchange plus one read of "does the task hold a block"); destruction happens either immediately (no frame in flight) or in the next frame's
+  retirement queue. Only a session that cannot learn its in-flight frame count pays one counted idle, plus the counted idle "ask again" uses to drain the parks.
+- **ABI**: `RenderDevice` gains one **non-pure** function (appended at the **end** of the interface's virtual function list, so existing slot numbers do not move); `RenderEngine` is unchanged.
+  Plugin and SDK must build together (as this repository always does); the old `gfx_backend_vsg.dll` in an install tree must be rebuilt, or the vtables do not line up.
+- **Behaviour**: a backend that does not implement the verb returns false from `releaseUploadStaging()`; the host does not need to tell "the backend has no staging" from "nothing to give back this time".
+- **Tests**: `UploadScratchTest` (frames do not idle; an explicit call → true with no rise (park); another call → true and exactly +1 (`drain()`); another → false with no rise;
+  after a new upload → true; 10 frames in a row → the park drains for free),
+  `HeadlessBackendTest.TheUploadStagingIsReleasedThroughTheDeviceTheEngineBorrows` (the engine does not forward it; the call goes through `engine->device()`),
+  and at the mechanism layer `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` (including the byte-count assertion on `stagedBytes()`)
+  and `AReplacedTransferTaskLeavesTheSessionSubmitting` (a queryable task is installed from the start; asking with no upload → false and no idle).
+- **Documents**: `graphics-content-lifecycle.md` 2.8 / F16–F22 / C4 / R4 / N7–N11 / 6.3 / D6–D15 / T5–T8;
+  `vsg-backend.md` F16.2 becomes "the backend implements the verb, the timing is the host's, the criterion asks the task"; `vsg-pitfalls.md` P42.2;
+  `docs/guides/graphics.md` loses the environment-variable line.
 
-## 后续
+## Follow-up
 
-- 宿主侧的调用点（这些是产品决定，不在本 ADR 里定死）：模型载入完成、关闭文档、窗口最小化，以及一条用户命令
-  （"释放内存"）。
-- 每帧上传数作为观测指标（`FrameCounters::uploads`）：等 HUD 或门禁真的要读它时再做，见 `../backlog/graphics.md` T25。
+- The call sites on the host side (these are product decisions, not fixed here): model load complete, document close, window minimise, and one user command
+  ("release memory").
+- The per-frame upload count as an observation metric (`FrameCounters::uploads`): do it when the HUD or a gate really reads it, see
+  `../backlog/graphics.md` T25.
