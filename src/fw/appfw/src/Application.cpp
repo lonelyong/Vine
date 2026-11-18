@@ -479,8 +479,8 @@ const std::filesystem::path& Application::configFile() const
 
 const String& Application::defaultOrganizationName()
 {
-    static const String s_name(kDefaultOrganization);
-    return s_name;
+    static const String kName(kDefaultOrganization);
+    return kName;
 }
 
 std::filesystem::path Application::dataDirectory() const

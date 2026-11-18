@@ -72,8 +72,8 @@ String translate(const char8_t* context, const char8_t* source)
 
 const String& languageConfigKey()
 {
-    static const String s_key(u8"general.language");
-    return s_key;
+    static const String kKey(u8"general.language");
+    return kKey;
 }
 
 ConfigItem languageConfigItem()

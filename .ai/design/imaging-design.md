@@ -140,7 +140,7 @@ A module below `graphics` cannot meaningfully talk about a GPU texture.
 | `Image(width, height, format, mip_count)` | constructs and zero-initialises | an illegal argument throws `invalid_argument` |
 | `mipCapacity(width, height)` | the maximum mip count | static |
 | `width()` / `height()` / `format()` / `mipCount()` | queries | — |
-| `mipData(level)` / `mipSize(level)` | access | clamps an out-of-range level |
+| `mipData(level)` / `mipByteSize(level)` | access | clamps an out-of-range level |
 
 ## 5. Constraints, Requirements and Invariants
 
@@ -180,7 +180,7 @@ A module below `graphics` cannot meaningfully talk about a GPU texture.
 
 ### 6.2 The mip offset sentinel
 
-- How it fails: one offset too few is stored and `mipSize()` of the last level reads out of range.
+- How it fails: one offset too few is stored and `mipByteSize()` of the last level reads out of range.
 - How to detect it: `mip_offsets_.size() == mip_count + 1`.
 - How to prevent it: the size is always the difference of two offsets, never a separate size table.
 

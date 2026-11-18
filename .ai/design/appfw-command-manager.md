@@ -56,6 +56,8 @@ A command must **not** use the synchronous entry inside itself; it should `co_aw
 CommandManager ── Impl ─┬─ shared_ptr<Chain> foreground
                         ├─ vector<weak_ptr<Chain>> live_chains
                         ├─ bool foreground_busy
+                        ├─ bool exclusive_busy
+                        ├─ atomic<uint64_t> cancel_generation
                         ├─ deque<CommandHistoryEntry> history
                         ├─ map<String, RegisteredCommand> registry
                         ├─ map<String, String> aliases
@@ -160,10 +162,10 @@ The name entry carries no caller data and the instance entry carries it in field
 
 ### 3.1.7 F7 The command manager dialog
 
-- **Behaviour**: a filter box → the command table (name / state / alias / source / group / description) → refresh / disable / close.
+- **Behaviour**: a filter box → the command table (name / state / alias / plugin / group / description) → refresh / disable / close.
 - **Constraints** (C7): a disabled row is greyed and italic, never hidden; the buttons are greyed until something is selected.
 - **Requirements** (R7): the dialog offers no "unload command"; disabling is a flag.
-- **Acceptance** (T7): `CommandManagerDialogTest`.
+- **Acceptance** (T7): `CommandManagerDialogTest.*`.
 - **Caveat** (N7): the table style is shared with the plugin manager through `TableStyle.hpp`.
 
 ## 4. Public Interface
@@ -182,13 +184,13 @@ The name entry carries no caller data and the instance entry carries it in field
 | `setCommandEnabled()` / `isCommandEnabled()` / `disabledCommands()` | disabling | persisted |
 | `names()` / `commandInfos()` / `isRegistered()` | enumeration / existence | disabled commands are still listed |
 | `commandFlags()` / `commandDescription()` | one entry's flags / description (cached at registration, aliases resolved) | the command UI is in `appfw-command-binding.md` |
-| `historySize()` / `historyAt()` / `clearHistory()` | history | value snapshots |
+| `historyCount()` / `historyAt()` / `clearHistory()` | history | value snapshots |
 
 ### 4.2 `Command` / `CommandExecutionContext`
 
 | Interface | Contract | Note |
 | --- | --- | --- |
-| `execute(CommandExecutionContext&)` | the command body | a coroutine |
+| `execute(CommandExecutionContext*)` | the command body | a coroutine |
 | `flags()` / `name()` / `group()` | metadata | called outside the locks |
 | `arguments()` | this execution's tokens | immutable, alive with the frame |
 | `executeChild(name)` / `executeChild(unique_ptr<Command>)` | nesting | joins the parent chain |
@@ -271,7 +273,7 @@ The name entry carries no caller data and the instance entry carries it in field
 | T3 | the three `NotApplicable` paths | `DetachedNotApplicableIsExplained...`, `NotApplicableTypedInTheConsole...` |
 | T4 | exclusion / cancellation / drain | `ExclusiveStopsEveryLiveChain`, `CancelAllAbortsWaitingTakeOver` |
 | T5 | disabling / persistence / the instance entry | `DisableIsAFlagAndIsPersisted`, `DisableBlocksCallerSuppliedInstance` |
-| T6 | the dialog | `CommandManagerDialogTest` |
+| T6 | the dialog | `CommandManagerDialogTest.*` |
 
 ## 9. Status and Evolution
 

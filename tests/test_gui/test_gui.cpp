@@ -65,6 +65,7 @@
 #include <vine/appfw/gui/AboutDialog.hpp>
 #include <vine/appfw/gui/AboutPanel.hpp>
 #include <vine/appfw/gui/CentralDocumentHost.hpp>
+#include <vine/appfw/gui/CommandManagerDialog.hpp>
 #include <vine/appfw/gui/CommandTarget.hpp>
 #include <vine/appfw/gui/ConfigWindow.hpp>
 #include <vine/appfw/gui/ConsolePanel.hpp>
@@ -9431,6 +9432,104 @@ TEST(UserIOTest, AnAnswerIsNotACommandLine)
     bindConsole(app, nullptr);
     cm->unregisterCommand(name);
     cm->clearHistory();
+}
+
+// 命令管理对话框：表格是 commandInfos() 的一份视图 —— 禁用的命令仍然列出（变灰而不是消失），
+// 开关按钮改的是管理器里的启用标志，命令从不被注销。
+TEST(CommandManagerDialogTest, ListsEveryCommandAndKeepsADisabledOneListed)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto name = vn::String(u8"dialogProbe");
+    cm->unregisterCommand(name);
+    ASSERT_TRUE(cm->registerCommand<NotApplicableCommand>(name));
+    cm->setCommandEnabled(name, false);
+
+    guifw::CommandManagerDialog dialog(cm);
+    auto* table = dialog.impl<QWidget>()->findChild<QTableWidget*>();
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->rowCount(), static_cast<int>(cm->commandInfos().size())) << "每一行都是一条注册命令，禁用的也在";
+
+    const auto row_of = [table](const vn::String& command) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            const auto* item = table->item(row, 0);
+            if (item != nullptr && fromQString(item->text()) == command) {
+                return row;
+            }
+        }
+        return -1;
+    };
+
+    const int row = row_of(name);
+    ASSERT_GE(row, 0) << "禁用的命令必须仍然在列表里";
+
+    // C7：变灰（斜体）而不是隐藏，且仍然注册着。
+    EXPECT_FALSE(table->isRowHidden(row));
+    EXPECT_TRUE(table->item(row, 0)->font().italic()) << "禁用的行要变灰，不是消失";
+    EXPECT_TRUE(cm->isRegistered(name));
+
+    // 选中它，按钮改为"启用"；点一下只改启用标志。
+    table->selectRow(row);
+    QPushButton* toggle = nullptr;
+    for (auto* button : dialog.impl<QWidget>()->findChildren<QPushButton*>()) {
+        if (fromQString(button->text()) == vn::appfw::translate("appfw", "Enable command")) {
+            toggle = button;
+        }
+    }
+    ASSERT_NE(toggle, nullptr) << "禁用行被选中时按钮应改为启用";
+    EXPECT_TRUE(toggle->isEnabled());
+    toggle->click();
+
+    EXPECT_TRUE(cm->isCommandEnabled(name)) << "按钮改的是管理器里的启用标志";
+    EXPECT_TRUE(cm->isRegistered(name)) << "禁用/启用从不注销命令";
+
+    cm->unregisterCommand(name);
+}
+
+// 过滤只隐藏行：表格不重建，所以筛选期间选中与滚动位置都还在（旧行为每次 toggle 都 setRowCount(0)）。
+TEST(CommandManagerDialogTest, TheFilterHidesRowsInsteadOfRebuildingThem)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* cm = app->commandManager();
+    ASSERT_NE(cm, nullptr);
+
+    const auto alpha = vn::String(u8"dialogFilterAlpha");
+    const auto beta  = vn::String(u8"dialogFilterBeta");
+    cm->unregisterCommand(alpha);
+    cm->unregisterCommand(beta);
+    ASSERT_TRUE(cm->registerCommand<NotApplicableCommand>(alpha));
+    ASSERT_TRUE(cm->registerCommand<NotApplicableCommand>(beta));
+
+    guifw::CommandManagerDialog dialog(cm);
+    auto* table  = dialog.impl<QWidget>()->findChild<QTableWidget*>();
+    auto* filter = dialog.impl<QWidget>()->findChild<QLineEdit*>();
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(filter, nullptr);
+
+    const int total = table->rowCount();
+    ASSERT_GT(total, 2);
+
+    filter->setText(QStringLiteral("dialogFilterAlpha"));
+    int visible = 0;
+    for (int row = 0; row < table->rowCount(); ++row) {
+        if (!table->isRowHidden(row)) {
+            ++visible;
+        }
+    }
+    EXPECT_EQ(table->rowCount(), total) << "过滤不重建表格";
+    EXPECT_EQ(visible, 1) << "只有匹配的那一条可见";
+
+    filter->clear();
+    for (int row = 0; row < table->rowCount(); ++row) {
+        EXPECT_FALSE(table->isRowHidden(row)) << "清空过滤后每一行都回来";
+    }
+
+    cm->unregisterCommand(alpha);
+    cm->unregisterCommand(beta);
 }
 
 // 读可以从任意线程发起：命令在定时器/IO 线程上恢复后调用 getXxxAsync，所以提示的

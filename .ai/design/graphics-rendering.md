@@ -127,7 +127,7 @@ every search, every guide table and every reader's head, which is the cost this 
 
 | # | Feature | Notes |
 |---|---|---|
-| F20 | `ShaderProgram` | Vertex / Fragment stages + entry points; `setStage` / `setStages` bump the revision. |
+| F20 | `ShaderProgram` | Vertex / Fragment stages + entry points; `addStage` / `setStage` / `clearStages` / `replaceStages` bump the revision. |
 | F21 | Built-in programs | forward / flat / gbuffer / deferred lighting / shadowed; `builtin_<role>.<stage>`. |
 | F22 | ABI | Vertex locations, `VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`, 128 B push. |
 | F23 | Transparency | The only channel is `Node::opacity`; materials contribute no alpha; blend is always on. |
@@ -160,7 +160,7 @@ every search, every guide table and every reader's head, which is the cost this 
 
 | Interface | Purpose |
 |---|---|
-| `ShaderProgram::setStages()` / `setStage()` / `stages()` / `revision()` | Program |
+| `ShaderProgram::addStage()` / `setStage()` / `description()` / `revision()`, `ShaderProgramDescription::stages()` | Program |
 | `ShaderStage{type, source, entryPoint}` | Stage |
 | `attributeLocation()` / `Vine*Block` | ABI |
 | `Light::setCastShadow()` / `isCastingShadow()` / `shadowSettings()` / `setShadowResolution()` / `setShadowBias()` | Light |

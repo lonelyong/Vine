@@ -147,7 +147,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | Interface | Contract | Note |
 | --- | --- | --- |
 | `putString` / `clear` | callable from any thread | the implementation marshals |
-| `getStringAsync` / `getIntAsync` / `getDoubleAsync` / `getBoolAsync` | a single slot | range-checked for `int` |
+| `getStringAsync` / `getIntAsync` / `getDoubleAsync` / `getPoint3dAsync` | a single slot | range-checked for `int`; the names are commands by contract, see `../decisions/ADR-2026-11-16-authoring-view-and-target-vocabulary.md` §8.2 |
 | `getFileAsync` / `getFilesAsync` / `getDirAsync` / `getDirsAsync` | file / directory reads | `;` separates several paths |
 | `cancelPendingInput()` | callable from any thread | only flips an atomic flag and `set()`s |
 | `FileReadOptions` / `DirReadOptions` | options | `extensions` / `require_existing` / `suggested_path` |
@@ -269,7 +269,7 @@ The input line distinguishes a command from an answer by the mode its caller set
 
 ### 9.3 Compatibility / migration
 
-`getIntAsync` returns an `int` (not an `int8_t`); the four file / directory read virtuals are appended at the end of the vtable, and the ABI is currently 8u.
+`getIntAsync` returns an `int` (not an `int8_t`); the four file / directory read virtuals are appended at the end of the vtable, and the ABI is currently 10u (`VN_APPFW_PLUGIN_ABI_VERSION`).
 
 ## 10. References
 

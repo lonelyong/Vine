@@ -671,15 +671,11 @@ void VisualUserIO::Impl::onLineEntered(const String& text)
     }
 
     if (owner->commandManager() && owner->commandManager()->runningCount() > 0) {
-        if (console) {
-            console->append(ConsoleMessageType::Warning, vn::appfw::translate("appfw", "A command is running, please wait"));
-        }
+        appendOnApplicationThread(vn::appfw::translate("appfw", "A command is running, please wait"), ConsoleMessageType::Warning);
         return;
     }
 
-    if (console) {
-        console->append(ConsoleMessageType::Command, text);
-    }
+    appendOnApplicationThread(text, ConsoleMessageType::Command);
 
     if (owner->commandManager()) {
         // 异步启动命令；失败信息在命令完成后回写。

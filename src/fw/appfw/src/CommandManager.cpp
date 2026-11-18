@@ -1549,8 +1549,8 @@ bool CommandManager::unregisterCommand(TypeId command_class)
 
 const String& CommandManager::disabledConfigKey()
 {
-    static const String s_key{ u8"commands.disabled" };
-    return s_key;
+    static const String kKey{ u8"commands.disabled" };
+    return kKey;
 }
 
 std::vector<String> CommandManager::disabledCommands() const

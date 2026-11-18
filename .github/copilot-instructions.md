@@ -75,8 +75,8 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
 * Before touching a module, read its `.ai/design/` doc and `.ai/backlog/`; after changing
   any `.ai/` file run `python3 scripts/check_ai_docs.py --strict`,
   `python3 scripts/check_design_docs.py` and `python3 scripts/check_cross_refs.py`.
-  Every `name.md §N.M` reference must resolve, and numbered design points must ascend - both are checked,
-  because neither has an owner otherwise.
+  Every `name.md §N.M` reference must resolve, numbered design points must ascend, and every name in a
+  public-interface table must exist in the tree - all three are checked, because none of them owns itself.
 
 ## Documentation Language
 

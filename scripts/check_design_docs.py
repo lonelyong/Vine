@@ -17,6 +17,13 @@ The template is defined in `.github/skills/design-docs/SKILL.md` and summarised 
       the numbers are how a reader finds "the ninth design point", so the order
       is the number's meaning. IDs are stable across a reorder - move the block,
       never renumber it.
+  R7  A name in the public-interface chapter's tables exists somewhere in the
+      tree. That chapter is a list of claims about the code, and a renamed or
+      deleted symbol left behind is exactly the drift that sends a reader to a
+      function that is not there (`historySize` outlived `historyCount`, and
+      `getBoolAsync` never existed). Only the first cell of a table row is read -
+      the template puts the names there - and only as a word in the tree, so
+      prose stays out of reach. A line carrying `<!-- drift-ok -->` is exempt.
 
 Usage:
     python3 scripts/check_design_docs.py [--strict]
@@ -63,6 +70,35 @@ META = (
 H2 = re.compile(r"^##\s+(\d+)\.\s+(.*)$")
 H3 = re.compile(r"^###\s+(\d+)\.(\d+)(?:\.(\d+))?\s+(.*)$")
 DATE_OR_ROUND = re.compile(r"20\d\d-\d\d-\d\d|\bround\b|\brevision\b", re.IGNORECASE)
+
+# R7 reads the tree once: where a public-interface name is allowed to be found. Tests and cmake are
+# included because a design page may legitimately name a test or a CMake function as part of the surface.
+CODE_ROOTS = ("src", "cmake", "tools", "tests")
+CODE_SUFFIXES = {".hpp", ".h", ".cpp", ".c", ".cmake", ".in"}
+BACKTICK = re.compile(r"`([^`]+)`")
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+DRIFT_OK = "<!-- drift-ok -->"
+
+_names: set[str] | None = None
+
+
+def code_names() -> set[str]:
+    """Every identifier the tree contains, tokenised once per run."""
+    global _names
+    if _names is None:
+        names: set[str] = set()
+        for root in CODE_ROOTS:
+            base = ROOT / root
+            if not base.is_dir():
+                continue
+            for path in sorted(base.rglob("*")):
+                if not path.is_file():
+                    continue
+                if path.suffix not in CODE_SUFFIXES and path.name != "CMakeLists.txt":
+                    continue
+                names.update(IDENTIFIER.findall(path.read_text(encoding="utf-8", errors="ignore")))
+        _names = names
+    return _names
 
 
 def design_docs() -> list[pathlib.Path]:
@@ -136,6 +172,8 @@ def check(path: pathlib.Path) -> list[str]:
 
     # R6: the two numbering forms the template uses, each checked as its own ascending sequence.
     findings.extend(out_of_order(path.name, text))
+    # R7: the public-interface chapter names symbols, and a symbol that is not in the tree is drift.
+    findings.extend(interface_names(path.name, lines))
     return findings
 
 
@@ -157,6 +195,37 @@ def out_of_order(name: str, text: str) -> list[str]:
                 findings.append(
                     f"ERROR {name}:{line}: {label} {current} follows {previous} - numbered items ascend "
                     f"(move the block; keep the ids)"
+                )
+    return findings
+
+
+def interface_names(name: str, lines: list[str]) -> list[str]:
+    """Returns the findings for public-interface names the tree does not have (rule R7)."""
+    findings: list[str] = []
+    names = code_names()
+    in_chapter = False
+    reported: set[str] = set()
+    for number, line in enumerate(lines, start=1):
+        heading = H2.match(line)
+        if heading:
+            in_chapter = heading.group(1) == "4"
+            continue
+        if not in_chapter or not line.startswith("|") or DRIFT_OK in line:
+            continue
+        cell = line.strip().strip("|").split("|", 1)[0].strip()
+        if not cell or cell.startswith("---") or cell.startswith("Interface"):
+            continue
+        for span in BACKTICK.findall(cell):
+            for part in span.split("/"):
+                # `logicalName(...)` / `Class::member` / `a / b` are the three shapes the tables use.
+                symbol = part.split("(")[0].split("::")[-1].strip()
+                if not IDENTIFIER.fullmatch(symbol) or symbol in reported:
+                    continue
+                if symbol in names:
+                    continue
+                reported.add(symbol)
+                findings.append(
+                    f"ERROR {name}:{number}: public-interface name `{symbol}` appears nowhere in the tree"
                 )
     return findings
 

@@ -80,8 +80,8 @@ a location is `Vfs + path`, a package is a zip, a mesh is a native bin, a device
 
 | # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | device XML | `DeviceIO::loadXml/saveXml`, with link/joint/DoF/material/shape | landed |
-| F2 | workcell XML | `WorkcellIO::loadXml/saveXml`, with obj/children/parent_frame | landed |
+| F1 | device XML | `DeviceIO::loadXml/savePkg`, with link/joint/DoF/material/shape | landed |
+| F2 | workcell XML | `WorkcellIO::loadXml/savePkg`, with obj/children/parent_frame | landed |
 | F3 | data mapping | the model ↔ XML fields correspond one to one | landed |
 | F4 | VFS / packaging | `loadPkg/savePkg`, `.vdevpkg`/`.vwspkg`, a package inside a package | landed |
 | F5 | mesh storage | a native bin + an XML reference; shared meshes de-duplicated | landed |
@@ -90,7 +90,7 @@ a location is `Vfs + path`, a package is a zip, a mesh is a native bin, a device
 
 ### 3.1.1 F1 device XML
 
-- **Behaviour**: `DeviceIO::loadXml(path|string|Vfs, dir)` / `saveXml(...)`; parses metadata, materials, links,
+- **Behaviour**: `DeviceIO::loadXml(path|string|Vfs, dir)` / `savePkg(...)`; parses metadata, materials, links,
   joints、DoF、camera/projector、parameters。
 - **Constraints** (C1): the root is `<device>`; a pose is a quaternion; a length is scaled by the metadata `length_unit`.
 - **Requirements** (R1): `DeviceKind` picks the factory (Scanner/MotionDevice); a material is referenced by name and never written inline in a visual.
@@ -99,7 +99,7 @@ a location is `Vfs + path`, a package is a zip, a mesh is a native bin, a device
 
 ### 3.1.2 F2 workcell XML
 
-- **Behaviour**: `WorkcellIO::loadXml/saveXml`; an `<obj>` may nest `<children>`, and `parent_frame` attaches to a device frame.
+- **Behaviour**: `WorkcellIO::loadXml` / `savePkg`; an `<obj>` may nest `<children>`, and `parent_frame` attaches to a device frame.
 - **Constraints** (C2): a device reference `file` may be `.vdev` or `.vdevpkg`; one `file` may have several instances while the definition is written once.
 - **Requirements** (R2): `home`/`q`/`resolutions` are instance attributes and do not enter the device definition.
 - **Acceptance** (T2): the workcell / suite cases in `tests/test_robotics_io`.
@@ -172,7 +172,7 @@ a location is `Vfs + path`, a package is a zip, a mesh is a native bin, a device
 | --- | --- | --- |
 | `loadXml(path, LoadOptions)` | loads a device from a file | a failure throws `runtime_error` |
 | `loadXml(string, ...)` / `loadXml(Vfs&, dir, ...)` | loads from a string / a VFS | a location is a VFS + path |
-| `saveXml(...)` | exports a device | units follow `SaveOptions` |
+| `savePkg(...)` | exports a device | units follow `SaveOptions` |
 | `LoadOptions` / `SaveOptions` | `source_len_unit` / `target_len_unit` |  default mm ↔ m |
 
 ### 4.2 `WorkcellIO`
@@ -180,7 +180,7 @@ a location is `Vfs + path`, a package is a zip, a mesh is a native bin, a device
 | Interface | Contract | Notes |
 | --- | --- | --- |
 | `loadXml(path|Vfs, ...)` | loads a workcell | a device reference is `.vdev`/`.vdevpkg` |
-| `saveXml(...)` | exports a workcell | a device definition is written once |
+| `savePkg(...)` | exports a workcell | a device definition is written once |
 | `loadPkg(path)` / `savePkg(cell, Vfs&, options)` | packaging | zip, no temporary directory |
 
 ### 4.3 `XmlIOBase`

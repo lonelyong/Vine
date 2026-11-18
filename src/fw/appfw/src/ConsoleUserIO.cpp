@@ -230,7 +230,7 @@ vn::async::Task<std::optional<double>> ConsoleUserIO::getDoubleAsync(const Strin
 
     bool         ok    = false;
     const double value = line->trimmed().toDouble(&ok);
-    co_return ok&& std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+    co_return ok && std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
 }
 
 vn::async::Task<std::optional<math::Point3d>> ConsoleUserIO::getPoint3dAsync(const String& prompt)

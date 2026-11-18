@@ -872,8 +872,8 @@ bool PluginManager::isSkipped(const String& name)
 
 const String& PluginManager::disabledConfigKey()
 {
-    static const String s_key{ u8"plugins.disabled" };
-    return s_key;
+    static const String kKey{ u8"plugins.disabled" };
+    return kKey;
 }
 
 bool PluginManager::isPluginAbiCompatible(const PluginAbi& abi) noexcept
