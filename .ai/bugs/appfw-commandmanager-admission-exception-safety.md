@@ -1,6 +1,6 @@
 # CommandManager: chain admission and activation do not roll back state on an exception
 
-- **Status**: Chain admission and activation fixed (2026-11-18); no allocation-failure injection test exists yet.
+- **Status**: Closed (2026-11-18) as **not modelled**: the only exception these paths can raise is `std::bad_alloc`, and this manager does not turn an allocation failure into a command outcome. The part that was a real defect under any model - a run released by an object that never took it - is fixed by ordering.
 - **Found**: 2026-11-02
 - **Module**: `src/fw/appfw`
 - **Files**: `CommandManager::Impl::admit()`, `executeCommandAsyncImpl()`, `ChainGuard`
@@ -26,15 +26,13 @@ The admission flag, the chain registration, the stack registration and the RAII 
 3. Make the pairing between a successful `chain->enter()` and `leaveChain()` explicit; a failed stack registration must not decrement the run count.
 4. Avoid work that can allocate while holding the admission lock; where that is impossible, make the exception path roll back every state change.
 
-## Fix (2026-11-18)
+## Decision (2026-11-18)
 
-- `admit()` checks the gate first, then performs both fallible steps (chain allocation, live-registry push), and only then commits: `exclusive_busy`, `foreground_busy`, `chain` and `foreground`. Everything after the last fallible call is `noexcept`, so the commit is all-or-nothing and a throw leaves no gate claimed and no foreground naming a chain the registry does not know.
-- `ChainGuard` records `entered`, set immediately after `chain->enter()` returns. Its destructor always releases the gate claims of `admit()` and releases the stack entry and the run only when the entry happened, so a throw from the `ProgressHost` allocation or from the stack push cannot decrement a run that was never added.
-- `leaveStack()` and `leaveChain()` now belong to that one guard (the separate `StackGuard` is gone), so the stack entry and the run count can no longer be released by different objects on different paths.
-
-## Remaining gap
-
-No failure-injection test: exercising these paths needs a controllable allocation failure or a counter that throws, which the test build does not provide. The invariants are documented in `../design/appfw-command-manager.md` (C4 and §2.2) and the normal paths are covered by the `CommandManager_*` cases.
+- What can throw here, exhaustively: `std::make_shared<Chain>()`, the live-chain `push_back`, the command-stack `push_back`, and two allocations inside the `ProgressHost` constructor (`ProgressIndicator`'s `new`, the registry `push_back`). There is no validation, no user callback and no virtual call between the gate claim and the entry, so nothing but `std::bad_alloc` exists on this path.
+- The manager does not model allocation failure, and it never did: `admit()` had no rollback, and `runGuarded` converts exceptions from *command bodies*, not the manager's own allocations. Defending one of these four allocations and not the others would leave a reader unable to tell which throws are handled - `G6` asks for one stance, and the stance is "not modelled".
+- Kept: `chain->enter()` runs **before** the guard exists, and the guard releases the stack entry, the run and the gate claims. That deletes the separate `StackGuard`, and it also covers everything after the entry - including the `changed()` handlers the progress host fires - so those are released normally. This is what removes the finding's (b) and (c): the run can no longer be released by an object that did not take it.
+- Reverted: the `entered` flag and the `admit()` commit-after-allocate reorder. Both existed only for `bad_alloc`, and the flag in particular made the guard's scope depend on a boolean instead of on where it was constructed.
+- Consequence, accepted: if an allocation on that path does fail, a gate claimed just before it stays claimed and the manager refuses further top-level commands. That is the behaviour of not modelling the failure, and it is stated here instead of being defended in one spot.
 
 ## Verification plan
 

@@ -781,26 +781,18 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
         if (exclusive_busy) {
             return false;
         }
+        exclusive_busy = true;
     }
     else if (foreground_busy || ambient_host_busy) {
         return false;
     }
 
-    // Allocate and publish before claiming anything: make_shared and the live-chain push_back can both
-    // throw, and a gate claimed before them would stay claimed forever (every later command refused), while
-    // a foreground pointer published before the push_back would name a chain cancelAll() does not know.
-    // Everything below the last fallible step is noexcept, so the commit either happens whole or not at all.
-    std::shared_ptr<Chain> admitted = std::make_shared<Chain>();
-    rememberChain(admitted);
-
-    if (exclusive) {
-        exclusive_busy = true;
-    }
+    chain      = std::make_shared<Chain>();
+    foreground = chain;
+    rememberChain(chain);
     if (testFlag(flags, CommandFlags::LongRunning)) {
         foreground_busy = true;
     }
-    chain      = std::move(admitted);
-    foreground = chain;
     return true;
 }
 
@@ -1199,19 +1191,16 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
     const bool holds_gate      = top_level && testFlag(flags, CommandFlags::LongRunning);
     const bool holds_exclusive = top_level && exclusive;
 
-    // Declared before the progress host below, so it is destroyed after it: the
-    // chain is reported drained only once this frame's host and stack entry are
-    // gone, which keeps an Exclusive command that waited for the drain from
-    // resuming into a half-torn-down state. The gate is released before the drain
-    // signal, so a command woken by it also sees a cleared gate.
-    //
-    // The guard owns all three facts of "this frame is part of the chain" - the
-    // gate claim admit() made, the stack entry and the run count - so they are
-    // released together and only if they were taken. Entering happens right after
-    // the declaration, because admit() has already claimed the gate and a
-    // constructor that throws would leave that claim set (the destructor of an
-    // object that never finished constructing does not run); `entered` is stored
-    // immediately after the call returns, so no exception can fall between the two.
+    // Joining the chain happens before the guard exists, so the guard's scope covers exactly what this
+    // frame holds: the stack entry and the run taken here, plus the gate claims admit() made. A guard
+    // declared earlier would release the run of an entry that may never have happened - a flag carried
+    // for an allocation failure the manager does not model anywhere else.
+    chain->enter(command);
+
+    // Declared before the progress host below, so it is destroyed after it: the chain is reported
+    // drained only once this frame's host and stack entry are gone, which keeps an Exclusive command
+    // that waited for the drain from resuming into a half-torn-down state. The gate is released before
+    // the drain signal, so a command woken by it also sees a cleared gate.
     struct ChainGuard {
         Impl*    impl;
         Chain*   chain;
@@ -1219,12 +1208,9 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
         bool     holds_gate;
         bool     holds_exclusive;
 
-        /// True once the command is on the chain; the stack entry and the run are released only then.
-        bool entered{ false };
-
         ~ChainGuard()
         {
-            if (holds_gate || holds_exclusive || !entered) {
+            if (holds_gate || holds_exclusive) {
                 std::lock_guard<std::mutex> lock(impl->mutex);
                 if (holds_gate) {
                     impl->foreground_busy = false;
@@ -1232,13 +1218,6 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
                 if (holds_exclusive) {
                     impl->exclusive_busy = false;
                 }
-                if (!entered && impl->foreground.get() == chain) {
-                    // The command never joined: the foreground must not keep naming its idle chain.
-                    impl->foreground.reset();
-                }
-            }
-            if (!entered) {
-                return;
             }
             chain->leaveStack(command);
             chain->leaveChain();
@@ -1256,13 +1235,6 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
         progress_host = std::make_unique<vn::appfw::ProgressHost>(chain->stop_source);
         progress_host->setForeground(true);
     }
-
-    // Joining the chain is the one step the guard cannot do in its constructor; see
-    // ChainGuard above for why the flag is set here and not inside it. A throw from
-    // enter() (the stack's push_back) leaves the guard reporting "not entered", which is
-    // exactly the state the chain is in.
-    chain->enter(command);
-    chain_guard.entered = true;
 
     VN_LOGI("Executing command: {}", toUtf8View(command->name()));
 
