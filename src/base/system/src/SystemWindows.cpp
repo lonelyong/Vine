@@ -214,7 +214,11 @@ void fillOsInfo(OperatingSystemInfo& info)
             RTL_OSVERSIONINFOW version{};
             version.dwOSVersionInfoSize = static_cast<DWORD>(sizeof(version));
             if (fn(&version) == 0) {
-                info.version = joinVersion(version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber);
+                // Windows has one version: the OS build IS the kernel version, so both fields report
+                // it instead of inventing a second number.
+                const String released = joinVersion(version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber);
+                info.osVersion        = released;
+                info.kernelVersion    = released;
             }
         }
     }

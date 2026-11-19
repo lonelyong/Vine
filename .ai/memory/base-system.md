@@ -54,8 +54,9 @@ set into an OS abstraction layer.
 
 ## Contracts worth not breaking
 
-- `OperatingSystemInfo::version` is each platform's own spelling: Windows `major.minor.build`;
-  Linux and macOS the `uname` kernel release.
+- `OperatingSystemInfo` keeps two versions: `osVersion` (the product version - Windows build, Linux
+  `PRETTY_NAME`, macOS `kern.osproductversion`) and `kernelVersion` (`uname` release; the same build
+  on Windows). Never print one as the other.
 - `DiskInfo` is a volume (with the backing disk's identity) on Windows, a mounted volume on macOS and
   a whole block device on Linux; `Hardware.hpp` states all three.
 - `kind` is `DiskKind::CdRom` for an optical drive, whose capacity is 0 while it holds no media; the

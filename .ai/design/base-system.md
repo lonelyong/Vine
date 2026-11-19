@@ -92,12 +92,15 @@ module small enough that a platform half can be read in one pass.
 
 ### 2.4 **The platform vocabulary is part of the contract** (G4, G6)
 
-- What it is: `OperatingSystemInfo::version` is the platform's own spelling (Windows
-  `major.minor.build`; Linux and macOS the `uname` kernel release); `DiskInfo` is a volume on Windows
+- What it is: `OperatingSystemInfo` separates the product version from the kernel release -
+  `osVersion` is what a user reads (Windows `major.minor.build`, Linux the distribution's
+  `PRETTY_NAME`, macOS `kern.osproductversion`) and `kernelVersion` is the `uname` release the
+  process actually runs on; `DiskInfo` is a volume on Windows
   and on macOS, and a whole block device on Linux; `kind` is `DiskKind`, a closed set of five values
   with a stated width; `exists()` answers existence, not accessibility.
-- Why: a caller that reads "10.0.19045" and a caller that reads "6.8.0-45-generic" are not reading
-  the same fact, and a header that says "OS version" for both invites a wrong comparison.
+- Why: an About panel that prints "6.8.0-45-generic" where the user expects a distribution version
+  is showing the wrong fact, and a container that runs another kernel than its product version
+  suggests makes the two genuinely different.
 - Boundary: a field stays a string where the platform's vocabulary is open (architecture, model); a
   closed end of the vocabulary is an `enum class` with a stated underlying type (`DiskKind`), so a
   caller cannot invent a sixth word and a log can print one.
@@ -129,7 +132,7 @@ module small enough that a platform half can be read in one pass.
 | # | Feature | Behaviour | Status |
 |---|---|---|---|
 | F1 | Process queries | Current pid and executable path, existence, lookup by executable name, forceful termination | landed |
-| F2 | Operating system facts | Name, version spelling, architecture; built once and cached | landed |
+| F2 | Operating system facts | Name, product version, kernel release, architecture; built once and cached | landed |
 | F3 | Hardware facts | CPU, motherboard, memory snapshot, storage enumeration, volume capacity and free space | landed |
 | F4 | Environment | Presence, value, full enumeration; read-only | landed |
 | F5 | Directory roots | Temporary, home, data, config, cache, executable directory | landed |
@@ -152,11 +155,13 @@ module small enough that a platform half can be read in one pass.
 ### 3.1.2 F2 Operating system facts
 
 - **Behaviour**: `OperatingSystem::info()` returns `OperatingSystemInfo` with `name` (`Windows`,
-  `Linux`, `macOS`), `version` and `architecture`; built once on first call and cached.
+  `Linux`, `macOS`), `osVersion`, `kernelVersion` and `architecture`; built once on first call and
+  cached.
 - **Constraints** (C2): a fact the platform cannot answer reads `unknown`, never an empty string.
-- **Requirements** (R3): the version is the platform's own spelling (§2.4).
+- **Requirements** (R3): each version field states the fact it names (§2.4).
 - **Acceptance** (T2).
-- **Caveats** (N2): on Linux and macOS the version is a kernel release, not a distribution version.
+- **Caveats** (N2): Windows has one version, so both fields report the OS build there; a Linux
+  distribution that publishes no `os-release` answers `unknown`.
 
 ### 3.1.3 F3 Hardware facts
 
@@ -264,7 +269,8 @@ module small enough that a platform half can be read in one pass.
 ### 5.1 Constraints
 
 - **C1** An identifier <= 0 and an empty executable name are rejected once, in the shared half.
-- **C2** `name`, `version` and `architecture` are never empty; an unknown fact reads `unknown`.
+- **C2** `name`, `osVersion`, `kernelVersion` and `architecture` are never empty; an unknown fact
+  reads `unknown`.
 - **C3** `CpuInfo::logicalCores` and `physicalCores` are at least 1 and `physicalCores <=
   logicalCores` after the shared fallback.
 - **C4** `disks()` returns whole devices only; a partition is never reported.
@@ -280,7 +286,8 @@ module small enough that a platform half can be read in one pass.
 - **R1** `exists()` answers existence, not accessibility: POSIX `EPERM` and Windows
   `ERROR_ACCESS_DENIED` both mean "there".
 - **R2** `findByName()` compares file names: case-insensitive on Windows, exact on Linux.
-- **R3** `OperatingSystemInfo::version` is the platform's own spelling (§2.4).
+- **R3** `osVersion` is the product version and `kernelVersion` is the kernel release; neither
+  substitutes for the other (§2.4).
 - **R4** `MemoryInfo::availableBytes` is what a new allocation can claim; `totalBytes` is physical
   memory.
 - **R5** `diskFreeSpace()` is available-to-the-caller, not unused (`f_bavail`, not `f_bfree`).
@@ -374,9 +381,6 @@ halves are not compiled on the Linux build machine; every edit to them is review
 
 ### 9.2 Known Gaps and Backlog
 
-- `B4`: macOS reports the Darwin kernel release and Linux the distribution-independent kernel release
-  as `version`; splitting the field into `os_version` and `kernel_version` changes the struct and is
-  therefore its own item.
 - `B5`: macOS reports mounted volumes, not physical disks; whole-disk capacity, model and serial need
   IOKit's `IOMedia` registry, which this half does not link.
 
@@ -390,6 +394,10 @@ change is needed:
   `std::uint64_t`.
 - `DiskInfo::kind`: `String` -> `DiskKind`; a caller that compared words now compares
   `DiskKind::CdRom` and friends.
+
+The version split (`B4`) changed the same struct again: `OperatingSystemInfo::version` is gone, and
+`osVersion` / `kernelVersion` take its place with the two facts it used to conflate. A consumer that
+printed `version` now chooses which of the two it means - an About panel takes `osVersion`.
 
 The class set stays additive otherwise: `Environment`, `Directories` and `Host` are separate classes
 and `memory()` extends `Hardware` without changing existing signatures. A platform the module does
@@ -421,7 +429,8 @@ adding one file.
 
 - `GetEnvironmentVariableW`, `GetEnvironmentStringsW`, `GlobalMemoryStatusEx`,
   `GetLogicalProcessorInformationEx`, `GetTempPathW`, `GetComputerNameExW` — Win32 API reference.
-- `proc(5)`, `sysfs` block-device attributes, `sysinfo(2)`, `getpwuid_r(3)` — Linux manual pages.
+- `proc(5)`, `sysfs` block-device attributes, `sysinfo(2)`, `getpwuid_r(3)`, the `os-release`
+  specification - Linux manual pages.
 - XDG Base Directory Specification.
 - `host_statistics64`, `sysctlbyname`, `_NSGetExecutablePath`, `_NSGetEnviron`, `proc_listpids`,
   `proc_pidpath`, `getmntinfo` — macOS API reference.

@@ -9,6 +9,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(__linux__)
+#    include <sys/utsname.h>
+#endif
+
 #include <vine/system/Directories.hpp>
 #include <vine/system/Environment.hpp>
 #include <vine/system/Hardware.hpp>
@@ -98,9 +102,21 @@ TEST(SystemTest, OperatingSystemInfoIsFilled)
 {
     const auto& info = OperatingSystem::info();
     EXPECT_FALSE(info.name.empty());
-    EXPECT_FALSE(info.version.empty());
+    EXPECT_FALSE(info.osVersion.empty());
+    EXPECT_FALSE(info.kernelVersion.empty());
     EXPECT_FALSE(info.architecture.empty());
 }
+
+#if defined(__linux__)
+TEST(SystemTest, KernelVersionIsTheKernelRelease)
+{
+    // The split exists to keep two facts apart: the product version a user reads and the kernel this
+    // process actually runs on. On Linux the second one is uname(2)'s answer, verifiable here.
+    struct utsname uts{};
+    ASSERT_EQ(::uname(&uts), 0);
+    EXPECT_EQ(OperatingSystem::info().kernelVersion, String::fromLocal8Bit(uts.release));
+}
+#endif
 
 TEST(SystemTest, InfoIsCached)
 {

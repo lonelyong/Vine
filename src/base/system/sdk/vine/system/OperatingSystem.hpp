@@ -8,13 +8,20 @@ VN_SYSTEM_NS_BEGIN
 /**
  * @brief Describes the operating system the process is running on.
  *
+ * @details
+ * - `name` is the platform family, `osVersion` is the product version a user recognises, and
+ *   `kernelVersion` is the kernel the process actually runs on. They are two facts: a distribution
+ *   changes its kernel without changing its product version, and a container runs another kernel
+ *   than its product version suggests.
+ *
  * @note
- * - Each field carries the platform's own spelling; the three fields are not a normalised version triple.
+ * - Each field carries the platform's own spelling; the fields are not a normalised version triple.
  */
 struct VN_SYSTEM_API OperatingSystemInfo {
-    String name;         // "Windows", "Linux", "macOS"; "Unknown" on a platform the module does not implement.
-    String version;      // Windows "major.minor.build" (e.g. "10.0.19045"); Linux and macOS report the uname kernel release.
-    String architecture; // "x64", "x86", "arm64", the platform's own machine spelling, or "unknown".
+    String name;          // "Windows", "Linux", "macOS"; "Unknown" on a platform the module does not implement.
+    String osVersion;     // Windows "10.0.19045"; Linux the distribution's PRETTY_NAME (e.g. "Ubuntu 24.04.1 LTS"); macOS "14.6.1".
+    String kernelVersion; // The uname release on Linux and macOS; the OS build on Windows, which has one version.
+    String architecture;  // "x64", "x86", "arm64", the platform's own machine spelling, or "unknown".
 };
 
 /**

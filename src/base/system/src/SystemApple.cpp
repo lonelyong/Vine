@@ -49,12 +49,17 @@ void fillOsInfo(OperatingSystemInfo& info)
 {
     info.name = u8"macOS";
 
+    // kern.osproductversion is the marketing version ("14.6.1"); the Darwin kernel release is the
+    // other fact and gets its own field.
+    char product[64] = {};
+    if (sysctlValue("kern.osproductversion", product, sizeof(product))) {
+        info.osVersion = fromLocal(product);
+    }
+
     struct utsname uts{};
     if (uname(&uts) == 0) {
-        // The Darwin kernel release, which is the version this platform reports; OperatingSystem.hpp
-        // states that spelling per platform.
-        info.version      = fromLocal(uts.release);
-        info.architecture = architectureName(uts.machine);
+        info.kernelVersion = fromLocal(uts.release);
+        info.architecture  = architectureName(uts.machine);
     }
 }
 

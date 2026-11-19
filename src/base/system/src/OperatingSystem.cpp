@@ -12,13 +12,16 @@ OperatingSystemInfo buildInfo()
     OperatingSystemInfo info;
     detail::fillOsInfo(info);
 
-    // The three fields are shown to a user (an "About" panel), so a fact the platform cannot answer
-    // reads "unknown" rather than as an empty cell.
+    // The fields are shown to a user (an "About" panel), so a fact the platform cannot answer reads
+    // "unknown" rather than as an empty cell.
     if (info.name.empty()) {
         info.name = u8"Unknown";
     }
-    if (info.version.empty()) {
-        info.version = u8"unknown";
+    if (info.osVersion.empty()) {
+        info.osVersion = u8"unknown";
+    }
+    if (info.kernelVersion.empty()) {
+        info.kernelVersion = u8"unknown";
     }
     if (info.architecture.empty()) {
         info.architecture = u8"unknown";

@@ -80,18 +80,77 @@ bool isNumeric(const std::string& text)
     return !text.empty() && std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
+/// The distribution's version string, read from the `os-release` file the specification names.
+///
+/// @details
+/// - `/etc/os-release` is the file a system owns; `/usr/lib/os-release` is the fallback the same
+///   specification names for a system that generates the first one, so both are tried in that order.
+/// - `PRETTY_NAME` is preferred ("Ubuntu 24.04.1 LTS"), then `NAME` with `VERSION_ID`, then
+///   `VERSION_ID` alone: a distribution that publishes only one of them still answers.
+/// - A missing or unreadable file ends the search with an empty answer, which the shared caller
+///   reports as "unknown".
+String distributionVersion()
+{
+    static constexpr const char* kPaths[] = { "/etc/os-release", "/usr/lib/os-release" };
+
+    for (const char* path : kPaths) {
+        std::ifstream file(path);
+        if (!file) {
+            continue;
+        }
+
+        std::string pretty;
+        std::string name;
+        std::string version_id;
+        std::string line;
+        while (std::getline(file, line)) {
+            const std::size_t equals = line.find('=');
+            if (equals == std::string::npos) {
+                continue;
+            }
+            const std::string key   = trimmed(line.substr(0, equals));
+            std::string       value = trimmed(line.substr(equals + 1));
+            if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') && value.back() == value.front()) {
+                value = value.substr(1, value.size() - 2);
+            }
+            if (key == "PRETTY_NAME") {
+                pretty = value;
+            }
+            else if (key == "NAME") {
+                name = value;
+            }
+            else if (key == "VERSION_ID") {
+                version_id = value;
+            }
+        }
+
+        if (!pretty.empty()) {
+            return fromLocal(pretty);
+        }
+        if (!name.empty()) {
+            return fromLocal(version_id.empty() ? name : name + " " + version_id);
+        }
+        if (!version_id.empty()) {
+            return fromLocal(version_id);
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 void fillOsInfo(OperatingSystemInfo& info)
 {
     info.name = u8"Linux";
 
+    // The distribution's own version string is what a user reads in an About panel; the kernel release
+    // is a different fact and gets its own field.
+    info.osVersion = distributionVersion();
+
     struct utsname uts{};
     if (uname(&uts) == 0) {
-        // The kernel release ("uname -r"): Linux publishes no distribution version in a portable
-        // way, and Hardware/OperatingSystem.hpp states which spelling each platform reports.
-        info.version      = fromLocal(uts.release);
-        info.architecture = architectureName(uts.machine);
+        info.kernelVersion = fromLocal(uts.release);
+        info.architecture  = architectureName(uts.machine);
     }
 }
 
