@@ -64,7 +64,7 @@ related documents**.
 - `async-design.md` — the `src/base/async` design (three rules that must hold).
 - `base-crash.md` — crash reporting: `vn::Crash` assembly / report format / handler symbolisation and the crash window.
 - `base-progress.md` — progress primitives: one [0, 1] scale, the move-only reporting handle and the staged scope, coalesced notification, the destruction-order and restart traps, and what appfw adds on top.
-- `base-runtime.md` — dynamic library loading (identity is the file, retention is the owner's choice, `lastError` explains a failure) and the typed TTL cache (one detached sweeper per stored type, safe as a static object); the cache interface is kept as a trigger-gated seam.
+- `base-runtime.md` — dynamic library loading (identity is the file, retention is the owner's choice, `lastError` explains a failure) and the cache: one typed `Cache` seam with explicit `Ok`/`Miss`/`Failure` answers, the in-memory implementation that never serialises, one detached sweeper per stored type, and persistent backends as `KeyValueStore` + serializer behind the same interface.
 - `brep-operations.md` — runtime B-rep operations: module ownership (`brep` / `brepio` / `geometry`), tessellation and primitive-to-solid contracts, failure representation.
 - `crypto.md` — the crypto module: algorithms only, one object one direction, incremental and one-shot are synonyms, backend initialisation in exactly one place (`detail::ensureLibraryInitialized`); today's implementation (digest / HMAC / HKDF / password hashing / AES-GCM·CBC·CTR / RSA / ECC plus DER, PEM and password-protected PKCS#8 key files) and the gaps (certificate parsing).
 - `geometry-axis-surfaces.md` — axisymmetric analytic surfaces (cylinder / cone / torus): the `Placement` value, the shared "in-plane axis" rule (`Frame.hpp`), rectangularly trimmed surfaces, and where spline surfaces stand.
@@ -90,13 +90,17 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (83)
+## decisions/ — decision records (ADRs) (84)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-19-cache-interface-and-backends.md` — one typed `Cache` interface with three-state
+  answers; `InMemoryCache` implements it without serialising, a persistent backend serialises into a
+  `KeyValueStore` behind an injected serializer, and the rejected erased/byte/dual-form shapes are
+  recorded.
 - `ADR-2026-11-19-iobase-whole-content-bound.md` — a whole-content read (zip entries, `addFile` on a buffering backend,
   `Zip::decompress`) is bounded at 1 GiB and answers `CapacityExceeded`; `openRead`/sinks/staging carry larger content.
 - `ADR-2026-11-19-iobase-writes-publish-whole.md` — every write that replaces a file stages into a uniquely named
@@ -221,7 +225,7 @@ decision is not to do them (the reason goes into an ADR).
 - `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation).
 - `base-crash.md` — crash-report open items (last-crash prompt, terminate, stack guarantees, read-only directories, Linux, the upload trigger).
 - `base-progress.md` — progress open items (consumer-less scope accessors, stale-stage detection, the `max <= 0` policy, a non-throwing callback, the appfw plugin-ABI coupling).
-- `base-runtime.md` — the cache interface's trigger (consume or retire), real plugin unload, and Windows identity coverage.
+- `base-runtime.md` — persistent cache backends (file/database) when a consumer appears, real plugin unload, and Windows identity coverage.
 - `brep.md` — runtime B-rep open items (OCCT backend verification, booleans and sewing).
 - `crypto.md` — crypto open items (error-code classification, Argon2 threading mode, configurable write-out scheme, a second AEAD, leak detection).
 - `geom-planar.md` — planar-geometry open items (ellipse / arc / the `ConicCurve` layer, planar queries, `CircleCurve::pointAt`).
@@ -237,7 +241,7 @@ decision is not to do them (the reason goes into an ADR).
 - `geometry.md` — geometry facts: the SDK class export convention and the five primitives' local space.
 - `appfw.md` — appfw cross-cutting rules (threading / no user code under a lock / lifetime).
 - `async.md` — `src/base/async` facts.
-- `base-runtime.md` — loader identity and retention, the detached process-lifetime cache sweeper, and the overwrite rule.
+- `base-runtime.md` — loader identity and retention, the typed cache seam and its outcomes, the detached process-lifetime sweeper, and the overwrite rule.
 - `imaging.md` — imaging facts.
 - `imageio.md` — imageio facts.
 - `loaders.md` — the loaders layer index.

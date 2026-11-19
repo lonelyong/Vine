@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -7,9 +8,12 @@
 #include <gtest/gtest.h>
 
 #include <vine/String.hpp>
+#include <vine/runtime/Cache.hpp>
 #include <vine/runtime/InMemoryCache.hpp>
 
 using vn::String;
+using vn::runtime::Cache;
+using vn::runtime::CacheOutcome;
 using vn::runtime::InMemoryCache;
 
 namespace
@@ -28,148 +32,173 @@ struct CopyOnly {
     CopyOnly& operator=(CopyOnly&&)      = delete;
 };
 
+/// The value of an Ok outcome; asserts the status first so a miss fails loudly.
+template <class TValue>
+std::optional<TValue> valueOf(CacheOutcome<TValue> outcome)
+{
+    EXPECT_TRUE(outcome.ok());
+    return outcome.value;
+}
+
+/// The answer of a boolean operation; asserts that the operation ran.
+bool answerOf(CacheOutcome<bool> outcome)
+{
+    EXPECT_TRUE(outcome.ok());
+    return outcome.value.value_or(false);
+}
+
 TEST(InMemoryCacheTest, SetGetRoundTrip)
 {
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "hello", 0);
-    const auto value = cache.get(1);
+    EXPECT_TRUE(cache.set(1, "hello", std::nullopt).ok());
+
+    const auto value = valueOf(cache.get(1));
     ASSERT_TRUE(value.has_value());
     EXPECT_EQ(*value, "hello");
 }
 
-TEST(InMemoryCacheTest, GetIntoOutput)
+TEST(InMemoryCacheTest, ImplementsTheCacheInterface)
 {
-    InMemoryCache<int, std::string> cache;
-    cache.set(1, "hello", 0);
+    InMemoryCache<int, std::string> impl;
+    Cache<int, std::string>&        cache = impl;
 
-    std::string out;
-    EXPECT_TRUE(cache.get(1, out));
-    EXPECT_EQ(out, "hello");
+    ASSERT_TRUE(cache.set(1, "hi", std::chrono::seconds(30)).ok());
 
-    std::string missing;
-    EXPECT_FALSE(cache.get(999, missing));
+    const auto hit = cache.get(1);
+    ASSERT_TRUE(hit.ok());
+    EXPECT_EQ(*hit.value, "hi");
+
+    const auto present = cache.contains(1);
+    ASSERT_TRUE(present.ok());
+    EXPECT_TRUE(*present.value);
+
+    const auto removed = cache.remove(1);
+    ASSERT_TRUE(removed.ok());
+    EXPECT_TRUE(*removed.value);
+    EXPECT_TRUE(cache.get(1).missed());
 }
 
-TEST(InMemoryCacheTest, NegativeTtlMeansForever)
+TEST(InMemoryCacheTest, NonPositiveLifetimeKeepsTheEntry)
 {
-    // Reference convention: ttl <= 0 keeps the entry forever. A negative
-    // literal must not overflow into an immediate expiry.
+    // The interface's rule: an empty or non-positive lifetime means "keep".
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "keep", -1);
-    EXPECT_TRUE(cache.contains(1));
-    EXPECT_EQ(*cache.get(1), "keep");
+    cache.set(1, "empty", std::nullopt);
+    cache.set(2, "zero", std::chrono::seconds(0));
+    cache.set(3, "negative", std::chrono::seconds(-1));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 3u);
 }
 
-TEST(InMemoryCacheTest, MissingReturnsNullopt)
+TEST(InMemoryCacheTest, MissingReportsMiss)
 {
     InMemoryCache<int, std::string> cache;
-    EXPECT_FALSE(cache.get(42).has_value());
-    EXPECT_FALSE(cache.contains(42));
+    const auto outcome = cache.get(42);
+    EXPECT_TRUE(outcome.missed());
+    EXPECT_FALSE(outcome.failed());
+    EXPECT_FALSE(outcome.value.has_value());
+
+    const auto present = cache.contains(42);
+    ASSERT_TRUE(present.ok());
+    EXPECT_FALSE(*present.value);
 }
 
 TEST(InMemoryCacheTest, OverwriteReplacesValue)
 {
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "a", 0);
-    cache.set(1, "b", 0);
-    const auto value = cache.get(1);
-    ASSERT_TRUE(value.has_value());
-    EXPECT_EQ(*value, "b");
+    cache.set(1, "a", std::nullopt);
+    cache.set(1, "b", std::nullopt);
+    EXPECT_EQ(valueOf(cache.get(1)).value_or(""), "b");
 }
 
 TEST(InMemoryCacheTest, StringKeysAreTyped)
 {
     InMemoryCache<String, int> cache;
-    cache.set(u8"key", 7, 0);
-    const auto value = cache.get(u8"key");
-    ASSERT_TRUE(value.has_value());
-    EXPECT_EQ(*value, 7);
+    cache.set(u8"key", 7, std::nullopt);
+    EXPECT_EQ(valueOf(cache.get(u8"key")).value_or(0), 7);
 }
 
 TEST(InMemoryCacheTest, RemoveAndClear)
 {
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "a", 0);
-    cache.set(2, "b", 0);
-    EXPECT_TRUE(cache.remove(1));
-    EXPECT_FALSE(cache.remove(1));
-    EXPECT_FALSE(cache.contains(1));
-    cache.clear();
-    EXPECT_FALSE(cache.contains(2));
+    cache.set(1, "a", std::nullopt);
+    cache.set(2, "b", std::nullopt);
+    EXPECT_TRUE(answerOf(cache.remove(1)));
+    EXPECT_FALSE(answerOf(cache.remove(1)));
+    EXPECT_FALSE(answerOf(cache.contains(1)));
+    EXPECT_TRUE(cache.clear().ok());
+    EXPECT_FALSE(answerOf(cache.contains(2)));
 }
 
 TEST(InMemoryCacheTest, TtlExpires)
 {
     // No start(): no background thread, so expiry is driven purely by access.
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "forever", 0);
-    cache.set(2, "short", 1);
-    EXPECT_TRUE(cache.contains(2));
+    cache.set(1, "forever", std::nullopt);
+    cache.set(2, "short", std::chrono::seconds(1));
+    EXPECT_TRUE(answerOf(cache.contains(2)));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 
-    EXPECT_FALSE(cache.contains(2));
-    EXPECT_FALSE(cache.get(2).has_value());
-    EXPECT_TRUE(cache.contains(1));
-    EXPECT_EQ(*cache.get(1), "forever");
+    EXPECT_TRUE(cache.get(2).missed());
+    EXPECT_FALSE(answerOf(cache.contains(2)));
+    EXPECT_EQ(valueOf(cache.get(1)).value_or(""), "forever");
 }
 
 TEST(InMemoryCacheTest, RemoveExpiredCleansOnlyExpired)
 {
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "forever", 0);
-    cache.set(2, "short", 1);
+    cache.set(1, "forever", std::nullopt);
+    cache.set(2, "short", std::chrono::seconds(1));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 
     EXPECT_EQ(cache.removeExpired(), 1u);
-    EXPECT_FALSE(cache.contains(2));
-    EXPECT_TRUE(cache.contains(1));
+    EXPECT_FALSE(answerOf(cache.contains(2)));
+    EXPECT_TRUE(answerOf(cache.contains(1)));
 }
 
 TEST(InMemoryCacheTest, CountAndEmpty)
 {
     InMemoryCache<int, std::string> cache;
-    EXPECT_TRUE(cache.isEmpty());
-    EXPECT_EQ(cache.count(), 0u);
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 0u);
 
-    cache.set(1, "a", 0);
-    cache.set(2, "b", 0);
-    EXPECT_FALSE(cache.isEmpty());
-    EXPECT_EQ(cache.count(), 2u);
+    cache.set(1, "a", std::nullopt);
+    cache.set(2, "b", std::nullopt);
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 2u);
 
     cache.remove(1);
-    EXPECT_EQ(cache.count(), 1u);
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 1u);
 
     cache.clear();
-    EXPECT_TRUE(cache.isEmpty());
-    EXPECT_EQ(cache.count(), 0u);
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 0u);
 }
 
 TEST(InMemoryCacheTest, CountIgnoresExpired)
 {
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "forever", 0);
-    cache.set(2, "short", 1);
-    EXPECT_EQ(cache.count(), 2u);
+    cache.set(1, "forever", std::nullopt);
+    cache.set(2, "short", std::chrono::seconds(1));
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 2u);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 
-    EXPECT_EQ(cache.count(), 1u);
-    EXPECT_FALSE(cache.contains(2));
-    EXPECT_TRUE(cache.contains(1));
+    EXPECT_EQ(valueOf(cache.count()).value_or(99u), 1u);
+    EXPECT_FALSE(answerOf(cache.contains(2)));
+    EXPECT_TRUE(answerOf(cache.contains(1)));
 }
 
 TEST(InMemoryCacheTest, KeysReturnsLiveKeys)
 {
     InMemoryCache<int, std::string> cache;
-    cache.set(1, "a", 0);
-    cache.set(2, "b", 0);
-    cache.set(3, "gone", 1);
+    cache.set(1, "a", std::nullopt);
+    cache.set(2, "b", std::nullopt);
+    cache.set(3, "gone", std::chrono::seconds(1));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 
-    const auto keys = cache.keys();
+    const auto keys = valueOf(cache.keys()).value_or(std::vector<int>{});
     ASSERT_EQ(keys.size(), 2u);
     EXPECT_NE(std::find(keys.begin(), keys.end(), 1), keys.end());
     EXPECT_NE(std::find(keys.begin(), keys.end(), 2), keys.end());
@@ -194,13 +223,13 @@ TEST(InMemoryCacheTest, BackgroundSweepAutoRemovesExpired)
     // expired entry on its own, with no explicit removeExpired() call.
     InMemoryCache<int, std::string> cache;
     cache.start(std::chrono::milliseconds(100));
-    cache.set(1, "forever", 0);
-    cache.set(2, "short", 1);
+    cache.set(1, "forever", std::nullopt);
+    cache.set(2, "short", std::chrono::seconds(1));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
-    EXPECT_FALSE(cache.contains(2));
-    EXPECT_TRUE(cache.contains(1));
+    EXPECT_FALSE(answerOf(cache.contains(2)));
+    EXPECT_TRUE(answerOf(cache.contains(1)));
     cache.stop();
 }
 
@@ -213,7 +242,7 @@ TEST(InMemoryCacheTest, ConcurrentAccessIsSafe)
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&cache, shared] {
             for (int i = 0; i < 500; ++i) {
-                cache.set(shared, "x", 0);
+                (void)cache.set(shared, "x", std::nullopt);
                 (void)cache.get(shared);
                 (void)cache.contains(shared);
                 cache.removeExpired();
@@ -224,16 +253,16 @@ TEST(InMemoryCacheTest, ConcurrentAccessIsSafe)
         thread.join();
     }
 
-    EXPECT_TRUE(cache.contains(shared));
+    EXPECT_TRUE(answerOf(cache.contains(shared)));
 }
 
 TEST(InMemoryCacheTest, OverwriteNeedsCopyConstructionOnly)
 {
     InMemoryCache<int, CopyOnly> cache;
-    cache.set(1, CopyOnly(1), 0);
-    cache.set(1, CopyOnly(2), 0); // compiling this line is half the assertion
+    cache.set(1, CopyOnly(1), std::nullopt);
+    cache.set(1, CopyOnly(2), std::nullopt); // compiling this line is half the assertion
 
-    const auto value = cache.get(1);
+    const auto value = valueOf(cache.get(1));
     ASSERT_TRUE(value.has_value());
     EXPECT_EQ(value->value, 2);
 }
@@ -244,14 +273,14 @@ TEST(InMemoryCacheTest, OneWorkerSweepsEveryStartedInstance)
     InMemoryCache<int, std::string> second;
     first.start(std::chrono::milliseconds(50));
     second.start(std::chrono::milliseconds(50));
-    first.set(1, "short", 1);
-    second.set(1, "short", 1);
+    first.set(1, "short", std::chrono::seconds(1));
+    second.set(1, "short", std::chrono::seconds(1));
 
     // No explicit removeExpired(): the shared worker serves both instances.
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
-    EXPECT_FALSE(first.contains(1));
-    EXPECT_FALSE(second.contains(1));
+    EXPECT_FALSE(answerOf(first.contains(1)));
+    EXPECT_FALSE(answerOf(second.contains(1)));
     first.stop();
     second.stop();
 }
@@ -264,7 +293,7 @@ TEST(InMemoryCacheTest, StartStopChurnFromSeveralThreadsLeavesAWorkingWorker)
             for (int i = 0; i < 50; ++i) {
                 InMemoryCache<int, std::string> cache;
                 cache.start(std::chrono::milliseconds(5));
-                cache.set(i, "v", 0);
+                cache.set(i, "v", std::nullopt);
                 // Destruction unregisters; the worker may exit and be started
                 // again by the next iteration or by another thread.
             }
@@ -277,9 +306,9 @@ TEST(InMemoryCacheTest, StartStopChurnFromSeveralThreadsLeavesAWorkingWorker)
     // After the churn a new instance must still be served.
     InMemoryCache<int, std::string> cache;
     cache.start(std::chrono::milliseconds(50));
-    cache.set(1, "short", 1);
+    cache.set(1, "short", std::chrono::seconds(1));
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-    EXPECT_FALSE(cache.contains(1));
+    EXPECT_FALSE(answerOf(cache.contains(1)));
     cache.stop();
 }
 

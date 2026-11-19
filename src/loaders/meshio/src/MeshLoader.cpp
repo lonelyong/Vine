@@ -695,11 +695,27 @@ const MeshLoader::Options& MeshLoader::options() const noexcept
 
 void MeshLoader::clearCache()
 {
-    cache_.clear();
+    (void)cache_.clear();
 }
 
 namespace
 {
+
+/**
+ * @brief The value of a cache hit, or a default-constructed value on a miss.
+ *
+ * The loader only ever holds an in-memory cache, whose get() cannot fail; a
+ * failure would be treated as a miss, which is the conservative choice if the
+ * backing store ever changes.
+ *
+ * @param outcome Result of a cache lookup.
+ * @return The cached value, or a default-constructed TValue.
+ */
+template <class TValue>
+TValue cachedValue(vn::runtime::CacheOutcome<TValue> outcome)
+{
+    return outcome.ok() ? *outcome.value : TValue{};
+}
 
 /**
  * @brief Turns a stated format into the token the parser expects, or none at all.
@@ -736,8 +752,8 @@ vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMerged(const std::filesy
         return vn::io::IoError::IoFailure; // a file this process may not read is not geometry either
     }
 
-    if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
-        return cached->merged;
+    if (auto cached = cache_.get(fingerprint); cached.ok() && cached.value->merged) {
+        return cached.value->merged;
     }
 
     Assimp::Importer     importer;
@@ -748,9 +764,9 @@ vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMerged(const std::filesy
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
 
-    auto cached   = cache_.get(fingerprint).value_or(Cached{});
+    auto   cached = cachedValue(cache_.get(fingerprint));
     cached.merged = mesh;
-    cache_.set(fingerprint, std::move(cached));
+    (void)cache_.set(fingerprint, std::move(cached), std::nullopt);
 
     return mesh;
 }
@@ -773,8 +789,8 @@ vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMergedBytes(std::vector<
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once and reused.
     const vn::crypto::ByteSequenceFingerprint fingerprint(std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
-    if (auto cached = cache_.get(fingerprint); cached && cached->merged) {
-        return cached->merged;
+    if (auto cached = cache_.get(fingerprint); cached.ok() && cached.value->merged) {
+        return cached.value->merged;
     }
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
@@ -786,9 +802,9 @@ vn::io::Result<vn::intrusive_ptr<Mesh>> MeshLoader::loadMergedBytes(std::vector<
 
     const auto mesh = MergedMeshBuilder(options_, *scene).build();
 
-    auto cached   = cache_.get(fingerprint).value_or(Cached{});
+    auto   cached = cachedValue(cache_.get(fingerprint));
     cached.merged = mesh;
-    cache_.set(fingerprint, std::move(cached));
+    (void)cache_.set(fingerprint, std::move(cached), std::nullopt);
 
     return mesh;
 }
@@ -812,8 +828,8 @@ vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::load(const std::filesystem:
         return vn::io::IoError::IoFailure;
     }
 
-    if (auto cached = cache_.get(fingerprint); cached && cached->model) {
-        return cached->model;
+    if (auto cached = cache_.get(fingerprint); cached.ok() && cached.value->model) {
+        return cached.value->model;
     }
 
     Assimp::Importer     importer;
@@ -842,8 +858,8 @@ vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::loadBytes(std::vector<unsig
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once per entry.
     const vn::crypto::ByteSequenceFingerprint fingerprint(std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
-    if (auto cached = cache_.get(fingerprint); cached && cached->model) {
-        return cached->model;
+    if (auto cached = cache_.get(fingerprint); cached.ok() && cached.value->model) {
+        return cached.value->model;
     }
 
     // assimp parses memory rather than a stream, which is why the caller had to hand over an image in the first place.
@@ -858,9 +874,9 @@ vn::io::Result<vn::intrusive_ptr<Model>> MeshLoader::loadBytes(std::vector<unsig
 vn::intrusive_ptr<Model> MeshLoader::cacheModel(const vn::crypto::ByteSequenceFingerprint& fingerprint, vn::intrusive_ptr<Model> model)
 {
     if (fingerprint) {
-        auto cached  = cache_.get(fingerprint).value_or(Cached{});
+        auto   cached = cachedValue(cache_.get(fingerprint));
         cached.model = model;
-        cache_.set(fingerprint, std::move(cached));
+        (void)cache_.set(fingerprint, std::move(cached), std::nullopt);
     }
     return model;
 }

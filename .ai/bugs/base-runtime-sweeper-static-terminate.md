@@ -37,8 +37,6 @@ construct a thread (and throw) from a destructor.
 - The join race is reasoned from the code; a two-thread stress probe (40 s) did not hit its
   unlock-to-wake window on this machine, so it was fixed with the same change rather than left as a
   latent defect.
-- `InMemoryManager` starts its sweeper in the constructor, so any static `InMemoryManager` reaches
-  the same abort.
 
 ## Fix
 
@@ -60,4 +58,4 @@ construct a thread (and throw) from a destructor.
   start, stop and destroy caches 50 times each; a new cache is still swept afterwards.
 - `InMemoryCacheTest.OneWorkerSweepsEveryStartedInstance`: two started caches both lose their
   expired entry with no explicit `removeExpired()`.
-- `test_runtime` 35 cases, `runtime_static_cache_exit` 1/1, all green.
+- `test_runtime` 30 cases, `runtime_static_cache_exit` 1/1, all green.

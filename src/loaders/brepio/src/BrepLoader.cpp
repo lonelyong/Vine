@@ -198,7 +198,7 @@ const std::set<String>& BrepLoader::supportedExtensions()
 
 void BrepLoader::clearCache()
 {
-    cache_.clear();
+    (void)cache_.clear();
 }
 
 vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(const std::filesystem::path& file_path)
@@ -227,8 +227,8 @@ vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(const 
         return vn::io::IoError::IoFailure; // a file this process may not read is not a solid either
     }
 
-    if (auto cached = cache_.get(fingerprint)) {
-        return *cached;
+    if (auto cached = cache_.get(fingerprint); cached.ok()) {
+        return *cached.value;
     }
 
 #if defined(VN_BREPIO_HAS_OCCT)
@@ -237,7 +237,7 @@ vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(const 
     if (!loaded) {
         return loaded;
     }
-    cache_.set(fingerprint, *loaded);
+    (void)cache_.set(fingerprint, *loaded, std::nullopt);
     return loaded;
 #endif
 }
@@ -259,8 +259,8 @@ vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(std::i
 
     // The same content loaded through either entry hashes to the same fingerprint, so it is parsed once.
     const vn::crypto::ByteSequenceFingerprint fingerprint(std::span<const std::byte>(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()));
-    if (auto cached = cache_.get(fingerprint)) {
-        return *cached;
+    if (auto cached = cache_.get(fingerprint); cached.ok()) {
+        return *cached.value;
     }
 
     std::istringstream image(bytes, std::ios::binary);
@@ -268,7 +268,7 @@ vn::io::Result<vn::intrusive_ptr<vn::models::BrepShape>> BrepLoader::load(std::i
     if (!loaded) {
         return loaded;
     }
-    cache_.set(fingerprint, *loaded);
+    (void)cache_.set(fingerprint, *loaded, std::nullopt);
     return loaded;
 #else
     static_cast<void>(in);

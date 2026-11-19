@@ -21,7 +21,7 @@ vn::runtime::InMemoryCache<int, int> g_cache;
 int main()
 {
     g_cache.start(std::chrono::milliseconds(1));
-    g_cache.set(1, 1, 1);
+    g_cache.set(1, 1, std::chrono::seconds(1));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     return 0;
 }

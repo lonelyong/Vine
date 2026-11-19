@@ -38,8 +38,9 @@ object. The module is small; the failure modes were not.
 - Plugin discovery, ABI handshakes and plugin policy — those belong to `appfw`.
 - Unloading plugin code while registries still reference it. The module offers the policy
   (`Retention`); the ordering problem is the host's.
-- A distributed cache implementation. `CacheManager` is the seam, not an implementation.
-- File watching, hash-based invalidation or persistence.
+- The persistent cache backends themselves (file, database). `Cache` and its outcome contract are
+  defined, and a backend lands with the consumer that needs it (`D8`, backlog `T1`).
+- File watching, hash-based invalidation or persistence of the in-memory store.
 
 ### 1.4 One-paragraph Conclusion
 
@@ -109,16 +110,18 @@ worker is shared per stored type and sleeps while no cache is registered.
   instances unregister through the same lock, so no entry is destroyed mid-sweep. Serves `G9` (a new
   key/value type needs no new machinery) and `G1` (one owner of "which caches are swept").
 
-### 2.6 **The cache interface is the swap point, kept without a consumer of its own**
+### 2.6 **One typed interface, mechanisms behind it**
 
-- What it is: `CacheManager` is the String/any interface; `InMemoryManager` is its in-memory
-  adapter, kept although its only caller today is `InMemoryManagerTest`.
-- Why: a host may register one cache service in `vn::di` and later change the backing store without
-  touching call sites; the typed `InMemoryCache` is used directly by `meshio` and `brepio`, so the
-  interface is not on their hot path.
-- Boundary: this is the module's one knowingly speculative surface. `G8` requires a trigger rather
-  than a defence: the backlog records what reopens it (a real service asking for the interface, or
-  its removal). The adapter must nevertheless be a correct, documented implementation.
+- What it is: `Cache<TKey, TValue>` is the seam every backend implements; `InMemoryCache` is the
+  in-memory implementation and stores values by value, so a hit copies and never encodes.
+- Why: memory, file and database backends must be interchangeable at the call site, while the
+  in-memory hot path must not pay for serialisation it can never use. A typed interface keeps the
+  value type known to both the caller and the store that encodes it; serialisation lives inside the
+  persistent implementation (a serializer injected there), never in the interface.
+- Boundary: a persistent implementation is a `KeyValueStore` (String keys, bytes, absolute expiry)
+  plus a serializer; a new backend implements the store only (`G9`). The interface is typed on
+  purpose — an erased String/`std::any` seam was tried and rejected (`D8`): it cast at every call
+  site and hid the value type from the store (`G1`, `G4`).
 
 ### 2.7 **An overwrite must not demand more of the value than a copy**
 
@@ -140,9 +143,9 @@ worker is shared per stored type and sleeps while no cache is registered.
 | F1 | Load and reuse a library | One object per file; search paths and the system search are tried in order | landed |
 | F2 | Retention policy | Unload at loader destruction, or keep mapped for the process | landed |
 | F3 | Failure reporting | The platform's reason for the last failed candidate | landed |
-| F4 | Typed TTL cache | Values by value, lazy expiry on access, no type erasure | landed |
+| F4 | Typed TTL cache | Values by value, lazy expiry on access, no serialisation | landed |
 | F5 | Background reclamation | One detached worker per stored type, shared by every started instance | landed |
-| F6 | Cache interface | `CacheManager` + `InMemoryManager`; no production consumer yet | kept, trigger-gated |
+| F6 | Cache interface | One typed seam; results distinguish a miss from a failure | landed |
 
 ### 3.1.1 F1 Load and reuse a library
 
@@ -204,13 +207,17 @@ worker is shared per stored type and sleeps while no cache is registered.
 
 ### 3.1.6 F6 Cache interface
 
-- **Behaviour**: `InMemoryManager` implements `CacheManager` over `InMemoryCache<String, std::any>`;
-  `set` clamps a lifetime beyond `int`'s range instead of wrapping to "forever".
-- **Constraints** (C1): the adapter is as thread-safe as the cache it wraps.
-- **Requirements** (R6): the interface's documented "0 keeps forever" is true after the clamp.
-- **Acceptance** (T6): `InMemoryManagerTest.*`.
-- **Caveats** (P6): a consumer-less surface stays on the checklist in the backlog; it is not
-  evidence that a distributed cache is planned.
+- **Behaviour**: `Cache<TKey, TValue>` declares `get`, `set`, `contains`, `remove`, `clear`, `count`
+  and `keys`; every one answers `CacheOutcome<T>` or `CacheResult`, so an absent key (`Miss`) and a
+  failed store (`Failure`) are different answers. `InMemoryCache` is the in-memory implementation.
+- **Constraints** (C5): implementations are safe for concurrent use and may evict lazily, so methods
+  are non-const.
+- **Requirements** (R6): a lookup distinguishes absent (`Miss`) from failed (`Failure`); the
+  in-memory implementation never reports `Failure`.
+- **Acceptance** (T6): `InMemoryCacheTest.ImplementsTheCacheInterface`,
+  `InMemoryCacheTest.MissingReportsMiss`, `InMemoryCacheTest.NonPositiveLifetimeKeepsTheEntry`.
+- **Caveats** (P6): a caller that ignores the result cannot tell a miss from a failure; the loaders
+  treat a non-hit as a miss because they hold the in-memory implementation.
 
 ## 4. Public Interface
 
@@ -238,9 +245,10 @@ worker is shared per stored type and sleeps while no cache is registered.
 
 | Interface | Contract | Notes |
 |---|---|---|
-| `InMemoryCache` | Typed, thread-safe, lazily expiring store; one shared worker per instantiation | Header-only template |
-| `CacheManager` | String/any cache interface, safe for concurrent use | The swap point |
-| `InMemoryManager` | `CacheManager` over `InMemoryCache<String, std::any>` | Kept without a consumer; see the backlog |
+| `Cache` | Typed seam: `get`/`set`/`contains`/`remove`/`clear`/`count`/`keys` | Every operation returns an outcome; implementations are concurrent-safe |
+| `CacheOutcome` | `Ok` with a value, `Miss`, or `Failure` with a reason | A miss is an answer, not an error |
+| `CacheResult` | `Ok` or `Failure` for operations with no value | `set`/`clear` |
+| `InMemoryCache` | Typed, thread-safe, lazily expiring store; one shared worker per instantiation | Header-only template; no serialisation |
 
 ## 5. Constraints, Requirements and Invariants
 
@@ -253,6 +261,8 @@ worker is shared per stored type and sleeps while no cache is registered.
 - C3: `InMemoryCache` values are stored by value; `TVal` must be copy-constructible.
 - C4: `base/runtime` depends on `vn::Global` and `vn::Core` only. No other `base` module includes
   it, so it cannot become a back edge.
+- C5: a `Cache` implementation is safe for concurrent use and may evict expired entries lazily, so
+  every method is non-const.
 
 ### 5.2 Requirements
 
@@ -261,7 +271,10 @@ worker is shared per stored type and sleeps while no cache is registered.
 - R3: a failed `load()` is always explainable through `lastError()`.
 - R4: expiry is enforced on access even when no worker is running.
 - R5: a started cache with static storage duration does not abort at exit.
-- R6: the `CacheManager` TTL rule ("0 keeps forever") survives the size-to-int conversion.
+- R6: a lookup distinguishes absent (`Miss`) from failed (`Failure`); the in-memory implementation
+  never reports `Failure`.
+- R7: the in-memory implementation never serialises a value, and a persistent one serialises only
+  where it stores.
 
 ### 5.3 Invariants
 
@@ -315,6 +328,7 @@ worker is shared per stored type and sleeps while no cache is registered.
 | D5 | `insert_or_assign` and a documented assignability requirement | An undocumented compile-time requirement is worse than losing the strong guarantee a cache does not need (`G4`) | — |
 | D6 | Throw from `load()` | Hosts probe optional plugin directories; a refusal is an answer, not an exceptional event (`G3`) | — |
 | D7 | Rename `fileName()` to `path()` | The stored value may be a bare name; the rename is churn without a truth gain (`G8`) | — |
+| D8 | An erased String/`std::any` cache interface (with its implementation) beside the typed store | `any_cast` and a copy at every call site; the interface names a value type no store knows; two names for one concept (`G1`, `G4`). The typed interface was chosen instead; also rejected: no interface at all (no seam for the planned backends) and a byte-level interface with a capability query (`G4`) | `../decisions/ADR-2026-11-19-cache-interface-and-backends.md` |
 
 ## 8. Tests and Acceptance
 
@@ -325,7 +339,7 @@ worker is shared per stored type and sleeps while no cache is registered.
 | T3 | A failed load is explained | `DynamicLibraryLoaderTest.LastErrorExplainsAFailedLoad` |
 | T4 | Typed cache behaviour | `test_runtime --gtest_filter='InMemoryCacheTest.*'` |
 | T5 | Worker serves every instance, survives churn, static exit is clean | `OneWorkerSweepsEveryStartedInstance`, `StartStopChurnFromSeveralThreadsLeavesAWorkingWorker`, ctest `runtime_static_cache_exit` |
-| T6 | Adapter through the interface | `test_runtime --gtest_filter='InMemoryManagerTest.*'` |
+| T6 | The typed interface and its answers | `InMemoryCacheTest.ImplementsTheCacheInterface`, `MissingReportsMiss`, `NonPositiveLifetimeKeepsTheEntry` |
 | T7 | Every public declaration is documented | `python3 scripts/check_public_docs.py` |
 
 ## 9. Status and Evolution
@@ -333,13 +347,14 @@ worker is shared per stored type and sleeps while no cache is registered.
 ### 9.1 Current Status
 
 Living. Both facilities are used: `meshio` and `brepio` cache through `InMemoryCache`; `appfw`'s
-plugin manager loads through `DynamicLibraryLoader::instance()`. The module's tests are 35 cases
+plugin manager loads through `DynamicLibraryLoader::instance()`. The module's tests are 30 cases
 plus the static-exit program.
 
 ### 9.2 Known Gaps and Backlog
 
-- `CacheManager` / `InMemoryManager` have no production consumer (F6, `G8`). Kept as the stated swap
-  point; the backlog records the trigger that either consumes or deletes them.
+- The persistent backends (file, database) do not exist yet. `Cache` is the seam they will implement;
+  a backend is a `KeyValueStore` plus a serializer, and lands with its first consumer (backlog
+  `T1`).
 - Plugin unloading is not supported. `KeepMapped` is the only safe policy while registries hold
   plugin function pointers; ordering a real unload is a future host responsibility.
 - The Windows identity path (`GetModuleFileNameW`) and the Win32 `lastError` text are not exercised
@@ -347,8 +362,13 @@ plus the static-exit program.
 
 ### 9.3 Compatibility and Migration
 
-- Public API additions: `Retention`, the `explicit DynamicLibraryLoader(Retention)` overload,
-  `lastError()`, `InMemoryCache::kDefaultSweepPeriod` / `kMinSweepPeriod`.
+- Public API additions: `Cache` with `CacheOutcome` / `CacheResult` / `CacheStatus` / `CacheError`,
+  `Retention`, the `explicit DynamicLibraryLoader(Retention)` overload, `lastError()`,
+  `InMemoryCache::kDefaultSweepPeriod` / `kMinSweepPeriod`.
+- Cache API change: `set` takes an `std::optional<std::chrono::seconds>` lifetime (empty means
+  keep), and `get`/`contains`/`remove`/`count`/`keys` return an outcome; the out-parameter `get` and
+  `isEmpty` are gone (use `count()`). A caller that held the old `std::optional` result must check
+  `ok()`/`missed()` instead.
 - Behaviour change: a directly constructed `DynamicLibraryLoader` now unloads its libraries at
   destruction (it leaked before). The process-wide `instance()` is unchanged.
 - Behaviour change: cache identity is the canonical file rather than the candidate spelling; a
@@ -361,16 +381,17 @@ plus the static-exit program.
 
 - `src/base/runtime/sdk/vine/runtime/DynamicLibrary.hpp`
 - `src/base/runtime/sdk/vine/runtime/DynamicLibraryLoader.hpp`
+- `src/base/runtime/sdk/vine/runtime/Cache.hpp`
 - `src/base/runtime/sdk/vine/runtime/InMemoryCache.hpp`
-- `src/base/runtime/sdk/vine/runtime/CacheManager.hpp`
-- `src/base/runtime/sdk/vine/runtime/InMemoryManager.hpp`
 - `tests/test_runtime/`
 
 ### 10.2 Documents and ADRs
 
 - `appfw-plugin-system.md` — the plugin policy that needs `Retention::KeepMapped`.
 - `meshio-brepio-design.md` — the loaders that memoise through `InMemoryCache`.
-- `../backlog/base-runtime.md` — the trigger for the cache interface.
+- `../backlog/base-runtime.md` — open, trigger-gated work for the module.
+- `../decisions/ADR-2026-11-19-cache-interface-and-backends.md` — why the seam is typed, why
+  outcomes carry a miss and a failure separately, and where the serializer belongs.
 
 ### 10.3 External Sources
 

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "runtime_global.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -12,15 +13,17 @@
 #include <utility>
 #include <vector>
 
+#include "Cache.hpp"
+
 VN_RUNTIME_NS_BEGIN
 
 /**
- * @brief Type-safe, thread-safe, TTL-aware in-memory cache.
+ * @brief The in-memory implementation of Cache: values stored by value, no serialisation.
  *
- * A header-only template that stores values by value and returns them as
- * std::optional<TVal>, so there is no type erasure or any_cast at the call
- * site. get()/contains() evict expired entries lazily on access, and
- * removeExpired() forces a sweep.
+ * A header-only template that returns values by value, so a hit copies the value
+ * and never encodes it; the persistent implementations of Cache serialise where
+ * they store. Expired entries are evicted lazily on access, and removeExpired()
+ * forces a sweep.
  *
  * Background reclamation: all instances of the same <TKey, TVal>
  * instantiation share one worker. Call start() to register this instance for
@@ -34,16 +37,11 @@ VN_RUNTIME_NS_BEGIN
  * and there is no join that could block a destructor while another instance
  * starts. A cache with static storage duration is therefore safe to start.
  *
- * The class is intentionally standalone: it does not derive from the
- * CacheManager interface. Use InMemoryManager to expose a typed cache through
- * that String/any interface (e.g. for vn::di injection).
- *
  * @tparam TKey Key type; must support operator<.
- * @tparam TVal Value type; must be copy-constructible. The out-parameter
- *              get() overload additionally requires it to be assignable.
+ * @tparam TVal Value type; must be copy-constructible.
  */
 template <typename TKey, typename TVal>
-class InMemoryCache {
+class InMemoryCache final : public Cache<TKey, TVal> {
   public:
     /**
      * @brief Monotonic clock used for expiry timestamps.
@@ -73,94 +71,81 @@ class InMemoryCache {
 
   public:
     /**
-     * @brief Stores or updates a value under a key.
+     * @brief Stores or replaces a value under a key.
      *
      * @details
-     * - A lifetime of 0 or a negative value keeps the entry forever.
+     * - An empty or non-positive lifetime keeps the entry until it is removed or
+     *   evicted.
      * - An overwrite is erase-then-insert: a copy that throws leaves no entry
      *   rather than the previous value.
      *
      * @param key Cache key.
      * @param value Value to store; copied into the cache.
-     * @param ttl Lifetime in seconds; 0 or negative keeps the entry forever.
+     * @param ttl Lifetime; an empty optional keeps the entry forever.
+     * @return `Ok`; this implementation cannot fail (an allocation failure throws).
      */
-    void set(const TKey& key, const TVal& value, int ttl = -1);
+    CacheResult set(const TKey& key, const TVal& value, std::optional<std::chrono::seconds> ttl) override;
 
     /**
-     * @brief Retrieves a non-expired value.
+     * @brief Returns the live value for a key.
      *
      * Expired entries are removed on access (lazy eviction).
      *
      * @param key Cache key.
-     * @return The stored value, or std::nullopt when absent or expired.
+     * @return `Ok` with the value, or `Miss` when absent or expired.
      */
-    std::optional<TVal> get(const TKey& key);
+    CacheOutcome<TVal> get(const TKey& key) override;
 
     /**
-     * @brief Retrieves a non-expired value into an output parameter.
-     *
-     * Avoids the copy of the optional-returning overload for callers that
-     * already hold storage. Expired entries are removed on access (lazy
-     * eviction).
-     *
-     * @param key Cache key.
-     * @param out Receives the stored value on hit.
-     * @return true when present and not expired; false otherwise.
-     */
-    bool get(const TKey& key, TVal& out);
-
-    /**
-     * @brief Returns whether a non-expired entry exists.
+     * @brief Returns whether a live entry exists.
      *
      * Expired entries are removed on access (lazy eviction).
      *
      * @param key Cache key.
-     * @return true when present and not expired.
+     * @return `Ok` with the answer (`false` when absent or expired).
      */
-    bool contains(const TKey& key);
+    CacheOutcome<bool> contains(const TKey& key) override;
 
     /**
      * @brief Removes one entry.
      *
      * @param key Cache key.
-     * @return true when an entry was removed.
+     * @return `Ok` with true when an entry was removed.
      */
-    bool remove(const TKey& key);
+    CacheOutcome<bool> remove(const TKey& key) override;
 
     /**
      * @brief Removes all expired entries.
      *
+     * Not part of Cache: a persistent store enforces expiry on its own and has
+     * no reason to promise a sweep.
+     *
      * @return The number of removed entries.
      */
-    size_t removeExpired();
+    std::size_t removeExpired();
 
     /**
      * @brief Removes all entries.
+     *
+     * @return `Ok`.
      */
-    void clear();
+    CacheResult clear() override;
 
     /**
      * @brief Returns the number of live (non-expired) entries.
      *
      * Expired entries are removed on access (lazy eviction).
      *
-     * @return The number of live entries.
+     * @return `Ok` with the number of live entries.
      */
-    size_t count();
-
-    /**
-     * @brief Returns whether the cache holds no live entry.
-     *
-     * @return true when there is no live entry.
-     */
-    bool isEmpty();
+    CacheOutcome<std::size_t> count() override;
 
     /**
      * @brief Returns the keys of all live entries.
      *
-     * @return The live keys; order is unspecified.
+     * @return `Ok` with the live keys; order is unspecified.
      */
-    std::vector<TKey> keys();
+    CacheOutcome<std::vector<TKey>> keys() override;
 
   public:
     /**
@@ -219,10 +204,10 @@ class InMemoryCache {
     /**
      * @brief Computes the expiry time point for a lifetime.
      *
-     * @param ttl Lifetime in seconds; 0 or negative means keep forever.
+     * @param ttl Lifetime; empty or non-positive means keep forever.
      * @return The expiry time, or a default (invalid) point for forever.
      */
-    static Clock::time_point makeExpireAt(int ttl);
+    static Clock::time_point expiryFor(std::optional<std::chrono::seconds> ttl);
 
     /**
      * @brief Returns whether the entry is past its expiry.
@@ -265,9 +250,9 @@ InMemoryCache<TKey, TVal>::~InMemoryCache()
 }
 
 template <typename TKey, typename TVal>
-void InMemoryCache<TKey, TVal>::set(const TKey& key, const TVal& value, int ttl)
+CacheResult InMemoryCache<TKey, TVal>::set(const TKey& key, const TVal& value, std::optional<std::chrono::seconds> ttl)
 {
-    Entry                       entry{ value, (ttl <= 0), makeExpireAt(ttl) };
+    Entry                       entry{ value, !ttl.has_value() || *ttl <= std::chrono::seconds::zero(), expiryFor(ttl) };
     std::lock_guard<std::mutex> lock(mutex_);
     // erase + emplace, not insert_or_assign: replacing an entry must not require
     // TVal to be assignable, only copy-constructible.
@@ -276,70 +261,54 @@ void InMemoryCache<TKey, TVal>::set(const TKey& key, const TVal& value, int ttl)
         entries_.erase(it);
     }
     entries_.emplace(key, std::move_if_noexcept(entry));
+    return {};
 }
 
 template <typename TKey, typename TVal>
-std::optional<TVal> InMemoryCache<TKey, TVal>::get(const TKey& key)
+CacheOutcome<TVal> InMemoryCache<TKey, TVal>::get(const TKey& key)
 {
     const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
     const auto                  it = entries_.find(key);
     if (it == entries_.end()) {
-        return std::nullopt;
+        return { CacheStatus::Miss, CacheError::None, std::nullopt };
     }
     if (isExpired(it->second, now)) {
         entries_.erase(it);
-        return std::nullopt;
+        return { CacheStatus::Miss, CacheError::None, std::nullopt };
     }
-    return it->second.value;
+    return { CacheStatus::Ok, CacheError::None, std::optional<TVal>(it->second.value) };
 }
 
 template <typename TKey, typename TVal>
-bool InMemoryCache<TKey, TVal>::get(const TKey& key, TVal& out)
+CacheOutcome<bool> InMemoryCache<TKey, TVal>::contains(const TKey& key)
 {
     const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
     const auto                  it = entries_.find(key);
     if (it == entries_.end()) {
-        return false;
+        return { CacheStatus::Ok, CacheError::None, false };
     }
     if (isExpired(it->second, now)) {
         entries_.erase(it);
-        return false;
+        return { CacheStatus::Ok, CacheError::None, false };
     }
-    out = it->second.value;
-    return true;
+    return { CacheStatus::Ok, CacheError::None, true };
 }
 
 template <typename TKey, typename TVal>
-bool InMemoryCache<TKey, TVal>::contains(const TKey& key)
+CacheOutcome<bool> InMemoryCache<TKey, TVal>::remove(const TKey& key)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return { CacheStatus::Ok, CacheError::None, entries_.erase(key) > 0 };
+}
+
+template <typename TKey, typename TVal>
+std::size_t InMemoryCache<TKey, TVal>::removeExpired()
 {
     const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto                  it = entries_.find(key);
-    if (it == entries_.end()) {
-        return false;
-    }
-    if (isExpired(it->second, now)) {
-        entries_.erase(it);
-        return false;
-    }
-    return true;
-}
-
-template <typename TKey, typename TVal>
-bool InMemoryCache<TKey, TVal>::remove(const TKey& key)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    return entries_.erase(key) > 0;
-}
-
-template <typename TKey, typename TVal>
-size_t InMemoryCache<TKey, TVal>::removeExpired()
-{
-    const auto                  now = Clock::now();
-    std::lock_guard<std::mutex> lock(mutex_);
-    size_t                      removed = 0;
+    std::size_t                 removed = 0;
     for (auto it = entries_.begin(); it != entries_.end();) {
         if (isExpired(it->second, now)) {
             it = entries_.erase(it);
@@ -353,14 +322,15 @@ size_t InMemoryCache<TKey, TVal>::removeExpired()
 }
 
 template <typename TKey, typename TVal>
-void InMemoryCache<TKey, TVal>::clear()
+CacheResult InMemoryCache<TKey, TVal>::clear()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.clear();
+    return {};
 }
 
 template <typename TKey, typename TVal>
-size_t InMemoryCache<TKey, TVal>::count()
+CacheOutcome<std::size_t> InMemoryCache<TKey, TVal>::count()
 {
     const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
@@ -372,17 +342,11 @@ size_t InMemoryCache<TKey, TVal>::count()
             ++it;
         }
     }
-    return entries_.size();
+    return { CacheStatus::Ok, CacheError::None, entries_.size() };
 }
 
 template <typename TKey, typename TVal>
-bool InMemoryCache<TKey, TVal>::isEmpty()
-{
-    return count() == 0;
-}
-
-template <typename TKey, typename TVal>
-std::vector<TKey> InMemoryCache<TKey, TVal>::keys()
+CacheOutcome<std::vector<TKey>> InMemoryCache<TKey, TVal>::keys()
 {
     const auto                  now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
@@ -396,7 +360,7 @@ std::vector<TKey> InMemoryCache<TKey, TVal>::keys()
             ++it;
         }
     }
-    return result;
+    return { CacheStatus::Ok, CacheError::None, std::move(result) };
 }
 
 template <typename TKey, typename TVal>
@@ -434,12 +398,15 @@ bool InMemoryCache<TKey, TVal>::isCleanupRunning() const
 }
 
 template <typename TKey, typename TVal>
-typename InMemoryCache<TKey, TVal>::Clock::time_point InMemoryCache<TKey, TVal>::makeExpireAt(int ttl)
+typename InMemoryCache<TKey, TVal>::Clock::time_point InMemoryCache<TKey, TVal>::expiryFor(std::optional<std::chrono::seconds> ttl)
 {
-    if (ttl > 0) {
-        return Clock::now() + std::chrono::seconds(ttl);
+    if (!ttl.has_value() || *ttl <= std::chrono::seconds::zero()) {
+        return {};
     }
-    return {};
+    // Bound the addition so a huge lifetime cannot overflow the time point; a
+    // hundred years is "forever" for a cache.
+    constexpr auto kMaxLifetime = std::chrono::seconds(24LL * 60 * 60 * 365 * 100);
+    return Clock::now() + std::min<std::chrono::seconds>(*ttl, kMaxLifetime);
 }
 
 template <typename TKey, typename TVal>
