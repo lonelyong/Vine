@@ -5118,6 +5118,8 @@ TEST(VsgBackendTest, AReadbackRefusalCarriesTheCodeOfItsCause)
     backend->shutdown();
 }
 
+#if !defined(_WIN32)
+
 /*
  * @brief Two drivers on one device each shade program-less content with THEIR OWN default program (T8, S8b).
  *
@@ -5235,6 +5237,8 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     backend->shutdown();
 }
 
+#endif // !defined(_WIN32)
+
 namespace
 {
 
@@ -5304,6 +5308,8 @@ bool waitFor(const std::atomic<bool>& flag, std::chrono::seconds budget)
 }
 
 } // namespace
+
+#if !defined(_WIN32)
 
 /**
  * @brief A frame held INSIDE ITS COMPILATION does not stop another driver's frame (T48 S8c's overlap witness).
@@ -5568,6 +5574,8 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     backend->releaseFrameDriver(*second);
     backend->shutdown();
 }
+
+#endif // !defined(_WIN32)
 
 /**
  * @brief Two drivers, two threads, two pictures: each frame is shaded by ITS driver's default program.

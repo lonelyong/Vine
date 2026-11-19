@@ -21,6 +21,9 @@ Only the two claims a script can decide EXACTLY are gated:
      job is the unit map (``COVERAGE_DOCS``). The map is part of what that document is for; a unit
      nobody documented is a hole. A second document naming the unit must not paper over that hole,
      so the coverage rule reads the map document alone, not the union of all documents.
+  3. A code fence must end where the page means it to end: an unclosed fence, or one interrupted by a
+     line that starts another block, renders whole sections as code - and because every other rule
+     here skips fenced blocks, it hides that damage from all of them (see ``fence_findings``).
 
 What is skipped, on purpose:
   * fenced code blocks (``\\`\\`\\``` ...) — a snippet is not a claim about the module's files;
@@ -68,7 +71,8 @@ FROZEN_SECTION_MARKERS = ("历史登记", "不再更新", "历史）")
 DRIFT_OK_MARKER = "<!-- drift-ok -->"
 
 UNIT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*\.(?:hpp|cpp))`")
-FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+# A fence line, with the info string a CLOSING fence may not carry (see `fence_findings`).
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 # A fenced block that declares which compiled file it is: `// example: tests/test_graphics/GuideExample.cpp`.
 EXAMPLE_MARKER = re.compile(r"^\s*//\s*example:\s*(\S+)\s*$")
 # A trailing `//` comment in C++ code. The examples carry prose comments in the page's language and
@@ -113,6 +117,51 @@ def example_findings(path: Path, text: str) -> list[str]:
                 findings.append(
                     f"{path.name}:{offset}: the compiled copy {marked.group(1)} has no statement `{statement}`"
                 )
+    return findings
+
+
+def fence_findings(path: Path, text: str) -> list[str]:
+    """Return one finding per code fence that cannot be read the way the page clearly means it.
+
+    A fence is a claim about EVERYTHING after it: the page's own rules skip fenced blocks (see `check_doc` and
+    `example_findings`), so an unclosed one silently swallows whole sections and no other rule here can see it -
+    which is how a stray block tail and two orphan fences hid the module guide's §3.4 pass table and all of §3.5
+    from every gate (review 6, 2026-11-19) while the fence COUNT stayed even.
+
+    Two shapes are decided, both exactly:
+      * a fence inside a fenced block that carries an info string (```` ```cpp ````) - CommonMark allows a CLOSING
+        fence no info string, so that line starts a new block and everything between the two reads as code;
+      * a fence that is never closed by the end of the document.
+    """
+    findings: list[str] = []
+    opened_at = 0
+    marker = ""
+    for number, line in enumerate(text.splitlines(), start=1):
+        match = FENCE_RE.match(line)
+        if match is None:
+            continue
+        fence = match.group(1)
+        info = match.group(2).strip()
+        if opened_at == 0:
+            opened_at = number
+            marker = fence[0]
+            continue
+        if info:
+            findings.append(
+                f"{path.name}:{number}: the code fence opened at line {opened_at} is interrupted by "
+                f"`{fence}{info}`, which starts a new block: every line between them renders as code"
+            )
+            opened_at = number
+            marker = fence[0]
+            continue
+        if fence[0] != marker:
+            findings.append(
+                f"{path.name}:{number}: `{fence}` closes the `{marker}` fence opened at line {opened_at}: "
+                "one block cannot be opened with one marker and closed with the other"
+            )
+        opened_at = 0
+    if opened_at != 0:
+        findings.append(f"{path.name}:{opened_at}: this code fence is never closed")
     return findings
 
 
@@ -189,6 +238,7 @@ def main() -> int:
         doc_text = doc.read_text(encoding="utf-8", errors="replace")
         findings.extend(check_doc(doc, unit_names, known, doc_text))
         findings.extend(example_findings(doc, doc_text))
+        findings.extend(fence_findings(doc, doc_text))
 
     # Rule 2: the map has to cover the tree — a unit nobody documented is a hole in it.
     all_text = print_doc_texts(COVERAGE_DOCS)

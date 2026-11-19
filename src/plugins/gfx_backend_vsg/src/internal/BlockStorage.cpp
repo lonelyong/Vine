@@ -333,12 +333,13 @@ BlockStorage::Strides BlockStorage::strides() const noexcept
 
 vn::graphics::ResidencyRow BlockStorage::materialResidency() const noexcept
 {
-    // The arena answers every number itself (see MaterialArena): slots holding a live material, the region's
-    // mapped size, the slots allocated so far, the slots the pin sweep returned and the notes it had to turn away.
+    // The arena answers every number itself (see MaterialArena): slots holding a live material, the bytes those slots
+    // occupy NOW, the slots allocated so far, the slots the pin sweep returned and the notes it had to turn away.
+    // `bytes` is the resident figure, not the buffer's size: a residency row promises a release makes it go down.
     vn::graphics::ResidencyRow row;
     row.kind    = vn::graphics::ResidencyKind::Materials;
     row.live    = static_cast<std::uint32_t>(d->arena.live());
-    row.bytes   = d->arena.capacityBytes();
+    row.bytes   = d->arena.residentBytes();
     row.built   = d->arena.allocations();
     row.retired = d->arena.retired();
     row.refused = d->arena.refusals();

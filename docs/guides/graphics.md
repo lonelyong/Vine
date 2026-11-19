@@ -507,10 +507,6 @@ const PlanResult applied = engine->applyPlan(Plan{ { gbuffer_pass, light_pass, f
 return applied;
 ```
 
-// 四条声明一个计划：名字是身份，差分由引擎做（新增 / 同名原地更新 / 消失的移除）。
-engine->applyPlan(vn::graphics::Plan{ { gbuffer_pass, light_pass, forward_pass, present_pass } }, owner);
-```
-
 | # | pass | renderTarget | order | 清屏 | 深度 | 输出 → 输入 |
 | --- | --- | --- | --- | --- | --- | --- |
 | ① | `gbuffer`（场景，program override） | `gbuffer`（MRT 4 色 + D24） | -3 | 是 | `TestAndWrite` | `GBuffer` |
@@ -528,6 +524,9 @@ engine->applyPlan(vn::graphics::Plan{ { gbuffer_pass, light_pass, forward_pass, 
   `resolveRenderState`）。
 - **MRT**：目标侧 `attachColor()` 调四次；程序侧输出按附件序号写；`ScreenPass` 的 program 会把源的每张
   彩色附件绑成纹理 0..N-1。
+
+### 3.5 例：同样的几张图，用 builder 一次写成
+
 （同样是 `GuideExamplePasses.cpp` 里的编译副本，见 §3.3 的说明。）
 
 ```cpp
@@ -574,18 +573,10 @@ hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
 hud.camera = vn::intrusive_ptr<Camera>(gizmo->camera());
 hud.content = vn::intrusive_ptr<Scene>(gizmo->content());
 hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
-// 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->update() 镜像源相机朝向。
+// 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->onFrame(context) 镜像源相机朝向。
 pipeline->addOverlay(u8"gizmo", gizmo.get(), hud);
 
 return pipeline;
-```
-PassDesc hud;
-hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
-hud.camera = intrusive_ptr<Camera>(gizmo->camera());
-hud.content = intrusive_ptr<Scene>(gizmo->content());
-hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
-// 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->update() 镜像源相机朝向。
-chain->addOverlay(u8"gizmo", gizmo.get(), hud);
 ```
 
 **手动 vs builder 对照**

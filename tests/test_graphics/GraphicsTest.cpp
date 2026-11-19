@@ -55,6 +55,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -11885,6 +11886,72 @@ TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
         << "a device that presents nothing is a first-class state, not a lost frame";
 }
 
+/// @brief A backend whose frame body throws, to pin "a frame is answered even then" (see RenderEngine::frame).
+class ThrowingFrameBackend : public MockBackend {
+  public:
+    PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    {
+        (void)frame;
+        (void)present_to;
+        throw std::runtime_error("synthetic frame failure");
+    }
+};
+
+TEST(RenderEngineTest, AThrowingEngineHalfIsAnsweredInsteadOfKillingTheThread)
+{
+    // REVIEW 6 / P1-4. The engine half calls into the backend, so a backend bug used to leave the frame unanswered:
+    // inline the exception reached the host mid-frame(), and on a frame thread it left the thread function - which is
+    // `std::terminate`, i.e. one frame took the whole process down. A frame is a value and is ALWAYS answered (design
+    // 2.12), so the throw becomes a Failed outcome plus one coded report in both modes.
+    auto backend = intrusive_ptr<ThrowingFrameBackend>(new ThrowingFrameBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    std::vector<RenderDiagnostic> reported;
+    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    // Inline: the frame is answered and the host is TOLD, instead of being handed an exception out of frame().
+    ASSERT_TRUE(engine->frame().ran());
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Failed);
+    EXPECT_EQ(engine->presentRecord().frame, engine->frameNumber());
+    EXPECT_EQ(engine->frameResult().present, PresentOutcome::Failed) << "the whole answer says the same thing";
+    // The report is about the FRAME, whatever else this plan had to say about its own wiring.
+    const auto failureReport = [](const std::vector<RenderDiagnostic>& diagnostics) -> const RenderDiagnostic* {
+        for (const RenderDiagnostic& diagnostic : diagnostics) {
+            if (diagnostic.code == u8"engine.frame.failed") {
+                return &diagnostic;
+            }
+        }
+        return nullptr;
+    };
+    const RenderDiagnostic* const reported_failure = failureReport(reported);
+    ASSERT_NE(reported_failure, nullptr) << "the throw is reported, not swallowed";
+    EXPECT_EQ(reported_failure->severity, DiagnosticSeverity::Error) << "the frame drew nothing: this is not a warning";
+    EXPECT_EQ(reported_failure->message.as_std_str().find("synthetic frame failure") != std::string::npos, true)
+        << "the sentence says what threw";
+
+    // On the frame thread the same throw used to escape the thread function; the completion a host waits on is now
+    // exactly what it was always meant to be - a frame that finished, not one that vanished.
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    reported.clear();
+    ASSERT_TRUE(engine->frame().submitted());
+    EXPECT_TRUE(engine->waitForFrame(std::chrono::milliseconds(5000))) << "the frame is answered, so the wait returns";
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Failed);
+    EXPECT_EQ(engine->frameResult().present, PresentOutcome::Failed);
+    EXPECT_NE(failureReport(reported), nullptr) << "the threaded frame reported the same failure";
+}
+
 TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded)
 {
     // THE ENGINE THREAD IS A PLACE, NOT A DIFFERENT PICTURE (design 2.12). frame() builds the content half and hands
@@ -12066,6 +12133,49 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
     engine->setFrameThreading(FrameThreading::Inline);
     vn::test::removePassForTest(*engine, extra.get());
     engine->shutdown();
+}
+
+TEST(RenderEngineTest, SwappingTheDeviceWaitsForTheFrameInFlight)
+{
+    // REVIEW 6 / P1-2. `setDevice` gives the OLD frame driver back and replaces `session_`, while the engine thread may
+    // be inside `session_->executeFrame`. Every other session change already obeys the rule (`applyPlan` refuses while
+    // busy, `setFrameThreading(false)` and `shutdown` wait for the pump); this pins the one lifecycle swap that returns
+    // the object a frame is running through.
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    ASSERT_NE(vn::test::applyPassForTest(*engine, std::move(pass_desc), 0), nullptr);
+    (void)scene->publish();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered(); // the engine thread is INSIDE the frame, running through the driver this swap gives back
+
+    auto              later    = intrusive_ptr<MockBackend>(new MockBackend());
+    std::atomic<bool> returned{ false };
+    std::thread       swapper([&engine, &later, &returned]() {
+        engine->setDevice(later);
+        returned.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_FALSE(returned.load()) << "the swap waits for the frame the old driver was running";
+    EXPECT_EQ(engine->device(), backend.get()) << "and the old device stays this engine's while that frame runs";
+
+    backend->release();
+    swapper.join();
+    EXPECT_TRUE(returned.load());
+    EXPECT_EQ(engine->device(), later.get()) << "then the new device is in place";
 }
 
 TEST(RenderEngineTest, AViewResizeWaitsForTheFrameBeforeItRestatesItsChain)
@@ -13127,6 +13237,12 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     // which is exactly why a handle kept across a resize describes a target the compile has let go.
     EXPECT_EQ(engine->transientTargetCount(), 1u);
     EXPECT_EQ(engine->transientTarget(u8"gbuffer")->width(), 640);
+
+    // REVIEW 6 / P1-3: the engine's OWN targets go back when it shuts down. The device is borrowed and may outlive the
+    // engine (one device can serve several), so a table dropped in silence would leave it holding storage for targets
+    // nothing will ever name again - and no `releaseRenderTarget` announcement would ever retire it.
+    engine->shutdown();
+    EXPECT_EQ(engine->transientTargetCount(), 0u) << "a torn-down engine hands the device back what it declared";
 }
 
 /**

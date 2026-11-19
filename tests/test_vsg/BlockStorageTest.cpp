@@ -577,6 +577,44 @@ TEST(BlockStorageTest, AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt)
     EXPECT_EQ(fixture.storage->growthNeeded().materials, 0U);
 }
 
+TEST(BlockStorageTest, TheMaterialResidencyBytesFollowWhatIsLive)
+{
+    // REVIEW 6 / P1-6. `ResidencyRow::bytes` means "the GPU bytes this kind occupies NOW - a release has to make it go
+    // DOWN" (see ResidencyRow), which is what a host's trim signal rests on. The material row used to report the
+    // arena's buffer SIZE: a figure that only ever grows, so a host watching it for a release never saw one.
+    if (!Fixture::available()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+    Fixture              fixture;
+    BlockStorage::Layout layout;
+    layout.materials.capacity = 4U;
+    ASSERT_TRUE(fixture.build(layout));
+
+    const auto a = materialId(0), b = materialId(1);
+    fixture.storage->beginFrame();
+    ASSERT_TRUE(fixture.storage->writeMaterial(a, 1, blockOf(64, 0xA1)).valid);
+    const vn::graphics::ResidencyRow one = fixture.storage->materialResidency();
+    ASSERT_TRUE(one.bytes.has_value()) << "the material kind counts its bytes";
+    EXPECT_EQ(one.live, 1U);
+    const std::uint64_t per_slot = *one.bytes;
+
+    ASSERT_TRUE(fixture.storage->writeMaterial(b, 1, blockOf(64, 0xB2)).valid);
+    const vn::graphics::ResidencyRow two = fixture.storage->materialResidency();
+    EXPECT_EQ(*two.bytes, 2U * per_slot) << "a second resident material costs what its copies cost";
+
+    // Only `a` is still named, so `b`'s slot goes back and the figure DROPS - which the buffer size could never do.
+    std::unordered_map<const void*, std::uint32_t>   buffers;
+    std::unordered_map<const void*, std::uint32_t>   textures;
+    std::unordered_map<std::uint64_t, std::uint32_t> materials;
+    materials.emplace(a.handle().bits(), 1U);
+    const vn::backend_vsg::ContentDeclarations declarations{
+        vn::backend_vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
+    EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
+    const vn::graphics::ResidencyRow released = fixture.storage->materialResidency();
+    EXPECT_EQ(released.live, 1U);
+    EXPECT_EQ(*released.bytes, per_slot) << "a release makes the residency figure go DOWN";
+}
+
 TEST(BlockStorageTest, TheMaterialRegionGrowsWhileTheOthersStay)
 {
     BlockStorage::Layout current;

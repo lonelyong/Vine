@@ -3,8 +3,10 @@
 #include "graphics_global.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 
 #include <vine/String.hpp>
 
@@ -37,17 +39,30 @@ VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief The diagnostic route: counting, and forwarding to the host's sink (see the file note).
+ *
+ * @warning ONE ROUTE, TWO THREADS. `report` is called from the engine thread (a backend refusing a draw, a frame
+ *          that could not be submitted) and from the host thread (a refused `applyPlan`, a host's own injection)
+ *          while the other side may be reporting too: the counters are atomics, and the sink is copied out under a
+ *          lock and invoked with none held - so a sink may itself report, and it MAY be entered by two threads at
+ *          once. A sink that touches shared state has to serialise it. `setSink` may run while a report is in
+ *          flight; it never blocks a frame (the sink is not called under the lock).
  */
 class VN_GRAPHICS_API Diagnostics {
   public:
     /** @brief Installs the host's sink, or clears it with an empty one.
      *
-     * @param sink Callback invoked for every report; must only record and return.
+     * @param sink Callback invoked for every report; must only record and return, and must tolerate being entered
+     *             by more than one thread (see the class note).
      */
     void setSink(vn::graphics::DiagnosticSink sink);
 
-    /** @brief Gets the installed sink (empty when unset). */
-    [[nodiscard]] const vn::graphics::DiagnosticSink& sink() const noexcept;
+    /** @brief Gets a COPY of the installed sink (empty when unset).
+     *
+     * @details
+     * - A copy, not a reference: the route may replace the sink on another thread at any moment, so a reference into
+     *   its storage would be a handle on something another thread is writing.
+     */
+    [[nodiscard]] vn::graphics::DiagnosticSink sink() const;
 
     /** @brief Reports one diagnostic: it is counted and forwarded to the sink when one is installed.
      *
@@ -128,13 +143,18 @@ class VN_GRAPHICS_API Diagnostics {
 
 
   private:
-    /// One counter per (origin, category); `DiagnosticOrigin::Count` sizes the first dimension, the SDK's `Count` the second.
-    std::array<std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticCategory::Count)>,
+    /// One counter per (origin, category); `DiagnosticOrigin::Count` sizes the first dimension, the SDK's `Count` the
+    /// second. ATOMIC because a backend reports from the engine thread while the host reports its own findings: a
+    /// plain counter here is the cross-thread shape `graphics-threading.md` §2.14 names as the one class of real UB.
+    std::array<std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(vn::graphics::DiagnosticCategory::Count)>,
                static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Count)>
         per_category_{};
     /// One counter per origin; `DiagnosticOrigin::Count` is its size.
-    std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Count)> per_origin_{};
-    vn::graphics::DiagnosticSink                                                               sink_;
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Count)> per_origin_{};
+    /// Guards `sink_` only: a report copies the sink out under it and calls it after releasing, so a sink is never
+    /// invoked with this lock held (see the class note).
+    mutable std::mutex                                                               sink_mutex_;
+    vn::graphics::DiagnosticSink                                                     sink_;
 };
 
 VN_GRAPHICS_NS_END

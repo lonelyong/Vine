@@ -37,14 +37,16 @@ void RenderDevice::setDiagnosticSink(DiagnosticSink sink)
     owned_route_.setSink(std::move(sink));
 }
 
-const DiagnosticSink& RenderDevice::diagnosticSink() const
+DiagnosticSink RenderDevice::diagnosticSink() const
 {
     // The sink this device's reports actually reach: an engine that installed one speaks for the device it borrowed -
     // that is what handing the route over means - and the device's own sink is the answer when no engine did. With
     // several engines borrowing one device, the first non-empty one answers; the reports reach all of them.
+    // A COPY, because a route's sink may be replaced from another thread while this reads it (see Diagnostics).
     for (const Diagnostics* borrowed : borrowed_routes_) {
-        if (borrowed->sink()) {
-            return borrowed->sink();
+        DiagnosticSink sink = borrowed->sink();
+        if (sink) {
+            return sink;
         }
     }
     return owned_route_.sink();

@@ -92,6 +92,11 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     if (device_ == device) {
         return;
     }
+    // A FRAME IN FLIGHT IS FINISHED FIRST. The driver about to go back is the one the engine half may be executing
+    // through, and `session_` is about to be replaced: every other session change already obeys this rule
+    // (`applyPlan` refuses while busy, `setFrameThreading(false)` and `shutdown` wait for the pump), so the one
+    // lifecycle swap that frees a driver must not be the exception (design `graphics-threading.md` §2.6).
+    pump_->waitIdle();
     // The route this engine installed on the OLD device goes with the old device: it was borrowed there (see
     // RenderDevice::setDiagnosticsRoute) and is about to stop being valid for it.
     // THE OLD DRIVER GOES BACK TO THE OLD DEVICE, before that reference is replaced.
@@ -237,6 +242,13 @@ void RenderEngine::shutdown()
     // joined, never detached) and the pump is left inline - a frame still executing while this call hands the device
     // back would touch objects its creator may already own (design F10 / N11).
     pump_->stop();
+    // THE TRANSIENT TARGETS THIS ENGINE DECLARED GO BACK TOO. The device owns their GPU storage and may outlive this
+    // engine (it is borrowed, and one device may serve several engines), so a table dropped in silence would leave
+    // the device holding storage for targets nothing will ever ask about again - and `releaseAll` is the
+    // announcement that lets it park each release against the frame that last used it (see FrameResources).
+    if (device_ != nullptr) {
+        resources_->releaseAll(device_.get());
+    }
     // The target this engine was resizing is gone (the area let go of it, or the device will): a re-initialized engine
     // asks its device for a new one, whose size is the device's own until the next frame hands it the announced one.
     surface_->detach();
@@ -334,11 +346,11 @@ FrameOutcome RenderEngine::frame()
     buildContentHalf(next);
 
     if (!pump_->threaded()) {
-        runEngineHalf(next);
+        answerEngineHalf(next);
         return FrameOutcome{ FrameOutcome::Status::Ran };
     }
     detail::EngineFrame* const submitted = &next;
-    pump_->submit([this, submitted]() { runEngineHalf(*submitted); });
+    pump_->submit([this, submitted]() { answerEngineHalf(*submitted); });
     return FrameOutcome{ FrameOutcome::Status::Submitted };
 }
 
@@ -562,30 +574,66 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     else {
         pump_->notePendingMicros(frame);
     }
+    publishFrameAnswer(frame);
+}
+
+void RenderEngine::answerEngineHalf(detail::EngineFrame& frame)
+{
+    // A FRAME IS ALWAYS ANSWERED (design 2.12). An engine half that throws used to leave the frame unanswered - inline
+    // the exception reached the host, and on a frame thread it left the thread function, which is `std::terminate`.
+    // Neither is an answer, so a throw becomes one here: the same completion a host's waitForFrame blocks on, plus a
+    // coded report saying the frame was not drawn.
+    try {
+        runEngineHalf(frame);
+    }
+    catch (const std::exception& error) {
+        reportEngineHalfFailure(frame, error.what());
+    }
+    catch (...) {
+        reportEngineHalfFailure(frame, "an exception that is not a std::exception");
+    }
+}
+
+void RenderEngine::reportEngineHalfFailure(detail::EngineFrame& frame, const char* what)
+{
+    // ONE REPORT, THEN A DEFINITE OUTCOME. Severity is Error: unlike the wiring problems this route usually carries,
+    // this frame drew nothing at all - and a host that only counted warnings would never learn why its picture stopped.
+    RenderDiagnostic diagnostic =
+        detail::engineProblem(u8"engine.frame.failed",
+                              DiagnosticCategory::SubmissionFailed,
+                              String(u8"the frame's engine half threw, so the frame was not drawn: ") + String::fromUtf8(what),
+                              String(u8"frame ") + String::fromUtf8(std::to_string(frame.number).c_str()));
+    diagnostic.severity = DiagnosticSeverity::Error;
+    diagnostics_.report(diagnostic);
+
+    frame.outcome = PresentOutcome::Failed;
+    publishFrameAnswer(frame);
+}
+
+void RenderEngine::publishFrameAnswer(detail::EngineFrame& frame)
+{
     // The picture's fate and the frame's id travel as ONE word (see detail::FramePump), and the frame's whole answer
     // lands beside it: which publication and camera the picture was taken from, what the frame consisted of, and what
-    // it reported.
+    // it reported. ONE function for an answered frame and a failed one: a host reading the answer must not have to
+    // know which of the two produced it.
     pump_->publishPresent(frame.number, frame.outcome);
-    // THE FRAME'S WHOLE ANSWER, in one value: which publication and camera the picture was taken from, what the frame
-    // consisted of, and what it reported. A snapshot handle and a camera value are all it shares, so the pump's lock
-    // is held for a copy in both directions - a host never sees half of this frame's answer beside half of the
+    // THE FRAME'S WHOLE ANSWER, in one value. A snapshot handle and a camera value are all it shares, so the pump's
+    // lock is held for a copy in both directions - a host never sees half of this frame's answer beside half of the
     // previous one.
-    {
-        FrameResult result;
-        result.frame          = frame.number;
-        result.present        = frame.outcome;
-        result.query.snapshot = frame.presented_snapshot;
-        result.query.view     = frame.presented_view;
-        for (const FrameDescription::Pass& pass : frame.description.passes) {
-            ++result.passes;
-            if (pass.draw.has_value()) {
-                result.draws += static_cast<std::uint32_t>(pass.draw->draws.size());
-            }
+    FrameResult result;
+    result.frame          = frame.number;
+    result.present        = frame.outcome;
+    result.query.snapshot = frame.presented_snapshot;
+    result.query.view     = frame.presented_view;
+    for (const FrameDescription::Pass& pass : frame.description.passes) {
+        ++result.passes;
+        if (pass.draw.has_value()) {
+            result.draws += static_cast<std::uint32_t>(pass.draw->draws.size());
         }
-        const std::size_t reported = diagnosticCount();
-        result.diagnostics         = reported >= frame.diagnostics_before ? static_cast<std::uint64_t>(reported - frame.diagnostics_before) : 0U;
-        pump_->publishResult(std::move(result));
     }
+    const std::size_t reported = diagnosticCount();
+    result.diagnostics = reported >= frame.diagnostics_before ? static_cast<std::uint64_t>(reported - frame.diagnostics_before) : 0U;
+    pump_->publishResult(std::move(result));
     pump_->markCompleted(frame.number);
 }
 

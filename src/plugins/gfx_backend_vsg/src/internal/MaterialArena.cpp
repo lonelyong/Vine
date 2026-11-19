@@ -108,6 +108,13 @@ std::uint64_t MaterialArena::capacityBytes() const noexcept
     return static_cast<std::uint64_t>(layout_.capacity) * layout_.copies * layout_.block_bytes;
 }
 
+std::uint64_t MaterialArena::residentBytes() const noexcept
+{
+    // The slots that HOLD a material, at the copies a frame may still be reading - not the buffer's size: a release
+    // has to make this go down, which is what a residency row promises (see ResidencyRow::bytes).
+    return static_cast<std::uint64_t>(entries_.size()) * layout_.copies * layout_.block_bytes;
+}
+
 std::uint32_t MaterialArena::blockBytes() const noexcept
 {
     return layout_.block_bytes;

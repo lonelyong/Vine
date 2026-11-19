@@ -164,6 +164,15 @@ class VN_BACKEND_VSG_API MaterialArena {
     /** @brief Gets the buffer size the API layer has to allocate for this layout. */
     [[nodiscard]] std::uint64_t capacityBytes() const noexcept;
 
+    /** @brief Gets the bytes the materials that have a slot occupy NOW: `live() x copies x blockBytes`.
+     *
+     * @details
+     * - THE NUMBER A RESIDENCY ROW REPORTS, and what makes it usable as a trim signal: a released slot lowers it
+     *   (see ResidencyRow::bytes in `vine/graphics/Residency.hpp`). `capacityBytes()` is the other question - how
+     *   large the buffer is - and it only ever grows.
+     */
+    [[nodiscard]] std::uint64_t residentBytes() const noexcept;
+
     /** @brief Gets the bytes one material block occupies. */
     [[nodiscard]] std::uint32_t blockBytes() const noexcept;
 

@@ -16,6 +16,9 @@ VN_GRAPHICS_NS_BEGIN
  *   - #Lost: there WAS a surface, and the picture did not reach it - the submission or the present was refused, the
  *     surface is gone (the window was destroyed under it), or the swapchain could no longer serve it. The picture is
  *     lost, the frame is over, and the host's move is to re-attach (see `.ai/design/graphics-threading.md` F9).
+ * - #Refused and #Failed are the engine's own answers, and they differ in what a host can do: #Refused says another
+ *   frame was already being recorded (drive one frame at a time), #Failed says the engine half threw (read the
+ *   diagnostic - the picture will not come back by re-attaching the surface).
  * - Why a VALUE and not a diagnostic: a lost frame is the one thing a host must ACT on (re-attach) while frames keep
  *   running, so it travels with the frame it belongs to (RenderEngine::presentRecord) instead of becoming a message a
  *   reader has to correlate with a frame number.
@@ -27,6 +30,9 @@ enum class PresentOutcome : std::uint8_t
     Lost,      // There was a surface and the picture did not reach it (refused, gone, or out of date).
     Refused,   // The device did not RECORD the frame at all: the calling thread already drives one (see
                // `backend/FrameGate.hpp`), so nothing was drawn and nothing was presented.
+    Failed,    // The ENGINE could not finish the frame: its engine half threw, so nothing was drawn and nothing was
+               // presented. Re-attaching does not help (that is #Lost) - the diagnostic the engine reported says
+               // what threw, and the frame is over.
 };
 
 /**

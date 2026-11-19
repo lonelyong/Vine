@@ -121,7 +121,9 @@ There is exactly one answer to "when does this copy expire": the publication val
   and only when the number changed.
 - **Why**: the handle's lifetime belongs to the host, the swap chain's lifetime to the device; the one point where they cross (the rebuild) must have a single writer (`G2`).
 - **Boundary**: device verbs (`createSurfaceTarget` / `setWindowHandle` / `device->initialize`) are **the host's between-frames** operations,
-  and doing them while a frame is in flight is undefined behaviour — the host calls `waitForFrame()` first (P3).
+  and doing them while a frame is in flight is undefined behaviour — the host calls `waitForFrame()` first (P3). One of them the framework makes safe on its own:
+  `RenderEngine::setDevice` waits for the frame in flight before it hands the old driver back, because that driver is what the engine half is executing through - the rule
+  `applyPlan` (refuse while busy) and `setFrameThreading(false)` (wait) already followed.
 
 ### 2.7 Parallelism lives only in the derivation layer
 
@@ -199,6 +201,11 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **The completion notification is a report, not a callback** (`G10`): a frame's **present outcome** is the `PresentOutcome` value, published with its frame number through
   `RenderEngine::presentRecord()` (packed into one atomic word, readable from any thread at any time). The engine thread **never** calls back into the UI, and never
   reads back from it. To "wait for frame N to be on screen" call `waitForFrame(N)`; to know "what happened to this frame" read `presentRecord()`.
+- **A frame is always ANSWERED, even when its engine half throws** (`G4` / `G11`): the half is handed over through `RenderEngine::answerEngineHalf`, which reports
+  `engine.frame.failed` (Error) and answers `PresentOutcome::Failed` - the same `presentRecord` / `frameResult` / completion a drawn frame uses. Neither escaping shape
+  is an answer: inline the exception used to reach the host out of `frame()`, and on a frame thread it left the thread function, which is `std::terminate`.
+  `FrameRunner` adds one narrower guarantee that does not depend on the caller: a job that throws still releases the one-in-flight handshake (and is counted by
+  `FrameRunner::failures()`), because a `has_request_` left set would block every later submit forever.
 - **The size travels with the frame, and the swap chain follows at the frame head**: `RenderArea::resize` does two things only — record this area's own size,
   and hand the geometry to the presenting view — and **does not touch** the target; `frame()` hands "this frame's size" to the target after assembly and before execution,
   and **only when the number changed**. So: a host resizing mid-frame does not wait for the device, and several resizes between two frames pay one swap-chain rebuild.
@@ -237,6 +244,9 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **Why** (`G1` / `G4` / `G10`): the **only class of real UB** is the UI changing lights/material/program while the engine thread reads the same non-atomic field (R3-1).
   The value channel makes "frame N draws the value it described with" value semantics rather than a convention; and each command saves 3 `intrusive_ptr` atomic increments/decrements.
   "Make the revision atomic" fixes one field only, and neither the lights nor the program text, and is **rejected** (`D12`).
+- **The diagnostic route was the second shape of that UB, and is no longer** (`G6`): a backend reports on the engine thread while the host may report its own findings at any
+  time (`DiagnosticsHandle::report`), so the route's counters are relaxed atomics and its sink is copied out under a lock and invoked with none held. A sink may therefore be
+  entered by two threads at once: one that touches shared state has to serialise it (§2.4).
 - **Boundary**: the lights' live-pointer channel is gone: `DrawCall::lights` and `FrameRecorder`'s object-shaped
   `setLights` are both gone, and `light_values` is the only channel. The live pointers that remain are `DrawItem::geometry/material/program`
   and `PassDraw::program_override`: they carry **identity and lifetime** (stream binding needs objects, residency accounting needs shares, `releaseContent` needs to ask "who else

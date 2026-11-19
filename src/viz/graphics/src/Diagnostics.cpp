@@ -6,11 +6,15 @@ VN_GRAPHICS_NS_BEGIN
 
 void Diagnostics::setSink(vn::graphics::DiagnosticSink sink)
 {
+    // The swap is a short critical section around the FUNCTION object only: a report copies the sink out and calls
+    // it after releasing the lock, so this never waits for a host's callback to finish (see the class note).
+    const std::lock_guard<std::mutex> lock(sink_mutex_);
     sink_ = std::move(sink);
 }
 
-const vn::graphics::DiagnosticSink& Diagnostics::sink() const noexcept
+vn::graphics::DiagnosticSink Diagnostics::sink() const
 {
+    const std::lock_guard<std::mutex> lock(sink_mutex_);
     return sink_;
 }
 
@@ -20,17 +24,24 @@ void Diagnostics::report(const vn::graphics::RenderDiagnostic& diagnostic)
     // on, and a host that never installed a sink must still be able to see that something happened.
     // The ORIGIN decides which numbers move (see DiagnosticOrigin): a host's own injection is counted, but
     // not in the engine's total - that is what keeps "the engine found nothing" decidable.
+    // Relaxed: a counter is a running total, not a publication, and the reader only needs each increment to be
+    // atomic (never half-written). Anything stronger would order nothing a reader could use.
     const auto origin = static_cast<std::size_t>(diagnostic.origin);
     if (origin < per_origin_.size()) {
-        ++per_origin_[origin];
+        per_origin_[origin].fetch_add(1U, std::memory_order_relaxed);
         const auto category = static_cast<std::size_t>(diagnostic.category);
         if (category < per_category_[origin].size()) {
-            ++per_category_[origin][category];
+            per_category_[origin][category].fetch_add(1U, std::memory_order_relaxed);
         }
     }
 
-    if (sink_) {
-        sink_(diagnostic);
+    vn::graphics::DiagnosticSink sink;
+    {
+        const std::lock_guard<std::mutex> lock(sink_mutex_);
+        sink = sink_;
+    }
+    if (sink) {
+        sink(diagnostic);
     }
 }
 
@@ -69,14 +80,14 @@ std::uint64_t Diagnostics::total() const noexcept
 {
     // THE ENGINE'S NUMBER, NOT THE ROUTE'S: Engine + Device, per DiagnosticOrigin. A host's injection is a
     // separate answer (total(DiagnosticOrigin::Host)), so a host bug cannot read as an engine problem.
-    return per_origin_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Engine)] +
-           per_origin_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Device)];
+    return per_origin_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Engine)].load(std::memory_order_relaxed) +
+           per_origin_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Device)].load(std::memory_order_relaxed);
 }
 
 std::uint64_t Diagnostics::total(const vn::graphics::DiagnosticOrigin origin) const noexcept
 {
     const auto index = static_cast<std::size_t>(origin);
-    return index < per_origin_.size() ? per_origin_[index] : 0;
+    return index < per_origin_.size() ? per_origin_[index].load(std::memory_order_relaxed) : 0;
 }
 
 std::uint64_t Diagnostics::count(const vn::graphics::DiagnosticCategory category) const noexcept
@@ -86,8 +97,8 @@ std::uint64_t Diagnostics::count(const vn::graphics::DiagnosticCategory category
         return 0;
     }
     // Same scope as total(): a host's own report does not change what the engine addressed.
-    return per_category_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Engine)][index] +
-           per_category_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Device)][index];
+    return per_category_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Engine)][index].load(std::memory_order_relaxed) +
+           per_category_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Device)][index].load(std::memory_order_relaxed);
 }
 
 bool Diagnostics::clean() const noexcept

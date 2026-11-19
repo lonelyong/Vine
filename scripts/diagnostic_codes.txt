@@ -102,6 +102,7 @@ engine.present.no_chain               — a view with no chain has nothing to pr
 engine.present.pass_unregistered      — the pass named for presentation is not registered on this surface' engine
 engine.shadow.not_built               — shadow-casting lights have no shadow pass (or fewer maps than casters): they are drawn unshadowed
 engine.view.content_mismatch          — the view adopted a pipeline whose passes draw other content: its scene never reaches the surface
+engine.frame.failed                   — the frame's engine half threw: the frame was not drawn, and the report names the exception
 
 # --- vsg backend: the session and the content world ---
 vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused

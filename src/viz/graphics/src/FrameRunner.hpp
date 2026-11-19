@@ -115,6 +115,14 @@ class FrameRunner {
     /** @brief Gets how many jobs have finished (run on the engine thread or inline). */
     [[nodiscard]] std::uint64_t frames() const;
 
+    /** @brief Gets how many jobs threw (counted in `frames()` too: a job that threw still ran).
+     *
+     * @details
+     * - A job is not supposed to throw - the engine answers its own frame (see RenderEngine::answerEngineHalf) - so a
+     *   number here is a caller's bug that the runner survived rather than a state a host acts on.
+     */
+    [[nodiscard]] std::uint64_t failures() const;
+
     /** @brief Whether a job is in flight right now. */
     [[nodiscard]] bool busy() const;
 
@@ -135,6 +143,7 @@ class FrameRunner {
     bool                    has_request_{ false }; ///< A job was handed over and has not finished.
     bool                    stopping_{ false };
     std::uint64_t           frames_{ 0 };
+    std::uint64_t           failures_{ 0 }; ///< Jobs that threw (see failures).
 };
 
 } // namespace detail

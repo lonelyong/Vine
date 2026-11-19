@@ -20,7 +20,17 @@ FrameRunner::~FrameRunner()
 
 void FrameRunner::runHere(const Job& job)
 {
-    job();
+    // A JOB THAT THROWS STILL OWES THE COUNT. Inline the caller sees the exception (it is their own thread), but the
+    // job did run, and the frame counter must not depend on how it ended.
+    try {
+        job();
+    }
+    catch (...) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++frames_;
+        ++failures_;
+        throw;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     ++frames_;
 }
@@ -92,6 +102,12 @@ std::uint64_t FrameRunner::frames() const
     return frames_;
 }
 
+std::uint64_t FrameRunner::failures() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return failures_;
+}
+
 bool FrameRunner::busy() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -110,9 +126,22 @@ void FrameRunner::loop()
         Job job = std::move(request_);
         request_ = Job();
         lock.unlock();
-        job();
+        // THE ONE-IN-FLIGHT HAND-SHAKE IS THE RUNNER'S, so it survives a job that throws: an exception leaving this
+        // thread function calls `std::terminate`, and one leaving `has_request_` set would block every later submit
+        // forever. Who the failure belongs to is the job's business (the engine answers its own frame - see
+        // RenderEngine::answerEngineHalf); this is only the guarantee that no job can take the runner down with it.
+        bool failed = false;
+        try {
+            job();
+        }
+        catch (...) {
+            failed = true;
+        }
         lock.lock();
         ++frames_;
+        if (failed) {
+            ++failures_;
+        }
         has_request_ = false;
         done_.notify_all();
     }

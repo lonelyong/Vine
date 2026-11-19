@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
@@ -209,4 +210,30 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
         << "the draw names the content's publication, not the content - which is what makes the frame portable";
     EXPECT_EQ(runner.busy(), false) << "nothing is left in flight";
     EXPECT_EQ(runner.mode(), RunnerMode::Threaded) << "the mode is a lifetime decision, not a live state";
+}
+
+TEST(FrameRunnerTest, AJobThatThrowsDoesNotTakeTheRunnerDownWithIt)
+{
+    // REVIEW 6 / P1-4. An exception leaving a thread function calls `std::terminate` - one bad job would end the
+    // process - and one leaving `has_request_` set would block every later submit forever. The one-in-flight
+    // handshake is the RUNNER's promise, so it holds whatever the job did; who the failure belongs to is the job's
+    // business (RenderEngine::answerEngineHalf turns it into a frame answer).
+    FrameRunner runner{ RunnerMode::Threaded };
+    runner.run([] { throw std::runtime_error("synthetic job failure"); });
+    EXPECT_EQ(runner.failures(), 1U) << "a job that threw still ran, and the runner says so";
+    EXPECT_EQ(runner.frames(), 1U) << "it counts as a frame: the handshake completed";
+    EXPECT_FALSE(runner.busy()) << "and nothing is left in flight";
+
+    // The runner is still usable: the throw neither killed the thread nor left the handshake stuck.
+    int ran = 0;
+    runner.run([&ran] { ++ran; });
+    EXPECT_EQ(ran, 1) << "the next job runs to completion";
+    EXPECT_EQ(runner.frames(), 2U);
+    EXPECT_EQ(runner.failures(), 1U);
+
+    // INLINE IS THE CALLER'S THREAD, so the caller keeps the exception: a runner with no thread must not swallow a
+    // failure the code that ran it is standing right next to.
+    FrameRunner inline_runner{ RunnerMode::Inline };
+    EXPECT_THROW(inline_runner.run([] { throw std::runtime_error("synthetic inline failure"); }), std::runtime_error);
+    EXPECT_EQ(inline_runner.failures(), 1U) << "the count is kept here too";
 }

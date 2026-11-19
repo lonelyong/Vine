@@ -242,6 +242,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   never drives its lifecycle - the party that created the device brings it up and takes it down (see
      *   RenderDevice::initialize), which is what lets two engines drive one device. Call before initialize().
      *   Setting the same instance again is a no-op.
+     * - A frame already handed to the engine thread is FINISHED first: the driver it runs through is what this call
+     *   gives back, and every other session change waits or refuses rather than racing a frame.
      * - The default content program is announced here, so a device brought up afterwards already knows what
      *   program-less content is drawn with - the device's own order asks for that before it comes up.
      * - The new device is handed this engine's ONE diagnostic route (see Diagnostics.hpp), so a host's
@@ -265,11 +267,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void setDiagnosticSink(DiagnosticSink sink);
 
-    /** @brief Gets the installed diagnostic sink (empty when unset).
+    /** @brief Gets a COPY of the installed diagnostic sink (empty when unset).
+     *
+     * @details
+     * - A copy, because the route may be replaced from another thread at any moment (see Diagnostics): a reference
+     *   into its storage would be a handle on something a report is writing.
      *
      * @return The sink.
      */
-    const DiagnosticSink& diagnosticSink() const
+    DiagnosticSink diagnosticSink() const
     {
         return diagnostics_.sink();
     }
@@ -527,6 +533,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - #PresentOutcome::Lost is the one answer a host must ACT on: the surface was there and the picture did not reach
      *   it (the window was destroyed under a frame, the swapchain could not serve it), so the move is to re-attach -
      *   which must happen BETWEEN frames (the device verbs are the host's, and they need it quiet).
+     * - #PresentOutcome::Failed is answered when the frame's engine half threw: it also means "the picture did not reach
+     *   the surface", but the move is NOT a re-attach - read the `engine.frame.failed` diagnostic and fix what threw.
+     *   The frame is answered either way, so `waitForFrame` never waits for a frame that will never finish.
      * - The frame's id never goes backwards and never skips: `frame` is the id of the frame that produced this answer.
      *
      * @return The last answered frame's id and picture outcome; frame 0 means no frame has been answered yet.
@@ -550,7 +559,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   built. A pick, an anchor or a fit that asks about "what the user sees" reads them here instead of the live
      *   scene and camera (`I7`, design N17).
      * - `frame` stays 0 until something is answered (`answered()`), and `present` is the same answer `presentRecord()`
-     *   carries - the one field a host must ACT on (`Lost` -> re-attach, between frames).
+     *   carries - the one field a host must ACT on (`Lost` -> re-attach, between frames; `Failed` -> the engine half
+     *   threw, see `engine.frame.failed` in the diagnostics: the picture will not come back by re-attaching).
      *
      * @note
      * - `presentedCamera()` is the camera half of `query.view`, kept as its own entry for callers that only aim.
@@ -1022,6 +1032,36 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param frame The frame value to answer (borrowed; it outlives the call because it is one of this engine's slots).
      */
     void runEngineHalf(detail::EngineFrame& frame);
+
+    /** @brief Runs one frame's engine half, turning a throw into a frame answer (see @ref runEngineHalf).
+     *
+     * @details
+     * - THIS is what the pump is handed, in both modes, so a frame is answered exactly once whatever happens inside:
+     *   inline the exception used to reach the host mid-`frame()`, and on a frame thread it left the thread function,
+     *   which is `std::terminate` (design 2.12 - a frame is a value and is always answered).
+     * - The failure is reported as `engine.frame.failed` and answered with #PresentOutcome::Failed: the frame is
+     *   complete, the waiter wakes, and the picture is known not to have been drawn.
+     *
+     * @param frame The frame value to answer (borrowed; one of this engine's slots).
+     */
+    void answerEngineHalf(detail::EngineFrame& frame);
+
+    /** @brief Reports why an engine half threw and answers its frame with #PresentOutcome::Failed.
+     *
+     * @param frame The frame that was being answered.
+     * @param what  What was thrown, as the report's sentence says it.
+     */
+    void reportEngineHalfFailure(detail::EngineFrame& frame, const char* what);
+
+    /** @brief Publishes one answered frame's outcome, its whole answer, and its completion.
+     *
+     * @details
+     * - ONE WRITER for both an answered frame and a failed one: a host reading the answer must not have to know which
+     *   produced it, and the completion a `waitForFrame` blocks on happens exactly here.
+     *
+     * @param frame The frame whose engine half is over (borrowed; `outcome` is already its answer).
+     */
+    void publishFrameAnswer(detail::EngineFrame& frame);
 
     /** @brief Answers the frame's draws: one expansion per described pass.
      *

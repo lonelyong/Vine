@@ -630,11 +630,15 @@ class VN_GRAPHICS_API RenderDevice {
      */
     virtual void setDiagnosticSink(DiagnosticSink sink);
 
-    /** @brief Gets the installed diagnostic sink (empty when unset).
+    /** @brief Gets a COPY of the installed diagnostic sink (empty when unset).
+     *
+     * @details
+     * - A copy: the route may be replaced from another thread while this reads it, so a reference into its storage
+     *   would be a handle on something a report is writing (see Diagnostics).
      *
      * @return The sink a previous setDiagnosticSink() installed on the active route.
      */
-    const DiagnosticSink& diagnosticSink() const;
+    [[nodiscard]] DiagnosticSink diagnosticSink() const;
 
     /** @brief Gets how many diagnostics were reported through the active route.
      *
