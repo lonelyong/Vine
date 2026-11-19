@@ -2,6 +2,7 @@
 #include "runtime_global.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -12,16 +13,14 @@
 VN_RUNTIME_NS_BEGIN
 
 /**
- * @brief Loads and caches dynamic libraries, one per file path.
+ * @brief Loads and caches dynamic libraries, one object per file.
  *
  * The loader performs the actual loading and hands out DynamicLibrary objects
- * that wrap the loaded handle. Loading the same path twice returns the
- * already-loaded DynamicLibrary, so each library is loaded exactly once per
- * loader. The loader owns all loaded libraries and keeps them mapped for the
- * process lifetime (see the destructor): its only client, the appfw plugin
- * manager, loads plugins once and never unloads them, so unloading the
- * libraries at process exit — before the registries that reference their code
- * are torn down — would crash (SIGSEGV).
+ * that wrap the loaded handle. Loading the same file twice returns the
+ * already-loaded DynamicLibrary: the cache key is the canonical path of the file
+ * the platform reports for the loaded module, so a symlink, a dot-segment
+ * spelling or a bare name found through a search path all reuse one instance.
+ * fileName() keeps the spelling that resolved.
  *
  * A bare library name passed to load() is resolved through the configured
  * search paths: each directory is tried in order, then the name falls back to
@@ -32,26 +31,54 @@ VN_RUNTIME_NS_BEGIN
  * registered with addDependencyPath(). On POSIX dependency resolution follows
  * the system dynamic linker (RPATH / LD_LIBRARY_PATH).
  *
- * Use instance() for the process-wide shared loader so every module that
- * links vn::Runtime manages its libraries through one place. The public
- * constructor remains available for isolated loaders, e.g. in tests.
+ * Retention is chosen at construction. A loader created by instance() keeps its
+ * libraries mapped for the process lifetime: plugin code must outlive the
+ * registries (commands, render-backend factories) that hold its function
+ * pointers, and unloading it during exit-time destruction crashes. A loader
+ * created directly unloads its libraries when it is destroyed.
+ *
+ * Use instance() for the process-wide shared loader so every module that links
+ * vn::Runtime manages its libraries through one place. The public constructors
+ * remain available for isolated loaders, e.g. in tests.
+ *
+ * @warning
+ * - The loader is not thread-safe: load(), find(), lastError() and the
+ *   search-path mutators must not run concurrently with one another.
  */
 class VN_RUNTIME_API DynamicLibraryLoader {
 
   public:
     /**
-     * @brief Creates an empty loader.
+     * @brief What a loader does with its libraries when it is destroyed.
+     */
+    enum class Retention : std::uint8_t {
+        /// Unload every library; its handles become invalid at destruction.
+        UnloadOnDestruction,
+        /// Keep every library mapped for the process lifetime (plugin code).
+        KeepMapped,
+    };
+
+  public:
+    /**
+     * @brief Creates an empty loader that unloads its libraries when destroyed.
      */
     DynamicLibraryLoader();
 
     /**
-     * @brief Destroys the loader WITHOUT unloading its libraries.
+     * @brief Creates an empty loader with the given retention policy.
      *
-     * Loaded libraries are deliberately leaked (never dlclose'd): plugins live
-     * for the process lifetime, and tearing the code down during exit-time
-     * static destruction would leave the registries (commands / render-backend
-     * factories) referencing unmapped plugin code. The OS reclaims the
-     * libraries when the process exits.
+     * @param retention What to do with the loaded libraries when this loader is destroyed.
+     */
+    explicit DynamicLibraryLoader(Retention retention);
+
+    /**
+     * @brief Destroys the loader, unloading its libraries unless Retention::KeepMapped
+     *        was chosen.
+     *
+     * KeepMapped is what instance() uses: the libraries are deliberately leaked
+     * so the registries that reference plugin code are torn down while it is
+     * still mapped, and the OS reclaims them at process exit. When real plugin
+     * unload support is added, those registries must be cleared first.
      */
     ~DynamicLibraryLoader();
 
@@ -62,12 +89,11 @@ class VN_RUNTIME_API DynamicLibraryLoader {
     /**
      * @brief Returns the process-wide shared library loader.
      *
-     * A single loader is shared by all modules that link vn::Runtime, so a
-     * library is loaded and unloaded exactly once per process regardless of
-     * which module requests it. The instance is created on first use and
-     * lives until process exit.
+     * The shared instance is created on first use, keeps its libraries mapped
+     * for the process lifetime (Retention::KeepMapped), and lives until process
+     * exit.
      *
-     * @return The shared DynamicLibraryLoader.
+     * @return The shared loader; a static object, valid for the process lifetime.
      */
     static DynamicLibraryLoader& instance();
 
@@ -96,7 +122,7 @@ class VN_RUNTIME_API DynamicLibraryLoader {
     /**
      * @brief Returns the search path list.
      *
-     * @return The directories searched in order for bare library names.
+     * @return Borrowed; the directories searched in order for bare library names.
      */
     const std::vector<String>& searchPaths() const;
 
@@ -126,37 +152,59 @@ class VN_RUNTIME_API DynamicLibraryLoader {
     /**
      * @brief Returns the dependency search directory list.
      *
-     * @return The directories searched for a loaded library's dependencies.
+     * @return Borrowed; the directories searched for a loaded library's dependencies.
      */
     const std::vector<String>& dependencyPaths() const;
 
     /**
      * @brief Loads a dynamic library, reusing the cached instance if present.
      *
-     * When name contains no path separator it is resolved against the search
-     * paths: each directory is tried in order, then the bare name falls back
-     * to the system default search. The cache is keyed by the resolved path,
-     * so loading the same file through different names reuses one instance.
+     * @details
+     * - When name contains no path separator it is resolved against the search
+     *   paths: each directory is tried in order, then the bare name falls back
+     *   to the system default search.
+     * - Identity is the canonical path of the file the platform reports for the
+     *   loaded module, so one file loaded through a symlink, a dot-segment
+     *   spelling or a search-path name is one DynamicLibrary.
+     * - A failure records the platform's reason in lastError().
      *
      * @param name Library file name or path.
-     * @return The loaded library, or nullptr when loading fails.
+     * @return Borrowed; the loaded library, owned by this loader, or nullptr when
+     *         loading fails.
      */
     DynamicLibrary* load(const String& name);
 
     /**
      * @brief Returns the library already loaded for the given name or path.
      *
-     * The name is resolved with the same rules as load().
+     * The name is resolved with the same rules as load(). A bare name that only
+     * the system loader could have found has no cache entry to match, because
+     * the file's location is unknown without loading it.
      *
      * @param name Library file name or path.
-     * @return The cached library, or nullptr when it is not loaded.
+     * @return Borrowed; the cached library, owned by this loader, or nullptr when
+     *         it is not loaded.
      */
     DynamicLibrary* find(const String& name) const;
 
     /**
-     * @brief Returns the number of loaded libraries.
+     * @brief Returns why the most recent load() failed.
      *
-     * @return The count of distinct loaded library paths.
+     * @details
+     * - The string is the platform's own reason (`dlerror` on POSIX, the Win32
+     *   error text on Windows) prefixed with the candidate that failed; the last
+     *   candidate tried is the one reported.
+     * - It is cleared when load() succeeds, so a non-empty value always belongs
+     *   to the call that just returned nullptr.
+     *
+     * @return Borrowed; empty when the last load() succeeded or has not run.
+     */
+    const String& lastError() const;
+
+    /**
+     * @brief Returns the number of distinct files loaded.
+     *
+     * @return The count of distinct library files.
      */
     std::size_t count() const;
 

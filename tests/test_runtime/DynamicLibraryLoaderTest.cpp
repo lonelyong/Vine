@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <string_view>
 
 #include <vine/runtime/DynamicLibraryLoader.hpp>
@@ -17,6 +18,16 @@ namespace
 String fixturePath()
 {
     return String(std::u8string_view(reinterpret_cast<const char8_t*>(VN_RUNTIME_FIXTURE)));
+}
+
+/** The filesystem spelling of a String; ASCII paths on every platform this test runs on. */
+std::filesystem::path pathOf(const String& text)
+{
+#ifdef _WIN32
+    return std::filesystem::path(text.toUtf16());
+#else
+    return std::filesystem::path(std::string(reinterpret_cast<const char*>(text.c_str())));
+#endif
 }
 
 TEST(DynamicLibraryLoaderTest, LoadMissingReturnsNull)
@@ -115,6 +126,77 @@ TEST(DynamicLibraryLoaderTest, ManageDependencyPaths)
     EXPECT_EQ(loader.dependencyPaths().size(), 1u);
     loader.clearDependencyPaths();
     EXPECT_TRUE(loader.dependencyPaths().empty());
+}
+
+TEST(DynamicLibraryLoaderTest, SameFileThroughADotSegmentIsOneLibrary)
+{
+    // Two spellings of one path: `dir/./name` is a different cache key from
+    // `dir/name` unless identity comes from the file, not the text.
+    DynamicLibraryLoader loader;
+    const String         path = fixturePath();
+    const auto           file = pathOf(path);
+    const String         dotted((file.parent_path() / "." / file.filename()).u8string());
+
+    auto* direct     = loader.load(path);
+    auto* dotted_lib = loader.load(dotted);
+    ASSERT_NE(direct, nullptr);
+    ASSERT_NE(dotted_lib, nullptr);
+    EXPECT_EQ(direct, dotted_lib);
+    EXPECT_EQ(loader.count(), 1u);
+}
+
+TEST(DynamicLibraryLoaderTest, SameFileThroughASymlinkIsOneLibrary)
+{
+#ifdef _WIN32
+    GTEST_SKIP() << "creating a symlink needs a privilege the test process may not have";
+#else
+    namespace fs = std::filesystem;
+
+    const fs::path fixture = pathOf(fixturePath());
+    const fs::path alias   = fs::temp_directory_path() / "vn_runtime_alias_fixture.so";
+    fs::remove(alias);
+    fs::create_symlink(fixture, alias);
+
+    DynamicLibraryLoader loader;
+    auto*                direct = loader.load(fixturePath());
+    auto*                linked = loader.load(String(alias.u8string()));
+    ASSERT_NE(direct, nullptr);
+    ASSERT_NE(linked, nullptr);
+    EXPECT_EQ(direct, linked);
+    EXPECT_EQ(loader.count(), 1u);
+    EXPECT_EQ(direct->handle(), linked->handle());
+
+    fs::remove(alias);
+#endif
+}
+
+TEST(DynamicLibraryLoaderTest, LastErrorExplainsAFailedLoad)
+{
+    DynamicLibraryLoader loader;
+    EXPECT_TRUE(loader.lastError().empty());
+
+    EXPECT_EQ(loader.load(u8"vn_no_such_library_xyz"), nullptr);
+    EXPECT_FALSE(loader.lastError().empty());
+
+    ASSERT_NE(loader.load(fixturePath()), nullptr);
+    EXPECT_TRUE(loader.lastError().empty()); // a success clears the previous reason
+}
+
+TEST(DynamicLibraryLoaderTest, KeepMappedLoaderOutlivesItsOwnDestruction)
+{
+    vn::runtime::DynamicLibrary* lib = nullptr;
+    {
+        DynamicLibraryLoader loader(DynamicLibraryLoader::Retention::KeepMapped);
+        lib = loader.load(fixturePath());
+        ASSERT_NE(lib, nullptr);
+    }
+
+    // The loader is gone and the library was requested to stay mapped, so its code
+    // is still usable. A Retention::UnloadOnDestruction loader must not be probed
+    // this way; that is the distinction the policy exists for.
+    auto* answer = lib->resolveSymbol<int (*)()>(u8"vn_test_fixture_answer");
+    ASSERT_NE(answer, nullptr);
+    EXPECT_EQ(answer(), 42);
 }
 
 } // namespace

@@ -14,9 +14,12 @@ class DynamicLibraryLoader;
  * @brief A dynamically loaded shared library, owned by a DynamicLibraryLoader.
  *
  * The platform handle is acquired by DynamicLibraryLoader and wrapped here;
- * the destructor unloads the library. Exported symbols are resolved with
- * resolveSymbol<T>(). The class is not copyable and can only be constructed
- * by the loader, so a library can never be loaded outside loader management.
+ * destroying the object unloads the library, so whether that ever happens is the
+ * loader's Retention policy (an isolated loader unloads at destruction, the
+ * process-wide instance keeps its libraries mapped). Exported symbols are
+ * resolved with resolveSymbol<T>(). The class is not copyable and can only be
+ * constructed by the loader, so a library can never be loaded outside loader
+ * management.
  */
 class VN_RUNTIME_API DynamicLibrary {
 
@@ -35,7 +38,8 @@ class VN_RUNTIME_API DynamicLibrary {
      *
      * @tparam T Type of the symbol; must be a function pointer type.
      * @param symbol Name of the exported symbol.
-     * @return The symbol cast to T, or nullptr when the symbol is not found.
+     * @return Borrowed; the symbol cast to T, or nullptr when the symbol is not
+     *         found. Valid while the owning loader keeps the library mapped.
      *
      * @note
      * - The conversion is a `reinterpret_cast`: a raw symbol address arrives as `void*`, and the
@@ -51,14 +55,18 @@ class VN_RUNTIME_API DynamicLibrary {
     /**
      * @brief Returns the raw platform library handle.
      *
-     * @return The platform handle (HMODULE on Windows, void* on POSIX).
+     * @return Borrowed; the platform handle (HMODULE on Windows, void* on POSIX),
+     *         valid while the owning loader keeps the library mapped.
      */
     void* handle() const;
 
     /**
-     * @brief Returns the library file path.
+     * @brief Returns the file name or path that resolved when the library was loaded.
      *
-     * @return The file path the library was loaded from.
+     * This is the candidate the loader passed to the platform (a search-path join
+     * or the caller's path), not the canonical identity used for caching.
+     *
+     * @return Borrowed; the spelling that loaded the library.
      */
     const String& fileName() const;
 
