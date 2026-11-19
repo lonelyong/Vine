@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -101,6 +103,44 @@ bool matches(const std::vector<VfsEntryInfo>& children, const std::filesystem::p
     const VfsEntryInfo* info = findInfo(children, path);
     return info != nullptr && info->kind == kind && info->size == size;
 }
+
+/**
+ * @brief A source that can be pulled exactly once, the way a source of unstated length is defined.
+ *
+ * rewind() is a no-op on purpose: a length that nobody knows cannot be reproduced, so the only way to get the content
+ * out is one sequential pass.
+ */
+class OneShotSource final : public vn::io::DataSource {
+  public:
+    /**
+     * @brief Serves @p payload once.
+     *
+     * @param payload The bytes to produce.
+     */
+    explicit OneShotSource(std::string payload)
+      : payload_(std::move(payload))
+    {}
+
+    [[nodiscard]] std::uint64_t size() const override
+    {
+        return vn::io::kUnknownSize;
+    }
+
+    void rewind() override
+    {}
+
+    [[nodiscard]] std::size_t read(std::span<std::byte> out) override
+    {
+        const std::size_t got = std::min(out.size(), payload_.size() - position_);
+        std::memcpy(out.data(), payload_.data() + position_, got);
+        position_ += got;
+        return got;
+    }
+
+  private:
+    std::string payload_;
+    std::size_t position_{ 0 };
+};
 
 } // namespace
 
@@ -436,4 +476,82 @@ TEST(ZipArchiveTest, ListReportsEveryChildShape)
     ASSERT_TRUE(devices.ok());
     ASSERT_EQ(devices->size(), 1u);
     EXPECT_TRUE(matches(devices.value(), std::filesystem::path(u8"devices/robot.vdev"), VfsEntryKind::File, 3u));
+}
+
+TEST(ZipArchiveTest, ListAnswersInPathOrder)
+{
+    const TempDir temp;
+    const auto    pkg = temp.path() / "order.zip";
+    {
+        const std::vector<unsigned char> bytes = buildPackage();
+        std::ofstream                    out(pkg, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    auto zip = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(zip.ok());
+
+    // The same order a directory backend answers in: the path bytes decide, not the order the archive stores or the
+    // host's directory walk happens to produce.
+    const auto top = zip->list(u8"");
+    ASSERT_TRUE(top.ok());
+    ASSERT_EQ(top->size(), 5u);
+    EXPECT_EQ((*top)[0].path, std::filesystem::path(u8"devices"));
+    EXPECT_EQ((*top)[1].path, std::filesystem::path(u8"empty"));
+    EXPECT_EQ((*top)[2].path, std::filesystem::path(u8"geoms"));
+    EXPECT_EQ((*top)[3].path, std::filesystem::path(u8"nested"));
+    EXPECT_EQ((*top)[4].path, std::filesystem::path(u8"workcell.xml"));
+}
+
+TEST(ZipArchiveTest, SaveAsKeepsAnExistingTargetWhenTheContentFails)
+{
+    const TempDir temp;
+    const auto    pkg = temp.path() / "target.zip";
+    {
+        ZipArchive archive;
+        ASSERT_EQ(archive.addFile(u8"kept.txt", bytesOf("keep")), IoError::Ok);
+        ASSERT_EQ(archive.saveAs(pkg), IoError::Ok);
+    }
+
+    // A file-backed entry whose file is gone cannot be written, so the save fails after it started.
+    const auto local = temp.path() / "gone.bin";
+    {
+        std::ofstream out(local, std::ios::binary);
+        out << "x";
+    }
+    ZipArchive broken;
+    ASSERT_EQ(broken.addFile(u8"gone.bin", local), IoError::Ok);
+    std::error_code ec;
+    std::filesystem::remove(local, ec);
+
+    EXPECT_NE(broken.saveAs(pkg), IoError::Ok);
+
+    // What was already there is still there, whole: a save writes next to its target and moves into place.
+    auto reopened = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(reopened.ok()) << "the failed save truncated the previous package";
+    const auto kept = reopened->read(u8"kept.txt");
+    ASSERT_TRUE(kept.ok());
+    EXPECT_EQ(kept.value(), bytesOf("keep"));
+}
+
+TEST(ZipArchiveTest, ReadingAGeneratedEntryKeepsItForTheSave)
+{
+    const TempDir temp;
+    ZipArchive    archive;
+    ASSERT_EQ(archive.addFile(u8"gen.bin", std::make_shared<OneShotSource>("generated")), IoError::Ok);
+
+    const auto read_back = archive.read(u8"gen.bin");
+    ASSERT_TRUE(read_back.ok());
+    EXPECT_EQ(std::string(read_back->begin(), read_back->end()), "generated");
+
+    // The source cannot be pulled a second time, so the bytes the read produced are what the save writes - a save
+    // after a read must not turn the entry into an empty one.
+    const auto pkg = temp.path() / "gen.zip";
+    ASSERT_EQ(archive.saveAs(pkg), IoError::Ok);
+
+    auto reopened = ZipArchive::open(pkg, ZipArchive::OpenMode::ReadOnly);
+    ASSERT_TRUE(reopened.ok());
+    const auto saved = reopened->read(u8"gen.bin");
+    ASSERT_TRUE(saved.ok());
+    EXPECT_EQ(std::string(saved->begin(), saved->end()), "generated");
 }

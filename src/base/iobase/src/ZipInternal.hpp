@@ -1,13 +1,17 @@
 #pragma once
 
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <zip.h>
+#include <zlib.h>
 
 #include <vine/String.hpp>
 #include <vine/io/IoError.hpp>
@@ -19,6 +23,132 @@ VN_IO_NS_BEGIN
 
 namespace detail
 {
+
+/**
+ * @brief Computes the CRC-32 of a byte range, continuing from @p seed.
+ *
+ * The codec takes a 32-bit length per call, so the range is walked in chunks: an entry larger than 4 GiB gets one
+ * checksum, not a truncated one - which is what a single crc32() call with a narrowed length would produce.
+ *
+ * @param seed The running checksum to continue; 0 starts a new one.
+ * @param bytes The bytes to fold in.
+ * @return The checksum.
+ */
+inline std::uint32_t crc32Of(std::uint32_t seed, std::span<const unsigned char> bytes) noexcept
+{
+    std::uint32_t crc    = seed;
+    std::size_t   offset = 0;
+    while (offset < bytes.size()) {
+        const std::size_t step = std::min<std::size_t>(bytes.size() - offset, 1U << 30);
+        crc                    = static_cast<std::uint32_t>(::crc32(crc, bytes.data() + offset, static_cast<uInt>(step)));
+        offset += step;
+    }
+    return crc;
+}
+
+/**
+ * @brief Computes the CRC-32 of a byte range.
+ *
+ * @param bytes The bytes to checksum.
+ * @return The checksum; 0 for an empty range, which is why a recorded 0 is read as "no checksum".
+ */
+inline std::uint32_t crc32Of(std::span<const unsigned char> bytes) noexcept
+{
+    return crc32Of(0, bytes);
+}
+
+/**
+ * @brief Maps a libzip error code onto this library's vocabulary.
+ *
+ * libzip says why an archive could not be opened or written; reporting every reason as InvalidData would hide a
+ * permission problem behind a format problem, which is the one thing a caller has to be able to tell apart.
+ *
+ * @param code A ZIP_ER_* code.
+ * @return The failure class; IoError::IoFailure for a code this layer does not name, which is true without being
+ *         specific.
+ */
+inline IoError ioErrorOf(int code) noexcept
+{
+    switch (code) {
+    case ZIP_ER_NOENT: return IoError::NotFound;
+    case ZIP_ER_EXISTS: return IoError::AlreadyExists;
+    case ZIP_ER_NOZIP:
+    case ZIP_ER_INCONS:
+    case ZIP_ER_INVAL: return IoError::InvalidData;
+    case ZIP_ER_OPNOTSUPP: return IoError::Unsupported;
+    default: return IoError::IoFailure;
+    }
+}
+
+/**
+ * @brief Maps a libzip error object onto this library's vocabulary.
+ *
+ * The system half is read first: a code that says "the operating system refused" carries the errno that explains it,
+ * and that is worth more than the generic class libzip wraps it in.
+ *
+ * @param error The error libzip reported.
+ * @return The failure class.
+ */
+inline IoError ioErrorOf(const zip_error_t& error) noexcept
+{
+    if (zip_error_system_type(&error) == ZIP_ET_SYS) {
+        switch (zip_error_code_system(&error)) {
+        case EACCES:
+        case EPERM: return IoError::PermissionDenied;
+        case ENOENT: return IoError::NotFound;
+        case ENOSPC: return IoError::CapacityExceeded;
+        default: break;
+        }
+    }
+    return ioErrorOf(zip_error_code_zip(&error));
+}
+
+/**
+ * @brief Owns a zip_error_t for one scope, so no return path forgets zip_error_fini().
+ *
+ * libzip may attach a description to the error it writes, so the object has to be finished on every path - including
+ * the ones that return a failure, which are exactly the paths a hand-written fini() forgets.
+ */
+class ZipError final
+{
+  public:
+    /** @brief Initializes an empty error. */
+    ZipError() noexcept
+    {
+        zip_error_init(&error_);
+    }
+
+    ~ZipError()
+    {
+        zip_error_fini(&error_);
+    }
+
+    ZipError(const ZipError&)            = delete;
+    ZipError& operator=(const ZipError&) = delete;
+
+    /**
+     * @brief The error, for a libzip call that writes one.
+     *
+     * @return Pointer to the owned error.
+     */
+    [[nodiscard]] zip_error_t* get() noexcept
+    {
+        return &error_;
+    }
+
+    /**
+     * @brief The error, for reading what libzip wrote.
+     *
+     * @return The owned error.
+     */
+    [[nodiscard]] const zip_error_t& ref() const noexcept
+    {
+        return error_;
+    }
+
+  private:
+    zip_error_t error_{};
+};
 
 /**
  * @brief One entry of an open archive's directory, in the form the ZIP stores it.

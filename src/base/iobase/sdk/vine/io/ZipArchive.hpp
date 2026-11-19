@@ -241,12 +241,14 @@ class VN_IOBASE_API ZipArchive : public Vfs {
      * @brief Reads a whole virtual file, decompressing it on demand.
      *
      * Use openRead() instead when the content is large: this call holds the whole
-     * entry in memory.
+     * entry in memory, and refuses (IoError::CapacityExceeded) an entry whose size the archive
+     * declares beyond what one buffer may hold.
      *
      * @param path The virtual file path.
      * @return The file bytes, IoError::NotFound when there is no such file,
      *         IoError::IsADirectory when path names a directory,
      *         IoError::IoFailure when the content cannot be read,
+     *         IoError::CapacityExceeded when the entry is too large to materialize,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
     [[nodiscard]] Result<std::vector<unsigned char>> read(const std::filesystem::path& path) const override;
@@ -315,6 +317,9 @@ class VN_IOBASE_API ZipArchive : public Vfs {
      * recompressed. File-backed and pull-source entries are read while writing, so
      * the peak memory is one entry, not the archive.
      *
+     * The file is written next to the target and moved into place at the end, so a failure leaves a file that was
+     * already there untouched instead of truncated.
+     *
      * @param path Target .zip file path.
      * @return IoError::Ok on success, IoError::IoFailure when the archive cannot be written.
      */
@@ -348,8 +353,10 @@ class VN_IOBASE_API ZipArchive : public Vfs {
      * The new archive is built next to the target and then replaces it in one
      * step, so a failure leaves the previous file untouched; afterwards the source
      * handle is re-opened on the new file.
-     * Two commits of the same file have to be serialized by the caller - the
-     * temporary file next to the target has a fixed name.
+     * Two commits of the same file have to be serialized by the caller: each staging file has a name of its own, but
+     * the last rename still wins.
+     * A commit cannot run while a reader handed out by openRead() is still alive: the reader keeps the source open, and
+     * Windows refuses to replace an open file.
      *
      * @return IoError::Ok on success, IoError::ReadOnly on a read-only archive,
      *         IoError::Unsupported when this archive was not opened from a file,
@@ -495,13 +502,15 @@ class VN_IOBASE_API ZipArchive : public Vfs {
         /// recorded (0 when only entrySize() knows). The path is the table key.
         VfsEntryInfo info;
 
-        std::vector<unsigned char>  data;              // Buffered content.
-        std::filesystem::path       src;               // Content file when from_file is true.
-        std::shared_ptr<DataSource> generator;         // Pull source, read while the archive is written.
-        std::string                 stored_name;       // Name the source archive held, verbatim; empty for an entry this archive created itself.
-        std::uint64_t               source_index{ 0 }; // Index in the source archive when from_source is true.
-        bool                        from_file{ false };
-        bool                        from_source{ false }; // Content still lives in the opened archive.
+        /// Buffered content; a pulled generator is cached here, since a source that stated no length cannot be pulled
+        /// twice. Mutable because read() is const while reading is what materializes it.
+        mutable std::vector<unsigned char> data;
+        std::filesystem::path              src;               // Content file when from_file is true.
+        mutable std::shared_ptr<DataSource> generator;         // Pull source, read while the archive is written.
+        std::string                         stored_name;       // Name the source archive held, verbatim; empty for an entry this archive created itself.
+        std::uint64_t                       source_index{ 0 }; // Index in the source archive when from_source is true.
+        bool                                from_file{ false };
+        bool                                from_source{ false }; // Content still lives in the opened archive.
     };
 
     /**
@@ -606,6 +615,15 @@ class VN_IOBASE_API ZipArchive : public Vfs {
      *         IoError::InvalidData when it is not an archive, IoError::IoFailure otherwise.
      */
     [[nodiscard]] IoError adoptFile(const std::filesystem::path& path);
+
+    /**
+     * @brief Re-opens the source file after a failed commit left this archive without a handle.
+     *
+     * The entry table is not touched: it still describes that file, whose entries were never written.
+     *
+     * @return IoError::Ok when the handle is back, or why the file could not be opened.
+     */
+    [[nodiscard]] IoError reopenSource();
 
     std::map<std::filesystem::path, Entry> entries_;            // Entry name to where its content comes from.
     std::shared_ptr<ArchiveHandle>         handle_;             // The source archive, when this one was opened.

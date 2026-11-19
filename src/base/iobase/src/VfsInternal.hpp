@@ -2,11 +2,19 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#    include <process.h>
+#else
+#    include <unistd.h>
+#endif
 
 #include <vine/String.hpp>
 #include <vine/io/IoError.hpp>
@@ -19,18 +27,43 @@ namespace detail
 {
 
 /**
+ * @brief Largest content one call may materialize in memory before it fails with IoError::CapacityExceeded.
+ *
+ * A size an archive directory states is a claim, not a measurement: a 1 KiB member can announce 2^60 bytes, and a
+ * whole-content read that believes it is a denial of service rather than a read. This is the bound a caller gets
+ * where the whole content has to sit in one buffer, and it is the one Zip::decompress has always enforced.
+ *
+ * It bounds a call, not a format: a stream (openRead(), a sink, a temporary file) carries content of any real size,
+ * and a backend stores an entry of any size. So a caller with a large entry uses the streaming form.
+ */
+inline constexpr std::uint64_t kMaxWholeContentBytes = 1ULL << 30;
+
+/**
  * @brief A sink that collects the bytes it is handed in one buffer.
  */
 class VectorSink final : public DataSink {
   public:
     /**
+     * @brief Creates a sink that refuses to grow past @p limit bytes.
+     *
+     * @param limit Byte count the collected content may reach; the default is no practical bound.
+     */
+    explicit VectorSink(std::uint64_t limit = static_cast<std::uint64_t>(-1)) noexcept
+      : limit_(limit)
+    {}
+
+    /**
      * @brief Appends the bytes to what was collected.
      *
      * @param bytes The bytes to append.
-     * @return IoError::Ok always; a vector only fails by throwing, which the caller sees as such.
+     * @return IoError::Ok, or IoError::CapacityExceeded when the content would pass the limit; a vector only
+     *         fails by throwing, which the caller sees as such.
      */
     IoError write(std::span<const std::byte> bytes) override
     {
+        if (bytes.size() > limit_ - bytes_.size()) {
+            return IoError::CapacityExceeded; // the bound a whole-content read is held to
+        }
         const auto* const first = reinterpret_cast<const unsigned char*>(bytes.data());
         bytes_.insert(bytes_.end(), first, first + bytes.size());
         return IoError::Ok;
@@ -58,6 +91,7 @@ class VectorSink final : public DataSink {
 
   private:
     std::vector<unsigned char> bytes_;
+    std::uint64_t              limit_;
 };
 
 /**
@@ -96,10 +130,13 @@ inline IoError pumpSource(DataSource& source, DataSink& sink)
             }
             break; // nothing was stated, so returning nothing is how this source reports the end
         }
-        if (const IoError refused = sink.write(std::span<const std::byte>(chunk.data(), got)); refused != IoError::Ok) {
+        // A source cannot write past the span it was handed; a count that claims more describes bytes nobody wrote, so
+        // only what actually fits is folded in.
+        const std::size_t fitted = std::min(got, want);
+        if (const IoError refused = sink.write(std::span<const std::byte>(chunk.data(), fitted)); refused != IoError::Ok) {
             return refused; // the destination would not take the content
         }
-        produced += got;
+        produced += fitted;
     }
 
     // The content arrived, but a source can only settle its verdict at the very end (a checksum finishes with the last
@@ -266,6 +303,59 @@ inline bool isPathBelow(const std::filesystem::path& parent, const std::filesyst
     const std::u8string prefix = parent.empty() ? std::u8string() : parent.generic_u8string() + u8"/";
     const std::u8string text   = path.generic_u8string();
     return text.size() > prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
+}
+
+/**
+ * @brief Reports whether one physical path is the other or lies below it.
+ *
+ * The component boundary is what makes this a containment test: "/data" contains "/data/x" and not "/database".
+ *
+ * @param root The directory a path has to stay inside (canonical or normalized).
+ * @param path The path to test, spelled the same way.
+ * @return true when path is root itself or an entry below it.
+ */
+inline bool isSameOrBelow(const std::filesystem::path& root, const std::filesystem::path& path)
+{
+    const std::u8string anchor = root.generic_u8string();
+    const std::u8string text   = path.generic_u8string();
+    if (text == anchor) {
+        return true;
+    }
+    if (text.size() <= anchor.size() || text.compare(0, anchor.size(), anchor) != 0) {
+        return false;
+    }
+    return anchor.empty() || anchor.back() == u8'/' || text[anchor.size()] == u8'/';
+}
+
+/**
+ * @brief The process id, so a staging file name can be unique across processes.
+ *
+ * @return The identifier of this process.
+ */
+inline std::uint64_t currentProcessId() noexcept
+{
+#if defined(_WIN32)
+    return static_cast<std::uint64_t>(::_getpid());
+#else
+    return static_cast<std::uint64_t>(::getpid());
+#endif
+}
+
+/**
+ * @brief A staging path a write-into-then-publish sequence owns next to its target.
+ *
+ * Unique per process and per call, because two writers of one target must not stage into the same file: a crash then
+ * leaves bytes nobody will ever publish, and a shared name would let one writer publish another's half.
+ *
+ * @param target The file the staging path is a sibling of.
+ * @return The staging path; it does not exist yet and nothing else uses it.
+ */
+inline std::filesystem::path temporaryPathFor(const std::filesystem::path& target)
+{
+    static std::atomic<std::uint64_t> s_counter{ 0 };
+    std::filesystem::path             staging = target;
+    staging += ".vine-tmp-" + std::to_string(currentProcessId()) + "-" + std::to_string(s_counter.fetch_add(1));
+    return staging;
 }
 
 /**

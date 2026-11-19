@@ -18,66 +18,100 @@ VN_IO_NS_BEGIN
 namespace
 {
 
-/// The largest decompressed size one call will produce.
-constexpr std::size_t kMaxDecompressedBytes = 1u << 30;
-
-/**
- * @brief Computes the CRC-32 of a buffer.
- *
- * The codec takes a 32-bit length, so the buffer is walked in chunks.
- *
- * @param bytes The bytes to checksum.
- * @return The checksum; 0 for an empty buffer.
- */
-std::uint32_t crc32Of(std::span<const unsigned char> bytes)
-{
-    std::uint32_t crc    = 0;
-    std::size_t   offset = 0;
-    while (offset < bytes.size()) {
-        const std::size_t step = std::min<std::size_t>(bytes.size() - offset, 1u << 30);
-        crc                    = static_cast<std::uint32_t>(::crc32(crc, bytes.data() + offset, static_cast<uInt>(step)));
-        offset += step;
-    }
-    return crc;
-}
+/// Bytes one deflate/inflate step may produce or consume; small enough to stay a cache-sized buffer.
+constexpr std::size_t kCodecChunkBytes = 64U * 1024U;
 
 } // namespace
 
 Result<std::vector<unsigned char>> Zip::compress(std::span<const unsigned char> bytes)
 {
-    const uLongf               bound = compressBound(static_cast<uLong>(bytes.size()));
-    std::vector<unsigned char> out(static_cast<std::size_t>(bound));
-    uLongf                     dest_len = bound;
-    if (::compress(out.data(), &dest_len, bytes.data(), static_cast<uLong>(bytes.size())) != Z_OK) {
+    // Streamed rather than one compress() call: the codec takes a 32-bit length, so a single call would silently
+    // compress only the first 4 GiB of a larger buffer on a platform where uLong is 32 bits.
+    z_stream stream{};
+    if (::deflateInit(&stream, Z_DEFAULT_COMPRESSION) != Z_OK) {
         return IoError::IoFailure;
     }
-    out.resize(static_cast<std::size_t>(dest_len));
+
+    std::array<unsigned char, kCodecChunkBytes> buffer{};
+    std::vector<unsigned char>                  out;
+    out.reserve(std::max<std::size_t>(bytes.size() / 2, 64));
+
+    std::size_t offset = 0;
+    while (true) {
+        if (stream.avail_in == 0 && offset < bytes.size()) {
+            const std::size_t step = std::min<std::size_t>(bytes.size() - offset, buffer.size());
+            stream.next_in        = const_cast<Bytef*>(bytes.data() + offset); // zlib reads it, never writes it
+            stream.avail_in       = static_cast<uInt>(step);
+            offset += step;
+        }
+
+        stream.next_out  = buffer.data();
+        stream.avail_out = static_cast<uInt>(buffer.size());
+        const int rc     = ::deflate(&stream, offset == bytes.size() ? Z_FINISH : Z_NO_FLUSH);
+        if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
+            ::deflateEnd(&stream);
+            return IoError::IoFailure;
+        }
+        out.insert(out.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(buffer.size() - stream.avail_out));
+        if (rc == Z_STREAM_END) {
+            break;
+        }
+        if (rc == Z_BUF_ERROR && stream.avail_in == 0 && offset == bytes.size()) {
+            ::deflateEnd(&stream);
+            return IoError::IoFailure; // nothing left to read and no progress: the stream never finished
+        }
+    }
+
+    ::deflateEnd(&stream);
     return out;
 }
 
 Result<std::vector<unsigned char>> Zip::decompress(std::span<const unsigned char> bytes)
 {
-    // The codec cannot say "not enough room" before trying, so the destination is
-    // retried at growing sizes until it fits - or until the limit says the stream
-    // will not fit anywhere sensible.
-    std::size_t capacity = std::max<std::size_t>(bytes.size() * 2, 256);
-    while (capacity <= kMaxDecompressedBytes) {
-        std::vector<unsigned char> out(capacity);
-        uLongf                     dest_len = static_cast<uLongf>(capacity);
-        const int                  rc       = ::uncompress(out.data(), &dest_len, bytes.data(), static_cast<uLong>(bytes.size()));
-        if (rc == Z_OK) {
-            out.resize(static_cast<std::size_t>(dest_len));
-            return out;
-        }
-        if (rc == Z_MEM_ERROR) {
-            return IoError::IoFailure;
-        }
-        if (rc != Z_BUF_ERROR) {
-            return IoError::InvalidData; // not a zlib stream
-        }
-        capacity *= 2;
+    // Streamed for the same reason compress() is, and it is what makes the size limit enforceable while the content
+    // grows instead of after it has already been allocated.
+    z_stream stream{};
+    if (::inflateInit(&stream) != Z_OK) {
+        return IoError::IoFailure;
     }
-    return IoError::CapacityExceeded;
+
+    std::array<unsigned char, kCodecChunkBytes> buffer{};
+    std::vector<unsigned char>                  out;
+
+    std::size_t offset = 0;
+    while (true) {
+        if (stream.avail_in == 0 && offset < bytes.size()) {
+            const std::size_t step = std::min<std::size_t>(bytes.size() - offset, buffer.size());
+            stream.next_in        = const_cast<Bytef*>(bytes.data() + offset); // zlib reads it, never writes it
+            stream.avail_in       = static_cast<uInt>(step);
+            offset += step;
+        }
+
+        stream.next_out  = buffer.data();
+        stream.avail_out = static_cast<uInt>(buffer.size());
+        const int         rc       = ::inflate(&stream, Z_NO_FLUSH);
+        const std::size_t produced = buffer.size() - stream.avail_out;
+        if (produced > detail::kMaxWholeContentBytes - out.size()) {
+            ::inflateEnd(&stream);
+            return IoError::CapacityExceeded; // the bound on what one call may materialize
+        }
+        out.insert(out.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(produced));
+
+        if (rc == Z_STREAM_END) {
+            break;
+        }
+        if (rc != Z_OK) {
+            ::inflateEnd(&stream);
+            return rc == Z_MEM_ERROR ? IoError::IoFailure : IoError::InvalidData; // not a zlib stream, or truncated
+        }
+        if (produced == 0 && stream.avail_in == 0 && offset == bytes.size()) {
+            ::inflateEnd(&stream);
+            return IoError::InvalidData; // the input ended before the stream did
+        }
+    }
+
+    ::inflateEnd(&stream);
+    return out;
 }
 
 IoError Zip::compressDirectory(const std::filesystem::path& dir_path, const std::filesystem::path& zip_path)
@@ -105,7 +139,7 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
     int               error     = 0;
     zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
     if (archive == nullptr) {
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error); // "not an archive" is only one of the reasons libzip can give
     }
     if (!std::filesystem::create_directories(dir_path, ec) && ec) {
         zip_close(archive);
@@ -197,7 +231,7 @@ Result<std::vector<VfsEntryInfo>> Zip::entries(const std::filesystem::path& path
     int               error     = 0;
     zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
     if (archive == nullptr) {
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error);
     }
     const auto result = detail::readEntries(archive);
     zip_close(archive);
@@ -212,22 +246,19 @@ Result<std::vector<VfsEntryInfo>> Zip::entries(std::span<const unsigned char> by
     if (bytes.empty()) {
         return IoError::InvalidData;
     }
-    zip_error_t error;
-    zip_error_init(&error);
-    zip_source_t* const source = zip_source_buffer_create(bytes.data(), bytes.size(), 0, &error);
+    detail::ZipError error;
+    zip_source_t* const source = zip_source_buffer_create(bytes.data(), bytes.size(), 0, error.get());
     if (source == nullptr) {
-        zip_error_fini(&error);
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error.ref());
     }
-    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, &error);
+    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, error.get());
     if (archive == nullptr) {
+        const IoError why = detail::ioErrorOf(error.ref());
         zip_source_free(source);
-        zip_error_fini(&error);
-        return IoError::InvalidData;
+        return why;
     }
     const auto result = detail::readEntries(archive);
     zip_close(archive);
-    zip_error_fini(&error);
     if (!result) {
         return result.error();
     }
@@ -253,7 +284,7 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
     int               error     = 0;
     zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
     if (archive == nullptr) {
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error);
     }
     // The lookup first compares the bytes we hold with the bytes the archive stored, and
     // falls back to comparing decoded names, so a legacy name is found by what it says
@@ -275,6 +306,10 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
         zip_close(archive);
         return IoError::IoFailure;
     }
+    if (static_cast<std::uint64_t>(st.size) > detail::kMaxWholeContentBytes) {
+        zip_close(archive);
+        return IoError::CapacityExceeded; // a size the directory states, not one that may be allocated blindly
+    }
     zip_file_t* const file = zip_fopen_index(archive, index, 0);
     if (file == nullptr) {
         zip_close(archive);
@@ -298,7 +333,7 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
     // libzip does not look at the checksum while it reads, so the content is
     // checked here against what the archive directory recorded - the same check
     // the opened archive performs.
-    if ((st.valid & ZIP_STAT_CRC) != 0 && st.crc != 0 && crc32Of(out) != static_cast<std::uint32_t>(st.crc)) {
+    if ((st.valid & ZIP_STAT_CRC) != 0 && st.crc != 0 && detail::crc32Of(out) != static_cast<std::uint32_t>(st.crc)) {
         return IoError::IoFailure;
     }
     return out;
@@ -312,18 +347,16 @@ Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char>
     if (bytes.empty()) {
         return IoError::InvalidData;
     }
-    zip_error_t error;
-    zip_error_init(&error);
-    zip_source_t* const source = zip_source_buffer_create(bytes.data(), bytes.size(), 0, &error);
+    detail::ZipError error;
+    zip_source_t* const source = zip_source_buffer_create(bytes.data(), bytes.size(), 0, error.get());
     if (source == nullptr) {
-        zip_error_fini(&error);
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error.ref());
     }
-    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, &error);
+    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, error.get());
     if (archive == nullptr) {
+        const IoError why = detail::ioErrorOf(error.ref());
         zip_source_free(source);
-        zip_error_fini(&error);
-        return IoError::InvalidData;
+        return why;
     }
 
     // Same lookup as the file overload: stored bytes first, decoded names second.
@@ -344,6 +377,10 @@ Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char>
         zip_close(archive);
         return IoError::IoFailure;
     }
+    if (static_cast<std::uint64_t>(st.size) > detail::kMaxWholeContentBytes) {
+        zip_close(archive);
+        return IoError::CapacityExceeded; // a size the directory states, not one that may be allocated blindly
+    }
     zip_file_t* const file = zip_fopen_index(archive, index, 0);
     if (file == nullptr) {
         zip_close(archive);
@@ -361,14 +398,13 @@ Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char>
     }
     zip_fclose(file);
     zip_close(archive);
-    zip_error_fini(&error);
     if (total != st.size) {
         return IoError::IoFailure;
     }
     // libzip does not look at the checksum while it reads, so the content is
     // checked here against what the archive directory recorded - the same check
     // the opened archive performs.
-    if ((st.valid & ZIP_STAT_CRC) != 0 && st.crc != 0 && crc32Of(out) != static_cast<std::uint32_t>(st.crc)) {
+    if ((st.valid & ZIP_STAT_CRC) != 0 && st.crc != 0 && detail::crc32Of(out) != static_cast<std::uint32_t>(st.crc)) {
         return IoError::IoFailure;
     }
     return out;

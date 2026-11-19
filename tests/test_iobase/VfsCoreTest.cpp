@@ -605,3 +605,92 @@ TEST(VfsCoreTest, DirectoryCreateRenameRemove)
     EXPECT_FALSE(dir->exists(u8"moved"));
     EXPECT_EQ(dir->remove(u8"moved"), IoError::NotFound);
 }
+
+TEST(VfsCoreTest, DirectoryReportsAFailedQueryAsSuch)
+{
+    const TempDir   temp;
+    std::error_code ec;
+    ASSERT_TRUE(std::filesystem::create_directories(temp.path() / "locked", ec));
+    std::filesystem::permissions(temp.path() / "locked", std::filesystem::perms::none, ec);
+    ASSERT_FALSE(ec);
+
+    // Where permissions are not enforced (a root account, a permissive mount) the case says nothing about the code.
+    std::error_code probe;
+    static_cast<void>(std::filesystem::status(temp.path() / "locked" / "x", probe));
+    if (probe != std::errc::permission_denied) {
+        std::filesystem::permissions(temp.path() / "locked", std::filesystem::perms::owner_all, ec);
+        GTEST_SKIP() << "permissions are not enforced here";
+    }
+
+    auto dir = DirectoryVfs::openDirectory(temp.path());
+    ASSERT_NE(dir, nullptr);
+
+    // A query that failed is reported as what it is - the storage refusing access - never as an answer about the
+    // path: "already exists" and "not a directory" were both answers about something the call could not even see.
+    EXPECT_EQ(dir->stat(u8"locked/x").error(), IoError::PermissionDenied);
+    EXPECT_EQ(dir->createDirectory(u8"locked/x"), IoError::PermissionDenied);
+    EXPECT_EQ(dir->createDirectories(u8"locked/x"), IoError::PermissionDenied);
+    EXPECT_EQ(dir->rename(u8"locked/x", u8"y"), IoError::PermissionDenied);
+
+    std::filesystem::permissions(temp.path() / "locked", std::filesystem::perms::owner_all, ec);
+}
+
+TEST(VfsCoreTest, DirectoryVfsRefusesALinkThatLeavesItsRoot)
+{
+    const TempDir tree;
+    const TempDir outside;
+
+    std::error_code ec;
+    {
+        std::ofstream out(outside.path() / "secret.txt", std::ios::binary);
+        out << "secret";
+    }
+
+    auto dir = DirectoryVfs::openDirectory(tree.path());
+    ASSERT_NE(dir, nullptr);
+    ASSERT_EQ(dir->addFile(u8"real.txt", bytesOf("inside")), IoError::Ok);
+
+    std::filesystem::create_symlink(outside.path() / "secret.txt", tree.path() / "escape.txt", ec);
+    if (ec) {
+        GTEST_SKIP() << "links are not available here: " << ec.message();
+    }
+    std::filesystem::create_symlink(tree.path() / "real.txt", tree.path() / "inside.txt", ec);
+    ASSERT_FALSE(ec) << "a link inside the tree is needed too";
+
+    // A link inside the tree is followed like any other entry ...
+    const auto inside = dir->read(u8"inside.txt");
+    ASSERT_TRUE(inside.ok());
+    EXPECT_EQ(inside.value(), bytesOf("inside"));
+
+    // ... one that points out of it names nothing this tree can serve, and it says so instead of reading the target.
+    EXPECT_EQ(dir->read(u8"escape.txt").error(), IoError::InvalidPath);
+    EXPECT_EQ(dir->stat(u8"escape.txt").error(), IoError::InvalidPath);
+
+    // The listing offers what it can serve, so the escaping link is left out.
+    const auto children = dir->list(u8"");
+    ASSERT_TRUE(children.ok());
+    EXPECT_EQ(findInfo(children.value(), std::filesystem::path(u8"escape.txt")), nullptr);
+    EXPECT_NE(findInfo(children.value(), std::filesystem::path(u8"inside.txt")), nullptr);
+}
+
+TEST(VfsCoreTest, ListAnswersInPathOrder)
+{
+    const TempDir temp;
+
+    auto dir = DirectoryVfs::openDirectory(temp.path());
+    ASSERT_NE(dir, nullptr);
+
+    // Written in an order the directory order is free to change.
+    ASSERT_EQ(dir->addFile(u8"zebra.txt", bytesOf("z")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"alpha.txt", bytesOf("a")), IoError::Ok);
+    ASSERT_EQ(dir->addFile(u8"mid/item.txt", bytesOf("m")), IoError::Ok);
+    ASSERT_EQ(dir->createDirectory(u8"beta"), IoError::Ok);
+
+    const auto children = dir->list(u8"");
+    ASSERT_TRUE(children.ok());
+    ASSERT_EQ(children->size(), 4u);
+    EXPECT_EQ((*children)[0].path, std::filesystem::path(u8"alpha.txt"));
+    EXPECT_EQ((*children)[1].path, std::filesystem::path(u8"beta"));
+    EXPECT_EQ((*children)[2].path, std::filesystem::path(u8"mid"));
+    EXPECT_EQ((*children)[3].path, std::filesystem::path(u8"zebra.txt"));
+}

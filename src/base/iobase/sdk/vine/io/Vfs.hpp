@@ -185,7 +185,9 @@ class VN_IOBASE_API Vfs {
      * can be fed straight back into stat() or read().
      *
      * @param dir The virtual directory to list; empty denotes the root.
-     * @return The children, or IoError::NotFound when dir does not exist,
+     * @return The children, ordered by the UTF-8 bytes of their full virtual path - so two backends listing the same
+     *         tree answer in the same order, and a diff between two listings shows real changes only.
+     *         IoError::NotFound when dir does not exist,
      *         IoError::NotADirectory when dir names a file,
      *         IoError::InvalidPath when dir is not a valid virtual path.
      */
@@ -201,6 +203,7 @@ class VN_IOBASE_API Vfs {
      * @return The file bytes, or IoError::NotFound when there is no such file,
      *         IoError::IsADirectory when path names a directory,
      *         IoError::InvalidPath when path is not a valid virtual path,
+     *         IoError::CapacityExceeded when the entry is larger than one buffer may hold (stream it instead),
      *         IoError::IoFailure when the content cannot be read.
      */
     [[nodiscard]] virtual Result<std::vector<unsigned char>> read(const std::filesystem::path& path) const = 0;
@@ -290,9 +293,11 @@ class VN_IOBASE_API Vfs {
      * @param path The virtual file path.
      * @param fragments The pieces, in order; an empty list adds an empty file.
      * @return IoError::Ok on success, IoError::InvalidData when a non-empty
-     *         piece points at no bytes, IoError::AlreadyExists when a file owns
-     *         the name, IoError::IsADirectory when the root or a directory owns
-     *         it, IoError::NotADirectory when an ancestor is a file,
+     *         piece points at no bytes, IoError::CapacityExceeded when the pieces
+     *         outgrow one buffer (a backend that keeps them borrowed has no such bound),
+     *         IoError::AlreadyExists when a file owns the name,
+     *         IoError::IsADirectory when the root or a directory owns it,
+     *         IoError::NotADirectory when an ancestor is a file,
      *         IoError::ReadOnly when the backend refuses writes,
      *         IoError::InvalidPath when path is not a valid virtual path.
      */
@@ -316,6 +321,8 @@ class VN_IOBASE_API Vfs {
      * @param path The virtual file path.
      * @param source The source to pull from; must not be null.
      * @return IoError::Ok on success, IoError::InvalidData when source is null,
+     *         IoError::CapacityExceeded when the content outgrows one buffer (a
+     *         backend that keeps the source pulls it at save time and has no such bound),
      *         IoError::AlreadyExists when a file owns the name,
      *         IoError::IsADirectory when the root or a directory owns it,
      *         IoError::NotADirectory when an ancestor is a file,

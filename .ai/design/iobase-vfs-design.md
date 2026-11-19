@@ -1,7 +1,7 @@
 # IOBase (vn::io) core capabilities: VFS and Stream
 
 > **Status**: current
-> **Last verified**: 2026-10-23
+> **Last verified**: 2026-11-19
 > **Scope**: `Vfs` / `Stream` / the error model / paths / backends / MountVfs; migration and gates.
 > **Sources**: `src/base/iobase/sdk/vine/io/**`, `tests/test_iobase`.
 > **Backlog**: `../backlog/`
@@ -54,6 +54,7 @@ a large payload travels through `openRead`/`read(sink)`/`addFile(source)`, and t
 - `..` cancels a segment; cancelling past the root → `InvalidPath`.
 - The ZIP archive entry accepts an old package that writes `\` as the directory separator; it maps to a `/` virtual path, a path outside the root is refused, a duplicate name invalidates the archive, and an unmodified entry keeps its original name when repackaging.
 - A non-text entry name is decoded as “valid UTF-8 → local code page → byte-for-byte same-value code points”, and the archive's original bytes are written back unchanged when repackaging.
+- A backend that maps onto real storage resolves the physical path and refuses one that lands outside its root: a link inside the tree cannot reach through it (`N6`). `DirectoryVfs::list` leaves such an entry out, so a listing offers only what can be served.
 
 ### 2.3 Backend family
 
@@ -69,7 +70,9 @@ Zip                 one-shot compress/decompress/entries/readEntry
 - The source `zip_t` is read-only throughout; the destination `zip_t` is opened only by `commit`/`saveAs`.
 - `commit()`: a temporary file + an atomic replace + an index rebuild; `saveAs(path|ostream)` / `toBytes()` write elsewhere.
 - An unmodified entry is carried over by `zip_source_zip_file`; peak memory = one entry.
-- The read path computes its own CRC against the directory record; a mismatch → `IoFailure`.
+- The read path computes its own CRC against the directory record; a mismatch → `IoFailure`. The checksum is folded in chunks, so an entry larger than the codec's 32-bit length is summed whole rather than truncated (`N3`).
+- A whole-content read (`read(path)`, `Zip::readEntry`, `addFile(bytes|fragments|source)` on a buffering backend) is bounded by `detail::kMaxWholeContentBytes` (1 GiB) and answers `CapacityExceeded` past it; `openRead`, a sink and a staging file carry larger content, so the bound never limits what a tree can store (`N7`).
+- Every write that replaces a file stages into a uniquely named sibling and renames it into place - `DirectoryVfs::addFile`, `ZipArchive::saveAs`, `ZipArchive::commit` - so a failure leaves the previous file whole instead of truncated (`R10`).
 
 ### 2.4 Streams and zero copy
 
@@ -208,6 +211,8 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | R7 | one source attaches to one entry; the callback runs on the saving thread. |
 | R8 | `commit()` uses a temporary file + an atomic replace + an index rebuild. |
 | R9 | even a single-character write obeys the capacity limit. |
+| R10 | a write that replaces a file leaves it either as it was or wholly replaced; the staging sibling has a name of its own. |
+| R11 | `list` answers ordered by the UTF-8 bytes of the full virtual path, in every backend, so two listings of one tree compare cleanly. |
 
 ### 5.3 Invariants (N#)
 
@@ -218,6 +223,9 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | N3 | the zip read path computes its own CRC; a mismatch → `IoFailure`. |
 | N4 | not thread-safe at the method level; a shared object is synchronised by the caller. |
 | N5 | after separator normalization, a duplicate name or a path outside the root refuses to open the archive; the original stored name is used only to repack an unmodified entry losslessly. |
+| N6 | a path is served only while its physical spelling stays inside the backend's root; a link that leaves it is `InvalidPath`. |
+| N7 | a whole-content read is bounded by `kMaxWholeContentBytes`; streaming is the path for anything larger. |
+| N8 | a storage query that failed is reported as `PermissionDenied`/`IoFailure`, never as an answer about the path. |
 
 ## 6. Caveats and Traps
 
@@ -232,6 +240,10 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | P7 | seeking in a compressed entry | every seek decompresses that entry from the start. | read and write sequentially; for repeated seeks, decompress into a memory stream first. |
 | P8 | `kUnknownSize` | the zip64 backfill fails when the destination is not seekable. | write an unknown length to a seekable destination only, otherwise buffer first (`C7`). |
 | P9 | `release()` / `clearData()` | assuming clearing the content also resets the limit. | the limit is independent of the content; the move constructor / assignment carry it (`C9`). |
+| P10 | a failed `stat` read as an answer | `status(p, ec)` answers `not_found` for a missing path and still sets `ENOENT`, and answers `none` when it could not look at all - so reading the code first turns "nothing is there" into a failure, and reading only the type turns a permission problem into `AlreadyExists`. | the type decides, `none` is the failure (`N8`); `VfsCoreTest.DirectoryReportsAFailedQueryAsSuch` pins it. |
+| P11 | a link out of the root | the host follows a link, so a tree that checks only the spelling reads and writes outside its root. | resolve the physical spelling and compare it with the root (`N6`); `DirectoryVfsRefusesALinkThatLeavesItsRoot`. |
+| P12 | commit while a reader lives | the reader keeps the source handle, and Windows refuses to replace an open file, so `commit()` fails; on POSIX it succeeds and the reader keeps serving the old bytes. | documented on `commit()`; the archive reopens its source when the rename fails, so a refusal leaves it usable rather than empty. |
+| P13 | a cycle of mounts | a tree mounted below itself recurses until the stack ends. | keep the mount graph acyclic; `mount()` holds no handle to its own object and cannot detect it. |
 
 ## 7. Rejected Options
 
@@ -243,6 +255,8 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | D4 | one name `save(path)` | writing back to itself and saving elsewhere are different targets; split into `commit`/`saveAs`. | — |
 | D5 | push writing `openWrite()` | the libzip source is pull; push could only buffer or spool. | — |
 | D6 | `toBytes()`/`saveAs(ostream&)` for a large package | the peak is about 2× the package; a large package goes through `saveAs(path)`/`commit`. | — |
+| D7 | writing in place, with a backup file for the failure case | a backup is one more file to name, clean up and get wrong, and the failure window is the same; staging plus rename is atomic on both platforms (`R10`). | `ADR-2026-11-19-iobase-writes-publish-whole.md` |
+| D8 | a configurable limit on a whole-content read | a setting every caller has to reason about, for a bound only the untrusted path needs; one constant plus the streaming form is the whole story (`N7`). | `ADR-2026-11-19-iobase-whole-content-bound.md` |
 
 ## 8. Tests and Acceptance
 
@@ -258,6 +272,7 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | T8 | MountVfs merging / cross-backend rename | `MountVfsTest` |
 | T9 | the memory-stream limit / reserve | `MemoryStreamTest` |
 | T10 | ZIP backslash compatibility, a path escape and a collision after normalization | `ZipArchiveTest.ReadsWindowsSeparatorsAsArchivePathSeparators`, `RejectsArchiveNamesThatCollideAfterSeparatorNormalization`, `RejectsWindowsSeparatorPathTraversalInArchiveNames` |
+| T11 | a failed storage query, a link out of the root, listing order, a failed save, a read generator | `VfsCoreTest.DirectoryReportsAFailedQueryAsSuch`, `VfsCoreTest.DirectoryVfsRefusesALinkThatLeavesItsRoot`, `VfsCoreTest.ListAnswersInPathOrder`, `ZipArchiveTest.ListAnswersInPathOrder`, `ZipArchiveTest.SaveAsKeepsAnExistingTargetWhenTheContentFails`, `ZipArchiveTest.ReadingAGeneratedEntryKeepsItForTheSave` |
 
 ## 9. Status and Evolution
 
@@ -269,7 +284,7 @@ The error model, path validation, stat/list, read-only, directory operations, st
 
 - TAR/GZIP distinction, cache, HTTP/ACL/encryption/deduplication: not done.
 - `saveAs(ostream&)`/`toBytes()` are not usable for a large package; the 2× peak of `toBytes()` can be removed when a real consumer appears.
-- a concurrent `commit()` on one file is not supported (a fixed temporary name).
+- a concurrent `commit()` on one file is not serialized: each write stages into a file of its own, but the last rename wins.
 - the core `IStream` layering is not done; the trigger for moving `Stream.hpp` down to core is the first consumer that does not depend on iobase.
 
 ### 9.3 Compatibility and Migration

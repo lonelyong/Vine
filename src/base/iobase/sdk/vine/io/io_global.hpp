@@ -9,11 +9,12 @@
 #endif
 
 /**
- * @brief vn::io provides byte/stream/encoding primitives.
+ * @brief vn::io is the storage layer: byte sources and sinks, a virtual file tree, and ZIP.
  *
- * Scope: byte buffers, input/output streams, gzip/zlib (de)compression and
- * encodings (base64/hex). File-system path operations are out of scope; they
- * belong to the system module.
+ * Scope: the DataSource/DataSink byte vocabulary, the Vfs backends (a real directory, a ZIP archive, several trees
+ * mounted under one root) with their IoError/Result contract, path normalization, stream adapters, and zlib/ZIP
+ * (de)compression. Everything above it - file dialogs, documents, application policy - belongs to the modules that
+ * own those concepts.
  */
 #define VN_IO_NS_BEGIN                                                                                                                                         \
     namespace VN_ROOT_NS                                                                                                                                       \

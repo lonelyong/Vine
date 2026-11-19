@@ -21,6 +21,13 @@ VN_IO_NS_BEGIN
  * write is already immediate. Useful for inspecting what would go into a ZIP
  * package, and for loading from an unpacked tree.
  *
+ * The tree never leaves its root. A link below the root that resolves to a path outside it is refused as
+ * IoError::InvalidPath, and list() leaves such an entry out - together with a dangling link and anything that is
+ * neither a file nor a directory - because stat() refuses those too: what the tree offers is what it can serve.
+ *
+ * A storage query that cannot be answered reports IoError::PermissionDenied or IoError::IoFailure; it is never turned
+ * into an answer about the path - "already exists" is only ever said about something the call could see.
+ *
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.
  */
@@ -256,7 +263,8 @@ class VN_IOBASE_API DirectoryVfs : public Vfs {
      * @param vfs_path The virtual path; empty denotes the root.
      * @param normalized Receives the normalized virtual path; untouched on failure.
      * @param out Receives the mapped real path; untouched on failure.
-     * @return IoError::Ok, or IoError::InvalidPath for an invalid virtual path.
+     * @return IoError::Ok, or IoError::InvalidPath for an invalid virtual path or one a link points out of the root,
+     *         IoError::IoFailure when the physical path cannot be resolved at all.
      */
     [[nodiscard]] IoError resolve(const std::filesystem::path& vfs_path, std::filesystem::path& normalized, std::filesystem::path& out) const;
 
@@ -289,7 +297,19 @@ class VN_IOBASE_API DirectoryVfs : public Vfs {
      */
     [[nodiscard]] IoError ensureWriteParent(const std::filesystem::path& real);
 
+    /**
+     * @brief Reports whether a real path resolves to the root or to a path below it.
+     *
+     * The test list() asks of a link before it offers the entry: a link whose target is outside the tree names
+     * nothing this backend can serve.
+     *
+     * @param real The real path of an entry below the root.
+     * @return true when the resolved path stays inside the root; false when it leaves it or cannot be resolved.
+     */
+    [[nodiscard]] bool staysInsideRoot(const std::filesystem::path& real) const;
+
     std::filesystem::path root_;
+    std::filesystem::path canonical_root_; // root_ with every link resolved, the anchor the containment test uses.
 };
 
 VN_IO_NS_END

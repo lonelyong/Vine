@@ -1,5 +1,6 @@
 ﻿#include <vine/io/DirectoryVfs.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <functional>
@@ -18,16 +19,27 @@ VN_IO_NS_BEGIN
 namespace
 {
 
-/** @brief Suffix of the file a streaming write grows before it replaces the target. */
-constexpr const char* kTemporarySuffix = ".vine-tmp";
+/**
+ * @brief The failure a storage query that did not answer reports.
+ *
+ * A query that fails is not an answer about the path, and it is worth saying why: the storage refusing access and the
+ * storage breaking are different problems for the caller.
+ *
+ * @param ec What the query reported.
+ * @return IoError::PermissionDenied when the storage refused access, IoError::IoFailure otherwise.
+ */
+IoError failureOf(const std::error_code& ec)
+{
+    return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
+}
 
 /**
- * @brief Writes a file by streaming into a sibling temporary and publishing it when the content is complete.
+ * @brief Writes a file by streaming into a sibling staging file and publishing it when the content is complete.
  *
  * A source can stop halfway (a broken stream, a length it cannot deliver), and a half-written file would look like
- * content - so the bytes go into a temporary first and the target is replaced at the very end. The target is therefore
- * either what was there before or the whole new content, never a mixture; ZipArchive::commit publishes its own file the
- * same way.
+ * content - so the bytes go into a staging file first and the target is replaced at the very end. The target is
+ * therefore either what was there before or the whole new content, never a mixture; ZipArchive writes its own file
+ * the same way.
  *
  * @param real The file to publish; its parent directory must exist.
  * @param produce Writes the content into the stream; it returns what went wrong, or IoError::Ok when it finished.
@@ -35,11 +47,9 @@ constexpr const char* kTemporarySuffix = ".vine-tmp";
  */
 IoError writeThroughTemporary(const std::filesystem::path& real, const std::function<IoError(std::ostream&)>& produce)
 {
-    std::filesystem::path staging = real;
-    staging += kTemporarySuffix;
+    const std::filesystem::path staging = detail::temporaryPathFor(real);
 
     std::error_code ec;
-    std::filesystem::remove(staging, ec); // a leftover from an interrupted run is not content to append to
     {
         std::ofstream out(staging, std::ios::binary | std::ios::trunc);
         if (!out) {
@@ -65,7 +75,14 @@ IoError writeThroughTemporary(const std::filesystem::path& real, const std::func
 
 DirectoryVfs::DirectoryVfs(const std::filesystem::path& root)
   : root_(root)
-{}
+{
+    // The containment test compares physical spellings, so the root is resolved once, here, rather than per call.
+    std::error_code ec;
+    canonical_root_ = std::filesystem::weakly_canonical(root, ec);
+    if (ec) {
+        canonical_root_ = root_; // nothing to resolve against; every later check falls back to the lexical spelling
+    }
+}
 
 DirectoryVfs::~DirectoryVfs() = default;
 
@@ -94,6 +111,19 @@ IoError DirectoryVfs::resolve(const std::filesystem::path& vfs_path, std::filesy
         return IoError::InvalidPath; // defense in depth
     }
     out = root_ / normalized;
+
+    // The lexical spelling is not the physical one: a link inside the tree can point anywhere, so the path is
+    // resolved and compared with the root before anything is read or written through it (Vfs.hpp: a virtual path
+    // never escapes its backend's root). A path that does not exist yet resolves through its existing prefix, which
+    // is exactly the part a link can hide in.
+    std::error_code               ec;
+    const std::filesystem::path  physical = std::filesystem::weakly_canonical(out, ec);
+    if (ec) {
+        return failureOf(ec); // the path cannot be resolved, so it cannot be served
+    }
+    if (!detail::isSameOrBelow(canonical_root_, physical)) {
+        return IoError::InvalidPath; // a link on the way points out of the root
+    }
     return IoError::Ok;
 }
 
@@ -164,10 +194,19 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
 
         std::error_code                  entry_ec;
         const std::filesystem::file_type entry_type = entry.status(entry_ec).type();
-        if (entry_ec) {
-            return IoError::IoFailure;
+        if (entry_type == std::filesystem::file_type::not_found) {
+            continue; // a dangling link, or an entry that vanished between the walk and the query
+        }
+        if (entry_type == std::filesystem::file_type::none) {
+            return failureOf(entry_ec); // the entry cannot be examined at all
         }
         const bool is_dir = entry_type == std::filesystem::file_type::directory;
+        if (!is_dir && entry_type != std::filesystem::file_type::regular) {
+            continue; // stat() refuses these too, so the listing does not offer them
+        }
+        if (entry.is_symlink(entry_ec) && !staysInsideRoot(entry.path())) {
+            continue; // a link that leaves the root is not part of this tree
+        }
 
         const std::filesystem::path name = entry.path().filename();
         VfsEntryInfo                info;
@@ -184,8 +223,14 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
         children.push_back(std::move(info));
     }
     if (ec) {
-        return IoError::IoFailure;
+        return failureOf(ec);
     }
+
+    // Ordered by the path bytes, the way every backend answers (Vfs::list), so two listings of one tree can be
+    // compared: the host's directory order is a storage detail, not part of the tree.
+    std::sort(children.begin(), children.end(), [](const VfsEntryInfo& left, const VfsEntryInfo& right) {
+        return left.path.generic_u8string() < right.path.generic_u8string();
+    });
     return children;
 }
 
@@ -269,14 +314,18 @@ IoError DirectoryVfs::createDirectory(const std::filesystem::path& path)
     }
 
     // The type decides, not the error code: MSVC also sets it for a missing
-    // path, where the standard only asks for file_type::not_found.
+    // path, where the standard only asks for file_type::not_found - and a host may set ENOENT for one too, so an
+    // error code alone would turn "nothing is there" into a failure. file_type::none is what a failed query leaves.
     std::error_code                  ec;
     const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
     if (type != std::filesystem::file_type::not_found) {
-        return IoError::AlreadyExists; // already a directory, or a file owns the name
+        return type == std::filesystem::file_type::none ? failureOf(ec) : IoError::AlreadyExists;
     }
 
     const std::filesystem::file_type parent_type = std::filesystem::status(real.parent_path(), ec).type();
+    if (parent_type == std::filesystem::file_type::none) {
+        return failureOf(ec); // the query failed, so nothing is known about the parent
+    }
     if (parent_type != std::filesystem::file_type::directory) {
         return parent_type == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
     }
@@ -307,6 +356,9 @@ IoError DirectoryVfs::createDirectories(const std::filesystem::path& path)
     const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
     if (type == std::filesystem::file_type::directory) {
         return IoError::Ok; // already there
+    }
+    if (type == std::filesystem::file_type::none) {
+        return failureOf(ec); // the query failed, so nothing is known about the path
     }
     if (type != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // a file owns the name
@@ -347,9 +399,16 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::file
         return parent;
     }
 
-    // A directory backend copies the file right away, streaming it.
-    std::filesystem::copy_file(real_path, real, std::filesystem::copy_options::overwrite_existing, ec);
+    // A directory backend copies the file right away, streaming it - and publishes it the way the other two overloads
+    // do, so a copy that dies halfway leaves no half-file under the real name.
+    const std::filesystem::path staging = detail::temporaryPathFor(real);
+    std::filesystem::copy_file(real_path, staging, ec);
+    if (!ec) {
+        std::filesystem::rename(staging, real, ec);
+    }
     if (ec) {
+        std::error_code ignored;
+        std::filesystem::remove(staging, ignored);
         return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
     }
     return IoError::Ok;
@@ -387,12 +446,19 @@ IoError DirectoryVfs::rename(const std::filesystem::path& from, const std::files
         return IoError::NotFound;
     }
     if (ec) {
-        return IoError::IoFailure;
+        return failureOf(ec);
     }
-    if (std::filesystem::status(target_real, ec).type() != std::filesystem::file_type::not_found) {
+    const std::filesystem::file_type existing = std::filesystem::status(target_real, ec).type();
+    if (existing == std::filesystem::file_type::none) {
+        return failureOf(ec); // the query failed, so it is unknown whether the target is free
+    }
+    if (existing != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // never overwrite, on any platform
     }
     const std::filesystem::file_type parent_type = std::filesystem::status(target_real.parent_path(), ec).type();
+    if (parent_type == std::filesystem::file_type::none) {
+        return failureOf(ec); // the query failed, so nothing is known about the parent
+    }
     if (parent_type != std::filesystem::file_type::directory) {
         return parent_type == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
     }
@@ -591,14 +657,14 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const
         return parent;
     }
 
-    std::ofstream out(real, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        return IoError::IoFailure;
-    }
-    if (!bytes.empty()) {
-        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    }
-    return out.good() ? IoError::Ok : IoError::IoFailure;
+    // Published like the streaming overloads: a failed write leaves no half-file behind, so all three addFile
+    // spellings give the target the same durability.
+    return writeThroughTemporary(real, [bytes](std::ostream& out) {
+        if (!bytes.empty()) {
+            out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        return out.good() ? IoError::Ok : IoError::IoFailure;
+    });
 }
 
 IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
@@ -677,6 +743,13 @@ IoError DirectoryVfs::ensureWriteParent(const std::filesystem::path& real)
         return IoError::NotADirectory; // a file blocks the way down
     }
     return IoError::IoFailure;
+}
+
+bool DirectoryVfs::staysInsideRoot(const std::filesystem::path& real) const
+{
+    std::error_code              ec;
+    const std::filesystem::path  physical = std::filesystem::weakly_canonical(real, ec);
+    return !ec && detail::isSameOrBelow(canonical_root_, physical);
 }
 
 IoError DirectoryVfs::commit()

@@ -12,13 +12,13 @@
 VN_IO_NS_BEGIN
 
 /**
- * @brief A tree assembled from other backends, each serving one prefix (§10).
+ * @brief A tree assembled from other backends, each serving one prefix.
  *
  * mount() attaches a backend to a virtual prefix: everything at or below the
  * prefix is served by that backend, addressed relative to it. Mounts at the
  * same prefix stack into an overlay ordered by priority (higher first).
  *
- * Routing rules, fixed by design and by the decisions recorded in §15:
+ * Routing rules:
  * - Longest prefix wins, with no fallback: a path under a mount at "data/a" is
  *   answered by that mount even when it cannot resolve it, never by a mount at
  *   "data".
@@ -48,6 +48,9 @@ VN_IO_NS_BEGIN
  * The tree is read-only exactly when no mount accepts writes; a tree without
  * mounts is read-only and resolves nothing. A MountVfs can itself be mounted,
  * and mounting keeps the backend alive through a shared handle.
+ *
+ * A cycle of mounts is not detected: a tree mounted below itself recurses until the stack ends, and no method can
+ * answer. mount() holds no shared handle to its own object, so it cannot recognize the case - keep the graph acyclic.
  *
  * Threading: no method is thread-safe and there is no internal locking - a shared object, and storage that two objects share, are synchronized by the caller;
  * objects that share nothing (buffer, handle or storage) may be used concurrently.

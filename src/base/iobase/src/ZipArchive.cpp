@@ -255,7 +255,7 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource {
         }
         position_ += static_cast<std::uint64_t>(got);
         if (crc_valid_ && got > 0) {
-            crc_ = static_cast<std::uint32_t>(::crc32(crc_, reinterpret_cast<const unsigned char*>(out.data()), static_cast<uInt>(got)));
+            crc_ = detail::crc32Of(crc_, std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(out.data()), static_cast<std::size_t>(got)));
             if (position_ == size_ && expected_crc_ != 0 && crc_ != expected_crc_) {
                 // The last byte arrived, so the checksum can be settled - and libzip
                 // itself does not look at it while reading.
@@ -289,6 +289,7 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource {
             position_  = offset;
             crc_valid_ = offset == 0;
             crc_       = 0;
+            error_     = IoError::Ok;
             return IoError::Ok;
         }
 
@@ -303,6 +304,9 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource {
         // rewind turns the check off.
         crc_valid_ = offset == 0;
         crc_       = 0;
+        // The reader is positioned on readable content again, so a failure an earlier seek recorded no longer describes
+        // it - without this, one refused offset would make every later, successful read report IoFailure.
+        error_ = IoError::Ok;
         return IoError::Ok;
     }
 
@@ -544,6 +548,12 @@ std::vector<VfsEntryInfo> ZipArchive::children(const std::filesystem::path& dir)
         }
         children.push_back(std::move(child));
     }
+
+    // Ordered by the path bytes, the way every backend answers (Vfs::list): the entry table's own order is an
+    // implementation detail, not part of the tree.
+    std::sort(children.begin(), children.end(), [](const VfsEntryInfo& left, const VfsEntryInfo& right) {
+        return left.path.generic_u8string() < right.path.generic_u8string();
+    });
     return children;
 }
 
@@ -582,11 +592,15 @@ Result<std::vector<unsigned char>> ZipArchive::contentOf(const Entry& entry) con
 
     // A generator is pulled in chunks while the content is assembled; the pull itself is the same one every other
     // place in the library uses, so a source that stated no length ends the same way here as it does anywhere else.
-    detail::VectorSink sink;
+    detail::VectorSink sink(detail::kMaxWholeContentBytes);
     if (const IoError pumped = detail::pumpSource(*entry.generator, sink); pumped != IoError::Ok) {
         return pumped;
     }
-    return sink.take();
+    // The bytes are kept in place of the source: a source that stated no length cannot be pulled twice, so reading an
+    // entry and then saving the archive would otherwise write it out empty.
+    entry.data = sink.take();
+    entry.generator.reset();
+    return entry.data;
 }
 
 Result<std::vector<unsigned char>> ZipArchive::read(const std::filesystem::path& path) const
@@ -615,6 +629,9 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem:
     }
     if (handle_ == nullptr) {
         return IoError::IoFailure;
+    }
+    if (entry.info.size > detail::kMaxWholeContentBytes) {
+        return IoError::CapacityExceeded; // the directory's claim, which may not be allocated blindly
     }
 
     zip_file_t* const file = zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED);
@@ -651,7 +668,7 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem:
     }
     // libzip's read path does not check the checksum, so the content is verified here
     // against what the archive directory recorded for the entry.
-    if (entry.info.crc != 0 && static_cast<std::uint32_t>(::crc32(0, bytes.data(), static_cast<uInt>(bytes.size()))) != entry.info.crc) {
+    if (entry.info.crc != 0 && detail::crc32Of(bytes) != entry.info.crc) {
         return IoError::IoFailure;
     }
     return bytes;
@@ -745,7 +762,7 @@ IoError ZipArchive::adoptFile(const std::filesystem::path& path)
     int               error     = 0;
     zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
     if (archive == nullptr) {
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error); // "not an archive" is only one of the reasons libzip can give
     }
 
     auto handle     = std::make_shared<ArchiveHandle>();
@@ -788,20 +805,17 @@ IoError ZipArchive::adoptBytes(std::span<const unsigned char> bytes)
 
 IoError ZipArchive::attachBytes(ArchiveHandle& handle)
 {
-    zip_error_t error;
-    zip_error_init(&error);
-    zip_source_t* const source = zip_source_buffer_create(handle.bytes.data(), handle.bytes.size(), 0, &error);
+    detail::ZipError error;
+    zip_source_t* const source = zip_source_buffer_create(handle.bytes.data(), handle.bytes.size(), 0, error.get());
     if (source == nullptr) {
-        zip_error_fini(&error);
-        return IoError::InvalidData;
+        return detail::ioErrorOf(error.ref());
     }
-    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, &error);
+    zip_t* const archive = zip_open_from_source(source, ZIP_RDONLY, error.get());
     if (archive == nullptr) {
+        const IoError why = detail::ioErrorOf(error.ref());
         zip_source_free(source);
-        zip_error_fini(&error);
-        return IoError::InvalidData;
+        return why;
     }
-    zip_error_fini(&error);
 
     handle.archive = archive;
     return IoError::Ok;
@@ -907,19 +921,31 @@ bool ZipArchive::emit(void* target) const
 
 IoError ZipArchive::saveAs(const std::filesystem::path& path) const
 {
-    const std::string path_utf8 = detail::toUtf8(path);
-    int               error     = 0;
-    zip_t* const      target    = zip_open(path_utf8.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &error);
+    // Built next to the target and moved into place only once it is complete: ZIP_TRUNCATE on the target itself would
+    // destroy a file that is already there before the first entry is written, and leave it half-written on a failure.
+    const std::filesystem::path staging = detail::temporaryPathFor(path);
+    std::error_code             ec;
+    const std::string           path_utf8 = detail::toUtf8(staging);
+    int                         error     = 0;
+    zip_t* const                target    = zip_open(path_utf8.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &error);
     if (target == nullptr) {
         return IoError::IoFailure;
     }
 
     if (!emit(target)) {
         zip_discard(target);
+        std::filesystem::remove(staging, ec);
         return IoError::IoFailure;
     }
     if (zip_close(target) < 0) {
         zip_discard(target); // the handle survives a failed close
+        std::filesystem::remove(staging, ec);
+        return IoError::IoFailure;
+    }
+
+    std::filesystem::rename(staging, path, ec);
+    if (ec) {
+        std::filesystem::remove(staging, ec);
         return IoError::IoFailure;
     }
     return IoError::Ok;
@@ -927,18 +953,15 @@ IoError ZipArchive::saveAs(const std::filesystem::path& path) const
 
 Result<std::vector<unsigned char>> ZipArchive::buildToBytes() const
 {
-    zip_error_t error;
-    zip_error_init(&error);
+    detail::ZipError error;
     // Growable in-memory source; kept alive past zip_close() to read it back.
-    zip_source_t* const buffer = zip_source_buffer_create(nullptr, 0, 1, &error);
+    zip_source_t* const buffer = zip_source_buffer_create(nullptr, 0, 1, error.get());
     if (buffer == nullptr) {
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
-    zip_t* const target = zip_open_from_source(buffer, ZIP_CREATE | ZIP_TRUNCATE, &error);
+    zip_t* const target = zip_open_from_source(buffer, ZIP_CREATE | ZIP_TRUNCATE, error.get());
     if (target == nullptr) {
         zip_source_free(buffer);
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
     zip_source_keep(buffer);
@@ -946,12 +969,10 @@ Result<std::vector<unsigned char>> ZipArchive::buildToBytes() const
     if (!emit(target)) {
         zip_discard(target);
         zip_source_free(buffer);
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
     if (zip_close(target) < 0) {
         zip_source_free(buffer);
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
 
@@ -959,7 +980,6 @@ Result<std::vector<unsigned char>> ZipArchive::buildToBytes() const
     zip_stat_init(&st);
     if (zip_source_stat(buffer, &st) < 0 || zip_source_open(buffer) < 0) {
         zip_source_free(buffer);
-        zip_error_fini(&error);
         return IoError::IoFailure;
     }
 
@@ -967,7 +987,6 @@ Result<std::vector<unsigned char>> ZipArchive::buildToBytes() const
     const zip_uint64_t         got = static_cast<zip_uint64_t>(zip_source_read(buffer, bytes.data(), st.size));
     zip_source_close(buffer);
     zip_source_free(buffer);
-    zip_error_fini(&error);
     if (got != st.size) {
         return IoError::IoFailure;
     }
@@ -998,30 +1017,46 @@ IoError ZipArchive::commit()
         return IoError::Unsupported; // nothing was opened from a file
     }
 
-    std::filesystem::path temp = source_path_;
-    temp += ".vine-tmp";
-    std::error_code ec;
-    std::filesystem::remove(temp, ec);
+    const std::filesystem::path staging = detail::temporaryPathFor(source_path_);
+    std::error_code             ec;
 
     // Written next to the target, while the source handle is still open: the
     // untouched entries are copied from it.
-    const IoError written = saveAs(temp);
+    const IoError written = saveAs(staging);
     if (written != IoError::Ok) {
-        std::filesystem::remove(temp, ec);
+        std::filesystem::remove(staging, ec);
         return written;
     }
 
     // The source has to go before the replacement: Windows refuses to rename over
     // a file this process still has open.
     handle_.reset();
-    std::filesystem::rename(temp, source_path_, ec);
+    std::filesystem::rename(staging, source_path_, ec);
     if (ec) {
-        std::filesystem::remove(temp, ec);
-        return IoError::IoFailure;
+        std::filesystem::remove(staging, ec);
+        // The source file is untouched (that is why the rename failed), so the handle is put back on it: without this
+        // every entry the table copies from the source would be unreadable from here on, and the overlay would be lost
+        // with it.
+        const IoError restored = reopenSource();
+        return restored == IoError::Ok ? IoError::IoFailure : restored;
     }
 
     // Re-index the new file, so the changes are now source-backed entries.
     return adoptFile(source_path_);
+}
+
+IoError ZipArchive::reopenSource()
+{
+    const std::string path_utf8 = detail::toUtf8(source_path_);
+    int               error     = 0;
+    zip_t* const      archive   = zip_open(path_utf8.c_str(), ZIP_RDONLY, &error);
+    if (archive == nullptr) {
+        return detail::ioErrorOf(error);
+    }
+    auto handle     = std::make_shared<ArchiveHandle>();
+    handle->archive = archive;
+    handle_         = std::move(handle); // the entry table is left as it is: it still describes this file
+    return IoError::Ok;
 }
 
 bool ZipArchive::isReadOnly() const noexcept

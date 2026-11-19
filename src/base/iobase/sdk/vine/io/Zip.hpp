@@ -108,7 +108,9 @@ class VN_IOBASE_API Zip {
      * @return The entry bytes, IoError::NotFound when the file or the entry is
      *         missing, IoError::InvalidData when the file is not an archive,
      *         IoError::InvalidPath when name is empty, IoError::IsADirectory when
-     *         name marks a directory, IoError::IoFailure when the entry cannot be
+     *         name marks a directory, IoError::CapacityExceeded when the entry is larger
+     *         than one buffer may hold (read it through ZipArchive::openRead instead),
+     *         IoError::IoFailure when the entry cannot be
      *         read or its content does not match the recorded checksum.
      */
     [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(const std::filesystem::path& path, const std::filesystem::path& name);
@@ -124,7 +126,9 @@ class VN_IOBASE_API Zip {
      * @return The entry bytes, IoError::NotFound when the entry is missing,
      *         IoError::InvalidData when the bytes are not an archive,
      *         IoError::InvalidPath when name is empty, IoError::IsADirectory when
-     *         name marks a directory, IoError::IoFailure when the entry cannot be
+     *         name marks a directory, IoError::CapacityExceeded when the entry is larger
+     *         than one buffer may hold (read it through ZipArchive::openRead instead),
+     *         IoError::IoFailure when the entry cannot be
      *         read or its content does not match the recorded checksum.
      */
     [[nodiscard]] static Result<std::vector<unsigned char>> readEntry(std::span<const unsigned char> bytes, const std::filesystem::path& name);

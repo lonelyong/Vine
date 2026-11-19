@@ -92,8 +92,14 @@ IoError Vfs::addFile(const std::filesystem::path& path, std::span<const Fragment
         return IoError::InvalidData;
     }
 
+    // This default assembles the content in one buffer, so the pieces have to fit the bound such a read is held to -
+    // and the sum is checked rather than trusted: an overflowing total would reserve a small buffer and then write past
+    // it. ZipArchive overrides the overload and keeps the pieces borrowed, where no sum is needed.
     std::uint64_t total = 0;
     for (const Fragment& piece : fragments) {
+        if (piece.size > detail::kMaxWholeContentBytes - total) {
+            return IoError::CapacityExceeded;
+        }
         total += piece.size;
     }
 
@@ -123,8 +129,9 @@ IoError Vfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSour
     }
 
     // The default materializes the content right away; a backend that can defer the pull to saveAs() overrides this and
-    // keeps the source instead. A source that states no length is read the same way - the buffer grows as bytes arrive.
-    detail::VectorSink sink;
+    // keeps the source instead. A source that states no length is read the same way - the buffer grows as bytes arrive,
+    // and stops at the bound every whole-content read is held to.
+    detail::VectorSink sink(detail::kMaxWholeContentBytes);
     if (const IoError pumped = detail::pumpSource(*source, sink); pumped != IoError::Ok) {
         return pumped;
     }

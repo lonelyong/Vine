@@ -89,13 +89,17 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (81)
+## decisions/ — decision records (ADRs) (83)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-19-iobase-whole-content-bound.md` — a whole-content read (zip entries, `addFile` on a buffering backend,
+  `Zip::decompress`) is bounded at 1 GiB and answers `CapacityExceeded`; `openRead`/sinks/staging carry larger content.
+- `ADR-2026-11-19-iobase-writes-publish-whole.md` — every write that replaces a file stages into a uniquely named
+  sibling and renames it into place; a failed save or `addFile` leaves the previous file whole.
 - `ADR-2026-11-19-progress-range-move-only.md` — the progress reporting handle is move-only: a copy that disarmed its source changed a `const` object's state and let assignment drop a pending portion; move assignment now completes the target first, "empty" is one invariant (`parent_scope_ == nullptr`), and a reference-counted handle is rejected because the reporting moment becomes unknowable.
 - `ADR-2026-11-18-plugin-command-attribution.md` — **a command is attributed by the call that registers it, not by the stack it happens to run on**: `PluginLoadContext::registerCommand()` sets the owner tag around that one call and restores it, `PluginManager` holds no tag across a lifecycle hook (the synchronous door pumps, so a suspended hook is not a boundary), and passing the owner per registration (an ABI change for every call site) is rejected.
 - `ADR-2026-11-18-the-frame-carries-its-context.md` — **the frame carries its context, and one clock measures it**:
