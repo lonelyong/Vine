@@ -5,15 +5,18 @@
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <crt_externs.h>
+#include <libproc.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_init.h>
 #include <mach/vm_statistics.h>
 #include <pwd.h>
 #include <signal.h>
+#include <sys/mount.h>
 #include <sys/statvfs.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
@@ -88,10 +91,41 @@ void fillMotherboardInfo(MotherboardInfo& info)
 
 std::vector<DiskInfo> enumerateDisks()
 {
-    // macOS exposes no sysfs equivalent: listing volumes means IOKit, which this module does not
-    // link. Hardware.hpp states the empty answer, so a caller can tell "no implementation" from
-    // "an empty machine".
-    return {};
+    std::vector<DiskInfo> result;
+
+    // macOS publishes no directory of whole devices without IOKit; what the platform hands out
+    // without it is the mounted volumes, which is the shape Windows reports too. Hardware.hpp states
+    // that this half answers volumes, with no model and no serial.
+    struct statfs* mounts = nullptr;
+    const int      count  = ::getmntinfo(&mounts, MNT_WAIT);
+    if (count <= 0 || mounts == nullptr) {
+        return result;
+    }
+
+    for (int index = 0; index < count; ++index) {
+        const struct statfs& mount = mounts[index];
+        const std::string    type(mount.f_fstypename);
+        // A device or automount filesystem is a view of the tree, not storage the caller can size.
+        if (type == "devfs" || type == "autofs") {
+            continue;
+        }
+
+        DiskInfo disk;
+        disk.name     = fromLocal(mount.f_mntonname);
+        disk.capacity = static_cast<std::uint64_t>(mount.f_blocks) * static_cast<std::uint64_t>(mount.f_bsize);
+
+        if (type == "cd9660" || type == "udf") {
+            disk.kind = DiskKind::CdRom;
+        }
+        else if ((mount.f_flags & MNT_LOCAL) != 0) {
+            disk.kind = DiskKind::Fixed;
+        }
+        else {
+            disk.kind = DiskKind::Network;
+        }
+        result.push_back(std::move(disk));
+    }
+    return result;
 }
 
 std::uint64_t volumeTotalSpace(const String& path)
@@ -100,7 +134,7 @@ std::uint64_t volumeTotalSpace(const String& path)
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {
         return 0;
     }
-    return static_cast<unsigned long long>(vfs.f_blocks) * vfs.f_frsize;
+    return static_cast<std::uint64_t>(vfs.f_blocks) * static_cast<std::uint64_t>(vfs.f_frsize);
 }
 
 std::uint64_t volumeFreeSpace(const String& path)
@@ -109,7 +143,7 @@ std::uint64_t volumeFreeSpace(const String& path)
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {
         return 0;
     }
-    return static_cast<unsigned long long>(vfs.f_bavail) * vfs.f_frsize;
+    return static_cast<std::uint64_t>(vfs.f_bavail) * static_cast<std::uint64_t>(vfs.f_frsize);
 }
 
 int currentPid()
@@ -138,10 +172,41 @@ bool pidExists(int pid)
     return errno == EPERM; // Exists, but belongs to another user.
 }
 
-std::vector<int> pidsByName(const String&)
+std::vector<int> pidsByName(const String& name)
 {
-    // KERN_PROC enumeration is not implemented; Process.hpp states the empty answer.
-    return {};
+    std::vector<int> result;
+
+    // libproc answers the byte size first and fills the buffer second; the process table can change
+    // between the two calls, so the buffer is sized from the first answer with room to spare.
+    const int required = ::proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
+    if (required <= 0) {
+        return result;
+    }
+    std::vector<pid_t> pids(static_cast<std::size_t>(required) / sizeof(pid_t) + 1, 0);
+    const int          written = ::proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
+    if (written <= 0) {
+        return result;
+    }
+
+    const std::size_t count = static_cast<std::size_t>(written) / sizeof(pid_t);
+    for (std::size_t index = 0; index < count; ++index) {
+        const pid_t pid = pids[index];
+        if (pid <= 0) {
+            continue;
+        }
+        // A process this one may not inspect is refused by the kernel, exactly like a failed read of
+        // /proc/<pid>/exe on the Linux half.
+        char path[PROC_PIDPATHINFO_MAXSIZE] = {};
+        if (::proc_pidpath(pid, path, sizeof(path)) <= 0) {
+            continue;
+        }
+        const std::string text(path);
+        const std::size_t slash = text.find_last_of('/');
+        if (fromLocal(text.c_str() + (slash == std::string::npos ? 0 : slash + 1)) == name) {
+            result.push_back(pid);
+        }
+    }
+    return result;
 }
 
 bool terminatePid(int pid)

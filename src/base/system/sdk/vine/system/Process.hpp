@@ -11,13 +11,11 @@ VN_SYSTEM_NS_BEGIN
  * @brief Provides information about processes and basic process operations.
  *
  * @details
- * - Queries use the Toolhelp API on Windows and the /proc filesystem on Linux; no process is spawned here, and no failure
- *   reason is reported: a query that cannot answer returns its empty value.
+ * - Queries use the Toolhelp API on Windows, the /proc filesystem on Linux and libproc on macOS; no process is spawned
+ *   here, and no failure reason is reported: a query that cannot answer returns its empty value.
  * - kill() is the only operation that changes the system.
  *
  * @note
- * - macOS answers currentProcessId(), currentExecutablePath(), exists() and kill(), but does not enumerate processes:
- *   findByName() returns an empty list there rather than guessing.
  * - A platform the module does not implement answers every query with its empty value.
  */
 class VN_SYSTEM_API Process {
@@ -63,8 +61,10 @@ class VN_SYSTEM_API Process {
      * - The comparison is against a file name, not a path: a directory part in @p name never matches.
      *
      * @note
+     * - POSIX resolves each process' executable (Linux /proc/<pid>/exe, macOS proc_pidpath) and skips a process the
+     *   caller may not inspect; Windows reads the name from its process snapshot.
      * - A process whose executable was deleted reports a name ending in " (deleted)" on Linux and is not matched.
-     * - macOS does not enumerate processes; an empty @p name matches nothing on every platform.
+     * - An empty @p name matches nothing on every platform.
      *
      * @param name Executable file name, e.g. "test_system.exe".
      * @return The identifiers of all matching processes.

@@ -94,8 +94,8 @@ module small enough that a platform half can be read in one pass.
 
 - What it is: `OperatingSystemInfo::version` is the platform's own spelling (Windows
   `major.minor.build`; Linux and macOS the `uname` kernel release); `DiskInfo` is a volume on Windows
-  and a whole block device on Linux; `kind` is `DiskKind`, a closed set of five values with a stated
-  width; `exists()` answers existence, not accessibility.
+  and on macOS, and a whole block device on Linux; `kind` is `DiskKind`, a closed set of five values
+  with a stated width; `exists()` answers existence, not accessibility.
 - Why: a caller that reads "10.0.19045" and a caller that reads "6.8.0-45-generic" are not reading
   the same fact, and a header that says "OS version" for both invites a wrong comparison.
 - Boundary: a field stays a string where the platform's vocabulary is open (architecture, model); a
@@ -145,8 +145,9 @@ module small enough that a platform half can be read in one pass.
 - **Requirements** (R1, R2): Windows compares executable names case-insensitively, Linux exactly;
   `exists()` reports existence even when the process cannot be opened.
 - **Acceptance** (T1).
-- **Caveats** (N1): macOS answers everything except `findByName()` (no `KERN_PROC` enumeration);
-  Linux does not match a process whose executable was deleted (" (deleted)" suffix).
+- **Caveats** (N1): a process the caller may not inspect is skipped on both POSIX halves (a refused
+  `/proc/<pid>/exe` read, a refused `proc_pidpath`); Linux does not match a process whose executable
+  was deleted (" (deleted)" suffix).
 
 ### 3.1.2 F2 Operating system facts
 
@@ -167,8 +168,8 @@ module small enough that a platform half can be read in one pass.
 - **Requirements** (R4, R5): `availableBytes` is what the system can hand to a new allocation;
   `diskFreeSpace` is space available to the calling user.
 - **Acceptance** (T3).
-- **Caveats** (N3): macOS enumerates no disks; Windows reports volumes (with the backing disk's
-  identity) while Linux reports block devices.
+- **Caveats** (N3): macOS reports mounted volumes (no model, no serial); Windows reports volumes
+  with the backing disk's identity while Linux reports block devices.
 
 ### 3.1.4 F4 Environment
 
@@ -207,7 +208,7 @@ module small enough that a platform half can be read in one pass.
 | `currentProcessId()` | The calling process' id | |
 | `currentExecutablePath()` | Absolute path, or empty | empty includes an unimplemented platform |
 | `exists(pid)` | `true` for an existing process, including a protected one | |
-| `findByName(name)` | Ids whose executable file name equals `name` | macOS answers empty |
+| `findByName(name)` | Ids whose executable file name equals `name` | `/proc` on Linux, `proc_pidpath` on macOS |
 | `kill(pid)` | `true` when the platform reports termination | SIGKILL / `TerminateProcess` |
 
 ### 4.2 OperatingSystem
@@ -373,10 +374,11 @@ halves are not compiled on the Linux build machine; every edit to them is review
 
 ### 9.2 Known Gaps and Backlog
 
-- `B3` in `../backlog/base-system.md`: macOS does not implement `findByName()` or `disks()`.
 - `B4`: macOS reports the Darwin kernel release and Linux the distribution-independent kernel release
   as `version`; splitting the field into `os_version` and `kernel_version` changes the struct and is
   therefore its own item.
+- `B5`: macOS reports mounted volumes, not physical disks; whole-disk capacity, model and serial need
+  IOKit's `IOMedia` registry, which this half does not link.
 
 ### 9.3 Compatibility and Migration
 
@@ -421,4 +423,5 @@ adding one file.
   `GetLogicalProcessorInformationEx`, `GetTempPathW`, `GetComputerNameExW` — Win32 API reference.
 - `proc(5)`, `sysfs` block-device attributes, `sysinfo(2)`, `getpwuid_r(3)` — Linux manual pages.
 - XDG Base Directory Specification.
-- `host_statistics64`, `sysctlbyname`, `_NSGetExecutablePath`, `_NSGetEnviron` — macOS API reference.
+- `host_statistics64`, `sysctlbyname`, `_NSGetExecutablePath`, `_NSGetEnviron`, `proc_listpids`,
+  `proc_pidpath`, `getmntinfo` — macOS API reference.

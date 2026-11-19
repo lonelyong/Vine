@@ -63,6 +63,8 @@ enum class DiskKind : std::uint8_t
  * @details
  * - Windows reports one entry per volume root (e.g. C:), with that volume's capacity and the model and serial of the
  *   physical disk backing it; a volume spanning several disks reports neither model nor serial.
+ * - macOS reports one entry per mounted volume (e.g. "/"), with that volume's capacity; no model and no serial are
+ *   available without querying the storage drivers directly.
  * - Linux reports one entry per whole block device ("/dev/sda"), with that device's capacity.
  *
  * @note
@@ -88,7 +90,7 @@ struct VN_SYSTEM_API DiskInfo {
  *
  * @note
  * - No error is reported: an empty string, an empty list or 0 means "the platform could not answer", which includes a
- *   platform the module does not implement (macOS enumerates no disks).
+ *   platform the module does not implement.
  * - disks() performs real I/O - on Windows one device query per volume - so it is not a cheap accessor.
  */
 class VN_SYSTEM_API Hardware {
@@ -127,7 +129,7 @@ class VN_SYSTEM_API Hardware {
      *
      * @note
      * - Not cached: every call queries the platform, and on Windows that is one device query per volume.
-     * - macOS has no implementation and answers an empty list; an empty list on another platform means "no storage".
+     * - macOS reports mounted volumes; a volume the platform does not expose there is simply absent.
      *
      * @return The devices, in the platform's enumeration order.
      */

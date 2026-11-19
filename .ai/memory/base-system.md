@@ -13,7 +13,7 @@ options). This page holds only the facts and traps that page does not repeat.
 | `Process.cpp`, `Hardware.cpp`, `OperatingSystem.cpp`, `Environment.cpp`, `Directories.cpp`, `Host.cpp` | The policy that is the same everywhere: the pid guard, query-once-and-cache, the "never report zero cores" fallback, the "unknown" fill-in, the empty-name guard, the "no trailing separator" rule and the executable-directory derivation. |
 | `SystemWindows.cpp` | Every hook for Windows. |
 | `SystemLinux.cpp` | Every hook for Linux and Android. |
-| `SystemApple.cpp` | Every hook for macOS; disk and process enumeration answer empty by contract. |
+| `SystemApple.cpp` | Every hook for macOS; disks are the mounted volumes (`getmntinfo`), process lookup is `proc_listpids` + `proc_pidpath`. |
 | `SystemUnsupported.cpp` | Every hook for any other platform, with the documented empty answers. |
 
 `vn_add_library` globs every `src/**/*.cpp`, so `CMakeLists.txt` marks the three foreign halves
@@ -56,8 +56,8 @@ set into an OS abstraction layer.
 
 - `OperatingSystemInfo::version` is each platform's own spelling: Windows `major.minor.build`;
   Linux and macOS the `uname` kernel release.
-- `DiskInfo` is a volume (with the backing disk's identity) on Windows and a whole block device on
-  Linux; `Hardware.hpp` states both.
+- `DiskInfo` is a volume (with the backing disk's identity) on Windows, a mounted volume on macOS and
+  a whole block device on Linux; `Hardware.hpp` states all three.
 - `kind` is `DiskKind::CdRom` for an optical drive, whose capacity is 0 while it holds no media; the
   five-value enum states its width (`std::uint8_t`), and the core counts and byte counts are
   `std::uint32_t` / `std::uint64_t`.

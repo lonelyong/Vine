@@ -209,7 +209,7 @@ std::uint64_t volumeTotalSpace(const String& path)
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {
         return 0;
     }
-    return static_cast<unsigned long long>(vfs.f_blocks) * vfs.f_frsize;
+    return static_cast<std::uint64_t>(vfs.f_blocks) * static_cast<std::uint64_t>(vfs.f_frsize);
 }
 
 std::uint64_t volumeFreeSpace(const String& path)
@@ -220,7 +220,7 @@ std::uint64_t volumeFreeSpace(const String& path)
     }
     // f_bavail, not f_bfree: the header promises the space available to the caller, and the two
     // differ on a volume that reserves blocks for root.
-    return static_cast<unsigned long long>(vfs.f_bavail) * vfs.f_frsize;
+    return static_cast<std::uint64_t>(vfs.f_bavail) * static_cast<std::uint64_t>(vfs.f_frsize);
 }
 
 int currentPid()

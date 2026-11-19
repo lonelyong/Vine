@@ -143,9 +143,6 @@ TEST(SystemTest, MotherboardInfoIsFilled)
 
 TEST(SystemTest, DisksAreEnumerated)
 {
-#if defined(__APPLE__)
-    GTEST_SKIP() << "macOS has no disk enumeration (Hardware.hpp documents the empty answer)";
-#else
     const auto disks = Hardware::disks();
     ASSERT_FALSE(disks.empty());
     for (const auto& disk : disks) {
@@ -158,7 +155,6 @@ TEST(SystemTest, DisksAreEnumerated)
             EXPECT_GT(disk.capacity, 0ull) << narrow(disk.name) << " kind=" << kindText(disk.kind);
         }
     }
-#endif
 }
 
 #if defined(__linux__)
