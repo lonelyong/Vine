@@ -15,6 +15,19 @@ using vn::runtime::InMemoryCache;
 namespace
 {
 
+/// Copy-constructible but neither copy- nor move-assignable: set() must not require
+/// assignment, so replacing an entry cannot go through insert_or_assign.
+struct CopyOnly {
+    int value{ 0 };
+
+    CopyOnly() = default;
+    explicit CopyOnly(int value_) : value(value_) {}
+    CopyOnly(const CopyOnly&)            = default;
+    CopyOnly(CopyOnly&&)                 = delete;
+    CopyOnly& operator=(const CopyOnly&) = delete;
+    CopyOnly& operator=(CopyOnly&&)      = delete;
+};
+
 TEST(InMemoryCacheTest, SetGetRoundTrip)
 {
     InMemoryCache<int, std::string> cache;
@@ -212,6 +225,62 @@ TEST(InMemoryCacheTest, ConcurrentAccessIsSafe)
     }
 
     EXPECT_TRUE(cache.contains(shared));
+}
+
+TEST(InMemoryCacheTest, OverwriteNeedsCopyConstructionOnly)
+{
+    InMemoryCache<int, CopyOnly> cache;
+    cache.set(1, CopyOnly(1), 0);
+    cache.set(1, CopyOnly(2), 0); // compiling this line is half the assertion
+
+    const auto value = cache.get(1);
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(value->value, 2);
+}
+
+TEST(InMemoryCacheTest, OneWorkerSweepsEveryStartedInstance)
+{
+    InMemoryCache<int, std::string> first;
+    InMemoryCache<int, std::string> second;
+    first.start(std::chrono::milliseconds(50));
+    second.start(std::chrono::milliseconds(50));
+    first.set(1, "short", 1);
+    second.set(1, "short", 1);
+
+    // No explicit removeExpired(): the shared worker serves both instances.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    EXPECT_FALSE(first.contains(1));
+    EXPECT_FALSE(second.contains(1));
+    first.stop();
+    second.stop();
+}
+
+TEST(InMemoryCacheTest, StartStopChurnFromSeveralThreadsLeavesAWorkingWorker)
+{
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([] {
+            for (int i = 0; i < 50; ++i) {
+                InMemoryCache<int, std::string> cache;
+                cache.start(std::chrono::milliseconds(5));
+                cache.set(i, "v", 0);
+                // Destruction unregisters; the worker may exit and be started
+                // again by the next iteration or by another thread.
+            }
+        });
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // After the churn a new instance must still be served.
+    InMemoryCache<int, std::string> cache;
+    cache.start(std::chrono::milliseconds(50));
+    cache.set(1, "short", 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    EXPECT_FALSE(cache.contains(1));
+    cache.stop();
 }
 
 } // namespace

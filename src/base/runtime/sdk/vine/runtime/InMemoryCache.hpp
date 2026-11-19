@@ -9,6 +9,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 VN_RUNTIME_NS_BEGIN
@@ -22,17 +23,24 @@ VN_RUNTIME_NS_BEGIN
  * removeExpired() forces a sweep.
  *
  * Background reclamation: all instances of the same <TKey, TVal>
- * instantiation share a single background thread. Call start() to register
- * this instance for periodic sweeps; stop() (or destruction) unregisters it,
- * and the shared thread ends when the last registered instance stops. No
- * thread is started until the first start() call.
+ * instantiation share one worker. Call start() to register this instance for
+ * periodic sweeps; stop() (or destruction) unregisters it, and the worker
+ * exits once the registry has stayed empty. No thread exists until the first
+ * start() call.
+ *
+ * The shared state is allocated once and never destroyed, and the worker is
+ * detached: a joinable std::thread cannot be a static object (its destructor
+ * runs before the caches that registered with it and calls std::terminate),
+ * and there is no join that could block a destructor while another instance
+ * starts. A cache with static storage duration is therefore safe to start.
  *
  * The class is intentionally standalone: it does not derive from the
  * CacheManager interface. Use InMemoryManager to expose a typed cache through
  * that String/any interface (e.g. for vn::di injection).
  *
  * @tparam TKey Key type; must support operator<.
- * @tparam TVal Value type; must be copy-constructible.
+ * @tparam TVal Value type; must be copy-constructible. The out-parameter
+ *              get() overload additionally requires it to be assignable.
  */
 template <typename TKey, typename TVal>
 class InMemoryCache {
@@ -41,6 +49,12 @@ class InMemoryCache {
      * @brief Monotonic clock used for expiry timestamps.
      */
     using Clock = std::chrono::steady_clock;
+
+    /// Sweep period used by start() when the caller does not choose one.
+    static constexpr std::chrono::milliseconds kDefaultSweepPeriod{ std::chrono::seconds(1) };
+
+    /// Smallest accepted sweep period; a shorter (or zero) one would spin the shared worker.
+    static constexpr std::chrono::milliseconds kMinSweepPeriod{ 1 };
 
     /**
      * @brief Constructs an empty cache.
@@ -60,6 +74,11 @@ class InMemoryCache {
   public:
     /**
      * @brief Stores or updates a value under a key.
+     *
+     * @details
+     * - A lifetime of 0 or a negative value keeps the entry forever.
+     * - An overwrite is erase-then-insert: a copy that throws leaves no entry
+     *   rather than the previous value.
      *
      * @param key Cache key.
      * @param value Value to store; copied into the cache.
@@ -147,19 +166,20 @@ class InMemoryCache {
     /**
      * @brief Registers this instance for background reclamation.
      *
-     * All instances of the same <TKey, TVal> instantiation share one
-     * background thread. If the thread is already running, only the sweep
-     * period is updated (last caller wins).
+     * All instances of the same <TKey, TVal> instantiation share one worker.
+     * If the worker is already running, only the sweep period is updated (last
+     * caller wins).
      *
-     * @param period Sweep period.
+     * @param period Sweep period; values below kMinSweepPeriod are raised to it,
+     *               so a zero period cannot spin the worker.
      */
-    void start(std::chrono::milliseconds period = std::chrono::seconds(1));
+    void start(std::chrono::milliseconds period = kDefaultSweepPeriod);
 
     /**
      * @brief Unregisters this instance from background reclamation.
      *
-     * The shared thread ends when the last registered instance stops; a no-op
-     * when this instance was never started.
+     * The shared worker exits once the registry has stayed empty; a no-op when
+     * this instance was never started.
      */
     void stop();
 
@@ -173,11 +193,27 @@ class InMemoryCache {
   private:
     struct Entry {
         TVal value;
-        // NOT "forever": Qt's qforeach.h defines that as a macro (`forever` -> `for (;;)`), so a
-        // translation unit that includes both a Qt header and this cache (MeshLoader pulls it in,
-        // for one) would not compile at all.
+        /// True when the entry never expires; named this way because Qt's qforeach.h defines `forever` as a macro.
         bool              never_expires{ false };
         Clock::time_point expires_at{};
+    };
+
+    /**
+     * @brief Shared reclaimer state for one <TKey, TVal> instantiation.
+     *
+     * Allocated once and never destroyed. It owns the registry and the wake-up
+     * machinery the worker uses; destroying it at exit would leave the worker
+     * using freed state, and keeping the worker in a static std::thread instead
+     * would call std::terminate before the caches that registered with it are
+     * torn down. The OS reclaims the block with the process.
+     */
+    struct Sweeper {
+        std::mutex                         mutex;
+        std::condition_variable            cv;
+        std::unordered_set<InMemoryCache*> instances;
+        std::chrono::milliseconds          period{ kDefaultSweepPeriod };
+        bool                               worker_alive{ false };
+        bool                               stop_requested{ false };
     };
 
     /**
@@ -198,27 +234,28 @@ class InMemoryCache {
     bool isExpired(const Entry& entry, const Clock::time_point& now) const;
 
     /**
-     * @brief Unregisters this instance; ends the shared thread when it is the
-     *        last one.
+     * @brief Unregisters this instance from background reclamation.
+     *
+     * Never joins or creates a thread, so it cannot block on or throw from a
+     * destructor.
      */
     void shutdown();
 
     /**
-     * @brief Shared background reclaimer body; sweeps all registered
-     *        instances periodically.
+     * @brief Returns the process-lifetime sweeper of this instantiation.
+     *
+     * @return The shared sweeper state; owned by the process, never destroyed.
      */
-    static void cleanupLoop();
+    static Sweeper& sweeper();
+
+    /**
+     * @brief Body of the shared worker: sweeps the registered instances, sleeping
+     *        while none is registered.
+     */
+    static void sweepLoop();
 
     mutable std::mutex    mutex_;
     std::map<TKey, Entry> entries_;
-
-    // ---- Shared background-thread state (one per <TKey, TVal> instantiation) ----
-    inline static std::mutex                         s_mutex_;
-    inline static std::condition_variable            s_cv_;
-    inline static std::thread                        s_thread_;
-    inline static std::unordered_set<InMemoryCache*> s_instances_;
-    inline static std::chrono::milliseconds          s_period_{ std::chrono::seconds(1) };
-    inline static bool                               s_stopping_{ false };
 };
 
 template <typename TKey, typename TVal>
@@ -232,7 +269,13 @@ void InMemoryCache<TKey, TVal>::set(const TKey& key, const TVal& value, int ttl)
 {
     Entry                       entry{ value, (ttl <= 0), makeExpireAt(ttl) };
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.insert_or_assign(key, entry);
+    // erase + emplace, not insert_or_assign: replacing an entry must not require
+    // TVal to be assignable, only copy-constructible.
+    const auto it = entries_.find(key);
+    if (it != entries_.end()) {
+        entries_.erase(it);
+    }
+    entries_.emplace(key, std::move_if_noexcept(entry));
 }
 
 template <typename TKey, typename TVal>
@@ -359,13 +402,21 @@ std::vector<TKey> InMemoryCache<TKey, TVal>::keys()
 template <typename TKey, typename TVal>
 void InMemoryCache<TKey, TVal>::start(std::chrono::milliseconds period)
 {
-    std::lock_guard<std::mutex> lock(s_mutex_);
-    s_period_ = period;
-    s_instances_.insert(this);
-    if (!s_thread_.joinable()) {
-        s_stopping_ = false;
-        s_thread_   = std::thread(&InMemoryCache<TKey, TVal>::cleanupLoop);
+    Sweeper&                    sweeper_state = sweeper();
+    std::lock_guard<std::mutex> lock(sweeper_state.mutex);
+    sweeper_state.period         = period < kMinSweepPeriod ? kMinSweepPeriod : period;
+    sweeper_state.stop_requested = false;
+    sweeper_state.instances.insert(this);
+    if (!sweeper_state.worker_alive) {
+        // Detached: there is no thread object to join or destroy, so neither the
+        // process exit order nor a concurrent stop() can block or throw here. The
+        // flag is set only after a worker exists, so a failed creation is retried
+        // by the next start() instead of leaving a registry without a worker.
+        std::thread worker(&InMemoryCache<TKey, TVal>::sweepLoop);
+        worker.detach();
+        sweeper_state.worker_alive = true;
     }
+    sweeper_state.cv.notify_all();
 }
 
 template <typename TKey, typename TVal>
@@ -377,8 +428,9 @@ void InMemoryCache<TKey, TVal>::stop()
 template <typename TKey, typename TVal>
 bool InMemoryCache<TKey, TVal>::isCleanupRunning() const
 {
-    std::lock_guard<std::mutex> lock(s_mutex_);
-    return s_instances_.find(const_cast<InMemoryCache*>(this)) != s_instances_.end();
+    Sweeper&                    sweeper_state = sweeper();
+    std::lock_guard<std::mutex> lock(sweeper_state.mutex);
+    return sweeper_state.instances.find(const_cast<InMemoryCache*>(this)) != sweeper_state.instances.end();
 }
 
 template <typename TKey, typename TVal>
@@ -397,48 +449,58 @@ bool InMemoryCache<TKey, TVal>::isExpired(const Entry& entry, const Clock::time_
 }
 
 template <typename TKey, typename TVal>
+typename InMemoryCache<TKey, TVal>::Sweeper& InMemoryCache<TKey, TVal>::sweeper()
+{
+    // Immortal by design (see Sweeper): a local static unique_ptr would destroy
+    // the state - and with it the worker's mutex and condition variable - at
+    // exit, while the worker may still be using them.
+    static Sweeper* const state = new Sweeper;
+    return *state;
+}
+
+template <typename TKey, typename TVal>
 void InMemoryCache<TKey, TVal>::shutdown()
 {
-    std::thread to_join;
-    bool        is_last = false;
-    {
-        std::lock_guard<std::mutex> lock(s_mutex_);
-        s_instances_.erase(this);
-        if (s_instances_.empty() && s_thread_.joinable()) {
-            s_stopping_ = true;
-            // Move the thread object out so a concurrent start() can spawn a
-            // fresh thread without racing this join.
-            to_join     = std::move(s_thread_);
-            is_last     = true;
-        }
-    }
-
-    if (!is_last) {
-        return;
-    }
-
-    // Join outside the lock: the loop needs the lock to re-check stopping.
-    s_cv_.notify_all();
-    to_join.join();
-
-    // If new instances registered while joining, start a fresh thread.
-    std::lock_guard<std::mutex> lock(s_mutex_);
-    if (!s_instances_.empty() && !s_thread_.joinable()) {
-        s_stopping_ = false;
-        s_thread_   = std::thread(&InMemoryCache<TKey, TVal>::cleanupLoop);
+    Sweeper&                    sweeper_state = sweeper();
+    std::lock_guard<std::mutex> lock(sweeper_state.mutex);
+    sweeper_state.instances.erase(this);
+    if (sweeper_state.instances.empty() && sweeper_state.worker_alive) {
+        // No join: the worker wakes, sees the empty registry and exits. A start()
+        // that re-registers first clears this request, so the worker keeps
+        // serving instead of exiting under the new instance.
+        sweeper_state.stop_requested = true;
+        sweeper_state.cv.notify_all();
     }
 }
 
 template <typename TKey, typename TVal>
-void InMemoryCache<TKey, TVal>::cleanupLoop()
+void InMemoryCache<TKey, TVal>::sweepLoop()
 {
-    std::unique_lock<std::mutex> lock(s_mutex_);
-    while (true) {
-        s_cv_.wait_for(lock, s_period_, [] { return s_stopping_; });
-        if (s_stopping_) {
+    Sweeper&                     sweeper_state = sweeper();
+    std::unique_lock<std::mutex> lock(sweeper_state.mutex);
+    for (;;) {
+        if (sweeper_state.instances.empty()) {
+            // Sleep until an instance registers or a stop request is pending.
+            sweeper_state.cv.wait(lock, [&sweeper_state] { return sweeper_state.stop_requested || !sweeper_state.instances.empty(); });
+        }
+        else {
+            sweeper_state.cv.wait_for(lock, sweeper_state.period, [&sweeper_state] { return sweeper_state.stop_requested || sweeper_state.instances.empty(); });
+        }
+
+        if (sweeper_state.stop_requested) {
+            if (!sweeper_state.instances.empty()) {
+                sweeper_state.stop_requested = false; // re-registered while stopping
+                continue;
+            }
+            sweeper_state.worker_alive = false;
             return;
         }
-        for (auto* instance : s_instances_) {
+
+        // Swept under the registry lock: an instance unregisters (and is then
+        // destroyed) only through that same lock, so no entry can disappear
+        // under the loop. A TVal destructor that calls back into a cache of this
+        // instantiation would deadlock against this lock.
+        for (auto* instance : sweeper_state.instances) {
             instance->removeExpired();
         }
     }

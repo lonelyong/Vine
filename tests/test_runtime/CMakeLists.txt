@@ -14,3 +14,12 @@ set_target_properties(runtime_test_fixture PROPERTIES FOLDER test)
 target_compile_definitions(${TEST_NAME} PRIVATE "VN_RUNTIME_FIXTURE=\"$<TARGET_FILE:runtime_test_fixture>\"")
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+
+# A started cache with static storage duration must survive process exit; the old
+# shared sweeper was a joinable static std::thread and aborted the process. The
+# failure happens at exit, not inside a test case, so it gets its own executable
+# and its own CTest entry.
+add_executable(runtime_static_cache_exit static_cache_exit/main.cpp)
+set_target_properties(runtime_static_cache_exit PROPERTIES FOLDER test)
+target_link_libraries(runtime_static_cache_exit vn::Runtime)
+add_test(NAME runtime_static_cache_exit COMMAND runtime_static_cache_exit)
