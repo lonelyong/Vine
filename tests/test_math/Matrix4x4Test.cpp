@@ -34,6 +34,24 @@ TEST(Matrix4x4, isIdentity)
     ASSERT_TRUE(m.isIdentity());
 }
 
+TEST(Matrix4x4, equalityIsExactAndIsEqualIsTolerant)
+{
+    // The pair the module states: operator== answers the VALUE question ("is this the same matrix", which is what a
+    // change test asks), isEqual(other, eps) answers the GEOMETRIC one ("the same transform within rounding").
+    const Mat4d identity   = Mat4d{};
+    const Mat4d translated = translate(1.0, 2.0, 3.0);
+
+    EXPECT_TRUE(identity == Mat4d{});
+    EXPECT_FALSE(identity != Mat4d{});
+    EXPECT_TRUE(translated == translate(1.0, 2.0, 3.0));
+    EXPECT_TRUE(translated != identity);
+
+    Mat4d near = identity;
+    near(0, 3) = 1.0e-15;
+    EXPECT_FALSE(identity == near) << "operator== is exact, so a tiny edit is a change";
+    EXPECT_TRUE(identity.isEqual(near)) << "isEqual is the tolerance form and still accepts the rounding";
+}
+
 TEST(Matrix4x4, multiplyAssign)
 {
     Mat4d a = translate(1.0, 2.0, 3.0);

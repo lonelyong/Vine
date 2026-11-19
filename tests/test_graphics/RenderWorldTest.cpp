@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -24,6 +25,7 @@
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
+#include <vine/graphics/StateNode.hpp>
 
 #include "DrawListBake.hpp"
 #include "SceneRows.hpp"
@@ -39,7 +41,9 @@ using vn::graphics::DrawItem;
 using vn::graphics::Scene;
 using vn::graphics::detail::buildRows;
 using vn::graphics::detail::refreshBoxes;
+using vn::graphics::detail::refreshRow;
 using vn::graphics::detail::Row;
+using vn::graphics::detail::RowRefresh;
 using vn::graphics::detail::SceneBake;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
@@ -161,12 +165,10 @@ TEST(SnapshotTest, ThePureSelectMatchesTheScene)
     scene.setRoot(assembly.root);
 
     const View view     = clipBoxView();
-    const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
+    const auto snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
     ASSERT_NE(snapshot, nullptr);
 
-    std::vector<DrawItem> selected;
-    bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
+    const std::vector<DrawItem> selected = vn::graphics::detail::selectSnapshot(*snapshot, view).commands;
     expectSameDrawList(selected, scene.collectDrawItems(view));
 }
 
@@ -189,9 +191,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
     const View view = clipBoxView();
 
     const auto old_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
-    std::vector<DrawItem> old_commands;
-    bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*old_snapshot, view, old_commands, viewport_used);
+    const std::vector<DrawItem> old_commands = vn::graphics::detail::selectSnapshot(*old_snapshot, view).commands;
     ASSERT_EQ(old_commands.size(), 1U);
     const auto old_values = old_commands.front().material_description;
     ASSERT_NE(old_values, nullptr);
@@ -199,8 +199,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
 
     material->setMetallic(0.75F);
     const auto fresh_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
-    std::vector<DrawItem> fresh_commands;
-    vn::graphics::detail::selectSnapshot(*fresh_snapshot, view, fresh_commands, viewport_used);
+    const std::vector<DrawItem> fresh_commands = vn::graphics::detail::selectSnapshot(*fresh_snapshot, view).commands;
     ASSERT_EQ(fresh_commands.size(), 1U);
     const auto fresh_values = fresh_commands.front().material_description;
     ASSERT_NE(fresh_values, nullptr);
@@ -208,8 +207,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
     EXPECT_FLOAT_EQ(fresh_values->values().metallic, 0.75F);
 
     // The old snapshot is still the old picture after the edit.
-    std::vector<DrawItem> old_again;
-    vn::graphics::detail::selectSnapshot(*old_snapshot, view, old_again, viewport_used);
+    const std::vector<DrawItem> old_again = vn::graphics::detail::selectSnapshot(*old_snapshot, view).commands;
     ASSERT_EQ(old_again.size(), 1U);
     EXPECT_EQ(old_again.front().material_description.get(), old_values.get());
     EXPECT_FLOAT_EQ(old_again.front().material_description->values().metallic, 0.0F);
@@ -228,9 +226,8 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
     scene.setRoot(root);
 
     const View view = clipBoxView();
+    const auto warm_snapshot = vn::graphics::detail::SceneRows::snapshot(scene); // warm the bake
     std::vector<DrawItem> selected;
-    bool                       viewport_used = false;
-    const auto                 warm_snapshot = vn::graphics::detail::SceneRows::snapshot(scene); // warm the bake
 
     constexpr int kRepetitions = 10;
     long long     publish_us   = 0;
@@ -244,7 +241,7 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
         const auto after_publish  = std::chrono::steady_clock::now();
         latest_snapshot           = snapshot;
 
-        vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
+        selected = vn::graphics::detail::selectSnapshot(*snapshot, view).commands;
         const auto after_select = std::chrono::steady_clock::now();
 
         publish_us += std::chrono::duration_cast<std::chrono::microseconds>(after_publish - before_publish).count();
@@ -289,16 +286,110 @@ TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)
     ASSERT_NE(after, nullptr);
     EXPECT_NE(before.get(), after.get()) << "an edit is a new publication";
 
-    std::vector<DrawItem> selected;
-    bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*after, view, selected, viewport_used);
+    const std::vector<DrawItem> selected = vn::graphics::detail::selectSnapshot(*after, view).commands;
     expectSameDrawList(selected, scene.collectDrawItems(view));
+}
+
+TEST(SnapshotTest, AnEditRefoldsEveryDescendantAcrossChunkBoundaries)
+{
+    // REVIEW 6 / P0-1. An edit re-folds the edited node's WHOLE subtree, but only the edited node and its ANCESTORS
+    // see their content epoch move (Node::announceContentChange climbs up, never down). A chunk holding nothing but
+    // descendants therefore passed the share test and was served from the previous publication, so part of a moved
+    // subtree was drawn where it used to be - and the staleness persisted across later publications.
+    //
+    // The expectation is computed from the EDIT, not from a snapshot: every leaf below the edited transform sits at
+    // x = 0.5 once the edit landed, whatever any chunk happens to hold.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto arm  = placed(0.0, 0.0, 0.0);
+    root->addChild(arm);
+
+    std::vector<GeometryPtr> leaves;
+    for (int index = 0; index < 40; ++index) { // arm + root + 40 leaves: the edited subtree spans more than one chunk
+        GeometryPtr leaf = triangle();
+        arm->addChild(leaf);
+        leaves.push_back(leaf);
+    }
+    const GeometryPtr beside = triangle(); // the branch the edit does not touch, sharing the last chunk
+    root->addChild(beside);
+
+    Scene scene;
+    scene.setRoot(root);
+    const View view = clipBoxView();
+    const auto before = vn::graphics::detail::SceneRows::snapshot(scene);
+    ASSERT_GT(before->row_count, vn::graphics::detail::SceneSnapshot::kRowsPerChunk)
+        << "a single-chunk fixture cannot see the share rule this test is about";
+
+    arm->setMatrix(vn::math::translate(0.5, 0.0, 0.0));
+    const auto after = vn::graphics::detail::SceneRows::snapshot(scene);
+    ASSERT_NE(after, nullptr);
+
+    const std::vector<DrawItem> selected = vn::graphics::detail::selectSnapshot(*after, view).commands;
+
+    std::size_t under_the_arm = 0;
+    for (const DrawItem& command : selected) {
+        if (command.node == beside->id()) {
+            EXPECT_NEAR(command.model_matrix.element(0, 3), 0.0, 1e-12) << "the untouched branch stayed where it was";
+            continue;
+        }
+        ++under_the_arm;
+        EXPECT_NEAR(command.model_matrix.element(0, 3), 0.5, 1e-12)
+            << "a leaf BELOW the edited node was served from the previous publication";
+    }
+    EXPECT_EQ(under_the_arm, leaves.size()) << "every leaf below the edited transform is drawn from the new picture";
+}
+
+TEST(SnapshotTest, AnEditBelowAStateNodeKeepsWhatTheStateNodeContributes)
+{
+    // REVIEW 6 / P0-2. The fold used to store the inherited state / material / program only on rows that DRAW, so a
+    // container row held nothing - while the incremental path reads the parent's row back as the seed of a re-fold.
+    // Editing a transform under a StateNode therefore dropped everything the StateNode contributed for the whole
+    // edited subtree, and the command lost the state, the material and the program it was drawn with.
+    auto root = intrusive_ptr<Group>(new Group());
+    auto hud  = intrusive_ptr<vn::graphics::StateNode>(new vn::graphics::StateNode());
+    auto arm  = placed(0.1, 0.0, 0.0);
+    const GeometryPtr leaf = triangle();
+
+    vn::graphics::DepthState depth;
+    depth.test    = false;
+    depth.write   = false;
+    hud->setDepth(depth);
+    auto material = vn::graphics::MaterialPtr(new vn::graphics::Material());
+    material->setMetallic(0.0F);
+    hud->setMaterial(material);
+
+    arm->addChild(leaf);
+    hud->addChild(arm);
+    root->addChild(hud);
+
+    Scene scene;
+    scene.setRoot(root);
+    const View view = clipBoxView();
+
+    const auto before = vn::graphics::detail::SceneRows::snapshot(scene);
+    ASSERT_NE(before, nullptr);
+
+    arm->setMatrix(vn::math::translate(0.2, 0.0, 0.0));
+    const auto after = vn::graphics::detail::SceneRows::snapshot(scene);
+    ASSERT_NE(after, nullptr);
+    EXPECT_NE(before.get(), after.get()) << "the edit has to reach the publication path";
+
+    const std::vector<DrawItem> selected = vn::graphics::detail::selectSnapshot(*after, view).commands;
+    ASSERT_EQ(selected.size(), 1U);
+
+    const DrawItem& command = selected.front();
+    EXPECT_NEAR(command.model_matrix.element(0, 3), 0.2, 1e-12) << "the edit itself landed";
+    ASSERT_TRUE(command.authored_state.depth.has_value())
+        << "the StateNode's depth state was dropped by the re-fold (a container row stored nothing to inherit)";
+    EXPECT_FALSE(command.authored_state.depth->test) << "the state the ancestor stated is the state the command carries";
+    EXPECT_FALSE(command.authored_state.depth->write);
+    ASSERT_NE(command.material.get(), nullptr) << "the StateNode's material was dropped by the re-fold";
+    EXPECT_EQ(command.material.get(), material.get());
 }
 
 TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
 {
     // K2: the snapshot must not cost more than 3x the row table it copies (N3's target is 2x). The measured delta
-    // covers the chunk vectors and the DrawFacts allocations; the row-table estimate uses the same capacities, so the
+    // covers the chunk vectors and the ResolvedDraw allocations; the row-table estimate uses the same capacities, so the
     // ratio is the comparison the audit asks for rather than a machine-specific absolute byte count.
 #if defined(__GLIBC__)
     auto root = intrusive_ptr<Group>(new Group());
@@ -319,7 +410,7 @@ TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
     for (const auto& chunk : snapshot->chunks) {
         row_bytes += chunk->capacity() * sizeof(vn::graphics::detail::Row);
         for (const auto& row : *chunk) {
-            row_bytes += row.draws.capacity() * sizeof(vn::graphics::detail::DrawFacts);
+            row_bytes += row.own.body.draws.capacity() * sizeof(vn::graphics::detail::ResolvedDraw);
         }
     }
 
@@ -370,7 +461,7 @@ TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
 
     const Row* other_row = row_of(other->id());
     ASSERT_NE(other_row, nullptr);
-    const Aabbd other_box = other_row->world_box;
+    const Aabbd other_box = other_row->resolved.world_box;
 
     // The leaf's bound moves. Only its row and the rows above it are re-derived, and the other branch is untouched.
     leaf->half_extent = 0.9;
@@ -378,12 +469,63 @@ TEST(DrawListBakeTest, ARefreshFoldsOnlyWhatChanged)
 
     const Row* leaf_row = row_of(leaf->id());
     ASSERT_NE(leaf_row, nullptr);
-    EXPECT_NEAR(leaf_row->world_box.max().x, 0.9, 1e-12) << "the world-space answer the leaf gave, and nothing else";
+    EXPECT_NEAR(leaf_row->resolved.world_box.max().x, 0.9, 1e-12) << "the world-space answer the leaf gave, and nothing else";
     const Row* left_row = row_of(left->id());
     ASSERT_NE(left_row, nullptr);
-    EXPECT_NEAR(left_row->world_box.max().x, 0.9, 1e-12) << "the chain above the changed leaf followed it";
-    EXPECT_TRUE(row_of(other->id())->world_box == other_box) << "the other branch was not re-derived";
+    EXPECT_NEAR(left_row->resolved.world_box.max().x, 0.9, 1e-12) << "the chain above the changed leaf followed it";
+    EXPECT_TRUE(row_of(other->id())->resolved.world_box == other_box) << "the other branch was not re-derived";
 
     // ...and it settles: a second look at the same table finds nothing to do.
     EXPECT_EQ(refreshBoxes(bake), 0U) << "and the next look folds nothing";
+}
+
+TEST(DrawListBakeTest, ARefreshClassifiesWhatMoved)
+{
+    // `refreshRow` is the incremental edit path's one question: can the fold replay this change, or must the table be
+    // rebuilt? The answer is derived from the two `RowOwn` groups (defaulted equality on `Fold` / `Body`), never from
+    // a hand-written field list - which is what this test pins: a field added to `RowOwn` has to land on one side of
+    // the line deliberately, not by being forgotten.
+    auto              root = intrusive_ptr<Group>(new Group());
+    auto              arm  = placed(0.1, 0.0, 0.0);
+    const GeometryPtr leaf = triangle();
+    arm->addChild(leaf);
+    root->addChild(arm);
+
+    SceneBake bake;
+    buildRows(*root, bake);
+
+    const auto index_of = [&bake](vn::graphics::NodeId identity) {
+        for (std::size_t index = 0; index < bake.rows.size(); ++index) {
+            if (bake.rows[index].identity == identity) {
+                return static_cast<std::uint32_t>(index);
+            }
+        }
+        return std::numeric_limits<std::uint32_t>::max();
+    };
+    const std::uint32_t arm_index  = index_of(arm->id());
+    const std::uint32_t leaf_index = index_of(leaf->id());
+    ASSERT_LT(arm_index, bake.rows.size());
+    ASSERT_LT(leaf_index, bake.rows.size());
+
+    // Nothing announced, nothing moved - and re-reading is what the table now holds.
+    EXPECT_EQ(refreshRow(bake, arm_index), RowRefresh::NoChange) << "a row re-read from the same node is unchanged";
+
+    // THE REPLAYABLE SET: placement, opacity, layers and draw order are what the fold re-derives from values.
+    arm->setMatrix(vn::math::translate(0.25, 0.0, 0.0));
+    EXPECT_EQ(refreshRow(bake, arm_index), RowRefresh::RefoldSubtree) << "a moved placement is a re-fold, not a rebuild";
+    EXPECT_EQ(refreshRow(bake, arm_index), RowRefresh::NoChange) << "the row now holds the re-read value";
+
+    arm->setOpacity(0.5F);
+    EXPECT_EQ(refreshRow(bake, arm_index), RowRefresh::RefoldSubtree) << "opacity is part of the replayable set";
+
+    leaf->setLayers(1U << 3U);
+    EXPECT_EQ(refreshRow(bake, leaf_index), RowRefresh::RefoldSubtree) << "a layer declaration is part of it too";
+
+    // EVERYTHING ELSE changes the row's meaning: only a rebuilt table can carry it.
+    auto material = vn::graphics::MaterialPtr(new vn::graphics::Material());
+    leaf->setMaterial(material);
+    EXPECT_EQ(refreshRow(bake, leaf_index), RowRefresh::RebuildTable) << "a new material cannot be replayed";
+
+    // An index that names no row cannot be refreshed: the conservative answer is the rebuild.
+    EXPECT_EQ(refreshRow(bake, static_cast<std::uint32_t>(bake.rows.size())), RowRefresh::RebuildTable);
 }

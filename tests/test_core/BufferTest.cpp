@@ -185,3 +185,25 @@ TEST(BufferTest, SetRevisionStaysForBytesWrittenOutsideTheBuffer)
     // The counter says nothing about the data; it only orders changes.
     EXPECT_EQ((*buffer)[0], 5);
 }
+
+TEST(BufferTest, ASliceEqualsTheSameSegmentOfTheSameBuffer)
+{
+    // Segment IDENTITY, not content: this is the comparison a fact table asks when it needs to know "is this still
+    // the stream I recorded", so editing the buffer's values must not make two holders of the same segment differ.
+    auto buffer = intrusive_ptr<Buffer<int>>(new Buffer<int>(8));
+    auto other  = intrusive_ptr<Buffer<int>>(new Buffer<int>(8));
+
+    const auto whole = BufferSlice<int>::whole(buffer);
+    const auto tail  = BufferSlice<int>::slice(buffer, 4u, 0u);
+
+    EXPECT_EQ(whole, BufferSlice<int>::whole(buffer));
+    EXPECT_EQ(BufferSlice<int>::slice(buffer, 4u, 0u), tail);
+    EXPECT_NE(whole, tail) << "different segments of one buffer are different values";
+    EXPECT_NE(whole, BufferSlice<int>::whole(other)) << "the same range of another buffer is a different value";
+
+    {
+        auto edit = buffer->edit();
+        edit[0]   = 9;
+    }
+    EXPECT_EQ(whole, BufferSlice<int>::whole(buffer)) << "an edited value is still the same segment";
+}

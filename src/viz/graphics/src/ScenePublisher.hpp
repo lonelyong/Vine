@@ -164,6 +164,10 @@ class ScenePublisher final
     // order. A view reads it instead of recomputing it, which is why a moving camera costs the prune and the sort
     // rather than a full walk.
     mutable std::unique_ptr<SceneBake> content_bake_;
+    // THE LAST PUBLICATION built from the rows (and the value a new one shares chunks with). It belongs HERE, not to
+    // the table: a rebuild replaces the table and must not orphan the publication, and a query that reads the table
+    // has no business owning the picture a frame draws (see `SceneBake`).
+    mutable SceneSnapshotPtr           publication_cache_;
     mutable std::uint64_t              bake_epoch_            = 0;
     mutable std::uint64_t              content_bake_count_    = 0;
     mutable std::uint64_t              content_collect_count_ = 0;

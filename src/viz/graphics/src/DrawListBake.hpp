@@ -1,9 +1,7 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -25,17 +23,15 @@
 
 #include <vine/graphics/graphics_global.hpp>
 
+#include "Frustum.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 using vn::geom::spatial::Aabbd;
 using vn::math::Mat4d;
-using vn::math::Vec3d;
-using vn::math::Vec4d;
 
 namespace detail
 {
-
-struct SceneSnapshot; // The immutable chunked publication (see SceneSnapshot.hpp).
 
 /**
  * @brief ONE DRAW a leaf row names, resolved: what the select needs to emit a command, and none of the arithmetic.
@@ -46,215 +42,249 @@ struct SceneSnapshot; // The immutable chunked publication (see SceneSnapshot.hp
  *   pass, now happens once per description.
  * - `drawn` is false for a primitive whose visible instance prefix is zero: not a draw this frame, but the row keeps
  *   it (an edit may make it one again without changing the description).
+ * - Equality is EXACT and defaulted: a field added here joins the comparison automatically, which is what the
+ *   change test needs (see RowRefresh).
  */
-struct DrawFacts {
+struct ResolvedDraw {
     std::uint32_t      primitive_index{ 0 };                 ///< Which primitive of the geometry this draw is.
     MaterialValuesPtr    material{};                           ///< Resolved: primitive, else geometry, else inherited.
-    /// The same material's values as a value (see MaterialValues::description), taken where the facts were built: what a
-    /// command hands a backend, so recording never reads the live material.
+    /// The same material's values as a value (see MaterialValues::description), taken where the values were read: what
+    /// a command hands a backend, so recording never reads the live material.
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr   program{};                            ///< Resolved the same way.
-    /// The same program's text as a value (see ShaderProgramDescription), taken where the facts were built: what a
+    /// The same program's text as a value (see ShaderProgramDescription), taken where the values were read: what a
     /// command hands a backend, so recording never reads the live program.
     ShaderProgramDescriptionPtr program_description{};
     BufferSlice<float> instance_transforms{};                ///< Null for a non-instanced draw.
     std::uint32_t      first_instance{ 0 };
     std::uint32_t      instance_count{ 0 };                  ///< 0 for a plain draw (see DrawItem).
     bool               drawn{ true };
+
+    [[nodiscard]] bool operator==(const ResolvedDraw& other) const = default;
 };
 
 /**
- * @brief ONE ROW of a draw list: a node's OWN facts and the values the fold resolved from them.
+ * @brief The facts the FOLD resolves for one row: what the row draws with, and what its children inherit from it.
  *
  * @details
- * - OWN facts are what the node itself says: its local placement, visibility, opacity, its own layer / draw-order
- *   declaration, its own state, material and program, its primitives - and, when its placement depends on the camera,
- *   a ViewPlacement VALUE. They are the fold's INPUT, which is what lets a producer that was handed VALUES (the
- *   render world) re-run the fold without a node.
- * - RESOLVED facts are what a select reads: the accumulated placement and folds, the subtree's layer union and world
- *   box, and the end of the subtree in walk order. Nothing there needs the node again - a per-view row is resolved
- *   from the view by the select, which reads its placement value (see ViewPlacement).
- * - `geometry` is the content object a content-side producer HAD (a share); a mirror built from values carries none,
- *   and nothing in the fold or the select reads it (see `.ai/design/graphics-threading.md`).
- * - `identity` is the node id the table keys by, kept separately so a producer that has no object at all (the render
- *   world) can still name what it mirrors.
+ * - IT IS ONE VALUE BECAUSE IT MOVES AS ONE. A node's edit re-derives its whole subtree in this same step, so a
+ *   publication has to ask "did any resolved fact move", not "did these nine fields move": storing this value is the
+ *   only way the resolved side is written (`storeResolved`), and it moves `Row::resolved_serial` when it changes -
+ *   which is what makes "this chunk is still the same picture" one comparison (see `SceneSnapshot`).
+ * - THE STATE / MATERIAL / PROGRAM ARE HERE FOR EVERY ROW, not only for the rows that draw: they are what a re-fold
+ *   below this row starts from (see `resolveSubtree`), so a container that stored nothing would reset its whole
+ *   subtree to the defaults - the edit path's second, hidden rule (design `graphics-frame-pipeline.md` §3.3 F2).
+ * - `local_box` covers both halves of one fact: a leaf's own bound (as its node states it) IS its folded box, so a
+ *   leaf and a container do not need two spells of "this subtree's extent".
+ * - EQUALITY IS DEFAULTED, FIELD FOR FIELD: the comparison is the definition of "the fold produced the same row
+ *   again", so it must cover everything. A hand-written list is a list somebody forgets to extend; a defaulted one
+ *   cannot fall out of step with the fields.
  */
-struct Row {
-    /// The node this row mirrors (see Node::id): a handle, so a row can outlive the object and still be told apart
-    /// from a later node built at the same address.
-    NodeId identity{};
-
-    /// 0-based row index into the WALK-ORDERED table (so a row is followed by its own subtree); the first row has none.
-    std::uint32_t parent{ 0xFFFFFFFFU };
-    std::uint32_t end{ 0 };                     ///< One past this row's subtree.
-    std::uint32_t child_count{ 0 };
-
-    /// Placement in the parent's frame; this and the fields below it are the row's OWN contribution - the fold's input.
-    Mat4d                        local{};
-    float                        own_opacity{ 1.0F };
-    std::optional<std::uint32_t> own_layers{};
-    std::optional<int>           own_draw_order{};
-    bool                         owns_state{ false };  ///< A StateNode's contribution below is meaningful.
-    RenderState                  own_state{};
-    MaterialValuesPtr              own_material{};
-    /// The own material's values, taken with it (content side): the fold copies pointers, so nothing downstream has to
-    /// ask the material for its values on a thread that does not own it.
-    MaterialDescriptionPtr       own_material_description{};
-    ShaderProgramPtr             own_program{};
-    /// The own program's text, taken with it (content side): the fold copies value pointers, so nothing downstream
-    /// has to ask the program for its stages on a thread that does not own it.
-    ShaderProgramDescriptionPtr  own_program_description{};
-    /// The leaf's own bound as the NODE states it, in WORLD space, for the leaves that cannot state one in their own
-    /// frame (a Geometry subclass may place itself in ways only it knows - see Node::subtreeBounds).
-    ///
-    /// The fold turns that answer into `local_box` with the row's own placement, so every box downstream lives in one
-    /// frame and the cull above the row still works. `refreshBoxes` re-reads it and compares, which is why such a row
-    /// is a content-side one: a mirror keeps the value it was told (see SceneBake::nodes).
-    std::optional<Aabbd>         world_box_answer{};
-    /// The per-view half of this row's placement, or null when the row is placed by `local` alone.
-    ///
-    /// A VALUE (see ViewPlacement): the select resolves it from the view it is drawing, which is what lets a mirror - or
-    /// any side that owns no node - draw a billboard without handing its subtree back to the graph walk.
-    ViewPlacementPtr             placement{};
-    GeometryPtr                  geometry{};           ///< The command's payload (a share, never dereferenced here).
-    /// The same geometry's shape as an immutable value (see Geometry::description): what a command hands a backend, so
-    /// describing streams never reads the live object. Shared by every draw of this row and stable per revision.
-    GeometryDescriptionPtr       description{};
-    std::vector<DrawFacts>       draws{};
-
-    /// Placed by this row's own `local`, from the fold (no camera read); this and the fields below it are the
-    /// fold's OUTPUT - what a select reads once the placement has been accumulated.
-    Mat4d            world{};
-    /// The placement accumulated ABOVE this row.
-    ///
-    /// A per-view placement produces the row's WHOLE local matrix (it replaces `local`), so it has to be composed
-    /// with what the parent already resolved - not with `world`, which already contains this row's own `local`.
-    Mat4d            parent_world{};
-    std::uint32_t    layers{ kDefaultLayer };
-    std::int32_t     draw_order{ 0 };
-    float            opacity{ 1.0F };
-    RenderState      state{};
-    MaterialValuesPtr  material{};
-    /// The resolved material's values (see `material`): from the row that owned the material, by pointer copy - a
-    /// material EDIT is a new value at the next publish, never a live re-read in the middle of a frame.
+struct ResolvedRow {
+    /// This row's placement accumulated from the root; a per-view row is re-placed by the select.
+    Mat4d world{};
+    /// The placement accumulated ABOVE this row: a per-view placement composes with this, never with `world`.
+    Mat4d parent_world{};
+    float opacity{ 1.0F };
+    std::uint32_t layers{ kDefaultLayer };
+    std::int32_t draw_order{ 0 };
+    RenderState state{};
+    MaterialValuesPtr material{};
+    /// The resolved material's values (see `material`): from the row that owned it, by pointer copy - a material EDIT
+    /// is a new value at the next publish, never a live re-read in the middle of a frame.
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr program{};
-    /// The resolved program's text as a value (see `program`): from the row that owned the program, by pointer copy -
-    /// a program EDIT is a new value at the next publish, never a live re-read in the middle of a frame.
+    /// The resolved program's text as a value (see `program`), copied for the same reason the material's values are.
     ShaderProgramDescriptionPtr program_description{};
     /// This subtree's box in this row's OWN frame (the frame `local` consumes): a leaf's own bounds, or the union of
     /// its children's boxes placed by their `local`. For a per-view row it does NOT cover the orientations the
     /// placement may choose - that bound is in the PARENT frame, see world_box.
-    Aabbd            local_box{};
+    Aabbd local_box{};
     /// This subtree's box in world space, CONSERVATIVE for every view: what the frustum test reads.
     ///
     /// A per-view row folds `placement->conservativeParentBox(local_box)` through `parent_world`, so the box covers
     /// every orientation the placement can take - the cull above it therefore does not depend on the camera.
-    Aabbd            world_box{};
-    /// This row or an ancestor resolves its placement per view: the select re-places the subtree from the view instead
-    /// of reading `world`.
-    bool             view_dependent{ false };
-    std::uint32_t    layers_union{ 0U };         ///< OR of the resolved layers of this subtree.
+    Aabbd world_box{};
+    /// OR of the resolved layers of this subtree.
+    std::uint32_t layers_union{ 0U };
+    /// This row or an ancestor resolves its placement per view: the select re-places the subtree from the view rather
+    /// than reading `world`.
+    bool view_dependent{ false };
     /// The subtree has NO view-independent bound, so a caller must not cull it (nor any ancestor, whose box was built
     /// from this one). Two causes: a per-view placement that can grow without a finite limit (screen scaling with no
     /// finite maximum), and a leaf that states no box at all.
-    bool             unbounded{ false };
+    bool unbounded{ false };
+
+    /**
+     * @brief Whether @p other is the same answer, field for field.
+     *
+     * @details
+     * - Defaulted on purpose: this comparison IS the definition of "the fold changed nothing", so every field must
+     *   take part. A hand-written version needs a note telling the next author to extend it; a defaulted one cannot
+     *   fall out of step with the fields.
+     *
+     * @param other The value to compare against.
+     * @return true when every field is equal.
+     */
+    [[nodiscard]] bool operator==(const ResolvedRow& other) const = default;
 };
 
 /**
- * @brief THE DRAW LIST'S ROWS: every node's facts in walk order, shared by every producer of a draw list.
+ * @brief WHERE ONE ROW SITS in the walk-ordered table: its parent, the end of its subtree, and its child count.
  *
  * @details
- * - WHY IT IS SHARED. `Scene` builds the rows by walking the live graph; the render world builds them from values it
- *   was told (see `.ai/design/graphics-threading.md`). Both must run the SAME fold, so the row type, the build and
- *   the passes over it live in one place (`DrawListBake.cpp`) instead of in two implementations that would drift.
- * - WHY AN ARRAY AND NOT A MAP. The build and the select are driven by the same order (children in order, invisible
- *   subtrees pruned), so the cursor IS the identity: no node-keyed map, no hashing. `end` keeps that alignment when
- *   a view prunes a subtree - the select jumps straight past it.
- * - WHAT IS NOT HERE. Anything a camera decides: the frustum test, the sort key, the final list.
- * - LIFETIME. A row holds SHARES of the content it names (geometry, material, program), so a row can never name a
- *   freed object. The table is dropped when the graph announces a change (the epoch) or the scene invalidates.
- * - WHAT IS CONTENT-SIDE ONLY. `nodes` is the build's record of which node each row came from, used by
- *   `refreshBoxes` (a byte edit announces itself on a buffer, so the box that depends on those bytes has to be
- *   re-read). It is NOT part of the draw list: a published snapshot drops it, which is why nothing in the fold or
- *   the select reads a node.
+ * - THE TABLE IS THE STRUCTURE. The rows are in walk order (a row is followed by its own subtree), so these three
+ *   numbers are everything a reader needs: the fold walks a child range, a select jumps to `end` to skip a pruned
+ *   subtree, and nothing keeps a node map on the side.
+ * - Equality is defaulted: a publication compares it to know a row's PLACE did not move (see `makeSceneSnapshot`).
  */
-struct SceneBake {
-    /// The row index meaning "this row has no parent" (the table's first row).
+struct RowLinks {
+    /// The parent value meaning "this row has no parent" (the table's first row).
     inline static constexpr std::uint32_t kNoParent = 0xFFFFFFFFU;
 
-    /// What the fold inherits ABOVE the table's first row (the scene's own opacity, and no placement).
-    struct Seed {
-        float parent_opacity{ 1.0F };
-    };
+    /// 0-based row index of the parent, or `kNoParent` for the table's first row.
+    std::uint32_t parent{ kNoParent };
+    std::uint32_t end{ 0 };         ///< One past this row's subtree: the index a walk continues at after it.
+    std::uint32_t child_count{ 0 }; ///< How many child rows this row has (an invisible child states none).
 
-    std::vector<Row>        rows;
-    std::vector<const Node*> nodes; // One per row, content-side box refresh only (dropped by a mirror).
-    Seed                    seed{};
-    // The incremental path's bookkeeping: the node epoch each row was built at, and the last immutable publication
-    // (kept here so Scene's public layout does not grow for an internal optimisation). A full rebuild carries the
-    // previous publication forward so the new snapshot can still share its unchanged chunks.
-    std::vector<std::uint64_t>            node_epochs;
-    std::shared_ptr<const SceneSnapshot> snapshot_cache;
+    [[nodiscard]] bool operator==(const RowLinks& other) const = default;
 };
 
 /**
- * @brief View frustum defined by six planes, used for culling.
+ * @brief WHAT A ROW'S NODE STATES: the fold's input, read once and never asked again.
  *
- * Planes are stored in the order: left, right, bottom, top, near, far. Each plane is a 4-vector (a, b, c, d)
- * satisfying a*x + b*y + c*z + d = 0 in world space.
+ * @details
+ * - IT IS ONE VALUE BECAUSE IT IS READ IN ONE PASS. `readRowOwn` builds it from a node and the row takes it as it is,
+ *   so a field added here can never survive an edit because somebody forgot to extend a reset list.
+ * - IT IS TWO NAMED GROUPS BECAUSE THE EDIT PATH ASKS TWO DIFFERENT QUESTIONS (see `RowRefresh`): `fold` is what a
+ *   re-fold re-derives from values alone, `body` is what changes the row's meaning. A new field joins one of them
+ *   deliberately, and each group compares as a whole (defaulted equality), so no hand-written field list exists
+ *   anywhere in the classification.
+ * - THE CONTENT VALUES ARE TAKEN WITH THE NODE (`material_description`, `program_description`, `description`): the
+ *   fold copies value pointers, so nothing downstream has to ask a live object for its values on a thread that does
+ *   not own it (see `.ai/design/graphics-threading.md`).
  */
-class Frustum {
-  public:
-    /** @brief Extracts the frustum from a combined view-projection matrix.
-     * @param vp Combined projection * view matrix.
-     * @return Frustum with normalized plane equations.
-     */
-    static Frustum fromViewProjection(const Mat4d& vp)
-    {
-        Frustum     f;
-        const auto  row = [&vp](int r) { return Vec4d(vp.element(r, 0), vp.element(r, 1), vp.element(r, 2), vp.element(r, 3)); };
-        const Vec4d r0  = row(0);
-        const Vec4d r1  = row(1);
-        const Vec4d r2  = row(2);
-        const Vec4d r3  = row(3);
-        f.planes_[0]    = r3 + r0; // left
-        f.planes_[1]    = r3 - r0; // right
-        f.planes_[2]    = r3 + r1; // bottom
-        f.planes_[3]    = r3 - r1; // top
-        f.planes_[4]    = r3 + r2; // near
-        f.planes_[5]    = r3 - r2; // far
-        for (auto& p : f.planes_) {
-            const Vec3d  n(p.x, p.y, p.z);
-            const double len = n.length();
-            if (len > 1e-12) {
-                p.x /= len;
-                p.y /= len;
-                p.z /= len;
-                p.w /= len;
-            }
-        }
-        return f;
-    }
+struct RowOwn {
+    /// The own facts a RE-FOLD re-derives from values alone (see RowRefresh::RefoldSubtree).
+    ///
+    /// The placement, the opacity, the layer and draw-order declarations and the view placement all feed the top-down
+    /// fold, so `resolveSubtree` reaches the same answer from them as a rebuilt table would.
+    struct Fold {
+        Mat4d                        local{};       ///< Placement in the parent's frame (this node's own transform).
+        float                        opacity{ 1.0F }; ///< This node's own multiplier, not the folded value.
+        std::optional<std::uint32_t> layers{};      ///< The declaration this node states, or nullopt to inherit.
+        std::optional<int>           draw_order{};  ///< The order this node declares, or nullopt to inherit.
+        /// The per-view half of the placement, or null when the row is placed by `local` alone.
+        ///
+        /// A VALUE (see ViewPlacement): the select resolves it from the view it is drawing, which is what lets a side
+        /// that owns no node draw a billboard without a graph walk.
+        ViewPlacementPtr placement{};
 
-    /** @brief Tests whether a box lies fully outside the frustum (the p-vertex test).
-     * @param box World-space axis-aligned bounding box.
-     * @return true when the box is fully outside the frustum.
-     */
-    bool isOutside(const Aabbd& box) const
-    {
-        for (const auto& p : planes_) {
-            const Vec3d n(p.x, p.y, p.z);
-            const Vec3d pos{ (n.x >= 0.0) ? box.max().x : box.min().x, (n.y >= 0.0) ? box.max().y : box.min().y, (n.z >= 0.0) ? box.max().z : box.min().z };
-            if (n.dot(pos) + p.w < 0.0) {
-                return true;
-            }
-        }
-        return false;
-    }
+        [[nodiscard]] bool operator==(const Fold& other) const = default;
+    };
 
-  private:
-    std::array<Vec4d, 6> planes_{};
+    /// The own facts that change the ROW SET rather than the fold's answer (see RowRefresh::RebuildTable).
+    struct Body {
+        /// A StateNode's contribution is meaningful (see `state`).
+        bool owns_state{ false };
+        /// The render state this node contributes; merged into the inherited one when `owns_state`.
+        RenderState state{};
+        /// The material this node names, or null when it names none (its draws inherit).
+        MaterialValuesPtr material{};
+        /// The material's values, taken with it: a material edit is a new value at the next publish, never a live
+        /// re-read in the middle of a frame.
+        MaterialDescriptionPtr material_description{};
+        /// The program this node names, or null when it names none (its draws inherit).
+        ShaderProgramPtr program{};
+        /// The program's text, taken with it for the same reason the material's values are.
+        ShaderProgramDescriptionPtr program_description{};
+        /// The leaf's own bound as the NODE states it, in the leaf's OWN frame, when it can answer there.
+        std::optional<Aabbd> local_box{};
+        /// The leaf's own bound as the NODE states it, in WORLD space, for the leaves that cannot state one in their
+        /// own frame (a Geometry subclass may place itself in ways only it knows - see Node::subtreeBounds).
+        ///
+        /// The fold converts it with the row's own placement, so every box downstream lives in one frame and the cull
+        /// above the row still works. `refreshBoxes` re-reads it and compares, which is why such a row is a content-side
+        /// one: a side that owns no node keeps the value it was told (see SceneBake::nodes).
+        std::optional<Aabbd> world_box{};
+        /// The node states no box that can be trusted: the fold marks this subtree (and every ancestor) unbounded.
+        bool unbounded{ false };
+        GeometryPtr geometry{}; ///< The command's payload (a share, never dereferenced here).
+        /// The same geometry's shape as an immutable value (see Geometry::description): what a command hands a backend,
+        /// so describing streams never reads the live object. Shared by every draw of this row, stable per revision.
+        GeometryDescriptionPtr description{};
+        /// ONE entry per primitive, resolved at read time (see ResolvedDraw): what the select emits, with no arithmetic.
+        std::vector<ResolvedDraw> draws{};
+
+        [[nodiscard]] bool operator==(const Body& other) const = default;
+    };
+
+    Fold fold{};
+    Body body{};
+
+    [[nodiscard]] bool operator==(const RowOwn& other) const = default;
+};
+
+/**
+ * @brief ONE ROW OF A DRAW LIST: its identity, where it sits, what its node states, and what the fold resolved.
+ *
+ * @details
+ * - THE THREE PARTS ARE THE THREE QUESTIONS A ROW ANSWERS: `links` says where it is in the table, `own` is the fold's
+ *   INPUT (what the node states, in the form the select reads) and `resolved` is the fold's OUTPUT (what the select
+ *   reads, and what a re-fold below this row starts from - see ResolvedRow).
+ * - THE FOLD IS THE RESOLVED SIDE'S ONLY WRITER, through `storeResolved`. Nothing else may write `resolved`, which is
+ *   what makes the serial below truthful.
+ * - `identity` is the node id the table keys by, kept separately so a producer that has no object at all can still
+ *   name what it mirrors.
+ * - `resolved_serial` changes IF AND ONLY IF `resolved` did, so a publication can ask "is this row still the picture
+ *   I published" with one comparison (see `SceneSnapshot`). A node's epoch cannot answer that: announcing an edit
+ *   increments the edited node's and its ANCESTORS' counters (`Node::announceContentChange`), never its descendants',
+ *   while an edit re-folds the whole subtree below it.
+ */
+struct Row {
+    NodeId        identity{};
+    RowLinks      links{};
+    RowOwn        own{};
+    ResolvedRow   resolved{};
+    std::uint64_t resolved_serial{ 0 };
+};
+
+/**
+ * @brief THE ROW TABLE of one scene: every node's own facts in walk order, plus the bookkeeping the incremental edit
+ *   path needs.
+ *
+ * @details
+ * - WHY IT IS SHARED. `Scene` builds the rows by walking the live graph; a producer that was handed VALUES re-folds
+ *   the same rows (see `.ai/design/graphics-threading.md`). Both must run the SAME fold, so the row type, the build
+ *   and the passes over it live in one place (`DrawListBake.cpp`) instead of in two implementations that would drift.
+ * - WHY AN ARRAY AND NOT A MAP. The build and the select are driven by the same order (children in order, invisible
+ *   subtrees pruned), so the cursor IS the identity: no node-keyed map, no hashing. `RowLinks::end` keeps that
+ *   alignment when a view prunes a subtree - the select jumps straight past it.
+ * - WHAT IS NOT HERE. Anything a camera decides: the frustum test, the sort key, the final list. Nor anything a
+ *   PUBLICATION decides: the last snapshot and its version belong to the publisher (see `ScenePublisher`), so a
+ *   table cannot disagree with itself about which publication it is current with.
+ * - LIFETIME. A row holds SHARES of the content it names (geometry, material, program), so a row can never name a
+ *   freed object. The table is dropped when the graph announces a change (the epoch) or the scene invalidates.
+ * - WHAT IS CONTENT-SIDE ONLY. `nodes` / `node_epochs` are the build's record of which node each row came from and
+ *   when it was read, used by `refreshRow` and `refreshBoxes` (a byte edit announces itself on a buffer, so the box
+ *   that depends on those bytes has to be re-read). They are NOT part of the draw list: a published snapshot drops
+ *   them, which is why nothing in the fold or the select reads a node.
+ */
+struct SceneBake {
+    std::vector<Row> rows{};
+
+    /// One per row: the node the row was read from. Content side only (a snapshot drops it).
+    std::vector<const Node*> nodes{};
+    /// One per row: the node's content epoch when its own facts were read (see refreshRow). Content side only.
+    std::vector<std::uint64_t> node_epochs{};
+
+    /// Opacity accumulated ABOVE the table's first row (the scene's own).
+    float parent_opacity{ 1.0F };
+
+    /// The counter the rows' `resolved_serial`s are drawn from. CARRIED across a full rebuild (see
+    /// `ScenePublisher::ensureRows`): a fresh table that started over at 1 would hand a row a number a previous
+    /// publication already used for a different value, and the share test would serve that different value.
+    std::uint64_t next_serial{ 1 };
 };
 
 /**
@@ -276,23 +306,6 @@ class Frustum {
 void buildRows(const Node& root, SceneBake& bake, float opacity = 1.0F);
 
 /**
- * @brief Builds a subtree's OWN facts and nothing else: the block a structure change carries.
- *
- * @details
- * - It is the first half of `buildRows` (the walk), without the fold: the rows come out with `parent` / `end` relative
- *   to a table of their own, and every resolved value untouched. Whoever SPLICES them into a live table folds them
- *   there, where the real parent's placement is known.
- * - Splitting it here rather than in the mirror is what keeps "how a subtree's own facts are read" in one place: the
- *   graph is only ever read by this file.
- * - Invisible subtrees still produce no rows (see buildRows): "connect a hidden subtree" is a no-op, and the caller
- *   that shows it later announces it as a new attach.
- *
- * @param root Root of the subtree to read.
- * @param bake Receives the rows (its previous contents are dropped); `nodes` is filled for a content-side caller.
- */
-void buildOwnFacts(const Node& root, SceneBake& bake);
-
-/**
  * @brief Re-resolves ONE row's subtree: the one fold, run by the build once and by a producer on every edit.
  *
  * @details
@@ -302,27 +315,14 @@ void buildOwnFacts(const Node& root, SceneBake& bake);
  * - THE CHAIN ABOVE is re-derived too, one row each: a box is a UNION, so the row just re-folded is part of every
  *   ancestor's box. Skipping that leaves a box that still says the subtree is where it was, and a cull then prunes
  *   content that moved INTO view - the object silently disappears.
- * - The boxes are values (`Row::local_box` for a leaf, the children's union for a container), so a fold never asks a
- *   node: a mirror re-folds exactly what content does.
+ * - The boxes are values (`RowOwn::Body::local_box` for a leaf, the children's union for a container), so a fold never
+ *   asks a node: a producer that owns no node re-folds exactly what content does.
  *
  * @param bake  The table containing @p index.
  * @param index The row to fold (with its subtree).
  * @return How many rows were re-resolved (0 when the row cannot be folded from values).
  */
 std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index);
-
-/**
- * @brief Recomputes one row's box and every ancestor's, from children that are already folded.
- *
- * @details
- * - The BOX halves of the fold only: no own fact and no resolved value changes, which is exactly the case a detached
- *   subtree leaves behind (the parent's union lost a child, everything else is as it was).
- * - Deepest first: each row is re-derived after the children it reads.
- *
- * @param bake  The table.
- * @param index The row whose own box moved last (the parent of what was removed), or the row that was inserted.
- */
-void refoldChain(SceneBake& bake, std::uint32_t index);
 
 /**
  * @brief Re-reads the own boxes of the rows whose geometry revision moved, and folds the ancestors' boxes.
@@ -367,28 +367,36 @@ std::uint32_t refreshBoxes(SceneBake& bake);
  */
 std::uint32_t refreshValues(SceneBake& bake);
 
-/** @brief What re-reading one row's own facts found. */
+/**
+ * @brief What re-reading one row's own facts found, and therefore what the table needs.
+ *
+ * @details
+ * - The three answers are the three costs: nothing, one subtree re-folded, or a rebuilt table. They are named for the
+ *   ACTION the caller takes rather than for the field that moved, so an answer cannot be mistaken for evidence.
+ */
 enum class RowRefresh
 {
-    NoChange,    ///< The node's own facts are the same (an ancestor's epoch moved, nothing below did).
-    HotChange,   ///< Only local placement / opacity / layers / draw order / view placement moved.
-    Incompatible ///< A field outside the hot set moved; the caller must rebuild the table.
+    NoChange,      ///< The row's own facts are the same (an ancestor's epoch moved, nothing below did).
+    RefoldSubtree, ///< Only `RowOwn::Fold` moved; the fold can re-derive the row's subtree in place.
+    RebuildTable   ///< `RowOwn::Body` moved; the caller must rebuild the table from the graph.
 };
 
 /**
- * @brief Re-reads one row's own facts from @p node, for the incremental edit path.
+ * @brief Re-reads one row's own facts from the node the table recorded, for the incremental edit path.
  *
  * @details
- * - It never touches `parent` / `end` / `child_count`: structure changes are the caller's signal to rebuild.
- * - @p index must name @p node in @p bake; a mismatch answers Incompatible rather than refreshing the wrong row.
- * - The caller resolves the subtree when the answer is HotChange; this function only fills the row's own facts.
+ * - IT READS THE NODE THE TABLE KNOWS (`bake.nodes[index]`), never one handed in beside an index: the row and its
+ *   source cannot disagree, so there is no "wrong node" answer to defend against.
+ * - It never touches `links` or `resolved`: the structure is the caller's to rebuild when it changes, and the
+ *   resolved side is the fold's to write (see `resolveSubtree`).
+ * - The classification is asked of the two own GROUPS (`RowOwn::Fold` / `RowOwn::Body`), not of a hand-written field
+ *   list, so a field added to `RowOwn` joins the classification by construction.
  *
- * @param node  The node the row was built from.
  * @param bake  The table to refresh.
  * @param index The row to refresh.
- * @return What changed (see RowRefresh).
+ * @return What the caller has to do (see RowRefresh).
  */
-RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t index);
+RowRefresh refreshRow(SceneBake& bake, std::uint32_t index);
 
 /**
  * @brief ONE command's place in the order a frame draws it: THE total order `sortCollected` sorts by.
@@ -466,33 +474,57 @@ struct SortKey {
 SortKey makeSortKey(const DrawItem& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie);
 
 /**
- * @brief Collects one view's commands from a row range, through an accessor.
+ * @brief Reorders @p commands into the order a frame draws them in, in place.
  *
  * @details
- * - The algorithm reads rows only; the accessor is what lets it run over a flat `SceneBake` and over the chunked
- *   `SceneSnapshot` without materialising either into the other's layout.
- * - `row_at(index)` must answer the row at @p index and must be stable for the duration of the call.
- * - @p keys, when given, receives ONE key per command appended - the caller then reorders with `sortCollected`.
- *   The keys are built here because a key needs facts only the row has (its layers and its world box).
+ * - The order is the TOTAL order @ref SortKey states: declared draw order, then layer, then the opaque segment before
+ *   the transparent one, then quantized camera-space depth (front-to-back opaque, back-to-front transparent), and
+ *   finally the row/primitive index. Because the last field is unique, no two commands compare equal - so any
+ *   permutation of the same commands sorts to the same list and `std::sort` (not `stable_sort`) is correct.
+ * - It is the last step of `selectRows`, not a second interface: the keys are built where the row facts are, and no
+ *   producer owns a second copy of the list.
+ *
+ * @param commands Commands to reorder (replaced by their sorted order).
+ * @param keys     The key of every command, in the commands' current order. Must have one entry per command.
+ */
+void sortCollected(std::vector<DrawItem>& commands, std::span<const SortKey> keys);
+
+/**
+ * @brief ONE VIEW'S SELECTION: the commands in the order the frame draws them, and what the select had to know.
+ *
+ * @details
+ * - SORTED, NOT WALK ORDER: `selectRows` fills the commands while it walks the rows and then applies the total order
+ *   `SortKey` states, so a caller never has to know which of the two orders it is holding.
+ * - `viewport_used` records whether a per-view placement resolved against the device-pixel viewport. A caller that
+ *   memoises the list has to key it by the viewport too when it is true, and may share it across rectangles when it
+ *   is false (see DrawListMemo).
+ */
+struct Selection {
+    std::vector<DrawItem> commands{};             ///< The commands, in draw order (see SortKey).
+    bool                  viewport_used{ false }; ///< A per-view row resolved against the device-pixel viewport.
+};
+
+/**
+ * @brief Selects one view's commands from a walk-ordered row range, through an accessor.
+ *
+ * @details
+ * - THE WHOLE VIEW HALF IN ONE CALL: layer prune, frustum cull, per-view placement, command construction and the
+ *   total order. A caller asks a view one question and receives the list a frame draws.
+ * - The accessor is what lets the one algorithm run over a flat `SceneBake` and over the chunked `SceneSnapshot`
+ *   without materialising either into the other's layout; `row_at(index)` must be stable for the duration of the
+ *   call.
+ * - A pruned subtree is skipped by jumping to its `RowLinks::end`, so the walk visits only the rows a view can draw.
  *
  * @tparam RowAt Callable `const Row&(std::uint32_t)`.
  *
- * @param row_count     Number of rows to walk.
- * @param row_at        Accessor answering one row.
- * @param frustum       The view's frustum.
- * @param view          The view being drawn (its layer mask is the content selection).
- * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
- * @param out           Receives the commands, in walk order.
- * @param keys          Receives the sort key of every appended command, or null when the caller sorts elsewhere.
+ * @param row_count Number of rows to walk.
+ * @param row_at    Accessor answering one row.
+ * @param frustum   The view's frustum.
+ * @param view      The view being drawn (its layer mask is the content selection).
+ * @return The commands, in draw order, and whether the viewport took part (see Selection).
  */
 template <class RowAt>
-void selectRows(std::uint32_t               row_count,
-                RowAt                       row_at,
-                const Frustum&              frustum,
-                const View&                 view,
-                bool&                       viewport_used,
-                std::vector<DrawItem>& out,
-                std::vector<SortKey>*       keys = nullptr)
+[[nodiscard]] Selection selectRows(std::uint32_t row_count, RowAt row_at, const Frustum& frustum, const View& view)
 {
     // The rows are in walk order, so the rows currently being resolved form the ancestor chain, deepest last. A row
     // whose placement was resolved for THIS view hands its world down; every other row is already placed by the fold.
@@ -506,104 +538,98 @@ void selectRows(std::uint32_t               row_count,
     // is a SmallVector and not a std::vector: a collection happens per view per frame, and it must not allocate.
     vn::SmallVector<OpenRow, 32U> open;
 
+    Selection            selection;
+    std::vector<SortKey> keys;
+    selection.commands.reserve(row_count);
+    keys.reserve(row_count);
+
     for (std::uint32_t index = 0; index < row_count;) {
         while (!open.empty() && open.back().end <= index) {
             open.pop_back();
         }
         const Row&  row             = row_at(index);
         const bool  parent_resolved = !open.empty() && open.back().resolved;
-        const bool  in_run          = row.view_dependent || parent_resolved;
-        const Mat4d parent_world    = parent_resolved ? open.back().world : row.parent_world;
+        const bool  in_run          = row.resolved.view_dependent || parent_resolved;
+        const Mat4d parent_world    = parent_resolved ? open.back().world : row.resolved.parent_world;
 
-        Mat4d world    = row.world;
+        Mat4d world    = row.resolved.world;
         bool  resolved = false;
-        if (row.placement != nullptr) {
-            const ViewDependence dependence = localToWorldForView(*row.placement, parent_world, view, world);
+        if (row.own.fold.placement != nullptr) {
+            const ViewDependence dependence = localToWorldForView(*row.own.fold.placement, parent_world, view, world);
             if (dependence == ViewDependence::ViewAndViewport) {
-                viewport_used = true;
+                selection.viewport_used = true;
             }
             if (dependence == ViewDependence::None) {
-                world = parent_world * row.local; // this view keeps the node's own placement
+                world = parent_world * row.own.fold.local; // this view keeps the node's own placement
             }
             resolved = true;
         }
         else if (in_run) {
-            world    = parent_world * row.local; // an ancestor was re-placed, so this row's folded world is stale
+            world    = parent_world * row.own.fold.local; // an ancestor was re-placed, so this row's folded world is stale
             resolved = true;
         }
 
-        if ((row.layers_union & view.layer_mask) == 0U) {
-            index = row.end;
+        if ((row.resolved.layers_union & view.layer_mask) == 0U) {
+            index = row.links.end;
             continue;
         }
         // A row with no view-independent bound must not be culled: no box can promise it is out of the frustum.
-        if (!row.unbounded && frustum.isOutside(resolved ? row.local_box.transformed(world) : row.world_box)) {
-            index = row.end;
+        if (!row.resolved.unbounded &&
+            frustum.isOutside(resolved ? row.resolved.local_box.transformed(world) : row.resolved.world_box)) {
+            index = row.links.end;
             continue;
         }
         if (resolved) {
-            open.push_back(OpenRow{ row.end, true, world });
+            open.push_back(OpenRow{ row.links.end, true, world });
         }
-        if (!row.draws.empty()) {
-            const float effective = std::clamp(row.opacity, 0.0f, 1.0f);
+        if (!row.own.body.draws.empty()) {
+            const float effective = std::clamp(row.resolved.opacity, 0.0f, 1.0f);
             // The box the key's representative point is taken from: the one this view resolved for a per-view row,
             // otherwise the box the fold published.
-            const Aabbd sort_box = resolved ? row.local_box.transformed(world) : row.world_box;
-            for (const DrawFacts& draw : row.draws) {
+            const Aabbd sort_box = resolved ? row.resolved.local_box.transformed(world) : row.resolved.world_box;
+            for (const ResolvedDraw& draw : row.own.body.draws) {
                 if (!draw.drawn) {
                     continue;
                 }
-                const MaterialValuesPtr material = draw.material != nullptr ? draw.material : row.material;
+                const MaterialValuesPtr material =
+                    draw.material != nullptr ? draw.material : row.resolved.material;
                 const MaterialDescriptionPtr material_description =
-                    draw.material_description != nullptr ? draw.material_description : row.material_description;
-                const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
+                    draw.material_description != nullptr ? draw.material_description : row.resolved.material_description;
+                const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.resolved.program;
                 const ShaderProgramDescriptionPtr program_description =
-                    draw.program_description != nullptr ? draw.program_description : row.program_description;
-                auto&                  cmd     = out.emplace_back(row.geometry, material, world, draw.primitive_index);
+                    draw.program_description != nullptr ? draw.program_description : row.resolved.program_description;
+                auto&                  cmd     = selection.commands.emplace_back(row.own.body.geometry, material, world, draw.primitive_index);
                 cmd.node                       = row.identity;
-                cmd.description                = row.description;
-                cmd.geometry_ref               = contentRefOf(row.identity, row.description != nullptr ? row.description->revision() : 0U);
+                cmd.description                = row.own.body.description;
+                cmd.geometry_ref               = contentRefOf(row.identity, row.own.body.description != nullptr ? row.own.body.description->revision() : 0U);
                 cmd.material_description       = material_description;
                 cmd.material_ref               = material_description != nullptr
                                                      ? ContentRef{ material != nullptr ? material->id().handle() : Handle{},
                                                                    material_description->revision() }
                                                      : ContentRef{};
                 cmd.opacity                    = effective;
-                cmd.draw_order                 = row.draw_order;
-                cmd.authored_state             = row.state;
+                cmd.draw_order                 = row.resolved.draw_order;
+                cmd.authored_state             = row.resolved.state;
                 cmd.program                    = program;
                 cmd.program_description        = program_description;
                 cmd.instance_transforms        = draw.instance_transforms;
                 cmd.first_instance             = draw.first_instance;
                 cmd.instance_count             = draw.instance_count;
-                if (keys != nullptr) {
-                    keys->push_back(makeSortKey(out.back(),
-                                                row.layers,
-                                                sort_box,
-                                                view.camera.view,
-                                                (static_cast<std::uint64_t>(index) << 32U) | draw.primitive_index));
-                }
+                keys.push_back(makeSortKey(selection.commands.back(),
+                                           row.resolved.layers,
+                                           sort_box,
+                                           view.camera.view,
+                                           (static_cast<std::uint64_t>(index) << 32U) | draw.primitive_index));
             }
         }
         ++index;
     }
-}
 
-/**
- * @brief Reorders @p commands into the order a frame draws them in, in place.
- *
- * @details
- * - The order is the TOTAL order @ref SortKey states: declared draw order, then layer, then the opaque segment before
- *   the transparent one, then quantized camera-space depth (front-to-back opaque, back-to-front transparent), and
- *   finally the row/primitive index. Because the last field is unique, no two commands compare equal - so any
- *   permutation of the same commands sorts to the same list and `std::sort` (not `stable_sort`) is correct.
- * - It exists as its own step because the view half (see SceneSnapshot.cpp) fills commands and keys in one pass and
- *   then needs one reordering; no producer owns a second copy of the list.
- *
- * @param commands Commands to reorder (replaced by their sorted order).
- * @param keys     The key of every command, in the commands' current order (see selectRows).
- */
-void sortCollected(std::vector<DrawItem>& commands, std::span<const SortKey> keys);
+    // THE DRAW ORDER: the walk order is not the draw order. One reordering, here, so the result is a property of the
+    // commands rather than of the walk that collected them (see SortKey and sortCollected).
+    sortCollected(selection.commands, keys);
+    return selection;
+}
 
 } // namespace detail
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cmath>
 #include <limits>
 
@@ -12,20 +13,6 @@ namespace detail
 
 namespace
 {
-
-/// @brief The values a row inherits from its parent (the fold's input as it descends).
-struct Inherited {
-    Mat4d            world{};      // the parent's accumulated placement (identity for the table's first row)
-    float            opacity{ 1.0F };
-    std::uint32_t    layers{ 1U };
-    std::int32_t     draw_order{ 0 };
-    RenderState      state{};
-    MaterialValuesPtr  material{};
-    MaterialDescriptionPtr material_description{};
-    ShaderProgramPtr program{};
-    ShaderProgramDescriptionPtr program_description{};
-    bool             view_dependent{ false };
-};
 
 /// @brief ONE leaf's own bound as the node states it, and the frame it stated it in.
 ///
@@ -38,9 +25,9 @@ struct Inherited {
 /// - A leaf that cannot state a bound at all is UNCULLABLE rather than contributing an empty box, which would quietly
 ///   drop everything above it.
 struct LeafBox {
-    Aabbd                local{ Aabbd::empty() }; ///< In the leaf's own frame; empty when the answer was `world`.
-    std::optional<Aabbd> world{};                 ///< The node's answer in world space, when it stated one there.
-    bool                 unbounded{ false };      ///< No box can be trusted for this leaf.
+    std::optional<Aabbd> local{};            ///< The answer in the leaf's own frame, when it stated one there.
+    std::optional<Aabbd> world{};            ///< The answer in world space, when that is the only frame it can use.
+    bool                 unbounded{ false }; ///< No box can be trusted for this leaf.
 };
 
 /// @brief Reads @p node's own bound.
@@ -55,71 +42,96 @@ LeafBox readLeafBox(const Node& node)
     }
     const Aabbd world = node.boundingBox();
     if (!world.isValid()) {
-        return LeafBox{ Aabbd::empty(), std::nullopt, true }; // nothing to cull by
+        return LeafBox{ std::nullopt, std::nullopt, true }; // nothing to cull by
     }
-    return LeafBox{ Aabbd::empty(), world, false };
+    return LeafBox{ std::nullopt, world, false };
 }
 
-/// @brief Writes @p box into @p row and says whether that changed anything the fold depends on.
+/// @brief Writes @p box into @p body and says whether that changed anything the fold depends on.
 ///
-/// @param row The leaf's row.
-/// @param box The bound read from the node.
-/// @return true when the row's own box or its cullability moved, so the rows above it have to be folded again.
-bool recordLeafBox(Row& row, const LeafBox& box)
+/// @details
+/// - It writes only the body side. The resolved box is the FOLD's derivation (see foldRow), which is what keeps
+///   `Row::resolved` a value with one writer.
+///
+/// @param body The leaf's own body facts.
+/// @param box  The bound read from the node.
+/// @return true when the own box or its cullability moved, so the rows above it have to be folded again.
+bool recordLeafBox(RowOwn::Body& body, const LeafBox& box)
 {
-    // Compared against what the NODE said: its own-frame box, or - for a leaf that can only answer in world space -
-    // that world answer (the row's own-frame box is then the FOLD's derivation of it, not a statement).
-    const bool from_world = box.world.has_value();
-    const bool changed    = (from_world ? row.world_box_answer != box.world : row.local_box != box.local) || row.unbounded != box.unbounded;
-    if (!changed) {
-        return false; // nothing moved: write nothing, so the derived box the fold produced stays exactly as it was
+    if (body.local_box == box.local && body.world_box == box.world && body.unbounded == box.unbounded) {
+        return false; // nothing moved: write nothing, so the fold's previous answer stays exactly as it was
     }
-    row.world_box_answer = box.world;
-    row.local_box        = from_world ? Aabbd::empty() : box.local; // from_world: the fold derives it from `world`
-    row.unbounded        = box.unbounded;
+    body.local_box = box.local;
+    body.world_box = box.world;
+    body.unbounded = box.unbounded;
     return true;
 }
 
+/// @brief Stores the fold's answer for one row, moving the row's serial only when the answer actually moved.
+///
+/// @details
+/// - THE ONLY WAY THE RESOLVED SIDE IS WRITTEN, which is what makes `Row::resolved_serial` truthful: a row whose
+///   re-fold produced the same facts keeps the number it was published with, so its chunk can be shared - and a row
+///   whose facts moved gets a new one, so its chunk cannot (see `SceneSnapshot::makeSceneSnapshot`).
+/// - Comparing BEFORE storing is the point, not an optimisation: the incremental path re-derives a whole subtree for
+///   one edit, and most of that subtree usually did not move. Without the comparison a single edit would cost the
+///   sharing of every chunk it touched.
+///
+/// @param bake The table the answer belongs to (its counter numbers the rows).
+/// @param row  The row to store into.
+/// @param next The facts the fold just derived; consumed.
+void storeResolved(SceneBake& bake, Row& row, ResolvedRow&& next) noexcept
+{
+    if (row.resolved == next) {
+        return;
+    }
+    row.resolved        = std::move(next);
+    row.resolved_serial = bake.next_serial++;
+}
+
 /// @brief Replays the fold for one row given what it inherits, and recurses into its children.
-void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
+///
+/// @param bake   The table being folded.
+/// @param index  The row to fold (the root of the subtree being re-derived).
+/// @param parent What the row inherits: the PARENT's resolved row, verbatim (see ResolvedRow).
+void foldDown(SceneBake& bake, std::uint32_t index, const ResolvedRow& parent)
 {
     Row& row = bake.rows[index];
 
-    row.view_dependent = parent.view_dependent || row.placement != nullptr;
+    // THE ROW INHERITS EVERYTHING ITS PARENT HOLDS, then applies what it states itself - so a container's answer is
+    // the whole seed a re-fold below it needs. The BOX half is the row's OWN (a leaf's own bound, or the union the
+    // last fold derived): it is re-derived bottom-up by foldRow, so it is taken from the row, never from the parent.
+    ResolvedRow next  = parent;
+    next.local_box    = row.resolved.local_box;
+    next.world_box    = row.resolved.world_box;
+    next.layers_union = row.resolved.layers_union;
+    next.unbounded    = row.resolved.unbounded;
 
-    Inherited inherited = parent;
-    inherited.world          = parent.world * row.local;
-    inherited.opacity        = parent.opacity * row.own_opacity;
-    inherited.layers         = row.own_layers.value_or(parent.layers);
-    inherited.draw_order     = row.own_draw_order.value_or(parent.draw_order);
-    inherited.view_dependent = row.view_dependent;
-    if (row.owns_state) {
-        inherited.state.merge(row.own_state);
-        if (row.own_material != nullptr) {
-            inherited.material             = row.own_material;
-            inherited.material_description = row.own_material_description;
+    next.world          = parent.world * row.own.fold.local;
+    next.parent_world   = parent.world;
+    next.opacity        = parent.opacity * row.own.fold.opacity;
+    next.layers         = row.own.fold.layers.value_or(parent.layers);
+    next.draw_order     = row.own.fold.draw_order.value_or(parent.draw_order);
+    next.view_dependent = parent.view_dependent || row.own.fold.placement != nullptr;
+    if (row.own.body.owns_state) {
+        next.state.merge(row.own.body.state);
+        if (row.own.body.material != nullptr) {
+            next.material             = row.own.body.material;
+            next.material_description = row.own.body.material_description;
         }
-        if (row.own_program != nullptr) {
-            inherited.program = row.own_program;
-            inherited.program_description = row.own_program_description;
+        if (row.own.body.program != nullptr) {
+            next.program             = row.own.body.program;
+            next.program_description = row.own.body.program_description;
         }
     }
+    // KEPT WHETHER OR NOT THE ROW DRAWS. A container's row states no command of its own, but it is what a re-fold
+    // BELOW it reads back as the seed (see resolveSubtree): storing only for rows with draws is what used to drop
+    // every inherited state, material and program of an edited subtree.
+    storeResolved(bake, row, std::move(next));
 
-    row.world              = inherited.world;
-    row.parent_world       = parent.world;
-    row.opacity            = inherited.opacity;
-    row.layers             = inherited.layers;
-    row.draw_order         = inherited.draw_order;
-    if (!row.draws.empty()) {
-        row.state    = inherited.state;
-        row.material             = inherited.material;
-        row.material_description = inherited.material_description;
-        row.program  = inherited.program;
-        row.program_description = inherited.program_description;
-    }
-
-    for (std::uint32_t cursor = index + 1; cursor < row.end;) {
-        const std::uint32_t child_end = bake.rows[cursor].end;
+    const ResolvedRow& inherited = row.resolved;
+    for (std::uint32_t cursor = index + 1; cursor < row.links.end;) {
+        const std::uint32_t child_end = bake.rows[cursor].links.end;
         foldDown(bake, cursor, inherited);
         cursor = child_end;
     }
@@ -137,125 +149,125 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
 /// @param index The row to re-derive (its children are read, never written).
 void foldRow(SceneBake& bake, std::uint32_t index)
 {
-    const std::uint32_t end = bake.rows[index].end;
+    const std::uint32_t end = bake.rows[index].links.end;
     Row&                row = bake.rows[index];
-    // The own-frame box is a VALUE: a leaf carries its own (read at build time, or re-read by refreshBoxes when the
-    // bytes under it announce), a container is the union of its children. A per-view child answers the union through
-    // its placement instead of through `local`, because the orientation it may choose is not the axis-aligned one
-    // its own box was measured in (see ViewPlacement::conservativeParentBox).
-    Aabbd local = row.child_count == 0 ? row.local_box : Aabbd::empty();
-    if (row.world_box_answer.has_value()) {
+
+    // The own-frame box is DERIVED here - the resolved side has one writer. A leaf states its bound in its own frame
+    // (read at build time, or re-read by refreshBoxes when the bytes under it announce) or, failing that, in world
+    // space; a container is the union of its children. A per-view child answers the union through its placement
+    // instead of through `local`, because the orientation it may choose is not the axis-aligned one its own box was
+    // measured in (see ViewPlacement::conservativeParentBox).
+    ResolvedRow next      = row.resolved;
+    Aabbd       local     = Aabbd::empty();
+    bool        unbounded = row.own.body.unbounded;
+    if (row.links.child_count == 0 && row.own.body.local_box.has_value()) {
+        local = *row.own.body.local_box;
+    }
+    else if (row.links.child_count == 0 && row.own.body.world_box.has_value()) {
         // A leaf that could only answer in world space: undo this row's own placement so the row holds the same kind
         // of box every other row does. The AABB of the transformed corners is a SUPERSET for a rotated placement,
         // which errs on the side of drawing. This is the only place the conversion can happen - it needs `world`,
         // which is the fold's own answer.
-        local         = Aabbd::empty();
-        Mat4d inverse = row.world;
+        Mat4d inverse = next.world;
         if (inverse.invert()) {
-            local = row.world_box_answer->transformed(inverse);
+            local = row.own.body.world_box->transformed(inverse);
         }
         else {
-            row.unbounded = true; // a degenerate placement cannot be undone, so no box can be trusted
+            unbounded = true; // a degenerate placement cannot be undone, so no box can be trusted
         }
     }
+
+    std::uint32_t union_of_layers = next.layers;
     for (std::uint32_t cursor = index + 1; cursor < end;) {
-        const std::uint32_t child_end = bake.rows[cursor].end;
+        const std::uint32_t child_end = bake.rows[cursor].links.end;
         const Row&          child     = bake.rows[cursor];
-        const Aabbd         placed    = child.placement != nullptr ? child.placement->conservativeParentBox(child.local_box)
-                                                                  : child.local_box.transformed(child.local);
+        const Aabbd         placed    = child.own.fold.placement != nullptr
+                                            ? child.own.fold.placement->conservativeParentBox(child.resolved.local_box)
+                                            : child.resolved.local_box.transformed(child.own.fold.local);
         if (placed.isValid()) {
             local.expandBy(placed);
         }
+        union_of_layers |= child.resolved.layers_union;
+        unbounded |= child.resolved.unbounded;
         cursor = child_end;
     }
-    row.local_box = local;
+    next.local_box = local;
     // The world box covers EVERY view, so a cull above this row never depends on the camera: a per-view row folds
     // the parent-frame bound through the parent's placement; an ordinary row folds its own box through its own.
-    row.world_box = row.placement != nullptr ? row.placement->conservativeParentBox(local).transformed(row.parent_world)
-                                             : local.transformed(row.world);
+    next.world_box = row.own.fold.placement != nullptr
+                         ? row.own.fold.placement->conservativeParentBox(local).transformed(next.parent_world)
+                         : local.transformed(next.world);
 
     // A subtree whose bound cannot be stated without a view must not be culled anywhere on the way down: the flag
-    // climbs with the boxes it invalidates.
-    bool          unbounded       = (row.placement != nullptr && !row.placement->isBounded()) || row.unbounded;
-    std::uint32_t union_of_layers = row.layers;
-    for (std::uint32_t cursor = index + 1; cursor < end;) {
-        const std::uint32_t child_end = bake.rows[cursor].end;
-        union_of_layers |= bake.rows[cursor].layers_union;
-        unbounded |= bake.rows[cursor].unbounded;
-        cursor = child_end;
-    }
-    row.unbounded    = unbounded;
-    row.layers_union = union_of_layers;
+    // climbs with the boxes it invalidates. It is DERIVED, never carried: a leaf that gains a box later can become
+    // cullable again.
+    next.unbounded    = unbounded || (row.own.fold.placement != nullptr && !row.own.fold.placement->isBounded());
+    next.layers_union = union_of_layers;
+    storeResolved(bake, row, std::move(next));
 }
 
 /// @brief Recomputes one subtree's boxes and layer unions bottom-up.
 void foldUp(SceneBake& bake, std::uint32_t index)
 {
-    const std::uint32_t end = bake.rows[index].end;
+    const std::uint32_t end = bake.rows[index].links.end;
     for (std::uint32_t cursor = index + 1; cursor < end;) {
-        const std::uint32_t child_end = bake.rows[cursor].end;
+        const std::uint32_t child_end = bake.rows[cursor].links.end;
         foldUp(bake, cursor);
         cursor = child_end;
     }
     foldRow(bake, index);
 }
 
-/// @brief Fills one row's OWN facts from @p node, leaving its resolved fields and structure untouched.
+/// @brief Reads @p node's own facts: the row's half of the fold, and the only place a node is read for one.
 ///
 /// @details
-/// - `bakeSubtree` uses it for a fresh row; the incremental edit path uses it to refresh a row in place.
-/// - The resolved fields (`world`, `parent_world`, `opacity`, `layers`, `world_box`, `layers_union`, …) are the
-///   fold's output and are recomputed by `resolveSubtree`; this function clears only the fields it owns.
-void fillOwnFacts(const Node& node, Row& row)
+/// - A FRESH VALUE, never a merge: the caller stores it as it is, so a field added to `RowOwn` can never survive an
+///   edit because somebody forgot to extend a reset list.
+/// - A drawable's draws are resolved here - its per-primitive material and program, the visible instance range -
+///   because this is the one place the geometry is read: a publication then carries the answer and never touches the
+///   live object.
+/// - The leaf's bound is read here too (see readLeafBox); a container states none, because its box is the union the
+///   fold derives from its children.
+///
+/// @param node The node to read.
+/// @return The node's own facts (see RowOwn).
+RowOwn readRowOwn(const Node& node)
 {
-    row.identity       = node.id();
-    row.local          = node.localTransformMatrix();
-    row.own_opacity    = node.opacity();
-    row.own_layers     = node.layers();
-    row.own_draw_order = node.drawOrder();
-    row.placement      = node.viewPlacement();
-
-    row.owns_state = false;
-    row.own_state  = RenderState{};
-    row.own_material.reset();
-    row.own_material_description.reset();
-    row.own_program.reset();
-    row.own_program_description.reset();
-    row.geometry.reset();
-    row.description.reset();
-    row.draws.clear();
-    row.world_box_answer.reset();
-    row.unbounded = false;
+    RowOwn own;
+    own.fold.local      = node.localTransformMatrix();
+    own.fold.opacity    = node.opacity();
+    own.fold.layers     = node.layers();
+    own.fold.draw_order = node.drawOrder();
+    own.fold.placement  = node.viewPlacement();
 
     if (const auto* state_node = obj_cast<StateNode>(&node)) {
-        row.owns_state = true;
-        row.own_state  = state_node->renderState();
+        own.body.owns_state = true;
+        own.body.state      = state_node->renderState();
         if (raw_ptr<MaterialValues> material = state_node->material()) {
-            row.own_material = material;
+            own.body.material = material;
             // The values are taken WITH the identity, here, on the content side: the fold below only copies the value
-            // pointer, which is what lets a mirror - threaded or not - resolve a material without reading the live
-            // object.
-            row.own_material_description = material->description();
+            // pointer, which is what lets a side that owns no node resolve a material without reading the live object.
+            own.body.material_description = material->description();
         }
         if (raw_ptr<ShaderProgram> program = state_node->program()) {
-            row.own_program = program;
+            own.body.program = program;
             // Its text travels with it, for the same reason the material's values do (see the fold's program copy).
-            row.own_program_description = program->description();
+            own.body.program_description = program->description();
         }
     }
     if (const auto* geometry = obj_cast<Geometry>(&node)) {
-        row.geometry    = GeometryPtr(const_cast<Geometry*>(geometry));
-        row.description = geometry->description();
-        const raw_ptr<MaterialValues>  geometry_material = geometry->material();
-        const raw_ptr<ShaderProgram> geometry_program  = geometry->program();
-        const std::size_t            primitive_count   = geometry->primitiveCount();
-        row.draws.reserve(primitive_count);
+        own.body.geometry    = GeometryPtr(const_cast<Geometry*>(geometry));
+        own.body.description = geometry->description();
+        const raw_ptr<MaterialValues> geometry_material = geometry->material();
+        const raw_ptr<ShaderProgram>  geometry_program  = geometry->program();
+        const std::size_t             primitive_count   = geometry->primitiveCount();
+        own.body.draws.reserve(primitive_count);
         for (std::size_t ordinal = 0; ordinal < primitive_count; ++ordinal) {
             const Primitive* primitive = geometry->primitive(ordinal);
             if (primitive == nullptr) {
                 continue;
             }
-            DrawFacts draw;
+            ResolvedDraw draw;
             draw.primitive_index = static_cast<std::uint32_t>(ordinal);
             draw.material        = primitive->material != nullptr
                                        ? MaterialValuesPtr(primitive->material)
@@ -274,17 +286,19 @@ void fillOwnFacts(const Node& node, Row& row)
                 draw.instance_count =
                     static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
             }
-            row.draws.push_back(std::move(draw));
+            own.body.draws.push_back(std::move(draw));
         }
-        (void)recordLeafBox(row, readLeafBox(node));
+        (void)recordLeafBox(own.body, readLeafBox(node));
     }
     else if (obj_cast<Group>(&node) == nullptr) {
         // A leaf the engine does not own: the same rule (see readLeafBox).
-        (void)recordLeafBox(row, readLeafBox(node));
+        (void)recordLeafBox(own.body, readLeafBox(node));
     }
+
+    return own;
 }
 
-std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = SceneBake::kNoParent)
+std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t parent = RowLinks::kNoParent)
 {
     if (!node.isVisible()) {
         return static_cast<std::uint32_t>(bake.rows.size());
@@ -293,11 +307,13 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
     const std::uint32_t index = static_cast<std::uint32_t>(bake.rows.size());
     bake.rows.emplace_back();
     bake.nodes.push_back(&node);
+    bake.node_epochs.push_back(node.contentEpoch());
 
     {
-        Row& row    = bake.rows[index];
-        row.parent  = parent;
-        fillOwnFacts(node, row);
+        Row& row         = bake.rows[index];
+        row.identity     = node.id();
+        row.links.parent = parent;
+        row.own          = readRowOwn(node);
     }
 
     std::uint32_t children = 0U;
@@ -308,106 +324,40 @@ std::uint32_t bakeSubtree(const Node& node, SceneBake& bake, std::uint32_t paren
         }
     }
 
-    Row& row        = bake.rows[index];
-    row.end         = static_cast<std::uint32_t>(bake.rows.size());
-    row.child_count = children;
-    return row.end;
+    Row& row              = bake.rows[index];
+    row.links.end         = static_cast<std::uint32_t>(bake.rows.size());
+    row.links.child_count = children;
+    return row.links.end;
 }
 
 } // namespace
 
-RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t index)
+RowRefresh refreshRow(SceneBake& bake, std::uint32_t index)
 {
-    if (index >= bake.rows.size() || bake.nodes.size() != bake.rows.size() || bake.nodes[index] != &node) {
-        return RowRefresh::Incompatible;
+    if (index >= bake.rows.size() || index >= bake.nodes.size() || bake.nodes[index] == nullptr) {
+        return RowRefresh::RebuildTable;
     }
 
-    const Row before = bake.rows[index];
-    Row&      row    = bake.rows[index];
-    fillOwnFacts(node, row);
+    Row&         row  = bake.rows[index];
+    const RowOwn next = readRowOwn(*bake.nodes[index]);
 
-    const auto same_matrix = [](const Mat4d& lhs, const Mat4d& rhs) {
-        for (int row_index = 0; row_index < 4; ++row_index) {
-            for (int column = 0; column < 4; ++column) {
-                if (lhs.element(row_index, column) != rhs.element(row_index, column)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    };
-    const auto same_draw = [](const DrawFacts& lhs, const DrawFacts& rhs) {
-        return lhs.primitive_index == rhs.primitive_index && lhs.material.get() == rhs.material.get() &&
-               lhs.material_description.get() == rhs.material_description.get() &&
-               lhs.program.get() == rhs.program.get() &&
-               lhs.program_description.get() == rhs.program_description.get() &&
-               lhs.instance_transforms.values.get() == rhs.instance_transforms.values.get() &&
-               lhs.instance_transforms.first == rhs.instance_transforms.first &&
-               lhs.instance_transforms.count == rhs.instance_transforms.count &&
-               lhs.first_instance == rhs.first_instance && lhs.instance_count == rhs.instance_count &&
-               lhs.drawn == rhs.drawn;
-    };
-    const auto same_draws = [&same_draw](const std::vector<DrawFacts>& lhs, const std::vector<DrawFacts>& rhs) {
-        if (lhs.size() != rhs.size()) {
-            return false;
-        }
-        for (std::size_t draw_index = 0; draw_index < lhs.size(); ++draw_index) {
-            if (!same_draw(lhs[draw_index], rhs[draw_index])) {
-                return false;
-            }
-        }
-        return true;
-    };
-    const auto same_optional_box = [](const std::optional<Aabbd>& lhs, const std::optional<Aabbd>& rhs) {
-        if (lhs.has_value() != rhs.has_value()) {
-            return false;
-        }
-        return !lhs.has_value() || *lhs == *rhs;
-    };
-
-    const bool non_hot = before.owns_state != row.owns_state || !(before.own_state == row.own_state) ||
-                         before.own_material.get() != row.own_material.get() ||
-                         before.own_material_description.get() != row.own_material_description.get() ||
-                         before.own_program.get() != row.own_program.get() ||
-                         before.own_program_description.get() != row.own_program_description.get() ||
-                         before.geometry.get() != row.geometry.get() ||
-                         before.description.get() != row.description.get() || !same_draws(before.draws, row.draws) ||
-                         !same_optional_box(before.world_box_answer, row.world_box_answer) ||
-                         !(before.local_box == row.local_box) || before.unbounded != row.unbounded;
-    if (non_hot) {
-        return RowRefresh::Incompatible;
+    // THE ONE QUESTION: with the row's BODY unchanged the fold can reach the new value by re-deriving this row's
+    // subtree; a body change is what only a rebuilt table can carry (see RowRefresh). Asked of the two named groups,
+    // never of a field list, so a new field lands on one side of the line deliberately.
+    RowRefresh answer = RowRefresh::NoChange;
+    if (row.own != next) {
+        answer = row.own.body == next.body ? RowRefresh::RefoldSubtree : RowRefresh::RebuildTable;
     }
-
-    const bool hot = !same_matrix(before.local, row.local) || before.own_opacity != row.own_opacity ||
-                     before.own_layers != row.own_layers || before.own_draw_order != row.own_draw_order ||
-                     before.placement.get() != row.placement.get();
-    return hot ? RowRefresh::HotChange : RowRefresh::NoChange;
-}
-
-void buildOwnFacts(const Node& root, SceneBake& bake)
-{
-    bake.rows.clear();
-    bake.nodes.clear();
-    bake.seed = SceneBake::Seed{};
-    (void)bakeSubtree(root, bake);
-}
-
-void refoldChain(SceneBake& bake, std::uint32_t index)
-{
-    if (index >= bake.rows.size()) {
-        return;
-    }
-    foldRow(bake, index);
-    for (std::uint32_t above = bake.rows[index].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
-        foldRow(bake, above);
-    }
+    row.own = next;
+    return answer;
 }
 
 void buildRows(const Node& root, SceneBake& bake, float opacity)
 {
     bake.rows.clear();
     bake.nodes.clear();
-    bake.seed.parent_opacity = opacity;
+    bake.node_epochs.clear();
+    bake.parent_opacity = opacity;
     (void)bakeSubtree(root, bake);
     (void)resolveSubtree(bake, 0U);
 }
@@ -418,33 +368,26 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
         return 0U;
     }
     const std::uint32_t first_row = index;
-    const std::uint32_t last_row  = bake.rows[index].end;
+    const std::uint32_t last_row  = bake.rows[index].links.end;
 
-    Inherited parent;
-    if (bake.rows[index].parent == SceneBake::kNoParent) {
-        parent.opacity = bake.seed.parent_opacity;
+    // WHAT THIS SUBTREE INHERITS is the parent row's OWN resolved answer, read back verbatim: that is why the fold
+    // stores the inherited state / material / program on EVERY row and not only on the rows that draw (see
+    // foldDown). The table's first row inherits nothing but the scene's opacity.
+    ResolvedRow parent;
+    if (bake.rows[index].links.parent == RowLinks::kNoParent) {
+        parent.opacity = bake.parent_opacity;
     }
     else {
-        const Row& above = bake.rows[bake.rows[index].parent];
-        parent.world     = above.world;
-        parent.opacity   = above.opacity;
-        parent.layers    = above.layers;
-        parent.draw_order = above.draw_order;
-        parent.state     = above.state;
-        parent.material  = above.material;
-        parent.material_description = above.material_description;
-        parent.program   = above.program;
-        parent.program_description = above.program_description;
-        parent.view_dependent = above.view_dependent;
+        parent = bake.rows[bake.rows[index].links.parent].resolved;
     }
     foldDown(bake, index, parent);
     foldUp(bake, index);
     // THE CHAIN ABOVE. A box is a union, so the row just re-folded is part of every ancestor's box: leaving them
     // alone keeps a box that says the subtree is still where it was, and a cull then prunes content that moved INTO
     // view - the object silently disappears (a subset of the rows is stale, which no assertion in the edit path can
-    // see). Each ancestor needs its OWN row recomputed and nothing more: its children are already folded (see
-    // refoldChain, which is the same rule for a change that moves no values).
-    for (std::uint32_t above = bake.rows[index].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
+    // see). Each ancestor needs its OWN row recomputed and nothing more: its children are already folded, so one
+    // `foldRow` per ancestor is the whole replay.
+    for (std::uint32_t above = bake.rows[index].links.parent; above != RowLinks::kNoParent; above = bake.rows[above].links.parent) {
         foldRow(bake, above);
     }
 
@@ -465,10 +408,10 @@ std::uint32_t refreshBoxes(SceneBake& bake)
     const std::size_t          count = std::min(bake.rows.size(), bake.nodes.size());
     for (std::size_t index = 0; index < count; ++index) {
         const Node* node = bake.nodes[index];
-        if (node == nullptr || bake.rows[index].child_count != 0) {
+        if (node == nullptr || bake.rows[index].links.child_count != 0) {
             continue;
         }
-        if (recordLeafBox(bake.rows[index], readLeafBox(*node))) {
+        if (recordLeafBox(bake.rows[index].own.body, readLeafBox(*node))) {
             changed.push_back(static_cast<std::uint32_t>(index));
         }
     }
@@ -481,7 +424,8 @@ std::uint32_t refreshBoxes(SceneBake& bake)
     // buffer's cost at its own chain instead of the whole table.
     const std::size_t leaves = changed.size();
     for (std::size_t position = 0; position < leaves; ++position) {
-        for (std::uint32_t above = bake.rows[changed[position]].parent; above != SceneBake::kNoParent; above = bake.rows[above].parent) {
+        for (std::uint32_t above = bake.rows[changed[position]].links.parent; above != RowLinks::kNoParent;
+             above = bake.rows[above].links.parent) {
             changed.push_back(above);
         }
     }
@@ -504,35 +448,41 @@ std::uint32_t refreshValues(SceneBake& bake)
     std::uint32_t moved = 0U;
     for (Row& row : bake.rows) {
         bool row_moved = false;
-        if (row.material != nullptr) {
-            const MaterialDescriptionPtr values = row.material->description();
-            if (values != row.material_description) {
-                row.material_description = values;
-                row_moved                = true;
+        // Each re-taken value is stored through the fold's one writer, so a row whose command value moved is not
+        // served from the previous publication (see Row::resolved_serial).
+        if (row.resolved.material != nullptr) {
+            const MaterialDescriptionPtr values = row.resolved.material->description();
+            if (values != row.resolved.material_description) {
+                ResolvedRow next        = row.resolved;
+                next.material_description = values;
+                storeResolved(bake, row, std::move(next));
+                row_moved = true;
             }
         }
-        if (row.own_material != nullptr) {
-            const MaterialDescriptionPtr values = row.own_material->description();
-            if (values != row.own_material_description) {
-                row.own_material_description = values;
-                row_moved                    = true;
+        if (row.own.body.material != nullptr) {
+            const MaterialDescriptionPtr values = row.own.body.material->description();
+            if (values != row.own.body.material_description) {
+                row.own.body.material_description = values;
+                row_moved                         = true;
             }
         }
-        if (row.program != nullptr) {
-            const ShaderProgramDescriptionPtr text = row.program->description();
-            if (text != row.program_description) {
-                row.program_description = text;
-                row_moved               = true;
+        if (row.resolved.program != nullptr) {
+            const ShaderProgramDescriptionPtr text = row.resolved.program->description();
+            if (text != row.resolved.program_description) {
+                ResolvedRow next       = row.resolved;
+                next.program_description = text;
+                storeResolved(bake, row, std::move(next));
+                row_moved = true;
             }
         }
-        if (row.own_program != nullptr) {
-            const ShaderProgramDescriptionPtr text = row.own_program->description();
-            if (text != row.own_program_description) {
-                row.own_program_description = text;
-                row_moved                   = true;
+        if (row.own.body.program != nullptr) {
+            const ShaderProgramDescriptionPtr text = row.own.body.program->description();
+            if (text != row.own.body.program_description) {
+                row.own.body.program_description = text;
+                row_moved                        = true;
             }
         }
-        for (DrawFacts& draw : row.draws) {
+        for (ResolvedDraw& draw : row.own.body.draws) {
             if (draw.material != nullptr) {
                 const MaterialDescriptionPtr values = draw.material->description();
                 if (values != draw.material_description) {
@@ -579,8 +529,11 @@ SortKey makeSortKey(const DrawItem& command, std::uint32_t layers, const Aabbd& 
 
 void sortCollected(std::vector<DrawItem>& commands, std::span<const SortKey> keys)
 {
+    // One key per command, in the commands' current order (see selectRows). A mismatch is a broken caller, not a case
+    // to recover from: answering the walk order would hide the defect behind a picture that merely sorts differently.
+    assert(keys.size() == commands.size());
     if (keys.size() != commands.size()) {
-        return; // a list of keys that does not describe these commands cannot order them: answer what was handed in
+        return;
     }
     // NO EQUAL KEYS (the tie field is unique per command), so a plain sort is deterministic and no stability is needed - the
     // order is a property of the commands, not of the walk that collected them (R17 / T9).

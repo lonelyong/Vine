@@ -22,8 +22,10 @@ namespace detail
  * - WHY IT EXISTS. `Scene` owns a mutable `SceneBake` that it refreshes in place. A select must not read that
  *   mutable table while the content thread edits it, so a publication hands out THIS value: rows are copied into
  *   fixed-size chunks, the `nodes` bookkeeping is dropped, and the result is only read afterwards.
- * - STRUCTURE SHARING. A new snapshot reuses the previous snapshot's chunk when none of its rows' identities,
- *   content epochs or structural fields moved. An edit therefore copies the chunks it touches, not the table.
+ * - STRUCTURE SHARING. A new snapshot reuses the previous snapshot's chunk when no row in it moved: its identity and
+ *   structure are the same, its node's own facts did not announce (the content epoch), and the FOLD's answer for it
+ *   did not change (`Row::resolved_serial`). An edit therefore copies the chunks it touches - including those below
+ *   the edited node, whose epochs do not move but whose resolved facts do - and shares the rest.
  * - IT IS STILL A BRIDGE. The row layout is today's `Row`; the hot/cold `ContentRef` layout is the next step. This
  *   value exists to make the snapshot boundary and chunk sharing measurable without changing the row fields.
  * - CONTENT VALUES TRAVEL IN THE ROWS. `Row::description` / `material_description` are immutable values carrying
@@ -76,20 +78,16 @@ using SceneSnapshotPtr = std::shared_ptr<const SceneSnapshot>;
  *
  * @details
  * - It reads only @p snapshot and @p view; it never asks a Scene, a Node or a material for anything.
- * - The output is cleared first, then filled in walk order and sorted by the same `sortCollected` the Scene uses,
- *   so the result is directly comparable with `Scene::collectDrawItems` for the same view.
- * - `viewport_used` reports whether a viewport-dependent placement was resolved, exactly as the Scene's collector
- *   reports it to its memo.
+ * - It is the same `selectRows` the Scene's own collector runs, so its list is directly comparable with
+ *   `Scene::collectDrawItems` for the same view - one rule, one implementation (`G1`).
+ * - `Selection::viewport_used` reports whether a viewport-dependent placement was resolved, exactly as the Scene's
+ *   collector reports it to its memo.
  *
- * @param snapshot      The published rows to select from.
- * @param view          The view value to select for (camera value, device-pixel area and layer mask).
- * @param out           Receives the commands (replaced).
- * @param viewport_used Receives whether the view's viewport affected a placement.
+ * @param snapshot The published rows to select from.
+ * @param view     The view value to select for (camera value, device-pixel area and layer mask).
+ * @return The commands, in draw order, and whether the viewport took part (see Selection).
  */
-void selectSnapshot(const SceneSnapshot&        snapshot,
-                    const View&                 view,
-                    std::vector<DrawItem>& out,
-                    bool&                       viewport_used);
+[[nodiscard]] Selection selectSnapshot(const SceneSnapshot& snapshot, const View& view);
 
 } // namespace detail
 

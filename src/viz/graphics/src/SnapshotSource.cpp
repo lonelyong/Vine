@@ -58,11 +58,9 @@ std::shared_ptr<const std::vector<vn::graphics::DrawItem>> SnapshotSource::colle
         return entry->commands;
     }
 
-    std::vector<vn::graphics::DrawItem> commands;
-    bool                                    viewport_used = false;
-    selectSnapshot(*snapshot, view, commands, viewport_used);
-    auto shared = std::make_shared<const std::vector<vn::graphics::DrawItem>>(std::move(commands));
-    (void)memo_.store(view_proj, view.camera.eye, view.viewport, view.layer_mask, viewport_used, snapshot->revision, shared, frame_);
+    Selection selection = selectSnapshot(*snapshot, view);
+    auto      shared    = std::make_shared<const std::vector<vn::graphics::DrawItem>>(std::move(selection.commands));
+    (void)memo_.store(view_proj, view.camera.eye, view.viewport, view.layer_mask, selection.viewport_used, snapshot->revision, shared, frame_);
     return shared;
 }
 

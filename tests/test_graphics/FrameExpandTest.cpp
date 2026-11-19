@@ -368,9 +368,7 @@ TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
     const vn::graphics::detail::SceneSnapshotPtr snapshot = source->snapshot();
     ASSERT_NE(snapshot, nullptr);
 
-    std::vector<DrawItem> selected;
-    bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
+    const std::vector<DrawItem> selected = vn::graphics::detail::selectSnapshot(*snapshot, view).commands;
 
     ASSERT_EQ(selected.size(), described_commands.size()) << "one View, one picture";
     for (std::size_t index = 0; index < selected.size(); ++index) {
@@ -388,7 +386,6 @@ TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
     // THE MASK TRAVELS IN THE VIEW: a picture that selects no layer draws nothing, and the select says so.
     View filtered = view;
     filtered.layer_mask = 0U;
-    selected.clear();
-    vn::graphics::detail::selectSnapshot(*snapshot, filtered, selected, viewport_used);
-    EXPECT_TRUE(selected.empty()) << "the mask is part of the view, not an argument beside it";
+    EXPECT_TRUE(vn::graphics::detail::selectSnapshot(*snapshot, filtered).commands.empty())
+        << "the mask is part of the view, not an argument beside it";
 }

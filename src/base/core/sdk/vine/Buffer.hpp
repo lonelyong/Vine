@@ -486,6 +486,32 @@ struct BufferSlice {
     }
 
     /**
+     * @brief Returns whether @p other names the same segment of the same buffer.
+     *
+     * @details
+     * - Segment IDENTITY, not content: the buffer object and the segment's first/count are the same. Editing an
+     *   element does not make two slices unequal, which is what a cache or a fact table keyed by a slice wants.
+     *
+     * @param other Segment to compare against.
+     * @return true when both name the same buffer and the same first/count.
+     */
+    [[nodiscard]] bool operator==(const BufferSlice& other) const noexcept
+    {
+        return values == other.values && first == other.first && count == other.count;
+    }
+
+    /**
+     * @brief Returns whether @p other names a different segment.
+     *
+     * @param other Segment to compare against.
+     * @return true when the buffer, first or count differs.
+     */
+    [[nodiscard]] bool operator!=(const BufferSlice& other) const noexcept
+    {
+        return !(*this == other);
+    }
+
+    /**
      * @brief Returns the segment as a view over the buffer.
      *
      * @return The segment's elements, empty when it holds none. It is a view over the buffer, so it

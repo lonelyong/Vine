@@ -195,9 +195,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
     const View view = clipBoxView();
 
     const auto old_snapshot = SceneRows::snapshot(scene);
-    std::vector<vn::graphics::DrawItem> old_commands;
-    bool                                     viewport_used = false;
-    selectSnapshot(*old_snapshot, view, old_commands, viewport_used);
+    const std::vector<vn::graphics::DrawItem> old_commands = selectSnapshot(*old_snapshot, view).commands;
     ASSERT_EQ(old_commands.size(), 1U);
     const auto old_description = old_commands.front().description;
     const auto old_material    = old_commands.front().material_description;
@@ -216,8 +214,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
     leaf->setProgram(program);
 
     const auto fresh_snapshot = SceneRows::snapshot(scene);
-    std::vector<vn::graphics::DrawItem> fresh_commands;
-    selectSnapshot(*fresh_snapshot, view, fresh_commands, viewport_used);
+    const std::vector<vn::graphics::DrawItem> fresh_commands = selectSnapshot(*fresh_snapshot, view).commands;
     ASSERT_EQ(fresh_commands.size(), 1U);
     EXPECT_NE(fresh_commands.front().description.get(), old_description.get()) << "a geometry revision is a new value";
     EXPECT_NE(fresh_commands.front().material_description.get(), old_material.get())
@@ -225,8 +222,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
     EXPECT_EQ(fresh_commands.front().program.get(), program.get()) << "the leaf's new program is what the row resolves";
 
     // The old snapshot is still the old picture after all three edits.
-    std::vector<vn::graphics::DrawItem> old_again;
-    selectSnapshot(*old_snapshot, view, old_again, viewport_used);
+    const std::vector<vn::graphics::DrawItem> old_again = selectSnapshot(*old_snapshot, view).commands;
     ASSERT_EQ(old_again.size(), 1U);
     EXPECT_EQ(old_again.front().description.get(), old_description.get());
     EXPECT_EQ(old_again.front().material_description.get(), old_material.get());

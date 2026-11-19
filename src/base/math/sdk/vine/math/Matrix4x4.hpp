@@ -323,6 +323,14 @@ class Matrix4x4 {
 
     /**
      * @brief Element-wise approximate equality.
+     *
+     * @details
+     * - This is the TOLERANCE form: use `operator==` when the question is exact ("is this the same value", "did
+     *   anything change") and this one when it is geometric ("is this the same transform within rounding").
+     *
+     * @param other Matrix to compare against.
+     * @param eps Per-element tolerance (see math::isEqual).
+     * @return true when every element matches within @p eps.
      */
     constexpr bool isEqual(const Matrix4x4& other, T eps = EPS<T>()) const
     {
@@ -341,6 +349,41 @@ class Matrix4x4 {
             if (!math::isZero(data[i], eps))
                 return false;
         return true;
+    }
+
+    /**
+     * @brief Exact element-wise equality.
+     *
+     * @details
+     * - The spelling every other value type in this module already has (`Vector3`, `Vector4`, `Point3`, `Quaternion`,
+     *   `Rect2`), so a caller comparing two matrices never has to write the loop itself.
+     * - It is the value question, not the geometric one: `-0.0 == 0.0` and `NaN != NaN`, exactly as the language's own
+     *   `==`. Use isEqual(other, eps) when rounding must not matter.
+     *
+     * @param right Right-hand matrix.
+     * @return true when every element is exactly equal.
+     */
+    [[nodiscard]]
+    constexpr bool operator==(const Matrix4x4& right) const
+    {
+        for (int index = 0; index < 16; ++index) {
+            if (data[index] != right.data[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * @brief Exact element-wise inequality.
+     *
+     * @param right Right-hand matrix.
+     * @return true when any element differs.
+     */
+    [[nodiscard]]
+    constexpr bool operator!=(const Matrix4x4& right) const
+    {
+        return !(*this == right);
     }
 
   public:

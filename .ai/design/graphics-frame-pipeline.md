@@ -127,6 +127,8 @@
 - Why: the host publishes "the frame graph I want" and the Session aligns it by name at a frame boundary ⇒ adding or removing a pass needs no add/remove call, and
   "changing the session's shape while a frame is in flight" **cannot be expressed** (`R21`; `G12`).
 - Boundary: `PassId` exists only inside a Session; the difference is taken by **name**, not by pointer (`C7`); a transient target's lifetime is declared by the plan.
+  The table that builds them belongs to the ENGINE, and the device it builds them on is borrowed and may outlive it - so a shutdown hands every live transient back
+  (`FrameResources::releaseAll` → `releaseRenderTarget`) instead of dropping the table and leaving the device holding storage nothing will name again.
   A plan expresses only the shapes `PassKind` can express (`Scene` / `Screen`): a pass subclass is no longer a registrable shape, and customisation lives in the
   **data** (program override, viewport, depth range); a kind change rebuilds the built-in node. There is no `PassKind::Custom` and no factory registry (`G8`).
 
@@ -198,18 +200,39 @@
 
 - **Behaviour**: `publish` turns the mutable scene into one immutable Snapshot: the row table is copied on write in 32-row chunks (only changed chunks are touched),
   material values are taken by `(id, revision)`, and the spatial index and light set are published together with the rows.
+- **What "changed" means for a chunk** (`G11`): two questions, because the two kinds of change are invisible to each other. The row's node **content epoch** answers "did this
+  node's own facts announce" — and an edit bumps the edited node's and its ANCESTORS' counters, never its descendants'. The row's **fold serial** (`Row::resolved_serial`,
+  moved only by the one function that stores the fold's answer) answers "did the fold write something else into this row" — which is what an edit does to the whole subtree
+  below it. A chunk is shared only when no row in it is new on either count.
 - **Constraints** (`C1` / `C2`): anything the content side changes after publication leaves in-flight frames untouched.
 - **Requirements** (`R9` / `R10` / `R13`): one atomic pointer swap; cost O(changed chunks + changed material values); the snapshot can be exported as a text summary.
 - **Acceptance** (`T1` / `T2` / `T3`): `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` (≤ 250 µs, RelWithDebInfo);
   the in-flight frame is unchanged item by item.
 - **Caveat** (`P2`): the metadata table (`id → revision`) must be shared while it is unchanged, or `K11` exposes a whole-table copy.
+- **Caveat** (measured 2026-11-19): the edit path shares; a table REBUILT from scratch (a child added or removed, a state or geometry change) reports every row as moved, because a
+  fresh row cannot say "the fold produced the same answer as the last publication". That is the conservative half of the rule: a full rebuild copies all chunks, an incremental
+  edit copies the ones it touched. Restoring sharing across a rebuild would need the previous publication's per-row serials carried into the new table, and nothing asks for it yet (`G8`).
 
 ### 3.3 F2 Pure derivation
 
 - **Behaviour**: `select(snapshot, view) → DrawList`; the view-independent fold is computed once per frame, and each view pays only culling and sorting.
+- **A row is three parts** (`G1` / `G4` / `G12`): `detail::RowLinks` (where the row sits in the walk-ordered table: parent, subtree end, child count),
+  `detail::RowOwn` (what the node states, as two named groups - `Fold`: placement, opacity, layers, draw order, view placement; `Body`: state
+  contribution, material, program, own bounds, geometry, draws) and `detail::ResolvedRow` (what the fold derived). `RowOwn` is the edit path's
+  classification, not decoration: a refresh whose `Body` is unchanged re-derives the row's subtree in place (`RowRefresh::RefoldSubtree`), while a
+  `Body` change is `RowRefresh::RebuildTable`. Both groups compare as a whole (defaulted equality), so the classification carries no hand-written field list.
+- **The select is one call** (`G4`): `detail::selectRows` (one template over a row accessor, so the flat `SceneBake` and the chunked
+  `SceneSnapshot` run the same algorithm) returns a `detail::Selection` - the commands already in draw order (`sortCollected` runs inside) and
+  `viewport_used` for the memo's key.
+- **The fold's one rule** (`G1` / `G12`): a row stores what the fold derived for it in one value (`detail::ResolvedRow`), and one function stores it
+  (`storeResolved`, which moves the row's serial only when the answer changed). What a row hands its children is that value — including the state, material and program it
+  inherited — so a re-fold below it starts from what the whole chain above says, whether or not the row itself draws. Storing only for drawing rows is precisely how an edited
+  subtree used to lose the state, material and program its ancestors contributed.
+- **The edit path** re-reads the rows whose epoch moved (`refreshRow`), then derives the edited row's SUBTREE, then one row per ancestor: a box is a union, so the chain
+  above a moved subtree has to be recomputed or a cull prunes content that moved into view.
 - **Constraints** (`C8`): value types that cross a layer carry no virtual functions or inheritance.
 - **Requirements** (`R14` / `R15` / `R16`): the same input gives the same items; the fold count is 1; view-dependent rows are recomputed per view.
-- **Acceptance** (`T8` / `T9` / `T24`): `SelectTest.SameInputSameList` (the same snapshot repeated, other views interleaved, after the scene is cleared, and 8 threads concurrently — item by item equal to serial), `SelectTest.TheSortKeyIsATotalOrder`, `SelectTest.OneChunkCullsEachRowOnItsOwnBox` (a chunk is the unit of sharing, not the unit of culling).
+- **Acceptance** (`T8` / `T9` / `T24`): `SelectTest.SameInputSameList` (the same snapshot repeated, other views interleaved, after the scene is cleared, and 8 threads concurrently — item by item equal to serial), `SelectTest.TheSortKeyIsATotalOrder`, `SelectTest.OneChunkCullsEachRowOnItsOwnBox` (a chunk is the unit of sharing, not the unit of culling); `SnapshotTest.AnEditRefoldsEveryDescendantAcrossChunkBoundaries` and `SnapshotTest.AnEditBelowAStateNodeKeepsWhatTheStateNodeContributes` for the edit path, computed from the edit rather than from the snapshot.
 - **Caveat** (`P5`): a pure function is not free — parallelism happens on pure values only (`I6`), and the device side is still one thread.
 
 ### 3.4 F3 Content identity
@@ -355,7 +378,7 @@
 
 | Interface | Contract | Notes |
 |---|---|---|
-| `detail::selectSnapshot(const SceneSnapshot&, const View&, ...)` | a pure function; the internal prototype | exists (`SceneSnapshot.hpp`) |
+| `detail::selectSnapshot(const SceneSnapshot&, const View&)` | a pure function over a publication; answers a `detail::Selection` (commands in draw order + `viewport_used`) | exists (`SceneSnapshot.hpp`) |
 | the sort key | a total-order value + two segments; the comparison rules are documented | the target, see §3.11 |
 
 ### 4.3 The session side

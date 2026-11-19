@@ -9,10 +9,10 @@
 - SDK: `src/viz/graphics/sdk/vine/graphics`; vsg backend: `src/plugins/gfx_backend_vsg` (`core/` pure policy + `api/` vsg adaptation + `support/`).
 - `RenderEngine`: lifetime / `frame()` / device borrowing / size / capabilities and reports; the three facades are `PassRegistry`, `OutputRegistry`, `DiagnosticsRoute`.
 - `frame()` returns `FrameOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
-- **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys).
+- **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys); it is the last step of `selectRows`, so a caller receives a sorted `Selection`.
+- **A row is three parts** (`DrawListBake.hpp`): `RowLinks` (parent / subtree end / child count in walk order), `RowOwn` (`Fold`: placement, opacity, layers, draw order, view placement; `Body`: state, material, program, own bounds, geometry, draws) and `ResolvedRow` (the fold's one value, with `resolved_serial` moved only by `storeResolved`). `refreshRow` classifies an edit from the groups: `Body` equal → `RefoldSubtree`, otherwise `RebuildTable`; a chunk-share test compares `RowLinks` + `resolved_serial`.
+- **Chunk sharing and the publication cache are the publisher's**: `ScenePublisher::publication_cache_` holds the last snapshot; `SceneBake` is only the row table (+ `nodes` / `node_epochs` / `next_serial`).
 - **The frame result is a value**: `RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`, written once when the frame is answered (`frame_result_mutex_`); `query.view` is a `View` value (camera snapshot + device pixel area + layer mask), and `presentedCamera()` is its camera half. The `poses` half waits for F10.
-- **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys).
-- **The frame result is a value**: `RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`, written once when the frame is answered (`frame_result_mutex_`); `query.view` is a `View` value (camera snapshot + device pixel area + layer mask), and `presentedCamera()` is its camera half. The `pose` half waits for F10.
 - Type tests on the `Object`-derived nodes / passes / geometry use `obj_cast<T>` (core's meta-type chain), never `dynamic_cast`; `CameraManipulator` and third-party vsg types are the exceptions.
 - `PassChain`: one picture's recipe + registration ownership. `PassChain::build(engine, ChainDesc)` builds the chain and registers the passes; the destructor hands its passes back to the engine; `SceneView::setChain` adopts it.
 - One frame: `beginFrame` → every pass (`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`) → `endFrame` → present.
@@ -29,10 +29,11 @@
 - **Pointer queries are answered against "the frame the user saw"** (N17): `RenderEngine::presentedCamera()` publishes the camera snapshot of the frame that was answered,
   `SceneView::setPresentedCamera` hands it to the manipulator, and `OrbitCameraManipulator::makeScreenRay` prefers it; with no published value it falls back to
   the current camera (static picture / inline). One pixel → a world ray is `CameraSnapshot::screenRay` (back-project both ends; perspective and orthographic use the same path).
-- The present outcome is a value: `PresentOutcome{Presented, Skipped, Lost, Refused}` + `RenderEngine::presentRecord()` (frame number + outcome, one atomic word).
+- The present outcome is a value: `PresentOutcome{Presented, Skipped, Lost, Refused, Failed}` + `RenderEngine::presentRecord()` (frame number + outcome, one atomic word).
   `Refused` means “the device did not record this frame at all”: the calling thread is already inside a frame (next bullet); it is neither `Skipped` (nothing to present) nor `Lost` (there is a surface but the picture did not arrive).
+  `Failed` (2026-11-19) means the frame's engine half threw: the frame is still ANSWERED (`engine.frame.failed` at Error comes with it), and the host's move is the diagnostic, not a re-attach.
   `Lost` is repaired by the **engine** (forget the announced size → report it again next frame → the backend rebuilds the swap chain); the host only logs one line, does not tear down the session and does not hide the area
-  (hiding the area would stop the repair frame). Device verbs (`createSurfaceTarget` / `setWindowHandle` / `initialize`) are **between-frame** operations.
+  (hiding the area would stop the repair frame). Device verbs (`createSurfaceTarget` / `setWindowHandle` / `initialize`) are **between-frame** operations; `RenderEngine::setDevice` waits for the frame in flight itself (2026-11-19).
 - **One frame at a time is a “checked fact”, not a comment (2026-11-15, T47)**: `backend/FrameGate.hpp` — `executeFrame` /
   `prepareFrame` takes a **lease** on entry: another thread **waits**, the same thread re-entering is **refused** (`PresentOutcome::Refused` /
   `PrepareReport::Outcome::Refused`, one `*.session.frame_reentry` diagnostic). Both backends share one implementation, so the host's same
@@ -376,6 +377,11 @@
 
 - `SceneSnapshot` is now an immutable snapshot of 32-row chunks: `makeSceneSnapshot` reuses unchanged chunks from the previous version;
   the `SceneRows::snapshot` cache hangs off the internal `SceneBake` (moved over on a full rebuild), and `Scene`'s public layout is unchanged.
+- **What a shareable chunk means (2026-11-19, review 6)**: a row is unchanged only when BOTH its node content epoch and its fold serial
+  (`Row::resolved_serial`, moved by the fold's one writer `storeResolved`) are unchanged. The epoch alone could not see an edit's effect on the
+  subtree BELOW the edited node (an announcement climbs to the ancestors only), so a chunk of pure descendants was served from the previous
+  publication. The fold now stores the inherited state / material / program on EVERY row, containers included, because that is the seed a re-fold
+  below it reads back. A full rebuild reports every row as moved (a fresh row cannot claim the same fold answer): the edit path shares, a rebuild copies.
 - `Scene::ensureRows` gained an incremental path: find edited rows by each row's `Node::contentEpoch`; check structure/visibility/parent order
   fully; only the hot fields local / opacity / layers / draw order / view placement may refresh in place,
   everything else (state / geometry / material / primitive / box) falls back to a full `buildRows`.
@@ -631,10 +637,10 @@
 - **Switch**: `ContentMirror::setSnapshotShadow` / `FrameWorker::setSnapshotShadow`, off by default; the shadow only compares, never replaces.
   `publish` takes the shadow with `SceneRows::snapshot(scene)` **after a successful post**; the frame protocol guarantees the engine half starts only after the content half
   completes, so “new rows, old shadow” cannot happen.
-- **Trap**: do not build a snapshot from the copy in `SceneRows::publish` — it clears `nodes` / `node_epochs`, so `makeSceneSnapshot` loses
-  chunk sharing; use the live `SceneBake`'s `snapshot_cache`.
+- **Trap**: do not build a snapshot from a COPY of the rows — it clears `nodes` / `node_epochs`, so `makeSceneSnapshot` loses chunk sharing; the publication cache
+  lives on `ScenePublisher` (`publication_cache_`) and survives a table rebuild (moved out of `SceneBake` on 2026-11-19).
 - **What the diff compares**: `DrawListDiff` compares row identity / geometry + description / material + program / world / opacity / order /
-  authored_state / instance slice; the order is `sortCollected`'s emission order (commands do not store a sort key).
+  authored_state / instance slice; the order is the select's draw order (commands do not store a sort key).
 - **Tests**: `SnapshotShadowTest` 600 frames (transform / opacity / material / placement edits) + an old picture inside a batch + an old snapshot's
   material/geometry/program + the empty-snapshot mutation; `FrameWorkerTest.TheSnapshotShadow...` for the frame-level seam. `test_graphics` 577 / `test_vsg` 542 /
   ctest 30/30 / TSan 0.

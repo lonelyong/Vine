@@ -56,9 +56,15 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
         for (std::size_t index = first; share && index < last; ++index) {
             const Row& current = rows.rows[index];
             const Row& prior   = previous->row(index);
-            share = current.identity == prior.identity && current.parent == prior.parent && current.end == prior.end &&
-                    current.child_count == prior.child_count &&
-                    snapshot->node_epochs[index] == previous->node_epochs[index];
+            // TWO QUESTIONS, BECAUSE THEY SEE DIFFERENT CHANGES. The epoch moved when the row's OWN facts announced
+            // (a mutator on that node); the resolved serial moved when the FOLD wrote a different answer into the
+            // row - which is what an edit does to the whole subtree BELOW the edited node, whose own epochs stay
+            // where they were (`Node::announceContentChange` climbs to the ancestors, never down). Without the
+            // serial, a chunk holding only descendants of an edited node would be served from the previous
+            // publication, and the picture would draw a moved subtree where it used to be.
+            share = current.identity == prior.identity && current.links == prior.links &&
+                    snapshot->node_epochs[index] == previous->node_epochs[index] &&
+                    current.resolved_serial == prior.resolved_serial;
         }
         if (share) {
             snapshot->chunks.push_back(previous->chunks[chunk]);
@@ -72,27 +78,16 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
     return snapshot;
 }
 
-void selectSnapshot(const SceneSnapshot&        snapshot,
-                    const View&                 view,
-                    std::vector<DrawItem>& out,
-                    bool&                       viewport_used)
+Selection selectSnapshot(const SceneSnapshot& snapshot, const View& view)
 {
-    out.clear();
-    viewport_used = false;
     if (snapshot.row_count == 0U) {
-        return;
+        return Selection{};
     }
     const Frustum frustum = Frustum::fromViewProjection(view.viewProjection());
-    std::vector<SortKey> keys;
-    keys.reserve(snapshot.row_count);
-    selectRows(static_cast<std::uint32_t>(snapshot.row_count),
-               [&snapshot](std::uint32_t index) -> const Row& { return snapshot.row(index); },
-               frustum,
-               view,
-               viewport_used,
-               out,
-               &keys);
-    sortCollected(out, keys);
+    return selectRows(static_cast<std::uint32_t>(snapshot.row_count),
+                      [&snapshot](std::uint32_t index) -> const Row& { return snapshot.row(index); },
+                      frustum,
+                      view);
 }
 
 } // namespace detail

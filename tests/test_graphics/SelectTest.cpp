@@ -29,6 +29,7 @@
 
 #include "DrawListBake.hpp"
 #include "DrawListDiff.hpp"
+#include "Frustum.hpp"
 #include "SceneRows.hpp"
 #include "SceneSnapshot.hpp"
 #include "SnapshotSource.hpp"
@@ -235,29 +236,23 @@ TEST(SelectTest, SameInputSameList)
     const View view_a = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
     const View view_b = viewFrom(Vec3d(7.0, 5.0, 12.0), Vec3d(0.0, 0.0, 0.0), Viewport{ 0, 0, 320, 240 });
 
-    bool                       viewport_used = false;
-    std::vector<DrawItem> first;
-    selectSnapshot(*snapshot, view_a, first, viewport_used);
+    const std::vector<DrawItem> first = selectSnapshot(*snapshot, view_a).commands;
     ASSERT_FALSE(first.empty()) << "the fixture is in view: an empty list would make 'same' trivial";
 
-    std::vector<DrawItem> again;
-    selectSnapshot(*snapshot, view_a, again, viewport_used);
+    const std::vector<DrawItem> again = selectSnapshot(*snapshot, view_a).commands;
     const auto repeated = diffDrawLists(again, first);
     EXPECT_TRUE(repeated.same) << "same snapshot, same view: a different list at index " << repeated.index << " ("
                                << repeated.field << ")";
 
-    std::vector<DrawItem> other_view;
-    selectSnapshot(*snapshot, view_b, other_view, viewport_used);
-    std::vector<DrawItem> back_to_a;
-    selectSnapshot(*snapshot, view_a, back_to_a, viewport_used);
+    const std::vector<DrawItem> other_view = selectSnapshot(*snapshot, view_b).commands;
+    const std::vector<DrawItem> back_to_a  = selectSnapshot(*snapshot, view_a).commands;
     const auto interleaved = diffDrawLists(back_to_a, first);
     EXPECT_TRUE(interleaved.same) << "a different view in between is not state (index " << interleaved.index << ")";
 
     // THE LIVE TREE IS NOT AN INPUT: after the scene stops drawing everything, the snapshot still answers its own
     // picture. Its rows hold shares, and select never asks a Scene, a Node or a material for a value.
     scene.setRoot(nullptr);
-    std::vector<DrawItem> from_the_value;
-    selectSnapshot(*snapshot, view_a, from_the_value, viewport_used);
+    const std::vector<DrawItem> from_the_value = selectSnapshot(*snapshot, view_a).commands;
     const auto detached = diffDrawLists(from_the_value, first);
     EXPECT_TRUE(detached.same) << "select reads the publication, not the content it was published from (index "
                                << detached.index << ")";
@@ -274,12 +269,10 @@ TEST(SelectTest, SameInputSameList)
     for (int thread = 0; thread < kThreads; ++thread) {
         workers.emplace_back([&, thread] {
             for (int round = 0; round < kRounds; ++round) {
-                const View&                view     = (round % 2 == 0) ? view_a : view_b;
+                const View&                 view     = (round % 2 == 0) ? view_a : view_b;
                 const std::vector<DrawItem>& expected = (round % 2 == 0) ? first : other_view;
-                std::vector<DrawItem>        answer;
-                bool                              used = false;
-                selectSnapshot(*snapshot, view, answer, used);
-                if (!diffDrawLists(answer, expected).same) {
+                const auto                  answer   = selectSnapshot(*snapshot, view);
+                if (!diffDrawLists(answer.commands, expected).same) {
                     int none = -1;
                     first_bad_thread.compare_exchange_strong(none, thread);
                     mismatches.fetch_add(1, std::memory_order_relaxed);
@@ -344,23 +337,20 @@ TEST(SelectTest, OneChunkCullsEachRowOnItsOwnBox)
 
     const Row& outside_row = snapshot->row(outside_index);
     const Row& inside_row  = snapshot->row(inside_index);
-    EXPECT_NE(outside_row.parent_world.element(0, 3), inside_row.parent_world.element(0, 3))
+    EXPECT_NE(outside_row.resolved.parent_world.element(0, 3), inside_row.resolved.parent_world.element(0, 3))
         << "the segments sit under different parent transforms (x = 1000 vs x = 0)";
 
     const View looking_at_inside = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
     const Frustum     frustum           = Frustum::fromViewProjection(looking_at_inside.viewProjection());
-    EXPECT_TRUE(frustum.isOutside(outside_row.world_box)) << "the block's FIRST row is the one out of view";
-    EXPECT_FALSE(frustum.isOutside(inside_row.world_box)) << "the second row is in view - it must not be culled";
+    EXPECT_TRUE(frustum.isOutside(outside_row.resolved.world_box)) << "the block's FIRST row is the one out of view";
+    EXPECT_FALSE(frustum.isOutside(inside_row.resolved.world_box)) << "the second row is in view - it must not be culled";
 
-    bool                       viewport_used = false;
-    std::vector<DrawItem> visible;
-    selectSnapshot(*snapshot, looking_at_inside, visible, viewport_used);
+    const std::vector<DrawItem> visible = selectSnapshot(*snapshot, looking_at_inside).commands;
     ASSERT_EQ(visible.size(), 1U) << "one segment per parent and one of them in view: a whole-block skip answers none";
     EXPECT_EQ(visible.front().node, inside_geometry->id());
 
-    const View          looking_at_outside = viewFrom(Vec3d(1000.0, 0.0, 10.0), Vec3d(1000.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
-    std::vector<DrawItem> other;
-    selectSnapshot(*snapshot, looking_at_outside, other, viewport_used);
+    const View                  looking_at_outside = viewFrom(Vec3d(1000.0, 0.0, 10.0), Vec3d(1000.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
+    const std::vector<DrawItem> other              = selectSnapshot(*snapshot, looking_at_outside).commands;
     ASSERT_EQ(other.size(), 1U) << "the other camera answers the other segment - culling is still ON";
     EXPECT_EQ(other.front().node, outside_geometry->id());
 }
@@ -416,14 +406,12 @@ TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
             views.push_back(viewFrom(Vec3d(0.001 * static_cast<double>(step), 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 }));
         }
 
-        bool                       viewport_used = false;
-        std::vector<DrawItem> selected;
-        selectSnapshot(*snapshot, views.front(), selected, viewport_used); // warm
+        std::vector<DrawItem> selected = selectSnapshot(*snapshot, views.front()).commands; // warm
         ASSERT_EQ(selected.size(), drawables) << "the fixture fills the view; a culled grid would time the prune";
 
         const auto select_began = std::chrono::steady_clock::now();
         for (const View& view : views) {
-            selectSnapshot(*snapshot, view, selected, viewport_used);
+            selected = selectSnapshot(*snapshot, view).commands;
         }
         const long long select_us =
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - select_began).count() / kRepetitions;

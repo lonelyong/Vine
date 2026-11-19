@@ -7,40 +7,15 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
-namespace
-{
-
-/// @brief Returns whether two view-projections are the SAME view (exact element equality).
-///
-/// @details
-/// - Matrix4x4 has no operator==, and the memo only needs "the same view": exact element equality is the right test
-///   because the memo caches a pure function of the view, so a camera that happens to produce the same matrices must
-///   reuse the entry (its result is identical by construction).
-///
-/// @param lhs First matrix to compare.
-/// @param rhs Second matrix to compare.
-/// @return true when every element matches.
-bool sameView(const Mat4d& lhs, const Mat4d& rhs)
-{
-    for (int row = 0; row < 4; ++row) {
-        for (int col = 0; col < 4; ++col) {
-            if (lhs(row, col) != rhs(row, col)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-} // namespace
-
 DrawListMemo::Entry*
 DrawListMemo::find(const Mat4d& view_proj, const Vec3d& eye, const Viewport& viewport, std::uint32_t layer_mask, std::uint64_t revision)
 {
+    // EXACT equality is the right test: the memo caches a pure function of the view, so a camera that happens to
+    // produce the same matrices must reuse the entry (its result is identical by construction).
     for (Entry& entry : entries_) {
         if (entry.revision == revision && entry.eye == eye && entry.layer_mask == layer_mask &&
             (!entry.viewport_sensitive || (entry.viewport.width == viewport.width && entry.viewport.height == viewport.height)) &&
-            sameView(entry.view_proj, view_proj))
+            entry.view_proj == view_proj)
         {
             ++hits_;
             return &entry;
