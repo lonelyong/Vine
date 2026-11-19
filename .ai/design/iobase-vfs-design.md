@@ -220,7 +220,7 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | --- | --- |
 | N1 | `NotFound` looks at `file_type` first and `error_code` second. |
 | N2 | a non-text entry name may be decoded as UTF-8 → local code page → byte code point; repackaging writes the original bytes back. |
-| N3 | the zip read path computes its own CRC; a mismatch → `IoFailure`. |
+| N3 | the zip read path computes its own CRC; a mismatch → `IoFailure`. Every path that hands content out or writes it out follows the rule, `Zip::decompressFile` included - the check is this module's own and does not depend on what the reader underneath validates. |
 | N4 | not thread-safe at the method level; a shared object is synchronised by the caller. |
 | N5 | after separator normalization, a duplicate name or a path outside the root refuses to open the archive; the original stored name is used only to repack an unmodified entry losslessly. |
 | N6 | a path is served only while its physical spelling stays inside the backend's root; a link that leaves it is `InvalidPath`. |
@@ -233,7 +233,7 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | --- | --- | --- | --- |
 | P1 | `error_code` decides `NotFound` | MSVC sets `ec` even when the path does not exist, so "not found" is misreported as `IoFailure`. | `stat`/`list` look at `file_type::not_found` first; write per N1 and pin it with a cross-platform case. |
 | P2 | an absolute segment escapes | `C:/…` as the right operand of a join replaces the left one. | `normalizeVfsPath` refuses a `:` segment and a leading `/`; path validation keeps one entry point. |
-| P3 | zip CRC | libzip's read path does not verify the CRC, so a corrupt entry quietly yields wrong bytes. | compute `crc32()` yourself against the directory record; a mismatch is `IoFailure`; `readEntries` takes `ZIP_STAT_CRC` and compares at the end of the stream. |
+| P3 | a damaged member that looks like content | the reader underneath may or may not validate a member, and it skips the check for a partial read (`zip_source_zip_new` only wraps a whole-member read), so trusting it makes the guarantee version-dependent. | compute `crc32Of()` yourself against the directory record; a mismatch is `IoFailure`; `readEntries` takes `ZIP_STAT_CRC` and the content is checked once the stream ran dry. |
 | P4 | a substring test for `..` | rejecting `..` by substring kills `a..b` and can still miss a real escape. | cancel segment by segment; `normalizeVfsPath` is the only entry (`C2`). |
 | P5 | `VfsEntryInfo::path` taken for a name | using the full path as a name builds a doubled path. | names go through `name()` (`R3`). |
 | P6 | `rename` overwriting a name | overwrite semantics follow the backend, and `DirectoryVfs` differs from the zip overlay. | `stat` first when "do not overwrite" is wanted; a failed cross-backend rename keeps the source (`C5`). |
@@ -244,6 +244,8 @@ Zip                 one-shot compress/decompress/entries/readEntry
 | P11 | a link out of the root | the host follows a link, so a tree that checks only the spelling reads and writes outside its root. | resolve the physical spelling and compare it with the root (`N6`); `DirectoryVfsRefusesALinkThatLeavesItsRoot`. |
 | P12 | commit while a reader lives | the reader keeps the source handle, and Windows refuses to replace an open file, so `commit()` fails; on POSIX it succeeds and the reader keeps serving the old bytes. | documented on `commit()`; the archive reopens its source when the rename fails, so a refusal leaves it usable rather than empty. |
 | P13 | a cycle of mounts | a tree mounted below itself recurses until the stack ends. | keep the mount graph acyclic; `mount()` holds no handle to its own object and cannot detect it. |
+| P14 | a recorded CRC of 0 | `VfsEntryInfo::crc` spells "none recorded" as 0, so an entry whose content really sums to 0 is indistinguishable from an unverified one. | accepted: a 2^-32 event, and refusing to verify such an entry would be worse than the gap; the field says so. |
+| P15 | extraction is not transactional | `Zip::decompressFile` writes members as they arrive, so a failure leaves the files written so far in the destination. | a caller that needs all-or-nothing extracts next to the target and moves the tree in; the header states it. |
 
 ## 7. Rejected Options
 

@@ -64,14 +64,17 @@ class VN_IOBASE_API Zip {
     /**
      * @brief Decompresses a ZIP file into a directory.
      *
-     * Entry names that could escape the destination directory are rejected.
+     * Entry names that could escape the destination directory are rejected. Each member is verified against the
+     * checksum the archive recorded, so a damaged package fails instead of writing content nobody can trust; the
+     * files already written stay - extraction is not transactional.
      *
      * @param zip_path Input .zip file path.
      * @param dir_path Destination directory, created if missing.
      * @return IoError::Ok on success, IoError::NotFound when zip_path does not
      *         exist, IoError::InvalidData when it is not an archive,
      *         IoError::InvalidPath when an entry name would escape dir_path,
-     *         IoError::IoFailure when reading or writing fails.
+     *         IoError::IoFailure when reading or writing fails, or a member does not
+     *         match the checksum the archive recorded.
      */
     [[nodiscard]] static IoError decompressFile(const std::filesystem::path& zip_path, const std::filesystem::path& dir_path);
 
@@ -85,7 +88,8 @@ class VN_IOBASE_API Zip {
      * - this is what keeps listing a large package cheap.
      *
      * @param path Input .zip file path.
-     * @return The entries, IoError::NotFound when the file does not exist, or IoError::InvalidData when it is not an archive.
+     * @return The entries, ordered by the UTF-8 bytes of their full path like every other listing in this module;
+     *         IoError::NotFound when the file does not exist, IoError::InvalidData when it is not an archive.
      */
     [[nodiscard]] static Result<std::vector<VfsEntryInfo>> entries(const std::filesystem::path& path);
 
@@ -93,15 +97,16 @@ class VN_IOBASE_API Zip {
      * @brief Lists the entries of an in-memory ZIP in the tree vocabulary.
      *
      * @param bytes ZIP bytes, which must stay readable for the call.
-     * @return The entries, or IoError::InvalidData when the bytes are not an archive.
+     * @return The entries, ordered by the UTF-8 bytes of their full path, or IoError::InvalidData when the bytes are
+     *         not an archive.
      */
     [[nodiscard]] static Result<std::vector<VfsEntryInfo>> entries(std::span<const unsigned char> bytes);
 
     /**
      * @brief Reads one entry of a ZIP file.
      *
-     * The content is checked against the checksum the archive recorded, the way
-     * an opened archive checks it - libzip itself does not.
+     * The content is checked against the checksum the archive recorded, whether or not the reader underneath
+     * validated it, so the guarantee does not depend on that reader's behaviour.
      *
      * @param path Input .zip file path.
      * @param name Entry name to read; the name the listing reported, or one ending in '/'.
@@ -118,8 +123,8 @@ class VN_IOBASE_API Zip {
     /**
      * @brief Reads one entry of an in-memory ZIP.
      *
-     * The content is checked against the checksum the archive recorded, the way
-     * an opened archive checks it - libzip itself does not.
+     * The content is checked against the checksum the archive recorded, whether or not the reader underneath
+     * validated it.
      *
      * @param bytes ZIP bytes, which must stay readable for the call.
      * @param name Entry name to read; the name the listing reported, or one ending in '/'.

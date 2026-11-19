@@ -530,7 +530,18 @@ Result<std::vector<unsigned char>> DirectoryVfs::read(const std::filesystem::pat
     if (!in) {
         return IoError::IoFailure;
     }
-    std::vector<unsigned char> bytes{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+    std::error_code      ec;
+    const std::uintmax_t size = std::filesystem::file_size(real, ec);
+    if (ec) {
+        return failureOf(ec);
+    }
+    if (size > detail::kMaxWholeContentBytes) {
+        return IoError::CapacityExceeded; // one buffer is the wrong tool; openRead() streams it
+    }
+
+    std::vector<unsigned char> bytes;
+    bytes.reserve(static_cast<std::size_t>(size));
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     if (in.bad()) {
         return IoError::IoFailure;
     }

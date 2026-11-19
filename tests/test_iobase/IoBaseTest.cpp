@@ -811,3 +811,40 @@ TEST(IoBaseTest, ZipArchiveCommitReplacesTheFile)
 }
 
 } // namespace
+
+TEST(IoBaseTest, ZipDecompressFileRefusesADamagedMember)
+{
+    TempDir                     dir;
+    const std::filesystem::path pkg = dir.path() / "damaged.zip";
+
+    // Incompressible content, so the entry is stored: flipping bytes then leaves the stream readable, and only the
+    // checksum the directory recorded can tell that the content changed - the same fixture the readEntry test uses.
+    std::vector<unsigned char> payload(64 * 1024);
+    std::uint32_t              state = 0x12345678;
+    for (unsigned char& byte : payload) {
+        state = state * 1664525u + 1013904223u;
+        byte  = static_cast<unsigned char>(state >> 24);
+    }
+    {
+        ZipArchive archive;
+        ASSERT_EQ(archive.addFile(u8"mesh.bin", payload), vn::io::IoError::Ok);
+        ASSERT_EQ(archive.saveAs(pkg), vn::io::IoError::Ok);
+    }
+
+    // Wreck the entry data but keep the directory intact.
+    {
+        std::fstream file(pkg, std::ios::binary | std::ios::in | std::ios::out);
+        ASSERT_TRUE(file.good());
+        file.seekg(0, std::ios::end);
+        const std::streamoff size = static_cast<std::streamoff>(file.tellg());
+        ASSERT_GT(size, 256);
+        const std::vector<char> garbage(64, static_cast<char>(0xAA));
+        file.seekp(size / 2);
+        file.write(garbage.data(), static_cast<std::streamsize>(garbage.size()));
+        ASSERT_TRUE(file.good());
+    }
+
+    // Extraction checks every member the way a read does: a damaged package fails instead of landing content nobody
+    // can trust.
+    EXPECT_EQ(Zip::decompressFile(pkg, dir.path() / "out"), vn::io::IoError::IoFailure);
+}

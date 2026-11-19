@@ -94,7 +94,9 @@ class VN_IOBASE_API IstreamSource final : public DataSource {
     /**
      * @brief Reports how many bytes this source produces.
      *
-     * @return The byte count after conversion (kUnknownSize was measured in the constructor).
+     * @return The byte count after conversion (kUnknownSize was measured in the constructor); 0 when the constructor
+     *         could not settle the length - error() says why, which is the only way to tell a broken setup from an
+     *         empty stream.
      */
     [[nodiscard]] std::uint64_t size() const noexcept override;
 

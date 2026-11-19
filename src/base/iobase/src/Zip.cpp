@@ -208,6 +208,12 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
             continue;
         }
 
+        // A member's parents are implied by its name; an archive that stores no "dir/" marker is the common case,
+        // not a broken one, so they are created here.
+        if (!std::filesystem::create_directories(target.parent_path(), ec) && ec) {
+            result = IoError::IoFailure;
+            break;
+        }
         zip_file_t* const file = zip_fopen_index(archive, i, 0);
         if (file == nullptr) {
             result = IoError::IoFailure;
@@ -221,7 +227,9 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
         }
 
         std::array<char, 16 * 1024> chunk{};
-        bool                        ok = true;
+        std::uint32_t               crc     = 0;
+        std::uint64_t               written = 0;
+        bool                        ok      = true;
         while (ok) {
             const zip_int64_t got = zip_fread(file, chunk.data(), chunk.size());
             if (got < 0) {
@@ -231,6 +239,8 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
             if (got == 0) {
                 break;
             }
+            crc = detail::crc32Of(crc, std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(chunk.data()), static_cast<std::size_t>(got)));
+            written += static_cast<std::uint64_t>(got);
             out.write(chunk.data(), static_cast<std::streamsize>(got));
             if (!out) {
                 ok = false;
@@ -238,7 +248,14 @@ IoError Zip::decompressFile(const std::filesystem::path& zip_path, const std::fi
             }
         }
         zip_fclose(file);
-        if (!ok) {
+        out.close();
+
+        // The bytes that reached the disk are verified here as well, so the guarantee does not depend on what the
+        // reader underneath happens to check: a member that does not match its directory record is a failure, not
+        // content.
+        const bool sized  = (st.valid & ZIP_STAT_SIZE) == 0 || written == static_cast<std::uint64_t>(st.size);
+        const bool intact = (st.valid & ZIP_STAT_CRC) == 0 || st.crc == 0 || crc == static_cast<std::uint32_t>(st.crc);
+        if (!ok || !out || !sized || !intact) {
             result = IoError::IoFailure;
             break;
         }

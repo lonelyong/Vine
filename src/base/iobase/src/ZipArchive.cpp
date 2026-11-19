@@ -257,8 +257,8 @@ class ZipArchive::EntryReadStream final : public VfsEntrySource {
         if (crc_valid_ && got > 0) {
             crc_ = detail::crc32Of(crc_, std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(out.data()), static_cast<std::size_t>(got)));
             if (position_ == size_ && expected_crc_ != 0 && crc_ != expected_crc_) {
-                // The last byte arrived, so the checksum can be settled - and libzip
-                // itself does not look at it while reading.
+                // The last byte arrived, so the checksum can be settled. The reader underneath may have noticed too;
+                // this layer does not depend on it.
                 error_ = IoError::IoFailure;
             }
         }
@@ -576,6 +576,9 @@ std::uint64_t ZipArchive::entrySize(const Entry& entry) const
 Result<std::vector<unsigned char>> ZipArchive::contentOf(const Entry& entry) const
 {
     if (entry.from_file) {
+        if (entrySize(entry) > detail::kMaxWholeContentBytes) {
+            return IoError::CapacityExceeded; // a file whose size says it does not fit one buffer
+        }
         std::ifstream in(entry.src, std::ios::binary);
         if (!in) {
             return IoError::IoFailure;

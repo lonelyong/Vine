@@ -555,3 +555,50 @@ TEST(ZipArchiveTest, ReadingAGeneratedEntryKeepsItForTheSave)
     ASSERT_TRUE(saved.ok());
     EXPECT_EQ(std::string(saved->begin(), saved->end()), "generated");
 }
+
+TEST(ZipArchiveTest, ArchiveIndexIsOrderedByPath)
+{
+    const TempDir temp;
+    const auto    pkg = temp.path() / "ordered.zip";
+    {
+        const std::vector<unsigned char> bytes = buildPackage();
+        std::ofstream                    out(pkg, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    const auto entries = Zip::entries(pkg);
+    ASSERT_TRUE(entries.ok());
+
+    // The one-shot listing answers in the order every listing in the module answers in, not in the order the archive
+    // happens to store its members.
+    std::vector<std::filesystem::path> listed;
+    listed.reserve(entries->size());
+    for (const VfsEntryInfo& info : entries.value()) {
+        listed.push_back(info.path);
+    }
+    const std::vector<std::filesystem::path> expected{
+        u8"devices/robot.vdev", u8"empty", u8"geoms/base.bin", u8"nested/deep", u8"workcell.xml"
+    };
+    EXPECT_EQ(listed, expected);
+}
+
+TEST(ZipArchiveTest, ExtractionCreatesImpliedDirectories)
+{
+    const TempDir temp;
+    const auto    pkg = temp.path() / "implied.zip";
+    {
+        const std::vector<unsigned char> bytes = buildPackage();
+        std::ofstream                    out(pkg, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    // The package holds "devices/robot.vdev" and "geoms/base.bin" without a directory marker of their own, which is
+    // what most writers produce: extraction has to create the parents the names imply.
+    const auto out = temp.path() / "out";
+    ASSERT_EQ(Zip::decompressFile(pkg, out), IoError::Ok);
+
+    std::ifstream in(out / "devices" / "robot.vdev", std::ios::binary);
+    ASSERT_TRUE(in.good()) << "a member whose parent has no marker of its own is still written";
+    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "xyz");
+}

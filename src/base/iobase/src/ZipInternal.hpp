@@ -65,7 +65,8 @@ inline std::uint32_t crc32Of(std::span<const unsigned char> bytes) noexcept
  * checksum in a single call, which truncates the length past 4 GiB.
  *
  * The probe past the end is what makes a damaged member a failure: decompression finishes, and the content is checked,
- * only once the stream is read past its last byte.
+ * only once the stream is read past its last byte. The checksum is folded here as well as by the reader underneath,
+ * so the guarantee does not depend on what that reader happens to validate.
  *
  * @param archive The open archive.
  * @param index The entry's index in that archive.
@@ -132,6 +133,7 @@ inline IoError ioErrorOf(int code) noexcept
     case ZIP_ER_EXISTS: return IoError::AlreadyExists;
     case ZIP_ER_NOZIP:
     case ZIP_ER_INCONS:
+    case ZIP_ER_CRC:
     case ZIP_ER_INVAL: return IoError::InvalidData;
     case ZIP_ER_OPNOTSUPP: return IoError::Unsupported;
     default: return IoError::IoFailure;
@@ -481,8 +483,11 @@ inline bool locateEntry(zip_t* archive, const std::filesystem::path& name, Locat
  * while a VfsEntryInfo carries the kind. An entry naming the root is left out - the
  * root always exists, and reporting it would only repeat that.
  *
+ * The result is ordered by the UTF-8 bytes of the full path, which is the order every listing in this module answers
+ * in (Vfs::list): an archive's storage order is a write detail, not part of the tree.
+ *
  * @param stored The entries as the archive stores them.
- * @return The entries as VfsEntryInfo, in the order they were stored.
+ * @return The entries as VfsEntryInfo, ordered by path.
  */
 inline std::vector<VfsEntryInfo> toEntryInfos(const std::vector<StoredEntry>& stored)
 {
@@ -502,6 +507,10 @@ inline std::vector<VfsEntryInfo> toEntryInfos(const std::vector<StoredEntry>& st
         }
         listed.push_back(std::move(info));
     }
+
+    std::sort(listed.begin(), listed.end(), [](const VfsEntryInfo& left, const VfsEntryInfo& right) {
+        return left.path.generic_u8string() < right.path.generic_u8string();
+    });
     return listed;
 }
 

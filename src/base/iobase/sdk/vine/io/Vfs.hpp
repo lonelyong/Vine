@@ -42,7 +42,7 @@ struct VN_IOBASE_API VfsEntryInfo {
     std::filesystem::path path;                       // Full normalized virtual path; the empty path is the root.
     VfsEntryKind          kind{ VfsEntryKind::File }; // What the path names: File or Directory, never Missing.
     std::uint64_t         size{ 0 }; // Size in bytes; 0 for a directory, kUnknownSize when the content has not been produced yet (a source nobody measured).
-    std::uint32_t         crc{ 0 };  // Content checksum recorded by the backend (a ZIP records CRC-32); 0 when it has none yet.
+    std::uint32_t         crc{ 0 };  // Checksum the backend recorded (a ZIP records CRC-32); 0 when it recorded none, so a genuine 0 cannot be told apart from "none".
 
     /**
      * @brief The last path segment, i.e. the entry's own name.
