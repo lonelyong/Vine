@@ -348,6 +348,22 @@ engine->frame();                        // 收集 → 录制 → 提交 → pres
 engine->shutdown();
 ```
 
+**要一个四边形或盒子时，先看 `geometryFromShape`。** `models` 那边的形状已经够用，转换会**一并声明好 indexed
+ triangle draw**，所以不存在「`setPositions` 顺带声明了默认 draw、必须用 `setPrimitive(0, …)` 覆盖」这一步。
+只有需要自定义通道（例如 cube map 的方向 texcoord3）或要原地改写顶点时，才走 `packAttribute` 的裸数组路径。
+
+```cpp
+// example: tests/test_graphics/GuideExample.cpp
+// 四边形：四个角 + 四个角索引；三角化与 indexed draw 都由转换一步给出。
+auto quad = vn::make_intrusive<vn::models::QuadMesh>();
+quad->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 1.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
+quad->setIndices({ 0u, 1u, 2u, 3u });
+const GeometryPtr quad_geometry = geometryFromShape(*quad);
+// 盒子：解析实体，六个面 / 逐面法线都来自 geom 的三角化，不写一个顶点。
+auto box = vn::make_intrusive<vn::models::Box>(2.0f, 2.0f, 2.0f);
+const GeometryPtr box_geometry = geometryFromShape(*box);
+```
+
 ### 3.2 改数据（唯一需要公告的地方）
 
 ```cpp

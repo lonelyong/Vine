@@ -47,6 +47,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/math/Transform3.hpp>
+#include <vine/models/Box.hpp>
 #include <vine/models/MixedMesh.hpp>
 #include <vine/models/QuadMesh.hpp>
 #include <vine/models/TriangleMesh.hpp>
@@ -9506,6 +9507,23 @@ TEST(GeometryTest, ConverterTriangulatesQuadAndMixedMeshes)
 
     mixed->setFaceOffsets({ 0u, 3u });
     EXPECT_EQ(geometryFromShape(*mixed).get(), nullptr) << "invalid mesh topology is rejected before conversion";
+}
+
+TEST(GeometryTest, ConverterTessellatesAnAnalyticBox)
+{
+    // An analytic solid owns no vertices: geometryFromShape() tessellates it at this boundary, so the renderer sees
+    // the same six flat faces (24 corners carrying per-face normals, an indexed triangle draw) a hand-built box
+    // would state.
+    const auto box  = vn::make_intrusive<vn::models::Box>(2.0f, 4.0f, 6.0f);
+    const auto geom = geometryFromShape(*box);
+
+    ASSERT_NE(geom.get(), nullptr);
+    EXPECT_EQ(geom->positionCount(), 24u);
+    EXPECT_EQ(geom->normalCount(), 24u);
+    EXPECT_EQ(geom->vertexCount(), 24u);
+    ASSERT_EQ(geom->primitiveCount(), 1u);
+    EXPECT_TRUE(geom->primitive(0)->isIndexed());
+    EXPECT_EQ(geom->primitive(0)->indices.span().size(), 36u);
 }
 
 TEST(GeometryTest, ConverterSharesTheMeshVertexStorage)

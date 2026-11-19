@@ -13,10 +13,12 @@
 //   device, and the case proves the documented scene really collects one draw item.
 // - `guideHelloTriangle()` (steps 4-5) is COMPILED and never called - a window handle and a loaded
 //   backend plug-in are a host's business, not a unit test's.
+// - `guideQuickGeometry()` (the quick quad / box recipe beside §3.1) is COMPILED and never called.
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <utility>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -32,6 +34,8 @@
 #include <vine/graphics/StateNode.hpp>
 
 #include <vine/models/Array.hpp>
+#include <vine/models/Box.hpp>
+#include <vine/models/QuadMesh.hpp>
 
 /// The guide example's statements, in the guide's own order.
 namespace guide_example
@@ -93,6 +97,30 @@ CameraPtr guideCamera()
     camera->setAspect(16.0 / 9.0);
 
     return camera;
+}
+
+/**
+ * @brief The quick shapes a host reaches for before authoring vertices itself: one quad, one box.
+ *
+ * @details
+ * - `QuadMesh` is four corners plus four corner indices; `geometryFromShape()` turns it into two triangles.
+ * - `Box` is the analytic solid: the six flat faces come from geom's tessellation, so the caller names an extent
+ *   and no vertex at all.
+ * - Both conversions state the indexed triangle draw themselves, which is why neither shape has to replace the
+ *   default draw that `setPositions` states on a hand-built geometry.
+ *
+ * @return The two geometries (compiled, not called: the guide prints them).
+ */
+std::pair<GeometryPtr, GeometryPtr> guideQuickGeometry()
+{
+    auto quad = vn::make_intrusive<vn::models::QuadMesh>();
+    quad->setPositions({ vn::math::Vec3f(0.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 0.0f, 0.0f), vn::math::Vec3f(1.0f, 1.0f, 0.0f), vn::math::Vec3f(0.0f, 1.0f, 0.0f) });
+    quad->setIndices({ 0u, 1u, 2u, 3u });
+    const GeometryPtr quad_geometry = geometryFromShape(*quad);
+
+    auto box = vn::make_intrusive<vn::models::Box>(2.0f, 2.0f, 2.0f);
+    const GeometryPtr box_geometry = geometryFromShape(*box);
+    return { quad_geometry, box_geometry };
 }
 
 /**

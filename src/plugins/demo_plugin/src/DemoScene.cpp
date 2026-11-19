@@ -29,7 +29,10 @@
 #include <vine/logging/Log.hpp>
 
 #include <vine/Colorf.hpp>
+#include <vine/geom/spatial/BoxSolid.hpp>
+#include <vine/geom/spatial/SolidTessellation.hpp>
 #include <vine/models/Array.hpp>
+#include <vine/models/Box.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -280,63 +283,32 @@ vn::intrusive_ptr<vn::graphics::Geometry> makeDirectionBox(const vn::String& nam
 {
     using vn::math::Vec3f;
 
-    vn::models::Vec3fArray  positions;
-    vn::models::Vec3fArray  normals;
-    vn::models::Vec3fArray  directions;
-    vn::models::UInt32Array indices;
+    // Six flat faces from geom's box triangulation: the demo owns no second definition of a box.
+    const vn::geom::spatial::Triangulationf box = vn::geom::spatial::tessellateSolid(
+        vn::geom::spatial::BoxSolidf{ static_cast<float>(half.x), static_cast<float>(half.y), static_cast<float>(half.z) });
 
-    const int face_table[6][3] = {
-        { 0, 1, 2 },
-        { 1, 2, 0 },
-        { 2, 0, 1 },
-        { 0, 2, 1 },
-        { 1, 0, 2 },
-        { 2, 1, 0 },
-    };
-    auto axisVector = [](int axis) { return Vec3f(axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f); };
-
-    for (int f = 0; f < 6; ++f) {
-        const int  n_axis = face_table[f][0];
-        const int  u_axis = face_table[f][1];
-        const int  v_axis = face_table[f][2];
-        const bool neg    = f >= 3;
-
-        const Vec3f normal = neg ? -axisVector(n_axis) : axisVector(n_axis);
-        const Vec3f u      = axisVector(u_axis);
-        const Vec3f v      = axisVector(v_axis);
-
-        const std::uint32_t base  = static_cast<std::uint32_t>(positions.size());
-        const float         hs[3] = { static_cast<float>(half.x), static_cast<float>(half.y), static_cast<float>(half.z) };
-        const float         cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
-        const float         cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
-        for (int k = 0; k < 4; ++k) {
-            const Vec3f corner = normal * hs[n_axis] + u * (cu[k] * hs[u_axis]) + v * (cv[k] * hs[v_axis]);
-            positions.push_back(corner);
-            normals.push_back(normal);
-            // The centre-to-corner VECTOR (not a direction), re-expressed in the MAP's frame - see the
-            // function comment. The length is left in: the sampler normalises, and a position is what
-            // interpolates to the fragment's own position.
-            directions.emplace_back(corner.x, corner.z, -corner.y);
-        }
-        indices.push_back(base + 0);
-        indices.push_back(base + 1);
-        indices.push_back(base + 2);
-        indices.push_back(base + 0);
-        indices.push_back(base + 2);
-        indices.push_back(base + 3);
+    vn::models::Vec3fArray directions;
+    directions.reserve(box.positions.size());
+    for (const Vec3f& corner : box.positions) {
+        // The centre-to-corner VECTOR (not a direction), re-expressed in the MAP's frame - see the function
+        // comment. The length is left in: the sampler normalises, and a position is what interpolates to the
+        // fragment's own position.
+        directions.emplace_back(corner.x, corner.z, -corner.y);
     }
 
+    // The RAW channel path, kept on purpose: this geometry carries a custom 3-scalar texcoord channel, which the
+    // shape bridge does not author. setPositions states a default draw, so the indexed one has to replace it.
     auto geometry = vn::make_intrusive<vn::graphics::Geometry>();
     geometry->setName(name);
-    geometry->setPositions(vn::graphics::packAttribute(positions));
-    geometry->setNormals(vn::graphics::packAttribute(normals));
+    geometry->setPositions(vn::graphics::packAttribute(box.positions));
+    geometry->setNormals(vn::graphics::packAttribute(box.normals));
     geometry->setTexcoords3(vn::graphics::packAttribute(directions));
     vn::graphics::Primitive draw;
-    draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(indices));
+    draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(box.indices));
     // setPositions already stated the DEFAULT draw (a non-indexed triangle list over the position channel,
     // see Geometry::addBuffer); this REPLACES it with the indexed one. Appending would keep the default and
-    // draw the 24 authored corners as 8 triangles, four of which mix corners of different faces - a
-    // direction box drawn that way smears its cube map across a triangle that spans the whole box.
+    // draw those 24 corners as 8 triangles, four of which mix corners of different faces - a direction box
+    // drawn that way smears its cube map across a triangle that spans the whole box.
     geometry->setPrimitive(0U, std::move(draw));
     return geometry;
 }
@@ -468,9 +440,10 @@ void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<v
 /**
  * @brief Builds a flat-shaded axis-aligned box node centred at a position.
  *
- * The box is authored as raw position / normal / index arrays (six faces,
- * twelve triangles, per-face vertex normals) filled into the geometry's
- * channels, so the vsg backend renders it directly.
+ * @details
+ * - The triangles are `vn::models::Box`'s, taken through `geometryFromShape()`: six flat faces with per-face
+ *   normals, triangulated by geom, so the demo authors no box vertex.
+ * - The centre is the TRANSFORM's, not the mesh's: the shape sits at the origin and the node places it.
  *
  * @param root    Root group receiving the node.
  * @param diffuse Flat diffuse colour of the box.
@@ -482,66 +455,12 @@ void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<v
 vn::intrusive_ptr<vn::graphics::MatrixTransform>
 addBox(vn::graphics::Group* root, const vn::Colorf& diffuse, const vn::String& name, const vn::math::Vec3d& centre, const vn::math::Vec3d& half)
 {
-    using vn::math::Vec3f;
-
-    vn::models::Vec3fArray  positions;
-    vn::models::Vec3fArray  normals;
-    vn::models::UInt32Array indices;
-
-    // Build each face with a consistent outward (counter-clockwise, seen from
-    // the outside) winding. For a face normal n, pick in-plane unit vectors
-    // u and v with u x v = n; then the four corners ordered as
-    //   -u-v, u-v, u+v, -u+v
-    // are guaranteed to wind CCW around the outward normal, so the winding is
-    // consistent across all faces by construction.
-    const int face_table[6][3] = {
-        // { normal axis, u axis, v axis } with implicit positive unit axes.
-        { 0, 1, 2 }, // +X: u=Y, v=Z  -> YxZ = +X
-        { 1, 2, 0 }, // +Y: u=Z, v=X  -> ZxX = +Y
-        { 2, 0, 1 }, // +Z: u=X, v=Y  -> XxY = +Z
-        { 0, 2, 1 }, // -X: u=Z, v=Y  -> ZxY = -X
-        { 1, 0, 2 }, // -Y: u=X, v=Z  -> XxZ = -Y
-        { 2, 1, 0 }, // -Z: u=Y, v=X  -> YxX = -Z
-    };
-
-    auto axisVector = [](int axis) { return Vec3f(axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f); };
-
-    for (int f = 0; f < 6; ++f) {
-        const int  n_axis = face_table[f][0];
-        const int  u_axis = face_table[f][1];
-        const int  v_axis = face_table[f][2];
-        const bool neg    = f >= 3; // the last three rows are the -axis faces
-
-        const Vec3f normal = neg ? -axisVector(n_axis) : axisVector(n_axis);
-        const Vec3f u      = axisVector(u_axis);
-        const Vec3f v      = axisVector(v_axis);
-
-        const std::uint32_t base  = static_cast<std::uint32_t>(positions.size());
-        const float         hs[3] = { static_cast<float>(half.x), static_cast<float>(half.y), static_cast<float>(half.z) };
-        const float         cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
-        const float         cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
-        for (int k = 0; k < 4; ++k) {
-            const Vec3f corner = normal * hs[n_axis] + u * (cu[k] * hs[u_axis]) + v * (cv[k] * hs[v_axis]);
-            positions.push_back(corner);
-            normals.push_back(normal);
-        }
-        indices.push_back(base + 0);
-        indices.push_back(base + 1);
-        indices.push_back(base + 2);
-        indices.push_back(base + 0);
-        indices.push_back(base + 2);
-        indices.push_back(base + 3);
-    }
-
-    auto geometry = vn::make_intrusive<vn::graphics::Geometry>();
+    // The analytic box IS the mesh: geometryFromShape() tessellates it and states the indexed draw, so this
+    // function carries no face table, no winding rule and no vertex loop.
+    auto box      = vn::make_intrusive<vn::models::Box>(
+        static_cast<float>(half.x * 2.0), static_cast<float>(half.y * 2.0), static_cast<float>(half.z * 2.0));
+    auto geometry = vn::graphics::geometryFromShape(*box);
     geometry->setName(name);
-    geometry->setPositions(vn::graphics::packAttribute(positions));
-    geometry->setNormals(vn::graphics::packAttribute(normals));
-    vn::graphics::Primitive draw;
-    draw.indices = vn::graphics::Primitive::IndexSpan::whole(vn::graphics::packIndices(indices));
-    // Replaces the default draw setPositions stated (see makeDirectionBox); appending would draw the 24
-    // corners a second time as 8 triangles, four of them mixing faces.
-    geometry->setPrimitive(0U, std::move(draw));
 
     auto material = vn::make_intrusive<vn::graphics::Material>();
     // Matte plastic: a low roughness keeps the highlight tight while the default dielectric reflectance

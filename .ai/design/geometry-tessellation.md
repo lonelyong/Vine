@@ -14,7 +14,8 @@
 ### 1.1 Problem and background
 
 `Primitive` is a modelling type: it carries identity, name, revision and dimensions, yet contains no vertex data at all (`geometry-parametric.md` 2.4).
-The rendering boundary `graphics::geometryFromShape()` accepts meshes only, so an analytic solid **cannot be drawn** today; B-rep's `Tessellation` can turn a `BrepShape` into a mesh, but that route needs the OCCT backend, while the geometry of an analytic solid is pure mathematics.
+When this entry was designed, the rendering boundary `graphics::geometryFromShape()` accepted meshes only, so an analytic solid could not be drawn; B-rep's `Tessellation` can turn a `BrepShape` into a mesh, but that route needs the OCCT backend, while the geometry of an analytic solid is pure mathematics.
+The boundary now takes primitives through this chain (9.1).
 
 Tessellation needs two things a value type cannot give: a traversal that lays out a mesh, and a set of vertex arrays.
 The former goes into a free function, and the latter is just an ordinary value type whose precision follows the solid (a `float` / `double` pair).
