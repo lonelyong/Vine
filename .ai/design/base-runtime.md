@@ -126,13 +126,25 @@ worker is shared per stored type and sleeps while no cache is registered.
 ### 2.7 **An overwrite must not demand more of the value than a copy**
 
 - What it is: `set()` erases an existing entry and emplaces the new one with
-  `std::move_if_noexcept`, so `TVal` needs to be copy-constructible, not assignable. The
-  out-parameter `get()` still assigns and says so.
+  `std::move_if_noexcept`, so `TVal` needs to be copy-constructible, not assignable.
 - Why: `insert_or_assign` silently required copy-assignability, which the class documentation did
   not state and which a cache of immutable values does not have.
 - Boundary: the trade is the strong exception guarantee — a throwing copy leaves no entry rather than
   the previous value; a cache is allowed to lose an entry, and the caveat is stated. Serves `G4`
   (stated requirements) and `G10` (moves when moving is safe).
+
+### 2.8 **A backend lives with the mechanism it needs**
+
+- What it is: `runtime` defines `Cache`, `KeyValueStore` and the mechanism-free implementations
+  (`InMemoryCache`, `SerializedCache`). A file, database or network store is implemented in the
+  module that owns that mechanism (an I/O module, a database plugin), depending on `runtime`, never
+  the other way round.
+- Why: a file store needs `vn::io`, a database store needs its driver, a network store needs a
+  socket; pulling any of them into `runtime` would force every plugin user to link it and would break
+  the module's Global+Core-only dependency rule (`C4`).
+- Boundary: the criterion is the mechanism, not the abstract/concrete split — a memory store needs no
+  external mechanism and belongs here; a concrete backend that needs one belongs to that module
+  (`G2`, `G5`, `G9`).
 
 ## 3. Features
 
@@ -146,6 +158,7 @@ worker is shared per stored type and sleeps while no cache is registered.
 | F4 | Typed TTL cache | Values by value, lazy expiry on access, no serialisation | landed |
 | F5 | Background reclamation | One detached worker per stored type, shared by every started instance | landed |
 | F6 | Cache interface | One typed seam; results distinguish a miss from a failure | landed |
+| F7 | Persistent backend seam | `KeyValueStore` (bytes + absolute expiry) and `SerializedCache` (values encoded by an injected serializer) | landed; backend implementations trigger-gated |
 
 ### 3.1.1 F1 Load and reuse a library
 
@@ -183,11 +196,10 @@ worker is shared per stored type and sleeps while no cache is registered.
 
 ### 3.1.4 F4 Typed TTL cache
 
-- **Behaviour**: `set(key, value, ttl)` stores a copy; `ttl <= 0` means forever. `get()` returns
-  `std::optional<TVal>` and evicts an expired entry it touches; `contains`, `count`, `isEmpty` and
-  `keys` do the same sweep-on-access.
-- **Constraints** (C3): `TVal` must be copy-constructible; the out-parameter `get()` also requires
-  assignability.
+- **Behaviour**: `set(key, value, ttl)` stores a copy; an empty or non-positive `ttl` keeps the
+  entry. `get()` answers `Ok` with the value, `Miss` when absent or expired, and evicts an expired
+  entry it touches; `contains`, `count` and `keys` answer their value in an outcome.
+- **Constraints** (C3): `TVal` must be copy-constructible.
 - **Requirements** (R4): expired entries are never returned, even without a background worker.
 - **Acceptance** (T4): `InMemoryCacheTest.*` (round trip, TTL, keys, overwrite).
 - **Caveats** (P4): an overwrite is erase-then-insert; a throwing copy loses the previous value.
@@ -219,6 +231,23 @@ worker is shared per stored type and sleeps while no cache is registered.
 - **Caveats** (P6): a caller that ignores the result cannot tell a miss from a failure; the loaders
   treat a non-hit as a miss because they hold the in-memory implementation.
 
+### 3.1.7 F7 Persistent backend seam
+
+- **Behaviour**: `KeyValueStore` stores bytes under String keys with an absolute `system_clock`
+  expiry; `SerializedCache<TValue, TSerializer>` implements `Cache<String, TValue>` by encoding on
+  `set` and decoding on `get`. A store reports a record it cannot decode as no value, which the
+  cache turns into `CacheError::Corrupt`; a store error is passed through. `count()`/`keys()` are
+  optional and answer `CacheError::Unsupported` when the store cannot enumerate.
+- **Constraints** (C6): a store that needs an external mechanism (file system, database, network)
+  is implemented outside `runtime`, in the module that owns the mechanism.
+- **Requirements** (R7): the cache always hands the store an absolute wall-clock expiry, never a
+  duration, so a stored record expires across a restart.
+- **Acceptance** (T8): `SerializedCacheTest.*` (round trip, corrupt bytes, store failure, absolute
+  expiry, enumeration unsupported).
+- **Caveats** (P7): `contains()` reads the record through the store (it does not decode it), so it
+  costs one store read; a backend that can answer presence more cheaply can implement `Cache`
+  directly instead of using `SerializedCache`.
+
 ## 4. Public Interface
 
 ### 4.1 DynamicLibraryLoader
@@ -249,6 +278,9 @@ worker is shared per stored type and sleeps while no cache is registered.
 | `CacheOutcome` | `Ok` with a value, `Miss`, or `Failure` with a reason | A miss is an answer, not an error |
 | `CacheResult` | `Ok` or `Failure` for operations with no value | `set`/`clear` |
 | `InMemoryCache` | Typed, thread-safe, lazily expiring store; one shared worker per instantiation | Header-only template; no serialisation |
+| `KeyValueStore` | Bytes under String keys with an absolute expiry; optional enumeration | Implemented by a backend module, never by `runtime` |
+| `ValueSerializer` | `encode(TValue) -> bytes`, `decode(bytes) -> optional<TValue>` | A concept; injected into `SerializedCache` |
+| `SerializedCache` | `Cache<String, TValue>` over a `KeyValueStore` + serializer | Encodes on `set`, decodes on `get` |
 
 ## 5. Constraints, Requirements and Invariants
 
@@ -263,6 +295,8 @@ worker is shared per stored type and sleeps while no cache is registered.
   it, so it cannot become a back edge.
 - C5: a `Cache` implementation is safe for concurrent use and may evict expired entries lazily, so
   every method is non-const.
+- C6: a backend that needs an external mechanism (file system, database, network) lives in the
+  module that owns that mechanism and depends on `runtime`; `runtime` never depends on it.
 
 ### 5.2 Requirements
 
@@ -274,7 +308,8 @@ worker is shared per stored type and sleeps while no cache is registered.
 - R6: a lookup distinguishes absent (`Miss`) from failed (`Failure`); the in-memory implementation
   never reports `Failure`.
 - R7: the in-memory implementation never serialises a value, and a persistent one serialises only
-  where it stores.
+  where it stores; a stored record carries an absolute wall-clock expiry.
+- R8: an undecodable stored value is `Failure` with `CacheError::Corrupt`, never a `Miss`.
 
 ### 5.3 Invariants
 
@@ -340,21 +375,22 @@ worker is shared per stored type and sleeps while no cache is registered.
 | T4 | Typed cache behaviour | `test_runtime --gtest_filter='InMemoryCacheTest.*'` |
 | T5 | Worker serves every instance, survives churn, static exit is clean | `OneWorkerSweepsEveryStartedInstance`, `StartStopChurnFromSeveralThreadsLeavesAWorkingWorker`, ctest `runtime_static_cache_exit` |
 | T6 | The typed interface and its answers | `InMemoryCacheTest.ImplementsTheCacheInterface`, `MissingReportsMiss`, `NonPositiveLifetimeKeepsTheEntry` |
-| T7 | Every public declaration is documented | `python3 scripts/check_public_docs.py` |
+| T8 | Persistent seam: bytes, errors, expiry, optional enumeration | `SerializedCacheTest.*` (10 cases) |
+| T9 | Every public declaration is documented | `python3 scripts/check_public_docs.py` |
 
 ## 9. Status and Evolution
 
 ### 9.1 Current Status
 
 Living. Both facilities are used: `meshio` and `brepio` cache through `InMemoryCache`; `appfw`'s
-plugin manager loads through `DynamicLibraryLoader::instance()`. The module's tests are 30 cases
+plugin manager loads through `DynamicLibraryLoader::instance()`. The module's tests are 40 cases
 plus the static-exit program.
 
 ### 9.2 Known Gaps and Backlog
 
-- The persistent backends (file, database) do not exist yet. `Cache` is the seam they will implement;
-  a backend is a `KeyValueStore` plus a serializer, and lands with its first consumer (backlog
-  `T1`).
+- No backend implementation exists yet (file, database, network). The contracts (`Cache`,
+  `KeyValueStore`) and the mechanism-free `SerializedCache` are in place; each backend is a
+  `KeyValueStore` implemented in its own module and lands with its first consumer (backlog `T1`).
 - Plugin unloading is not supported. `KeepMapped` is the only safe policy while registries hold
   plugin function pointers; ordering a real unload is a future host responsibility.
 - The Windows identity path (`GetModuleFileNameW`) and the Win32 `lastError` text are not exercised
@@ -383,6 +419,8 @@ plus the static-exit program.
 - `src/base/runtime/sdk/vine/runtime/DynamicLibraryLoader.hpp`
 - `src/base/runtime/sdk/vine/runtime/Cache.hpp`
 - `src/base/runtime/sdk/vine/runtime/InMemoryCache.hpp`
+- `src/base/runtime/sdk/vine/runtime/KeyValueStore.hpp`
+- `src/base/runtime/sdk/vine/runtime/SerializedCache.hpp`
 - `tests/test_runtime/`
 
 ### 10.2 Documents and ADRs
@@ -391,7 +429,8 @@ plus the static-exit program.
 - `meshio-brepio-design.md` — the loaders that memoise through `InMemoryCache`.
 - `../backlog/base-runtime.md` — open, trigger-gated work for the module.
 - `../decisions/ADR-2026-11-19-cache-interface-and-backends.md` — why the seam is typed, why
-  outcomes carry a miss and a failure separately, and where the serializer belongs.
+  outcomes carry a miss and a failure separately, where the serializer belongs, and why a backend
+  lives outside `runtime`.
 
 ### 10.3 External Sources
 

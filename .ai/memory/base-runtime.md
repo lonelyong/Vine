@@ -9,9 +9,16 @@
   the library; Windows reasons are prefixed with the candidate.
 - `Cache<TKey, TValue>` is the typed seam (`Cache.hpp`); `InMemoryCache` is its in-memory
   implementation (values by value, **no serialisation**). Every operation returns `CacheOutcome<T>`
-  (`Ok`/`Miss`/`Failure`) or `CacheResult`; a `Miss` is not a failure. A persistent backend will be
-  a `SerializedCache` over a `KeyValueStore` + injected serializer (backlog T1), not part of the
-  interface.
+  (`Ok`/`Miss`/`Failure`) or `CacheResult`; a `Miss` is not a failure.
+- `KeyValueStore` (`KeyValueStore.hpp`) is the persistent seam: String keys, bytes, **absolute
+  `system_clock` expiry** (a record must expire across a restart), optional enumeration
+  (`CacheError::Unsupported` otherwise). `SerializedCache<TValue, TSerializer>`
+  (`SerializedCache.hpp`) is the mechanism-free facade: encode on `set`, decode on `get`, decode
+  failure = `Corrupt`, store failure = passthrough. The serializer is a `ValueSerializer` concept,
+  injected, never in `Cache`.
+- Backends are **not** in `runtime`: a file store (links `vn::IOBase`), a database store (carries its
+  driver) and a network store live in their own modules and implement `KeyValueStore` (backlog T1).
+  `runtime` keeps its Global+Core dependency rule.
 - `set` takes `std::optional<std::chrono::seconds>`: empty/non-positive means keep. The out-parameter
   `get` and `isEmpty` are gone; use `get(...).ok()` / `count()`.
 - `InMemoryCache`'s sweeper is a leaked, per-instantiation singleton with a **detached** worker; it

@@ -33,15 +33,17 @@ site; deleting the interface left no seam for the planned backends.
 - `InMemoryCache<TKey, TValue>` implements the interface by storing values by value: no serialisation,
   and its background sweeper and `removeExpired()` stay on the concrete type (a persistent store
   enforces expiry itself and has nothing to sweep).
-- A persistent implementation is `SerializedCache<TKey, TValue, Serializer>` over a `KeyValueStore`
+- A persistent implementation is `SerializedCache<TValue, TSerializer>` over a `KeyValueStore`
   (`String` keys, bytes, absolute expiry): the serializer is injected where the store is constructed,
   never part of the interface. A new backend implements `KeyValueStore` only (`G9`).
-- The serializer/persistent layer is **not** written yet: it has no consumer. The interface exists
-  because its failure channel and lifetime are contracts that would be expensive to change later
-  (`G4`); a backend lands with its first consumer (backlog `T1`).
-- Layering: `runtime` defines the interface, the memory implementation and (later) the serialized
-  facade; a file store links `vn::io` in its own target and a database store carries its own driver,
-  so `runtime` keeps its Global+Core dependencies (`G2`).
+- Both contracts and the mechanism-free facade are implemented now: `Cache`, `CacheOutcome` /
+  `CacheResult`, `KeyValueStore`, `SerializedCache` and the `ValueSerializer` concept. Their test
+  doubles (an in-memory byte store and an int serializer) live in `tests/test_runtime`, not in the
+  SDK.
+- **Backends are not in `runtime`.** A file store, a database store and a network store each need
+  their mechanism (`vn::io`, a driver, a socket) and live in the module that owns it; `runtime`
+  keeps its Global+Core dependencies and defines only the contract (`G2`, `G5`). Each backend lands
+  with its first consumer (backlog `T1`).
 
 ## Consequences
 
@@ -61,5 +63,9 @@ site; deleting the interface left no seam for the planned backends.
   (`set`/`get`/`contains`/`remove`).
 - `InMemoryCacheTest.MissingReportsMiss` pins `Miss` (and not `Failure`) as the absent answer.
 - `InMemoryCacheTest.NonPositiveLifetimeKeepsTheEntry` pins the lifetime rule through the interface.
+- `SerializedCacheTest.SetGetRoundTripThroughBytes` proves the value crosses the seam as bytes;
+  `UndecodableBytesAreCorrupt` and `StoreFailureIsPassedThrough` pin the error mapping;
+  `LifetimeBecomesAnAbsoluteExpiry` and `ExpiredRecordIsAMiss` pin the wall-clock expiry;
+  `EnumerationIsOptional` pins `CacheError::Unsupported`.
 - `meshio` and `brepio` use `InMemoryCache` directly; their call sites treat an outcome's non-hit as a
   miss.
