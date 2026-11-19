@@ -691,8 +691,16 @@ std::vector<std::filesystem::path> Application::allUsersPluginRegistrationDirect
 
 void Application::exit(int code)
 {
-    // 退出请求只能由主线程下：别的线程上的调用方（宿主自己丢到池上的启动工作就是一条）不必知道这条规矩。
+    // The loop is stopped from the application thread only; a caller elsewhere (the host's own startup work on the pool
+    // is the usual case) does not have to know that rule, so its request is queued for the application thread.
     if (MainThreadDispatcher::hasEventLoop() && !MainThreadDispatcher::isMainThread()) {
+        // "While no loop is running, it does nothing" is part of the contract, so a request that arrives before the
+        // loop runs is dropped instead of being queued to stop a loop that has not started: a worker that finishes
+        // early must not end a boot nobody has begun yet.
+        if (!dptr()->loop_running.load(std::memory_order_acquire)) {
+            VN_LOGW("Application::exit() was called from another thread while no loop is running: the request is ignored");
+            return;
+        }
         static_cast<void>(MainThreadDispatcher::postToMainThread([code] { QCoreApplication::exit(code); }));
         return;
     }
@@ -702,9 +710,11 @@ void Application::exit(int code)
 
 bool Application::isBusy() const
 {
-    // Only the foreground operation blocks new commands; background hosts run
-    // in parallel and do not make the application busy.
-    return vn::appfw::ProgressHost::current() != nullptr;
+    // Only the foreground operation blocks new commands; background hosts run in parallel and do not make the
+    // application busy. Read as a snapshot, not through ProgressHost::current(): that pointer is the operation's own
+    // entry point and stays valid only while the operation runs, while this question is asked by an observer - command
+    // admission, on whichever thread is admitting - that may outlive the operation it is looking at.
+    return vn::appfw::ProgressHost::currentSnapshot().has_value();
 }
 
 raw_ptr<CommandManager> Application::commandManager() const

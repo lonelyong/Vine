@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -100,8 +101,10 @@ struct ApplicationData {
 
     /// True while run() is inside the main loop. The teardown belongs after the loop has
     /// stopped, and shutdown() reports a call that arrives before that instead of trusting
-    /// the caller to know - it cannot tell "the loop is running" any other way.
-    bool loop_running = false;
+    /// the caller to know - it cannot tell "the loop is running" any other way. Atomic because both readers may be
+    /// another thread: shutdown() warns from whichever thread calls it, and exit() uses it to honour "no loop, no
+    /// effect" for a caller that is not on the application thread.
+    std::atomic<bool> loop_running{ false };
 
     /// Set by shutdown() when it finds a boot still in flight: the loop stopped while one of its phases was waiting, so
     /// the phases still to come are skipped (see Application::bootAbandoned()) instead of putting a main window on

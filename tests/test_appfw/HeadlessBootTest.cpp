@@ -483,6 +483,46 @@ TEST(HeadlessBootTest, ASecondApplicationInOneProcessIsRefusedWithAReadableReaso
     EXPECT_EQ(vn::appfw::Application::current(), first.get());
 }
 
+/// `exit()` from another thread while no loop is running does nothing: a worker that finishes early must not end a boot
+/// nobody has started yet. The request is dropped and reported, not queued for the loop run() is about to start.
+TEST(HeadlessBootTest, AnExitFromAnotherThreadBeforeTheLoopRunsIsIgnored)
+{
+    QStandardPaths::setTestModeEnabled(true);
+
+    static char  arg0[] = "test_appfw";
+    static char* argv[] = { arg0, nullptr };
+
+    vn::appfw::AppConfig config;
+    config.name           = u8"test_appfw";
+    config.persist_config = false;
+    config.load_plugins   = false;
+
+    auto app = std::make_unique<WorkingHostApplication>(config, 1, argv);
+    ASSERT_NE(app, nullptr);
+
+    const WarningCapture warnings = captureWarnings();
+
+    // Before run(): there is no loop to stop, so this must not be armed for the loop that follows.
+    std::thread([&app] { app->exit(0); }).join();
+
+    // The end of the boot comes from inside it, after the host's own work.
+    bool work_ran = false;
+    app->work     = [&work_ran] {
+        work_ran = true;
+        static_cast<void>(vn::appfw::MainThreadDispatcher::postToMainThread([] { QTimer::singleShot(20, qApp, [] { QCoreApplication::exit(0); }); }));
+    };
+
+    // Backstop: 2 is not a code this boot may return, so an early exit caused by the dropped request fails the case
+    // instead of looking like a normal run.
+    QTimer::singleShot(3000, qApp, [] { QCoreApplication::exit(2); });
+
+    const int code = app->run();
+
+    EXPECT_EQ(code, 0) << "the dropped request must not end the boot early";
+    EXPECT_TRUE(work_ran) << "the boot must still have run its second phase";
+    EXPECT_TRUE(warnings.contains("while no loop is running")) << "the dropped request is reported, not silently swallowed";
+}
+
 /// 叶子自己收场的宿主：取消的启动**不该**跑到最后一拍（那一拍是"撤掉启动的脸、把主窗端出来"）。
 class CancellingHostApplication : public vn::appfw::Application {
   public:

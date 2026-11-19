@@ -214,8 +214,12 @@ class VN_APPFW_API Application : public Object {
      *
      * The loop stops once the event being processed finishes; run() then returns
      * the provided code and stops the event bus at that point, so no delivery
-     * happens from inside this method. Calling it while no loop is running does
-     * nothing.
+     * happens from inside this method.
+     *
+     * Any thread may call it: from a thread that is not the application thread (a host's startup work on the pool is
+     * the usual case) the request is queued for the application thread, which owns the loop. Calling it while no loop
+     * is running does nothing, and that holds for a queued request too - one that arrives before run() is dropped
+     * rather than armed for the loop that is about to start.
      *
      * @param code The exit code to return from run().
      */

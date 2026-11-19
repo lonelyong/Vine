@@ -36,6 +36,14 @@
 - One `Application` per process: a second construction throws `vn::Exception(INVALID_OPERATION, "only one
   Application may exist per process")`, and the process-wide slot is withdrawn again if the constructor itself
   throws.
+- `Application::isBusy()` reads `ProgressHost::currentSnapshot()`, never the borrowed `current()`: the question is
+  asked by an observer (command admission, on whichever thread) that may outlive the operation it looks at.
+- `Application::exit()` is safe from any thread; from a worker it is queued, and when no loop is running the request
+  is **dropped with a warning** instead of being armed for the loop `run()` is about to start (`loop_running` is
+  atomic for exactly that read).
+- `GuiApplicationData` owns its widgets through `unique_ptr`, declared main window → view registry → document host →
+  startup frame, so the frame dies first and the host hands its slot back before the window goes; `~GuiApplication`
+  only reports a frame left up by a boot that never reached its last phase.
 - Progress updates per phase; there is no continuous animation or heartbeat. The splash has only a status
   line and a spinner, never a percentage or a progress bar.
 - During startup the splash is the only thing on screen; the main window `show()`s for the first time in

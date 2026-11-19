@@ -76,6 +76,8 @@ VN_APPFWGUI_NS_BEGIN
 
 VN_OBJECT_META_IMPL(GuiApplication, Application)
 
+GuiApplicationData::~GuiApplicationData() = default;
+
 namespace
 {
 
@@ -90,7 +92,7 @@ constexpr int kFirstPaintDeadlineMs = 300;
 /// @return The startup frame, or nullptr when the boot shows nothing.
 Window* startupWindow(GuiApplicationData* d)
 {
-    return static_cast<Window*>(d->boot_splash);
+    return static_cast<Window*>(d->boot_splash.get());
 }
 
 // Classic Fusion dark palette (matches the Qt >= 6.5 Fusion dark palette).
@@ -370,27 +372,16 @@ GuiApplication::~GuiApplication()
 {
     auto* d = static_cast<GuiApplicationData*>(dptr());
 
-    if (d->boot_splash != nullptr) {
-        // The frame dies with the application either way, but a boot that never reached its last phase also leaves the
-        // main window it was hiding unshown, which is what is worth reporting. Two ways there: a host that drives its own
-        // boot and never calls startupEnd(), and a boot the framework cancelled or failed - which leaves the frame up on
-        // purpose (see Application::cancelStartup()), so the line states the fact and does not blame the host.
-        if (!d->boot_ended) {
-            VN_LOGW("Startup frame is still showing as the application is destroyed: the boot never reached its last "
-                    "phase (Application::startupEnd())");
-        }
-        delete d->boot_splash;
-        d->boot_splash = nullptr;
+    // The widgets belong to the data block and die with it, right after this destructor (in reverse declaration order:
+    // the frame, then the document host, then the registry, then the main window the host hands its slot back to).
+    // What is left to say is the boot that never reached its last phase: the frame is still up and the main window it
+    // was hiding was never shown. Two ways there: a host that drives its own boot and never calls startupEnd(), and a
+    // boot the framework cancelled or failed - which leaves the frame up on purpose (see Application::cancelStartup()),
+    // so the line states the fact and does not blame the host.
+    if (d->boot_splash != nullptr && !d->boot_ended) {
+        VN_LOGW("Startup frame is still showing as the application is destroyed: the boot never reached its last "
+                "phase (Application::startupEnd())");
     }
-
-    // The document host goes before the window: it hands the central slot back through that window's dock manager.
-    delete d->central_host;
-    d->central_host = nullptr;
-    delete d->view_registry;
-    d->view_registry = nullptr;
-
-    delete d->main_window;
-    // d is deleted by Application::~Application()
 }
 
 UserIO* GuiApplication::createUserIO()
@@ -424,14 +415,14 @@ void GuiApplication::createWindows(const SplashConfig& splash)
         // It is the only window the boot shows (see startupStart()) and only a view of it: the startup progress
         // sink belongs to the framework (the startup phase creates it) and the frame follows it through ProgressHost,
         // so nothing is reported from here.
-        d->boot_splash = new BootSplash(splash);
+        d->boot_splash = std::make_unique<BootSplash>(splash);
 
         // Created, not shown: the startup phase shows the frame (see startupStart()) and waits for its first paint
         // before the plugins load. Showing it here would drive the queue before the loop exists - which itself would run
         // the timers of everything that is starting up, the very thing the frame's repaint() exists to avoid.
     }
 
-    d->main_window = new MainWindow();
+    d->main_window = std::make_unique<MainWindow>();
 
     // Embed the automatic progress bar into the main window's status bar: the framework's startup progress follows that
     // presenter too, so what the boot reports stays visible for as long as the window is up.
@@ -445,10 +436,10 @@ void GuiApplication::createWindows(const SplashConfig& splash)
     // central host below is what makes "the current document is what the middle of the window shows" the framework's
     // default instead of every host's own three lines. The host installs its container lazily (see its class note), so
     // a shell that put its own content in the central area keeps it until the first document is presented.
-    d->view_registry = new DocumentViewRegistry();
+    d->view_registry = std::make_unique<DocumentViewRegistry>();
     if (auto* documents = documentManager(); documents != nullptr) {
         if (auto* docks = d->main_window->dockPanelManager(); docks != nullptr) {
-            d->central_host = new CentralDocumentHost(*documents, *d->view_registry, *docks);
+            d->central_host = std::make_unique<CentralDocumentHost>(*documents, *d->view_registry, *docks);
         }
     }
 
@@ -491,8 +482,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
     // is shown without activating the process, so on Windows the window never became the foreground window and, without
     // an explicit raise, stays under whatever was in front when the frame appeared (the terminal the application was
     // started from) - which looks exactly like a window that never showed up.
-    delete d->boot_splash;
-    d->boot_splash = nullptr;
+    d->boot_splash.reset();
 
     if (d->main_window != nullptr) {
         // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was never
@@ -508,7 +498,7 @@ vn::async::Task<void> GuiApplication::startupEnd()
 
 raw_ptr<BootSplash> GuiApplication::bootSplash() const
 {
-    return static_cast<const GuiApplicationData*>(dptr())->boot_splash;
+    return static_cast<const GuiApplicationData*>(dptr())->boot_splash.get();
 }
 
 void GuiApplication::setTheme(Theme theme)
@@ -543,13 +533,13 @@ void GuiApplication::setFollowSystemTheme(bool follow)
 raw_ptr<DocumentViewRegistry> GuiApplication::viewRegistry() const
 {
     const auto* d = static_cast<const GuiApplicationData*>(dptr());
-    return d->view_registry;
+    return d->view_registry.get();
 }
 
 raw_ptr<CentralDocumentHost> GuiApplication::centralDocumentHost() const
 {
     const auto* d = static_cast<const GuiApplicationData*>(dptr());
-    return d->central_host;
+    return d->central_host.get();
 }
 
 bool GuiApplication::followSystemTheme() const
@@ -561,7 +551,7 @@ bool GuiApplication::followSystemTheme() const
 raw_ptr<MainWindow> GuiApplication::mainWindow() const
 {
     const auto* d = static_cast<const GuiApplicationData*>(dptr());
-    return d->main_window;
+    return d->main_window.get();
 }
 
 void GuiApplication::applyTheme(Theme theme)
