@@ -18,9 +18,12 @@ VN_LOGGING_NS_BEGIN
 /**
  * @brief A named logger dispatching records to a set of sinks.
  *
- * Logger wraps an spdlog logger behind a private implementation, so no spdlog
- * header leaks into this interface. A logger is a cheap shared value: copies
- * refer to the same underlying spdlog logger.
+ * @details
+ * - Logger wraps an spdlog logger behind a private implementation, so no spdlog header leaks into this interface.
+ * - A logger is a cheap shared value: copies refer to the same underlying spdlog logger.
+ * - The formatted level methods take the source location as a parameter because a member function cannot see its
+ *   caller: a std::source_location::current() evaluated inside Logger would name this header. The macros in Log.hpp
+ *   expand VN_HERE at the call site; a direct call passes the location it means to report.
  */
 class VN_LOGGING_API Logger {
   public:
@@ -47,8 +50,18 @@ class VN_LOGGING_API Logger {
      */
     Logger(std::string name, LogLevel level, std::vector<LogSink> sinks, std::string pattern = {});
 
+    /**
+     * @brief Returns the logger name.
+     *
+     * @return The name given at construction; empty for the silent logger.
+     */
     const std::string& name() const;
 
+    /**
+     * @brief Returns the minimum level of records passed to sinks.
+     *
+     * @return The current level; LogLevel::Off for the silent logger.
+     */
     LogLevel level() const;
 
     /**
@@ -120,60 +133,62 @@ class VN_LOGGING_API Logger {
     void log(LogLevel level, std::string message, const std::source_location& loc = std::source_location::current()) noexcept;
 
     /**
-     * @brief Formatted logging entry points, one per level.
+     * @brief Logs a formatted record at trace level.
      *
-     * Each overload formats fmt with args (std::vformat) and writes the record
-     * through the configured sinks. None of them throws: a formatting or sink
-     * failure is dropped after being reported once on stderr, so a logging call can
-     * never change what the caller does next. The overloads taking a
-     * std::source_location keep the caller's location; the others use
-     * std::source_location::current().
+     * @param loc Call site to record; VN_HERE means "here".
+     * @param fmt std::format pattern; an argument mismatch writes the pattern itself.
+     * @param args Arguments substituted into fmt.
      */
-    /// Logs at trace level.
-    template <typename... Args>
-    void trace(std::string_view fmt, Args&&... args) noexcept;
-
-    /// Logs at debug level.
-    template <typename... Args>
-    void debug(std::string_view fmt, Args&&... args) noexcept;
-
-    /// Logs at info level.
-    template <typename... Args>
-    void info(std::string_view fmt, Args&&... args) noexcept;
-
-    /// Logs at warning level.
-    template <typename... Args>
-    void warn(std::string_view fmt, Args&&... args) noexcept;
-
-    /// Logs at error level.
-    template <typename... Args>
-    void error(std::string_view fmt, Args&&... args) noexcept;
-
-    /// Logs at critical level.
-    template <typename... Args>
-    void critical(std::string_view fmt, Args&&... args) noexcept;
-
-    /// Logs at trace level from the given source location.
     template <typename... Args>
     void trace(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept;
 
-    /// Logs at debug level from the given source location.
+    /**
+     * @brief Logs a formatted record at debug level.
+     *
+     * @param loc Call site to record; VN_HERE means "here".
+     * @param fmt std::format pattern; an argument mismatch writes the pattern itself.
+     * @param args Arguments substituted into fmt.
+     */
     template <typename... Args>
     void debug(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept;
 
-    /// Logs at info level from the given source location.
+    /**
+     * @brief Logs a formatted record at info level.
+     *
+     * @param loc Call site to record; VN_HERE means "here".
+     * @param fmt std::format pattern; an argument mismatch writes the pattern itself.
+     * @param args Arguments substituted into fmt.
+     */
     template <typename... Args>
     void info(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept;
 
-    /// Logs at warning level from the given source location.
+    /**
+     * @brief Logs a formatted record at warning level.
+     *
+     * @param loc Call site to record; VN_HERE means "here".
+     * @param fmt std::format pattern; an argument mismatch writes the pattern itself.
+     * @param args Arguments substituted into fmt.
+     */
     template <typename... Args>
     void warn(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept;
 
-    /// Logs at error level from the given source location.
+    /**
+     * @brief Logs a formatted record at error level.
+     *
+     * @param loc Call site to record; VN_HERE means "here".
+     * @param fmt std::format pattern; an argument mismatch writes the pattern itself.
+     * @param args Arguments substituted into fmt.
+     */
     template <typename... Args>
     void error(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept;
 
-    /// Logs at critical level from the given source location.
+    /**
+     * @brief Logs a formatted record at critical level.
+     *
+     * @param loc Call site to record; VN_HERE means "here".
+     * @param fmt std::format pattern; an argument mismatch writes the pattern itself.
+     * @param args Arguments substituted into fmt.
+     */
     template <typename... Args>
     void critical(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept;
 
@@ -194,42 +209,6 @@ class VN_LOGGING_API Logger {
  * first time, so a broken sink cannot flood the console.
  */
 VN_LOGGING_API void reportLoggingFailure() noexcept;
-
-template <typename... Args>
-void Logger::trace(std::string_view fmt, Args&&... args) noexcept
-{
-    trace(std::source_location::current(), fmt, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void Logger::debug(std::string_view fmt, Args&&... args) noexcept
-{
-    debug(std::source_location::current(), fmt, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void Logger::info(std::string_view fmt, Args&&... args) noexcept
-{
-    info(std::source_location::current(), fmt, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void Logger::warn(std::string_view fmt, Args&&... args) noexcept
-{
-    warn(std::source_location::current(), fmt, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void Logger::error(std::string_view fmt, Args&&... args) noexcept
-{
-    error(std::source_location::current(), fmt, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void Logger::critical(std::string_view fmt, Args&&... args) noexcept
-{
-    critical(std::source_location::current(), fmt, std::forward<Args>(args)...);
-}
 
 template <typename... Args>
 void Logger::trace(const std::source_location& loc, std::string_view fmt, Args&&... args) noexcept
@@ -293,3 +272,14 @@ void Logger::writeFormatted(LogLevel level, const std::source_location& loc, std
 }
 
 VN_LOGGING_NS_END
+
+/**
+ * @brief The current call site, for the level methods' explicit location parameter.
+ *
+ * @details
+ * - A macro rather than a function: std::source_location::current() reports where it is evaluated, so it has to be
+ *   evaluated at the call site; a function wrapping it would report its own body.
+ * - The VN_LOGx macros use it, and a caller that logs through a Logger it holds writes the same thing:
+ *   `logger.info(VN_HERE, "mesh loaded, {} triangles", count)`.
+ */
+#define VN_HERE ::std::source_location::current()

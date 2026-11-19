@@ -85,7 +85,7 @@ TEST(LoggerTest, DefaultLoggerProducesNoOutput)
 {
     Logger logger;
     EXPECT_EQ(logger.name(), "");
-    EXPECT_NO_THROW(logger.info("hello"));
+    EXPECT_NO_THROW(logger.info(VN_HERE, "hello"));
 }
 
 TEST(LoggerTest, LogSendsFormattedMessageToSink)
@@ -96,7 +96,7 @@ TEST(LoggerTest, LogSendsFormattedMessageToSink)
         capture.line  = line;
     });
     Logger  logger("unit", LogLevel::Trace, { sink }, "%v");
-    logger.error("boom {}", 42);
+    logger.error(VN_HERE, "boom {}", 42);
     EXPECT_EQ(capture.level, LogLevel::Error);
     EXPECT_EQ(capture.line, "boom 42");
 }
@@ -106,9 +106,9 @@ TEST(LoggerTest, LevelFilteringSuppressesBelowThreshold)
     Capture capture;
     auto    sink = LogSink::function([&capture](LogLevel, const std::string& line) { capture.line = line; });
     Logger  logger("unit", LogLevel::Error, { sink }, "%v");
-    logger.warn("should not appear");
+    logger.warn(VN_HERE, "should not appear");
     EXPECT_TRUE(capture.line.empty());
-    logger.error("appears");
+    logger.error(VN_HERE, "appears");
     EXPECT_EQ(capture.line, "appears");
 }
 
@@ -121,23 +121,23 @@ TEST(LoggerTest, VariadicLevelMethodsForwardMessage)
     });
     Logger  logger("unit", LogLevel::Trace, { sink }, "%v");
 
-    logger.trace("t {}", 1);
+    logger.trace(VN_HERE, "t {}", 1);
     EXPECT_EQ(capture.level, LogLevel::Trace);
     EXPECT_EQ(capture.line, "t 1");
 
-    logger.debug("d {}", 2);
+    logger.debug(VN_HERE, "d {}", 2);
     EXPECT_EQ(capture.level, LogLevel::Debug);
 
-    logger.info("i {}", 3);
+    logger.info(VN_HERE, "i {}", 3);
     EXPECT_EQ(capture.level, LogLevel::Info);
 
-    logger.warn("w {}", 4);
+    logger.warn(VN_HERE, "w {}", 4);
     EXPECT_EQ(capture.level, LogLevel::Warn);
 
-    logger.error("e {}", 5);
+    logger.error(VN_HERE, "e {}", 5);
     EXPECT_EQ(capture.level, LogLevel::Error);
 
-    logger.critical("c {}", 6);
+    logger.critical(VN_HERE, "c {}", 6);
     EXPECT_EQ(capture.level, LogLevel::Critical);
 }
 
@@ -159,7 +159,7 @@ TEST(LoggerTest, PatternControlsFormatting)
     Capture capture;
     auto    sink = LogSink::function([&capture](LogLevel, const std::string& line) { capture.line = line; });
     Logger  logger("unit", LogLevel::Info, { sink }, "[%n] %v");
-    logger.info("hello");
+    logger.info(VN_HERE, "hello");
     EXPECT_EQ(capture.line, "[unit] hello");
 }
 
@@ -169,7 +169,7 @@ TEST(LoggerTest, SetPatternChangesOutput)
     auto    sink = LogSink::function([&capture](LogLevel, const std::string& line) { capture.line = line; });
     Logger  logger("unit", LogLevel::Info, { sink }, "%v");
     logger.setPattern("%n:%v");
-    logger.info("msg");
+    logger.info(VN_HERE, "msg");
     EXPECT_EQ(capture.line, "unit:msg");
 }
 
@@ -184,7 +184,7 @@ TEST(LogSinkTest, StreamSinkWritesToStream)
     std::ostringstream out;
     auto               sink = LogSink::stream(out);
     Logger             logger("unit", LogLevel::Info, { sink }, "%v");
-    logger.info("to stream");
+    logger.info(VN_HERE, "to stream");
 
     // spdlog appends the platform EOL (\r\n on Windows, \n elsewhere), so
     // compare the payload ignoring the trailing line terminator.
@@ -205,7 +205,7 @@ TEST(LogSinkTest, FileSinkWritesToFile)
     {
         auto   sink = LogSink::file(path);
         Logger logger("unit", LogLevel::Info, { sink }, "%v");
-        logger.info("file line");
+        logger.info(VN_HERE, "file line");
         logger.flush();
     }
 
@@ -237,7 +237,7 @@ TEST(LogSinkTest, DailyFileSinkWritesToDatedFile)
     {
         auto   sink = LogSink::dailyFile(base);
         Logger logger("unit", LogLevel::Info, { sink }, "%v");
-        logger.info("daily line");
+        logger.info(VN_HERE, "daily line");
         logger.flush();
     }
 
@@ -307,9 +307,20 @@ TEST(LogTest, InitWithFileSinkWritesToFile)
 // 这几个 static_assert 让契约在编译期守住：一旦有人把 noexcept 去掉，这里先编译失败。
 static_assert(noexcept(defaultLogger()));
 static_assert(noexcept(std::declval<Logger&>().log(LogLevel::Info, std::string{})));
-static_assert(noexcept(std::declval<Logger&>().info("{}", 1)));
-static_assert(noexcept(std::declval<Logger&>().error(std::source_location::current(), "{}", 1)));
+static_assert(noexcept(std::declval<Logger&>().info(VN_HERE, "{}", 1)));
+static_assert(noexcept(std::declval<Logger&>().error(VN_HERE, "{}", 1)));
 static_assert(noexcept(VN_LOGE("{}", 1)));
+
+// The level methods require the location as an argument. A member call cannot see its caller, so an overload taking
+// only a format string would record Logger.hpp instead of the call site; that overload is gone on purpose.
+template <typename Log>
+concept LogsWithoutLocation = requires(Log& logger) { logger.info("no location"); };
+
+template <typename Log>
+concept LogsWithLocation = requires(Log& logger, const std::source_location& loc) { logger.info(loc, "located {}", 1); };
+
+static_assert(!LogsWithoutLocation<Logger>);
+static_assert(LogsWithLocation<Logger>);
 
 // sink 抛出非 std::exception 时 spdlog 会重新抛出（它只对 std::exception 走错误处理器）。
 // 这种情况必须被日志层吞掉：否则在 catch 块/析构路径上调日志就会 terminate。
@@ -317,9 +328,9 @@ TEST(LoggerTest, SinkThrowingNonStandardExceptionDoesNotPropagate)
 {
     Logger logger("throwing", LogLevel::Info, { LogSink::function([](LogLevel, const std::string&) { throw 42; }) }, "%v");
 
-    EXPECT_NO_THROW(logger.info("a sink that throws an int"));
+    EXPECT_NO_THROW(logger.info(VN_HERE, "a sink that throws an int"));
     EXPECT_NO_THROW(logger.log(LogLevel::Error, "a sink that throws an int"));
-    EXPECT_NO_THROW(logger.warn("a sink that throws an int"));
+    EXPECT_NO_THROW(logger.warn(VN_HERE, "a sink that throws an int"));
 }
 
 // 格式化失败（参数与格式串不匹配）也不得抛。
@@ -328,9 +339,37 @@ TEST(LoggerTest, FormatMismatchDoesNotPropagate)
     std::string seen;
     Logger      logger("mismatch", LogLevel::Info, { LogSink::function([&seen](LogLevel, const std::string& line) { seen = line; }) }, "%v");
 
-    EXPECT_NO_THROW(logger.info("{} {}", 1)); // 少一个参数 ⇒ std::format_error
-    logger.info("ok {}", 7);
+    EXPECT_NO_THROW(logger.info(VN_HERE, "{} {}", 1)); // 少一个参数 ⇒ std::format_error
+    logger.info(VN_HERE, "ok {}", 7);
     EXPECT_EQ(seen, "ok 7");
+}
+
+// The record carries the location the caller passed. This is what VN_HERE exists for: current() evaluated inside
+// Logger would name Logger.hpp, which is why the location is a parameter rather than something the call infers.
+TEST(LoggerTest, RecordCarriesTheGivenLocation)
+{
+    std::string seen;
+    auto        sink = LogSink::function([&seen](LogLevel, const std::string& line) { seen = line; });
+    Logger      logger("unit", LogLevel::Info, { sink }, "%@");
+
+    const auto here = std::source_location::current();
+    logger.info(here, "located");
+
+    EXPECT_EQ(seen, std::string(here.file_name()) + ":" + std::to_string(here.line()));
+}
+
+// The macro is what makes "the caller" true: it evaluates VN_HERE in its own expansion, so the recorded line is the
+// call, not the header the call went through.
+TEST(LogTest, MacroRecordsTheCallSite)
+{
+    std::string seen;
+    initDefault(LogConfig{ .pattern = "%#", .sinks = { LogSink::function([&seen](LogLevel, const std::string& line) { seen = line; }) } });
+
+    const int call_line = __LINE__ + 1;
+    VN_LOGI("call site");
+
+    EXPECT_EQ(seen, std::to_string(call_line));
+    initDefault(); // restore the console default the other tests expect
 }
 
 } // namespace

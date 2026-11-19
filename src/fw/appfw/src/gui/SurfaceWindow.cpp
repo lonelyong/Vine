@@ -353,12 +353,11 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     // Backend diagnostics become log records: a windowed app never shows stderr, and a rejected geometry, a
     // fallback shader or an off-screen target that could not be built would otherwise go unseen.
     d->engine->setDiagnosticSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
-        auto&             logger  = vn::logging::defaultLogger();
         const std::string message = diagnostic.message.as_std_str();
         switch (diagnostic.severity) {
-        case vn::graphics::DiagnosticSeverity::Error: logger.error("[graphics] {}", message); break;
-        case vn::graphics::DiagnosticSeverity::Warning: logger.warn("[graphics] {}", message); break;
-        case vn::graphics::DiagnosticSeverity::Info: logger.info("[graphics] {}", message); break;
+        case vn::graphics::DiagnosticSeverity::Error: VN_LOGE("[graphics] {}", message); break;
+        case vn::graphics::DiagnosticSeverity::Warning: VN_LOGW("[graphics] {}", message); break;
+        case vn::graphics::DiagnosticSeverity::Info: VN_LOGI("[graphics] {}", message); break;
         }
     });
 
@@ -752,17 +751,17 @@ bool SurfaceWindow::init()
             // Once per session: this line is the answer to "why is my render area empty?". It also says how long
             // the caller's own startup kept the surface unusable.
             d->deferral_logged = true;
-            vn::logging::defaultLogger().info("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
-                                              width(),
-                                              height(),
-                                              elapsedMs(d->created_at));
+            VN_LOGI("[RenderControl] waiting for a usable surface ({}x{}, {} ms after construction)",
+                    width(),
+                    height(),
+                    elapsedMs(d->created_at));
         }
         return d->backend_live;
     }
     if (d->has_session && handle != nativeTargetHandle()) {
         // The platform window was recreated: re-announce the new handle on the TARGET (WindowPresentTarget::
         // setWindowHandle) instead of tearing the session down, so the device and every compiled pipeline stay.
-        vn::logging::defaultLogger().info("[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
+        VN_LOGI("[RenderControl] the render surface was recreated: re-announcing the new handle so the backend can follow it");
     }
     // The window this area is presented through belongs to the AREA, and the DEVICE is what makes the target that
     // names it (RenderDevice::createSurfaceTarget): the device is the party that knows whether it presents at all
@@ -800,8 +799,8 @@ bool SurfaceWindow::init()
         // area so the next attach can use it. Said out loud once - it also explains a longer startup there.
         if (!d->needs_visible_surface) {
             d->needs_visible_surface = true;
-            vn::logging::defaultLogger().info("[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, "
-                                              "showing the surface so the next attach can use it");
+            VN_LOGI("[RenderControl] attaching to a surface that is not on screen failed: this platform wants a visible window, "
+                    "showing the surface so the next attach can use it");
             if (on_needs_visible_surface) {
                 on_needs_visible_surface();
             }
@@ -811,7 +810,7 @@ bool SurfaceWindow::init()
 
     // The attach's own timing, on its own line: this is the device + session + pipeline build, the half a startup
     // cares about (the frame below is the other half, and the Presenting transition logs it).
-    vn::logging::defaultLogger().info("[RenderControl] session up after {} ms (device, session and pipelines)", elapsedMs(d->created_at));
+    VN_LOGI("[RenderControl] session up after {} ms (device, session and pipelines)", elapsedMs(d->created_at));
     d->has_session = true;
     // failureReason() is the answer only while the state is Failed: a session that comes up after a failed attempt
     // clears the old verdict, so a host that reports the reason cannot keep showing one for a running session.
@@ -839,7 +838,7 @@ void SurfaceWindow::fitToScreen()
 void SurfaceWindow::recreateArea()
 {
     // destroy() + create() is how a platform window is recreated; the follow path does the rest.
-    vn::logging::defaultLogger().info("[RenderControl] test hatch: recreating the render surface");
+    VN_LOGI("[RenderControl] test hatch: recreating the render surface");
     destroy();
     create();
     show();
@@ -946,9 +945,9 @@ void SurfaceWindow::observePresentRecord()
     // picture still is - hiding the area here would also stop the frames that repair it (a hidden window asks for none),
     // which turns a recoverable swapchain into a dead one. So this says it once and leaves the repair to the engine
     // (the next frame re-announces the size) and to the handle check at the head of the drive (a window that is gone).
-    vn::logging::defaultLogger().warn("[RenderControl] frame {} did not reach the surface: the next frame re-announces "
-                                      "the size so the backend rebuilds the swapchain",
-                                      seen.frame);
+    VN_LOGW("[RenderControl] frame {} did not reach the surface: the next frame re-announces "
+            "the size so the backend rebuilds the swapchain",
+            seen.frame);
 }
 
 void SurfaceWindow::setState(SurfaceState next)
@@ -963,19 +962,19 @@ void SurfaceWindow::setState(SurfaceState next)
     // One line per transition, with the elapsed time: "construction -> the attach's frame" is the number that says
     // whether a startup pays the device and pipeline build before its window exists.
     if (next == SurfaceState::Failed) {
-        vn::logging::defaultLogger().error("[RenderControl] surface {} -> {} after {} ms: {}",
-                                           stateName(previous),
-                                           stateName(next),
-                                           elapsedMs(d->created_at),
-                                           d->failure_reason.as_std_str());
+        VN_LOGE("[RenderControl] surface {} -> {} after {} ms: {}",
+                stateName(previous),
+                stateName(next),
+                elapsedMs(d->created_at),
+                d->failure_reason.as_std_str());
     }
     else {
-        vn::logging::defaultLogger().info("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
-                                          stateName(previous),
-                                          stateName(next),
-                                          elapsedMs(d->created_at),
-                                          isVisible(),
-                                          isExposed());
+        VN_LOGI("[RenderControl] surface {} -> {} after {} ms (surface visible={}, exposed={})",
+                stateName(previous),
+                stateName(next),
+                elapsedMs(d->created_at),
+                isVisible(),
+                isExposed());
     }
 
     if (on_state_changed) {

@@ -63,10 +63,14 @@ VN_LOGGING_NS_END
 /*
  * Macros logging to the default logger.
  *
- * They forward the source location (std::source_location::current()) together
- * with an std::format string and its arguments, for example:
+ * Each expansion carries VN_HERE (the call site) together with an
+ * std::format string and its arguments, for example:
  *
  *     VN_LOGI("mesh loaded, {} triangles", count);
+ *
+ * The location has to come from the expansion: a member call cannot see its
+ * caller, so Logger's level methods take it as a parameter instead of guessing.
+ * That is why this entry point is a macro.
  *
  * Levels: VN_LOGT(trace) VN_LOGD(debug) VN_LOGI(info)
  *         VN_LOGW(warn)  VN_LOGE(error) VN_LOGC(critical)
@@ -75,9 +79,9 @@ VN_LOGGING_NS_END
  * dropped, so macro logging is safe inside catch blocks, noexcept functions and
  * detached coroutines.
  */
-#define VN_LOGT(...) ::vn::logging::defaultLogger().trace(::std::source_location::current(), __VA_ARGS__)
-#define VN_LOGD(...) ::vn::logging::defaultLogger().debug(::std::source_location::current(), __VA_ARGS__)
-#define VN_LOGI(...) ::vn::logging::defaultLogger().info(::std::source_location::current(), __VA_ARGS__)
-#define VN_LOGW(...) ::vn::logging::defaultLogger().warn(::std::source_location::current(), __VA_ARGS__)
-#define VN_LOGE(...) ::vn::logging::defaultLogger().error(::std::source_location::current(), __VA_ARGS__)
-#define VN_LOGC(...) ::vn::logging::defaultLogger().critical(::std::source_location::current(), __VA_ARGS__)
+#define VN_LOGT(...) ::vn::logging::defaultLogger().trace(VN_HERE, __VA_ARGS__)
+#define VN_LOGD(...) ::vn::logging::defaultLogger().debug(VN_HERE, __VA_ARGS__)
+#define VN_LOGI(...) ::vn::logging::defaultLogger().info(VN_HERE, __VA_ARGS__)
+#define VN_LOGW(...) ::vn::logging::defaultLogger().warn(VN_HERE, __VA_ARGS__)
+#define VN_LOGE(...) ::vn::logging::defaultLogger().error(VN_HERE, __VA_ARGS__)
+#define VN_LOGC(...) ::vn::logging::defaultLogger().critical(VN_HERE, __VA_ARGS__)
