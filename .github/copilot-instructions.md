@@ -349,6 +349,20 @@ implementation to learn the lifetime.
 * `@return` on a function returning a pointer or a reference states which of the four it is ("borrowed", "owned"),
   because a return value has no parameter list to carry the promise.
 
+### Callback Lifetime
+
+A registered callback (a layout step, a diagnostic sink, a hook) borrows the CLIENT's state: its closure may name
+anything the client owns, and the framework cannot know what that is. Three rules keep the two duties apart:
+
+* **A destructor never invokes a registered callback.** A destructor body releases handles and drops registrations; it
+  does not run client code. Cleanup that has to notify exposes an explicit `close()` / `detach()` the client calls
+  while every participant is still whole.
+* **A callback may capture only what it is guaranteed to outlive**: the registrant itself, or objects the registrant
+  owns. A widget, a window or an owner that can be destroyed first is not a valid capture - and neither is "ask it
+  whether it is still alive": a method call on a dead object is the defect, not the check.
+* **A teardown test is the proof.** Register a step/sink that fails when called, destroy the registrant, and require
+  it was never called (`SceneViewViewportTest.ALayoutStepNeverRunsWhileTheViewIsTornDown` is the shape).
+
 ## API Design
 
 * Do not change existing public APIs unless explicitly requested.

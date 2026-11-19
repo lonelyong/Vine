@@ -33,22 +33,24 @@ SceneView::SceneView()
 
 SceneView::~SceneView()
 {
-    // Leave the surface first, and while the adopted pipeline is still there to hold the engine alive. The surface
-    // also stops naming this view, so the other order - the surface destroyed first - leaves this pointer null and
-    // nothing to do.
+    // NO HOST CALLBACK SURVIVES THE START OF THIS BODY. A layout step is the creator's closure over its own objects
+    // (the demo's calls back into the RenderControl that embeds this view), and the view is destroyed INSIDE that
+    // creator's teardown - the widget tree deletes the surface after the control's own members are gone. The steps are
+    // therefore dropped first, before any later teardown step could run one (the crash this records: a step called
+    // RenderControl::view() through a control whose Impl had already been destroyed).
+    clearSurfaceLayouts();
+    // Leave the surface next, while the adopted pipeline is still there to hold the engine alive. The surface also
+    // stops naming this view, so the other order - the surface destroyed first - leaves this pointer null and nothing
+    // to do.
     if (surface_ != nullptr) {
         surface_->dismiss(this);
     }
-    // NO LAYOUT STEP RUNS ON THE WAY OUT. A step is the creator's closure over its own objects (the demo's calls back
-    // into the RenderControl that embeds this view), and the view is destroyed INSIDE that creator's teardown - the
-    // widget tree deletes the surface after the control's own members are gone. Dropping the chain needs no geometry
-    // pass (there is nothing left to size), so the steps are dropped first and the handle released without one (the
-    // crash this records: a step called RenderControl::view() through a control whose Impl had already been destroyed).
-    clearSurfaceLayouts();
-    // Drop the pipeline this view adopted, then the rows a chain stated IN THIS VIEW'S SCOPE (see
-    // PassChain::build(engine, desc, owner)): a rebuilt chain leaves its rows to the scope, so the view is what takes
-    // them back. The lease answers "gone" when the engine went first, so this never reaches into freed memory.
-    setChain(nullptr);
+    // Drop the pipeline this view adopted, DIRECTLY: dropping needs no geometry pass, and this body must not depend on
+    // `setChain`'s policy for that (it applies geometry only when a chain is ADOPTED). Then the rows a chain stated IN
+    // THIS VIEW'S SCOPE (see PassChain::build(engine, desc, owner)): a rebuilt chain leaves its rows to the scope, so
+    // the view is what takes them back. The lease answers "gone" when the engine went first, so this never reaches into
+    // freed memory.
+    pipeline_ = nullptr;
     if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
         engine->passes().clearOwnedBy(this);
     }
