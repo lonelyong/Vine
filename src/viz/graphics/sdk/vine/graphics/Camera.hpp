@@ -79,8 +79,9 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     /** @brief Points the camera at @p center from @p eye, keeping @p up as its up direction.
      *
      * @details
-     * - This states the VIEW, not a matrix: eye / target / up are kept, so a later lookAt or a read back of them
-     *   answers the same three values, and the view matrix is rebuilt from them on demand (see viewMatrix).
+     * - This states the VIEW, not a matrix: eye and target are kept as given and up is stored NORMALISED (the view
+     *   basis needs a direction, not a length), so the three accessors answer the view that was stated, a later
+     *   lookAt overrides all three, and the view matrix is rebuilt from them on demand (see viewMatrix).
      *
      * @param eye    Camera eye position (world space).
      * @param center Point the camera looks at (world space).
@@ -151,9 +152,9 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
      */
     Vec3d target() const;
 
-    /** @brief Gets the up vector (last set via lookAt).
+    /** @brief Gets the up direction (last set via lookAt, stored normalised).
      *
-     * @return The up vector.
+     * @return The unit up vector.
      */
     Vec3d up() const;
 

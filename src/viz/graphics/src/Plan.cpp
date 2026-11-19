@@ -107,8 +107,7 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
         for (const String& input : plan.passes[consumer].input_names) {
             const auto producer = published_by.find(input);
             if (producer == published_by.end()) {
-                const bool served = std::find(external_outputs.begin(), external_outputs.end(), input) != external_outputs.end();
-                if (!served) {
+                if (std::find(external_outputs.begin(), external_outputs.end(), input) == external_outputs.end()) {
                     problems.push_back(PlanProblem{ PlanProblemCode::UnknownInput,
                                                     plan.passes[consumer].name,
                                                     String(u8"pass '") + plan.passes[consumer].name + String(u8"' reads '") + input +

@@ -351,15 +351,10 @@ std::uint64_t Geometry::ignoredPrimitiveEdits() const noexcept
 
 bool Geometry::setInstanceTransforms(std::size_t index, BufferSlice<float> transforms)
 {
-    if (index >= primitives_.size()) {
-        ++ignored_primitive_edits_;
+    const bool applied = updatePrimitive(index, [&transforms](Primitive& primitive) { return primitive.setInstanceTransforms(std::move(transforms)); });
+    if (!applied) {
         return false;
     }
-    Primitive updated = primitives_[index];
-    if (!updated.setInstanceTransforms(std::move(transforms))) {
-        return false;
-    }
-    setPrimitive(index, std::move(updated));
     // An accepted instance edit is an edit even when the slice identity is unchanged: the bytes behind the
     // same buffer may have moved (the slice re-reads its buffer). The setter is the caller's announcement,
     // so do not let setPrimitive's no-op check swallow it.
@@ -369,38 +364,26 @@ bool Geometry::setInstanceTransforms(std::size_t index, BufferSlice<float> trans
 
 bool Geometry::setVisibleInstanceCount(std::size_t index, std::size_t count)
 {
-    if (index >= primitives_.size()) {
-        ++ignored_primitive_edits_;
-        return false;
-    }
-    Primitive updated = primitives_[index];
-    updated.setVisibleInstanceCount(count);
-    setPrimitive(index, std::move(updated));
-    return true;
+    return updatePrimitive(index, [count](Primitive& primitive) {
+        primitive.setVisibleInstanceCount(count);
+        return true;
+    });
 }
 
 bool Geometry::clearVisibleInstanceCount(std::size_t index)
 {
-    if (index >= primitives_.size()) {
-        ++ignored_primitive_edits_;
-        return false;
-    }
-    Primitive updated = primitives_[index];
-    updated.clearVisibleInstanceCount();
-    setPrimitive(index, std::move(updated));
-    return true;
+    return updatePrimitive(index, [](Primitive& primitive) {
+        primitive.clearVisibleInstanceCount();
+        return true;
+    });
 }
 
 bool Geometry::clearInstanceTransforms(std::size_t index)
 {
-    if (index >= primitives_.size()) {
-        ++ignored_primitive_edits_;
-        return false;
-    }
-    Primitive updated = primitives_[index];
-    updated.clearInstanceTransforms();
-    setPrimitive(index, std::move(updated));
-    return true;
+    return updatePrimitive(index, [](Primitive& primitive) {
+        primitive.clearInstanceTransforms();
+        return true;
+    });
 }
 
 raw_ptr<MaterialValues> Geometry::material() const

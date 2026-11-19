@@ -10,17 +10,11 @@
 
 #include <vine/graphics/AutoTransform.hpp>
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/LightRig.hpp>
-#include <vine/graphics/Material.hpp>
 #include <vine/graphics/DrawItem.hpp>
-#include <vine/graphics/StateNode.hpp>
-#include <vine/math/Transform3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
-
-using vn::math::Vec3d;
 
 VN_OBJECT_META_IMPL(Scene, vn::Object);
 

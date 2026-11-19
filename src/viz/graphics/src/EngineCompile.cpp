@@ -1015,8 +1015,8 @@ void SessionShape::collectPlanProblems()
     // whole target), or the image asked for is a depth the target does not have. WHERE the producer was
     // registered is no longer a wiring fact: the scheduler orders a later-announced producer first (see
     // scheduleRows), so registration order says nothing about execution order.
-    for (std::size_t index = 0; index < slots_.size(); ++index) {
-        RenderPass* pass = slots_[index].pass.get();
+    for (const Slot& slot : slots_) {
+        RenderPass* pass = slot.pass.get();
         if (pass == nullptr) {
             continue;
         }

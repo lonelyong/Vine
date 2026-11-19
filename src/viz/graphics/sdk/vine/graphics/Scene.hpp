@@ -461,7 +461,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
 
-    /** @brief Gets how many times the graph was BAKED (see the class note's two halves).
+    /** @brief Gets how many times the graph was BAKED (see detail::ScenePublisher).
      *
      * @details
      * - A bake is the half of a collection that only depends on the graph: placements, world boxes and folded

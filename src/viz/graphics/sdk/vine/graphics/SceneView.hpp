@@ -27,7 +27,6 @@ VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class CameraManipulator;
-class PassChain;
 class RenderEngine;
 class RenderPass;
 class RenderArea;

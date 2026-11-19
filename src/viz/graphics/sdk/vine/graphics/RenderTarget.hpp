@@ -19,11 +19,13 @@ VN_GRAPHICS_NS_BEGIN
 using vn::math::Mat4d;
 
 /**
- * @brief Render target managing color and depth buffers.
+ * @brief A render target's DESCRIPTION: the attachments, formats and size a backend materialises.
  *
  * @details
- * - Represents an off-screen frame buffer. Supports various color and depth formats and provides buffer readback for
- *   post-processing or export.
+ * - An off-screen frame buffer as a VALUE: colour and depth formats, size and sample count. It owns no GPU image and
+ *   no device handle (the same split Texture states for itself); a backend builds the images from this description.
+ * - Readback belongs to the DEVICE (RenderDevice::readColorBuffer / readDepthBuffer), not to the target: a target
+ *   says what the picture IS, it does not hold a copy of the pixels.
  */
 class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
     VN_OBJECT_META_DECL;
@@ -167,7 +169,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      *   - Off-screen targets are drawn multi-sampled and RESOLVED when the pass ends, so the colour a later
      *     pass samples, and the pixels a readback answers, are the resolved picture - one colour per pixel,
      *     with geometry edges averaged instead of stepped.
-     *   - A DEPTH a shader samples (see setDepthPromoted / shareDepth) has to be a single-sample picture: a
+     *   - A DEPTH a shader samples (see setDepthPromotion / shareDepth) has to be a single-sample picture: a
      *     multi-sampled target RESOLVES its depth into one where the backend can resolve depth, and a backend
      *     that cannot refuses that target with a diagnostic naming it (it never draws at another count).
      *     A MULTI-SAMPLED TARGET THAT BORROWS a depth is refused by every backend: one depth image cannot be a
@@ -193,7 +195,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Returns whether a depth attachment is configured.
      *
      * @note True for an own depth attachment or one borrowed via shareDepth(); readback of a borrowed depth goes
-     *       through the source target (see RenderBackend::readDepthBuffer).
+     *       through the source target (see RenderDevice::readDepthBuffer).
      */
     bool hasDepth() const;
 

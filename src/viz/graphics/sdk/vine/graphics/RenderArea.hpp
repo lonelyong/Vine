@@ -36,9 +36,10 @@ class SurfaceLedger; // the ONE creator (createArea), which owns the result (see
  *   all, and two windows never share a frame. This area's size is always the size that frame's passes lay
  *   themselves out on.
  * - THE WINDOW IS THE AREA'S TOO: bindTarget() holds the target the DEVICE made for the host's window
- *   (RenderDevice::createSurfaceTarget), resize() is the ONE size announcement (the view, the frame, the target's
- *   window half), and a recreated window is re-announced ON the target, which moves the established session
- *   (device and compiled pipelines stay - see WindowPresentTarget::setWindowHandle).
+ *   (RenderDevice::createSurfaceTarget), resize() is the ONE size announcement for the view and the frame (the
+ *   window half - the swapchain - is resized by the frame at its head; see resize), and a recreated window is
+ *   re-announced ON the target, which moves the established session (device and compiled pipelines stay - see
+ *   WindowPresentTarget::setWindowHandle).
  *
  * @note
  * - Presentation used to be INFERRED (RenderEngine::hasWindowPass): a global, order-sensitive guess that silently

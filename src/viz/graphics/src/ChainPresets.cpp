@@ -16,6 +16,36 @@
 
 VN_GRAPHICS_NS_BEGIN
 
+namespace
+{
+
+/** @brief The direction and up vector a shadow camera is oriented by. */
+struct LightBasis {
+    vn::math::Vec3d forward; // Normalised propagation direction.
+    vn::math::Vec3d up;      // Any unit vector that is not parallel to @ref forward.
+};
+
+/**
+ * @brief Reads the basis both shadow cameras are built from.
+ *
+ * @details
+ * - A light is a DIRECTION, not a roll (see Light): the up vector only has to be non-parallel to the forward
+ *   direction, and stating the choice once keeps the two shadow matrices on one orientation convention.
+ *
+ * @param light Light to read (a light that states no direction falls back to -Z).
+ * @return The normalised forward direction and a usable up vector.
+ */
+LightBasis lightBasis(const Light& light)
+{
+    using vn::math::Vec3d;
+
+    const Vec3d forward = light.direction().length() > 1e-9 ? light.direction().normalized() : Vec3d(0.0, 0.0, -1.0);
+    // Any up vector that is not parallel to the direction: a light is a direction, not a roll.
+    return { forward, std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0) };
+}
+
+} // namespace
+
 intrusive_ptr<ShaderProgram> defaultGbufferGeometryProgram()
 {
     return gbufferGeometryProgram();
@@ -64,20 +94,18 @@ Mat4d directionalShadowMatrix(const Light& light, const vn::geom::spatial::Aabbd
 {
     using vn::math::Vec3d;
 
-    const bool  valid = bounds.max().x >= bounds.min().x && bounds.max().y >= bounds.min().y && bounds.max().z >= bounds.min().z;
+    const bool  valid = bounds.isValid();
     const Vec3d extent =
         valid ? Vec3d(bounds.max().x - bounds.min().x, bounds.max().y - bounds.min().y, bounds.max().z - bounds.min().z) : Vec3d(2.0, 2.0, 2.0);
-    const Vec3d centre   = valid ? Vec3d(bounds.center().x, bounds.center().y, bounds.center().z) : Vec3d(0.0, 0.0, 0.0);
+    const Vec3d centre = valid ? Vec3d(bounds.center().x, bounds.center().y, bounds.center().z) : Vec3d(0.0, 0.0, 0.0);
     // Every orientation of the box fits in this sphere, so the window does not shrink when the sun
     // moves; the margin keeps a caster standing exactly on the border out of the depth clamp.
-    const double radius  = extent.length() * 0.5;
-    const double depth   = radius * 4.0 + 1.0;
-    const Vec3d  forward = light.direction().length() > 1e-9 ? light.direction().normalized() : Vec3d(0.0, 0.0, -1.0);
-    // Any up vector that is not parallel to the direction: a light is a direction, not a roll.
-    const Vec3d up       = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
-    const Vec3d eye      = centre - forward * (radius * 2.0 + 1.0);
+    const double     radius = extent.length() * 0.5;
+    const double     depth  = radius * 4.0 + 1.0;
+    const LightBasis basis  = lightBasis(light);
+    const Vec3d      eye    = centre - basis.forward * (radius * 2.0 + 1.0);
 
-    camera.lookAt(eye, eye + forward, up);
+    camera.lookAt(eye, eye + basis.forward, basis.up);
     camera.setOrthographic(-radius, radius, -radius, radius, 0.0, depth);
     // Orthographic: the window above carries the shape, and the matrix does not read the camera's aspect at all.
     // The shadow map is square anyway (the window is -radius..radius on both axes).
@@ -88,11 +116,9 @@ Mat4d spotShadowMatrix(const Light& light, const vn::geom::spatial::Aabbd& bound
 {
     using vn::math::Vec3d;
 
-    const bool  valid   = bounds.max().x >= bounds.min().x && bounds.max().y >= bounds.min().y && bounds.max().z >= bounds.min().z;
-    const Vec3d forward = light.direction().length() > 1e-9 ? light.direction().normalized() : Vec3d(0.0, 0.0, -1.0);
-    const Vec3d eye     = light.position();
-    // Any up vector that is not parallel to the direction: a light is a direction, not a roll.
-    const Vec3d up      = std::abs(forward.z) > 0.9 ? Vec3d(0.0, 1.0, 0.0) : Vec3d(0.0, 0.0, 1.0);
+    const bool       valid = bounds.isValid();
+    const LightBasis basis = lightBasis(light);
+    const Vec3d      eye   = light.position();
 
     // How far the content is from the LIGHT, along its axis: a spot has a position, so a fitted sphere around the
     // whole scene would be the wrong question. An invalid box keeps a usable frustum instead of a degenerate one.
@@ -105,7 +131,7 @@ Mat4d spotShadowMatrix(const Light& light, const vn::geom::spatial::Aabbd& bound
             const Vec3d  point((corner & 1) != 0 ? bounds.max().x : bounds.min().x,
                                (corner & 2) != 0 ? bounds.max().y : bounds.min().y,
                                (corner & 4) != 0 ? bounds.max().z : bounds.min().z);
-            const double distance = (point - eye).dot(forward);
+            const double distance = (point - eye).dot(basis.forward);
             axis_min              = std::min(axis_min, distance);
             axis_max              = std::max(axis_max, distance);
         }
@@ -123,7 +149,7 @@ Mat4d spotShadowMatrix(const Light& light, const vn::geom::spatial::Aabbd& bound
     const double half_angle = std::clamp(light.outerConeAngle() * 1.02, 0.5, 85.0);
     const double fov_y      = 2.0 * half_angle;
 
-    camera.lookAt(eye, eye + forward, up);
+    camera.lookAt(eye, eye + basis.forward, basis.up);
     camera.setPerspective(fov_y, near_plane, far_plane);
     // The map is square and the shadow pass draws the whole target, so the aspect the camera derives from its pass
     // rectangle is 1 and the horizontal extent equals the vertical one.

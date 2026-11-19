@@ -20,6 +20,44 @@ constexpr float kMinimumPointSize = 1.0F;
 /// non-positive request is raised to it instead of becoming "invisible".
 constexpr float kMinimumLineWidth = 1.0F;
 
+/**
+ * @brief Takes @p authored into @p resolved when it is stated, and records which layer decided it.
+ *
+ * @details
+ * - The shape every item of the priority table has (see resolveRenderState): "the authored value wins, and the
+ *   origin says so" was spelled out once per item; stating it once is what makes the table read as a table.
+ *
+ * @param authored The value a layer states, if any.
+ * @param resolved Receives the value when it is stated.
+ * @param origin   Receives @p source when the value is taken.
+ * @param source   The layer the value came from.
+ */
+template <typename T>
+void take(const std::optional<T>& authored, T& resolved, StateOrigin& origin, StateOrigin source)
+{
+    if (authored) {
+        resolved = *authored;
+        origin   = source;
+    }
+}
+
+/**
+ * @brief The floor-carrying form of take() (see kMinimumPointSize / kMinimumLineWidth).
+ *
+ * @param authored The value a layer states, if any.
+ * @param resolved Receives the value raised to @p floor when it is stated.
+ * @param origin   Receives @p source when the value is taken.
+ * @param source   The layer the value came from.
+ * @param floor    The smallest value the item may resolve to.
+ */
+void takeFloor(const std::optional<float>& authored, float& resolved, StateOrigin& origin, StateOrigin source, float floor)
+{
+    if (authored) {
+        resolved = std::max(*authored, floor);
+        origin   = source;
+    }
+}
+
 } // namespace
 
 ResolvedRenderState applyStateDefaults(const RenderState& state)
@@ -55,37 +93,19 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
 
     // The content's word first, item by item: what a StateNode authored is kept (and says so), everything it did
     // not author is still the "nobody said" case the defaults below answer.
-    if (authored.cullMode) {
-        resolved.state.cullMode  = *authored.cullMode;
-        resolved.origin.cullMode = StateOrigin::Content;
-    }
-    if (authored.blend) {
-        resolved.state.blend  = *authored.blend;
-        resolved.origin.blend = StateOrigin::Content;
-    }
-    if (authored.polygonMode) {
-        resolved.state.polygonMode  = *authored.polygonMode;
-        resolved.origin.polygonMode = StateOrigin::Content;
-    }
+    take(authored.cullMode, resolved.state.cullMode, resolved.origin.cullMode, StateOrigin::Content);
+    take(authored.blend, resolved.state.blend, resolved.origin.blend, StateOrigin::Content);
+    take(authored.polygonMode, resolved.state.polygonMode, resolved.origin.polygonMode, StateOrigin::Content);
     // A depth bias is something the CONTENT says about its own surfaces (this decal sits on that panel), so it
     // has no pass layer: nothing a view chooses can make two coplanar faces stop fighting without also changing
     // what the content means.
-    if (authored.polygonOffset) {
-        resolved.state.polygonOffset  = *authored.polygonOffset;
-        resolved.origin.polygonOffset = StateOrigin::Content;
-    }
+    take(authored.polygonOffset, resolved.state.polygonOffset, resolved.origin.polygonOffset, StateOrigin::Content);
     // The point size is content-authored state like the rest, and it is the one item whose destination is the
     // DRAW BLOCK rather than a pipeline or its dynamic state (see ResolvedRenderState::pointSize). The floor
     // applies wherever the value comes from, so a pass cannot ask for a zero-size point either.
-    if (authored.pointSize) {
-        resolved.state.pointSize  = std::max(*authored.pointSize, kMinimumPointSize);
-        resolved.origin.pointSize = StateOrigin::Content;
-    }
+    takeFloor(authored.pointSize, resolved.state.pointSize, resolved.origin.pointSize, StateOrigin::Content, kMinimumPointSize);
     // The line width is API state (dynamic), so it carries no draw-block comment: same fold, same floor.
-    if (authored.lineWidth) {
-        resolved.state.lineWidth  = std::max(*authored.lineWidth, kMinimumLineWidth);
-        resolved.origin.lineWidth = StateOrigin::Content;
-    }
+    takeFloor(authored.lineWidth, resolved.state.lineWidth, resolved.origin.lineWidth, StateOrigin::Content, kMinimumLineWidth);
     // Topology: the DATA's own word (a primitive's topology) - no StateNode layer exists for it, because a
     // subtree cannot reinterpret another object's vertex/index data. The pass may override it below, which is
     // the "show me this scene as points" view switch.
@@ -109,28 +129,16 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     // Rasterisation is an OVERRIDE, so it comes last and wins even over a content-authored mode: it is the
     // "show me the edges" switch, and a switch a content-authored Line could veto would never take the picture
     // back to Fill (see PassRenderState).
-    if (pass.polygonMode) {
-        resolved.state.polygonMode  = *pass.polygonMode;
-        resolved.origin.polygonMode = StateOrigin::Pass;
-    }
+    take(pass.polygonMode, resolved.state.polygonMode, resolved.origin.polygonMode, StateOrigin::Pass);
 
     // Same rule for the more drastic view switch: a pass that says "assemble everything as points" wins over
     // what the data states (and the pipeline is then compiled for that topology - see core::PipelineKey).
-    if (pass.topology) {
-        resolved.state.topology  = *pass.topology;
-        resolved.origin.topology = StateOrigin::Pass;
-    }
+    take(pass.topology, resolved.state.topology, resolved.origin.topology, StateOrigin::Pass);
 
     // And the size those points are drawn at: the same viewing-switch rule as the topology above, because
     // "show me this scene as points" is useless at one pixel (see PassRenderState::pointSize).
-    if (pass.pointSize) {
-        resolved.state.pointSize  = std::max(*pass.pointSize, kMinimumPointSize);
-        resolved.origin.pointSize = StateOrigin::Pass;
-    }
-    if (pass.lineWidth) {
-        resolved.state.lineWidth  = std::max(*pass.lineWidth, kMinimumLineWidth);
-        resolved.origin.lineWidth = StateOrigin::Pass;
-    }
+    takeFloor(pass.pointSize, resolved.state.pointSize, resolved.origin.pointSize, StateOrigin::Pass, kMinimumPointSize);
+    takeFloor(pass.lineWidth, resolved.state.lineWidth, resolved.origin.lineWidth, StateOrigin::Pass, kMinimumLineWidth);
 
     return resolved;
 }

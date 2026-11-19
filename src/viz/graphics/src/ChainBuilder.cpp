@@ -157,7 +157,7 @@ void ChainBuilder::reportRequestedShadows() const
             if (light == nullptr || !light->isEnabled() || !light->isCastingShadow()) {
                 continue;
             }
-            if (light->type() == LightType::Directional || light->type() == LightType::Spot) {
+            if (light->hasDirection()) {
                 ++buildable;
             }
             else {
@@ -216,8 +216,7 @@ intrusive_ptr<const Light> requestedShadowLight(raw_ptr<const Scene> content)
     // one taken from its cone. A POINT light has no pass yet (it needs six faces; see backlog S6) and is reported
     // rather than silently ignored.
     for (const auto& light : content->lights()) {
-        if (light != nullptr && light->isEnabled() && light->isCastingShadow() && (light->type() == LightType::Directional || light->type() == LightType::Spot))
-        {
+        if (light != nullptr && light->isEnabled() && light->isCastingShadow() && light->hasDirection()) {
             return light; // a strong handle: the map holds its light (RenderTarget::setShadowOf)
         }
     }

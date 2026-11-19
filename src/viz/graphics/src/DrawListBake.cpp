@@ -439,6 +439,38 @@ std::uint32_t refreshBoxes(SceneBake& bake)
     return refreshed;
 }
 
+namespace
+{
+
+/**
+ * @brief Re-takes one live object's immutable description, storing it only when it moved.
+ *
+ * @details
+ * - A material's values and a program's text are edited through live objects, so no node mutator announces them and
+ *   the graph epoch cannot see the change - while the values a command carries do change (see refreshValues).
+ * - The slot keeps its old value when the object is null or its description is unchanged, which is what keeps a
+ *   publication from claiming an edit nobody made.
+ *
+ * @param object The live object, or null when the slot holds none.
+ * @param slot   The description the row carries; receives the new one when it moved.
+ * @return true when @p slot changed.
+ */
+template <typename Pointer, typename Description>
+bool retakeDescription(const Pointer& object, Description& slot)
+{
+    if (object == nullptr) {
+        return false;
+    }
+    Description next = object->description();
+    if (next == slot) {
+        return false;
+    }
+    slot = std::move(next);
+    return true;
+}
+
+} // namespace
+
 std::uint32_t refreshValues(SceneBake& bake)
 {
     // The value halves the fold copies are re-taken here: a material's values and a program's text are edited through
@@ -449,53 +481,38 @@ std::uint32_t refreshValues(SceneBake& bake)
     for (Row& row : bake.rows) {
         bool row_moved = false;
         // Each re-taken value is stored through the fold's one writer, so a row whose command value moved is not
-        // served from the previous publication (see Row::resolved_serial).
+        // served from the previous publication (see Row::resolved_serial). The resolved side is compared BEFORE the
+        // copy storeResolved needs, so a row nobody edited costs no copy here.
         if (row.resolved.material != nullptr) {
             const MaterialDescriptionPtr values = row.resolved.material->description();
             if (values != row.resolved.material_description) {
-                ResolvedRow next        = row.resolved;
+                ResolvedRow next          = row.resolved;
                 next.material_description = values;
                 storeResolved(bake, row, std::move(next));
                 row_moved = true;
             }
         }
-        if (row.own.body.material != nullptr) {
-            const MaterialDescriptionPtr values = row.own.body.material->description();
-            if (values != row.own.body.material_description) {
-                row.own.body.material_description = values;
-                row_moved                         = true;
-            }
-        }
         if (row.resolved.program != nullptr) {
             const ShaderProgramDescriptionPtr text = row.resolved.program->description();
             if (text != row.resolved.program_description) {
-                ResolvedRow next       = row.resolved;
+                ResolvedRow next         = row.resolved;
                 next.program_description = text;
                 storeResolved(bake, row, std::move(next));
                 row_moved = true;
             }
         }
-        if (row.own.body.program != nullptr) {
-            const ShaderProgramDescriptionPtr text = row.own.body.program->description();
-            if (text != row.own.body.program_description) {
-                row.own.body.program_description = text;
-                row_moved                        = true;
-            }
+        if (retakeDescription(row.own.body.material, row.own.body.material_description)) {
+            row_moved = true;
+        }
+        if (retakeDescription(row.own.body.program, row.own.body.program_description)) {
+            row_moved = true;
         }
         for (ResolvedDraw& draw : row.own.body.draws) {
-            if (draw.material != nullptr) {
-                const MaterialDescriptionPtr values = draw.material->description();
-                if (values != draw.material_description) {
-                    draw.material_description = values;
-                    row_moved                 = true;
-                }
+            if (retakeDescription(draw.material, draw.material_description)) {
+                row_moved = true;
             }
-            if (draw.program != nullptr) {
-                const ShaderProgramDescriptionPtr text = draw.program->description();
-                if (text != draw.program_description) {
-                    draw.program_description = text;
-                    row_moved                = true;
-                }
+            if (retakeDescription(draw.program, draw.program_description)) {
+                row_moved = true;
             }
         }
         if (row_moved) {

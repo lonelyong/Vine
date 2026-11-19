@@ -13,67 +13,12 @@
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/Scene.hpp>
 
+#include "OverlayMesh.hpp"
 #include "PixelGeometry.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(AxisGizmo, Object);
-
-namespace
-{
-
-/**
- * @brief Appends an axis-aligned box to the mesh arrays.
- *
- * Builds six flat-shaded faces with outward, counter-clockwise (seen from the
- * outside) winding so the box is consistent and renders from either side.
- *
- * @param positions Box vertex positions (appended).
- * @param normals   Per-vertex face normals (appended).
- * @param indices   Triangle indices (appended).
- * @param mn        Minimum corner.
- * @param mx        Maximum corner.
- */
-void appendBox(vn::models::Vec3fArray& positions,
-               vn::models::Vec3fArray& normals,
-               vn::models::UInt32Array& indices,
-               const vn::math::Vec3f&     mn,
-               const vn::math::Vec3f&     mx)
-{
-    using vn::math::Vec3f;
-
-    const Vec3f c     = (mn + mx) * 0.5f;
-    const float h[3]  = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
-    const auto  axis  = [](int a) { return a == 0 ? Vec3f(1.0f, 0.0f, 0.0f) : (a == 1 ? Vec3f(0.0f, 1.0f, 0.0f) : Vec3f(0.0f, 0.0f, 1.0f)); };
-    const float cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
-    const float cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
-
-    for (int f = 0; f < 6; ++f) {
-        const int   a    = f / 2; // face normal axis.
-        const bool  neg  = (f % 2) == 1;
-        const int   nxt  = (a + 1) % 3;
-        const int   nxt2 = (a + 2) % 3;
-        const int   ua   = neg ? nxt2 : nxt;
-        const int   va   = neg ? nxt : nxt2;
-        const Vec3f n    = neg ? -axis(a) : axis(a);
-        const Vec3f u    = axis(ua);
-        const Vec3f v    = axis(va);
-
-        const std::uint32_t base = static_cast<std::uint32_t>(positions.size());
-        for (int k = 0; k < 4; ++k) {
-            positions.push_back(c + n * h[a] + u * (cu[k] * h[ua]) + v * (cv[k] * h[va]));
-            normals.push_back(n);
-        }
-        indices.push_back(base + 0);
-        indices.push_back(base + 1);
-        indices.push_back(base + 2);
-        indices.push_back(base + 0);
-        indices.push_back(base + 2);
-        indices.push_back(base + 3);
-    }
-}
-
-} // namespace
 
 AxisGizmo::AxisGizmo()
 {
@@ -231,7 +176,7 @@ void AxisGizmo::rebuild()
         vn::models::Vec3fArray  positions;
         vn::models::Vec3fArray  normals;
         vn::models::UInt32Array indices;
-        appendBox(positions, normals, indices, stick.mn, stick.mx);
+        detail::appendBox(positions, normals, indices, stick.mn, stick.mx);
 
         auto geometry = make_intrusive<Geometry>();
         geometry->setPositions(packAttribute(positions));

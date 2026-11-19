@@ -85,9 +85,9 @@ struct VN_GRAPHICS_API LightValue {
  * - All four kinds are shaded: directional (infinite, direction only), point (position + range), spot
  *   (position + direction + cone) and the ambient fill. A positional light's contribution falls to zero at
  *   its range, so the range is how a host bounds the cost of one light.
- * - SHADOWS REMAIN DIRECTIONAL: only a directional caster gets a depth pass (its light camera is
- *   orthographic), so `setCastShadow` on a point or spot light has no effect today and the host's diagnostic
- *   channel says so.
+ * - SHADOWS: a directional caster gets a depth pass with an orthographic light camera, a spot caster one with a
+ *   perspective camera taken from its cone; a POINT caster has none yet (it needs six faces of one shadow - see
+ *   backlog S6), so `setCastShadow` on a point light has no effect today and the host's diagnostic channel says so.
  */
 class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     VN_OBJECT_META_DECL;
@@ -272,7 +272,7 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setOuterConeAngle(double degrees);
 
-    /** @brief Returns whether the light casts a shadow (directional, v4b).
+    /** @brief Returns whether the light casts a shadow (directional or spot).
      *
      * @return true when shadow casting is requested.
      */
@@ -294,7 +294,7 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      */
     void setCastShadow(bool cast);
 
-    /** @brief Gets the shadow-map settings (resolution / bias / filter).
+    /** @brief Gets the shadow-map settings (resolution / bias).
      *
      * @return The current settings.
      */

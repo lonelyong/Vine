@@ -1,12 +1,9 @@
 #include <vine/graphics/SceneView.hpp>
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <utility>
 
 #include <vine/graphics/AxisGizmo.hpp>
-#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraManipulator.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
@@ -17,14 +14,10 @@
 #include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
-#include <vine/window/MouseButton.hpp>
 
 #include "EngineDiagnostics.hpp"
 
 VN_GRAPHICS_NS_BEGIN
-
-namespace
-{} // namespace
 
 SceneView::SceneView()
   : camera_(make_intrusive<Camera>())

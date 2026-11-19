@@ -193,14 +193,16 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (3)
+## research/ — research and proposals (4)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except the three below,
 which exist because the third-round audit's open items were left with no home when its page was
 deleted (git is still the archive for the page itself), because the fifth review's two deferred
-proposals (`T40` / `T41`) keep their arguments where a design page cannot carry them, and because the
-sixth review's two P0 findings are a working record for the fix batch that follows.
+proposals (`T40` / `T41`) keep their arguments where a design page cannot carry them, because the
+sixth review's two P0 findings are a working record for the fix batch that follows, and because the
+seventh review's implementation-quality batch and its follow-up candidates are a working record for
+the next refactor batch.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
@@ -214,6 +216,11 @@ sixth review's two P0 findings are a working record for the fix batch that follo
   (the diagnostics counters, `setDevice`, `FrameResources::releaseAll`, the engine thread's exception
   barrier, the guide's §3.4/§3.5 residue, vsg's material byte figure), and a section-by-section
   re-verification of the threading model (`T31` is closed).
+- `graphics-2026-11-20-review-7.md` — the seventh pass, on implementation quality: one byte-identical
+  38-line box builder unified (`OverlayMesh.hpp`), one helper per state-priority item, one
+  `Geometry::updatePrimitive`, one `retakeDescription`, `Aabbd::isValid()` / `Light::hasDirection()`
+  rather than their hand spellings, nine comment corrections, and the verified candidates left alone
+  with their reasons (the two ray formulas, zero-consumer public API, the four large splits).
 
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
@@ -259,7 +266,7 @@ decision is not to do them (the reason goes into an ADR).
 - `robotics-kinematics.md` — Robotics kinematics facts.
 - `robotics-proximity.md` — Robotics proximity facts.
 
-## bugs/ — bug records (44)
+## bugs/ — bug records (45)
 
 Symptom / root cause / status / files involved / verification, one file per bug; a fixed record keeps
 its history marker, an unfixed one states its status.
@@ -302,6 +309,7 @@ its history marker, an unfixed one states its status.
 - `graphics-renderengine-addpass-null-pass-crash.md`
 - `graphics-scene-memo-key-missing-view-basis.md`
 - `graphics-transparent-sort-uses-origin.md`
+- `graphics-layout-step-runs-in-view-destruction.md` — a layout step ran from `~SceneView` and called `RenderControl::view()` on a control whose `Impl` was already destroyed; steps are now dropped first and run only from a geometry event.
 - `demo-chain-never-adopted.md` — the demo built a `PassChain` and never adopted it with `setChain`: the transparent scene the chain owns was never published (sky/overlay missing) and the chain's size could only be fixed up by the demo itself; after the fix the view maintains it in one place.
 - `vk-screen-draw-inherits-pass-depth.md` — vk's full-screen draw inherited the pass's `TestAndWrite` depth policy, so against a target with depth / borrowed depth the whole screen pass was discarded (the window and the deferred composite went black with zero VUIDs); a full-screen call now always uses `Disabled`, with a regression case.
 - `vk-screen-pass-shaded-without-the-map.md` — vk's full-screen set always bound the shadow white stand-in / zero block, so a deferred lighting program never saw the real shadow map (forward had shadows, deferred did not, with zero diagnostics); the screen path now uses the pass-resolved `ShadowSource`, with a regression case.

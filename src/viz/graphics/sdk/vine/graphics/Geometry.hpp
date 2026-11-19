@@ -10,6 +10,7 @@
 #include <optional>
 #include <shared_mutex>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include <vine/Buffer.hpp>
@@ -1090,6 +1091,34 @@ class VN_GRAPHICS_API Geometry : public Node {
         TriangleIndexKey          key{};
         std::shared_ptr<const Bvh> tree{};
     };
+
+    /**
+     * @brief Applies @p mutate to a COPY of primitive @p index, then stores it through setPrimitive().
+     *
+     * @details
+     * - The shared frame of every per-primitive mutator: the range guard (which counts an ignored edit, see
+     *   ignoredPrimitiveEdits), the copy-modify-write-back shape, and setPrimitive()'s no-op rule. Stating it once is
+     *   what keeps a mutator from forgetting the counter or the announcement.
+     * - @p mutate answers whether it accepted the value; a rejection leaves the primitive untouched.
+     *
+     * @param index  Primitive to edit.
+     * @param mutate Edit applied to the copy; returns whether it accepted the value.
+     * @return true when the edit was accepted; false for a missing primitive or a rejected value.
+     */
+    template <typename Mutate>
+    bool updatePrimitive(std::size_t index, Mutate&& mutate)
+    {
+        if (index >= primitives_.size()) {
+            ++ignored_primitive_edits_;
+            return false;
+        }
+        Primitive updated = primitives_[index];
+        if (!mutate(updated)) {
+            return false;
+        }
+        setPrimitive(index, std::move(updated));
+        return true;
+    }
 
     /**
      * @brief Reads the key of draw @p draw's triangle stream.

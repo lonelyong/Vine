@@ -12,6 +12,7 @@
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/Scene.hpp>
 
+#include "OverlayMesh.hpp"
 #include "PixelGeometry.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -20,58 +21,6 @@ VN_OBJECT_META_IMPL(FpsOverlay, Object);
 
 namespace
 {
-
-/**
- * @brief Appends an axis-aligned box to the mesh arrays.
- *
- * Six flat-shaded faces with outward, counter-clockwise (seen from the
- * outside) winding so the box renders from either side. Mirrors the box
- * builder used by AxisGizmo so the bars share its geometry conventions.
- *
- * @param positions Box vertex positions (appended).
- * @param normals   Per-vertex face normals (appended).
- * @param indices   Triangle indices (appended).
- * @param mn        Minimum corner.
- * @param mx        Maximum corner.
- */
-void appendBox(vn::models::Vec3fArray& positions,
-               vn::models::Vec3fArray& normals,
-               vn::models::UInt32Array& indices,
-               const vn::math::Vec3f&     mn,
-               const vn::math::Vec3f&     mx)
-{
-    using vn::math::Vec3f;
-
-    const Vec3f c     = (mn + mx) * 0.5f;
-    const float h[3]  = { (mx.x - mn.x) * 0.5f, (mx.y - mn.y) * 0.5f, (mx.z - mn.z) * 0.5f };
-    const auto  axis  = [](int a) { return a == 0 ? Vec3f(1.0f, 0.0f, 0.0f) : (a == 1 ? Vec3f(0.0f, 1.0f, 0.0f) : Vec3f(0.0f, 0.0f, 1.0f)); };
-    const float cu[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
-    const float cv[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
-
-    for (int f = 0; f < 6; ++f) {
-        const int   a    = f / 2; // face normal axis
-        const bool  neg  = (f % 2) == 1;
-        const int   nxt  = (a + 1) % 3;
-        const int   nxt2 = (a + 2) % 3;
-        const int   ua   = neg ? nxt2 : nxt;
-        const int   va   = neg ? nxt : nxt2;
-        const Vec3f n    = neg ? -axis(a) : axis(a);
-        const Vec3f u    = axis(ua);
-        const Vec3f v    = axis(va);
-
-        const std::uint32_t base = static_cast<std::uint32_t>(positions.size());
-        for (int k = 0; k < 4; ++k) {
-            positions.push_back(c + n * h[a] + u * (cu[k] * h[ua]) + v * (cv[k] * h[va]));
-            normals.push_back(n);
-        }
-        indices.push_back(base + 0);
-        indices.push_back(base + 1);
-        indices.push_back(base + 2);
-        indices.push_back(base + 0);
-        indices.push_back(base + 2);
-        indices.push_back(base + 3);
-    }
-}
 
 /** @brief One seven-segment bar: centre offset and half extents in-plane. */
 struct BarSpec {
@@ -346,7 +295,7 @@ void FpsOverlay::rebuild()
             const auto& bar = kSegments[s];
             const Vec3f centre(static_cast<float>(ox + bar.dx), static_cast<float>(y0 + bar.dy), 0.0f);
             const Vec3f half(static_cast<float>(bar.hx), static_cast<float>(bar.hy), static_cast<float>(kBarD / 2.0));
-            appendBox(positions, normals, indices, centre - half, centre + half);
+            detail::appendBox(positions, normals, indices, centre - half, centre + half);
         }
     }
 
