@@ -1655,17 +1655,21 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // is what this lambda is). Without it a strip resized during a recording keeps the rectangle of the last
     // accepted plan until some later layout event.
     // The lambda OWNS the declarations (a copy per layout step): mutable, because the step updates the rectangle of
-    // each row before restating it.
-    view->addSurfaceLayout([engine, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) mutable {
+    // each row before restating it. It captures the VIEW, not a way to look one up: a step is registered on the view,
+    // so it only runs while that view is alive (see SceneView::addSurfaceLayout) - while the control behind
+    // `render_control` is already gone when the widget tree tears a surface down (a step that called back into it for
+    // `view()` crashed the shutdown: the control's Impl was destroyed before its QWindow). `render_control` is only
+    // the plan's owner identity here, which is one value and not a call.
+    view->addSurfaceLayout([engine, view, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) mutable {
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
         // THE TILES BELONG TO THE CHAIN'S G-BUFFER. These rows read "GBuffer", which the adopted chain publishes, and
-        // a view runs its layout steps when it ADOPTS a chain and when it DROPS one (see SceneView::setChain ->
-        // applySurfaceGeometry). A step that arrives after the chain is gone would therefore re-state rows whose
-        // producer no longer exists - refused four times over (unknown-input) in the middle of tearing the view down.
-        // No chain, no G-buffer, nothing to place.
-        if (render_control->view() == nullptr || render_control->view()->chain() == nullptr) {
+        // a view runs its layout steps on a size or when it ADOPTS a chain (see SceneView::setChain ->
+        // applySurfaceGeometry); dropping a chain - or being destroyed - runs none. A step that ran without a chain
+        // would re-state rows whose producer no longer exists, so it states nothing. No chain, no G-buffer, nothing to
+        // place.
+        if (view->chain() == nullptr) {
             return;
         }
         const int source_width  = preview_source->width();

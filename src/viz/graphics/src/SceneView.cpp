@@ -39,6 +39,12 @@ SceneView::~SceneView()
     if (surface_ != nullptr) {
         surface_->dismiss(this);
     }
+    // NO LAYOUT STEP RUNS ON THE WAY OUT. A step is the creator's closure over its own objects (the demo's calls back
+    // into the RenderControl that embeds this view), and the view is destroyed INSIDE that creator's teardown - the
+    // widget tree deletes the surface after the control's own members are gone. Dropping the chain needs no geometry
+    // pass (there is nothing left to size), so the steps are dropped first and the handle released without one (the
+    // crash this records: a step called RenderControl::view() through a control whose Impl had already been destroyed).
+    clearSurfaceLayouts();
     // Drop the pipeline this view adopted, then the rows a chain stated IN THIS VIEW'S SCOPE (see
     // PassChain::build(engine, desc, owner)): a rebuilt chain leaves its rows to the scope, so the view is what takes
     // them back. The lease answers "gone" when the engine went first, so this never reaches into freed memory.
@@ -88,11 +94,18 @@ void SceneView::setChain(intrusive_ptr<PassChain> pipeline)
     if (pipeline_.get() == pipeline.get()) {
         return;
     }
+    const bool adopting = pipeline != nullptr;
     pipeline_ = std::move(pipeline);
-    // The view brings what a chain cannot know: the surface size it comes out of and the pixel ratio.
-    // Everything else (which passes exist, the shading mode, the overlays) is the chain's, which is why adopting
-    // one is one call and why a chain change never has to re-state any of it.
-    applySurfaceGeometry();
+    // ADOPTING A CHAIN SIZES IT AT ONCE: the view brings what a chain cannot know - the surface size it comes out of
+    // and the pixel ratio - and everything else (which passes exist, the shading mode, the overlays) is the chain's,
+    // which is why adopting one is one call and why a chain change never has to re-state any of it.
+    //
+    // DROPPING ONE APPLIES NOTHING. There is no chain to lay out, so a layout step has no subject - and a step is a
+    // creator's callback, so the drop path must not call one (the view's destruction is a drop: it happens inside the
+    // creator's own teardown, where the callback's captures may already be gone).
+    if (adopting) {
+        applySurfaceGeometry();
+    }
     // The one thing the two halves can disagree on: the chain may have been built for OTHER content. Reported once
     // per episode (see checkChainContent) - the structure is legal, and drawing a scene nobody has is exactly
     // what an empty surface looks like from the host's side.

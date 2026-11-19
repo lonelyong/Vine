@@ -5625,6 +5625,36 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     EXPECT_EQ(later_h, 720);
 }
 
+TEST(SceneViewViewportTest, ALayoutStepNeverRunsWhileTheViewIsTornDown)
+{
+    // The demo's layout step calls back into the RenderControl that embeds this view, and the view is destroyed
+    // INSIDE that control's widget-tree teardown - after the control's own Impl is gone. A step that ran from the
+    // destructor therefore read a dead widget (the shutdown crash this records).
+    // THE CONTRACT: a step runs on a size and when a chain is ADOPTED; dropping one - and dying - runs none.
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto view   = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->resize(800, 600, 1.0);
+
+    int calls = 0;
+    view->addSurfaceLayout([&calls](int, int) { ++calls; });
+
+    ChainDesc options;
+    options.gizmo.source_camera = view->camera();
+    ASSERT_NE(buildFor(*view, engine.get(), options), nullptr);
+    EXPECT_EQ(calls, 1) << "adopting a chain sizes it at once: that is a geometry event, and a step is due";
+
+    calls = 0;
+    view->setChain(nullptr);
+    EXPECT_EQ(calls, 0) << "a dropped chain has nothing to size, so no step runs for it";
+
+    // Re-adopt, then let the view die with a chain still adopted: the teardown path the crash took.
+    ASSERT_NE(buildFor(*view, engine.get(), options), nullptr);
+    calls = 0;
+    view.reset();
+    EXPECT_EQ(calls, 0) << "destroying the view must not run a creator's layout step";
+}
+
 TEST(SceneViewViewportTest, TheOverlayBoxSitsInTheAreaCorner)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());

@@ -196,6 +196,9 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   pipeline's resize policy with its creator (deferred chains at native / fractional resolution, fixed
      *   shadow maps doing nothing, corner-anchored previews re-anchoring) while the engine stays a pure
      *   scheduler.
+     * - A step runs only while the view is ALIVE, and only from a geometry event (a resize, the adoption of a chain,
+     *   presentation on a sized area). Destroying the view runs none: a view is destroyed inside its creator's own
+     *   teardown, so a step that named that creator would be called against a half-destroyed object.
      * - The size is in the space the HOST reports (for the Qt host, the logical widget size - see RenderControl),
      *   but a pass viewport wants DEVICE pixels: scale by the ratio in the callback (see the ratio overload and
      *   PassChain::resize, which takes the ratio for exactly that reason; AxisGizmo / FpsOverlay lay out
