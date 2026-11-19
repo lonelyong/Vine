@@ -3,11 +3,15 @@
 #include <vine/system/system_global.hpp>
 
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include <vine/String.hpp>
 
+#include <vine/system/Directories.hpp>
+#include <vine/system/Environment.hpp>
 #include <vine/system/Hardware.hpp>
+#include <vine/system/Host.hpp>
 #include <vine/system/OperatingSystem.hpp>
 #include <vine/system/Process.hpp>
 
@@ -165,6 +169,91 @@ inline String architectureName(const char* machine)
     }
     return String::fromLocal8Bit(machine);
 }
+
+/**
+ * @brief Writes the value of environment variable @p name into @p value.
+ *
+ * @details
+ * - Answers the "set but empty" case: a variable that exists with an empty value returns true and writes an empty
+ *   string.
+ * - The per-drive pseudo entries Windows exposes (`=C:=C:\dir`) are not variables and never match.
+ *
+ * @param name Variable name; never empty when called from Environment.
+ * @param value Receives the value; untouched when the variable is not set.
+ * @return true when the variable exists.
+ */
+bool environmentVariable(const String& name, String& value);
+
+/**
+ * @brief Returns every inherited variable as a name/value pair, in the platform's order.
+ *
+ * @details
+ * - Split at the first '=', so a value may contain the character.
+ * - The Windows per-drive pseudo entries are excluded: they are working directories, not variables.
+ *
+ * @return The pairs; empty where the platform cannot enumerate its environment.
+ */
+std::vector<std::pair<String, String>> environmentVariables();
+
+/**
+ * @brief Returns the system temporary root.
+ *
+ * @return The directory, or an empty string where the platform has none; a trailing separator may be present and is
+ *         removed by the shared caller.
+ */
+String temporaryDirectory();
+
+/**
+ * @brief Returns the current user's home directory.
+ *
+ * @return The directory, or an empty string when the process has no home.
+ */
+String homeDirectory();
+
+/**
+ * @brief Returns the root for per-user application data.
+ *
+ * @return The directory, or an empty string when it cannot be determined.
+ */
+String dataDirectory();
+
+/**
+ * @brief Returns the root for per-user configuration.
+ *
+ * @return The directory, or an empty string when it cannot be determined.
+ */
+String configDirectory();
+
+/**
+ * @brief Returns the root for per-user cache data.
+ *
+ * @return The directory, or an empty string when it cannot be determined (or the platform has no separate root).
+ */
+String cacheDirectory();
+
+/**
+ * @brief Fills @p info with the memory facts.
+ *
+ * @details
+ * - A field the platform cannot answer is left at 0; the shared caller does not substitute a guess.
+ *
+ * @param info Structure to fill; may be left all-zero where the platform has no query.
+ */
+void fillMemoryInfo(MemoryInfo& info);
+
+/**
+ * @brief Returns the machine name.
+ *
+ * @return The name, or an empty string when the platform does not expose one.
+ */
+String hostName();
+
+/**
+ * @brief Returns the account name of the user owning this process.
+ *
+ * @return The account name, or an empty string when the platform cannot answer.
+ */
+String userName();
 
 } // namespace detail
 

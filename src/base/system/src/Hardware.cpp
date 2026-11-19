@@ -46,6 +46,15 @@ const MotherboardInfo& Hardware::motherboard()
     return cached;
 }
 
+MemoryInfo Hardware::memory()
+{
+    // Not cached: availableBytes moves with every allocation on the machine, so an answer is a
+    // snapshot of this call and not a fact about the process.
+    MemoryInfo info;
+    detail::fillMemoryInfo(info);
+    return info;
+}
+
 std::vector<DiskInfo> Hardware::disks()
 {
     // Not cached: a volume can be mounted, removed or filled while the process runs, and the header

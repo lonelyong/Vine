@@ -1,6 +1,7 @@
 #include "SystemPlatform.hpp"
 
 #include <thread>
+#include <utility>
 #include <vector>
 
 VN_SYSTEM_NS_BEGIN
@@ -65,6 +66,54 @@ std::vector<int> pidsByName(const String&)
 bool terminatePid(int)
 {
     return false;
+}
+
+bool environmentVariable(const String&, String&)
+{
+    return false;
+}
+
+std::vector<std::pair<String, String>> environmentVariables()
+{
+    return {};
+}
+
+String temporaryDirectory()
+{
+    return {};
+}
+
+String homeDirectory()
+{
+    return {};
+}
+
+String dataDirectory()
+{
+    return {};
+}
+
+String configDirectory()
+{
+    return {};
+}
+
+String cacheDirectory()
+{
+    return {};
+}
+
+void fillMemoryInfo(MemoryInfo&)
+{}
+
+String hostName()
+{
+    return {};
+}
+
+String userName()
+{
+    return {};
 }
 
 } // namespace detail

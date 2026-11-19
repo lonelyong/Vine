@@ -1,18 +1,26 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include <vine/system/Directories.hpp>
+#include <vine/system/Environment.hpp>
 #include <vine/system/Hardware.hpp>
+#include <vine/system/Host.hpp>
 #include <vine/system/OperatingSystem.hpp>
 #include <vine/system/Process.hpp>
 
 using vn::String;
+using vn::system::Directories;
+using vn::system::Environment;
 using vn::system::Hardware;
+using vn::system::Host;
 using vn::system::OperatingSystem;
 using vn::system::Process;
 
@@ -195,6 +203,79 @@ TEST(SystemTest, DiskSpaceOfAnUnknownPathIsZero)
 {
     EXPECT_EQ(Hardware::diskTotalSpace(u8"vine-no-such-path-7f3c"), 0ull);
     EXPECT_EQ(Hardware::diskFreeSpace(u8"vine-no-such-path-7f3c"), 0ull);
+}
+
+TEST(SystemTest, EnvironmentAnswersPresenceAndValue)
+{
+    // PATH is the one variable every platform gives this process.
+    EXPECT_TRUE(Environment::has(u8"PATH"));
+    EXPECT_FALSE(Environment::value(u8"PATH").empty());
+
+    EXPECT_FALSE(Environment::has(String()));
+    EXPECT_TRUE(Environment::value(String()).empty());
+    EXPECT_FALSE(Environment::has(u8"VINE_NO_SUCH_VARIABLE_7F3C"));
+    EXPECT_TRUE(Environment::value(u8"VINE_NO_SUCH_VARIABLE_7F3C").empty());
+}
+
+#if !defined(_WIN32)
+TEST(SystemTest, EnvironmentSeesAVariableSetByTheProcess)
+{
+    ASSERT_EQ(::setenv("VINE_SYSTEM_TEST_VARIABLE", "value-1", 1), 0);
+    EXPECT_TRUE(Environment::has(u8"VINE_SYSTEM_TEST_VARIABLE"));
+    EXPECT_EQ(Environment::value(u8"VINE_SYSTEM_TEST_VARIABLE"), String(u8"value-1"));
+
+    ASSERT_EQ(::unsetenv("VINE_SYSTEM_TEST_VARIABLE"), 0);
+    EXPECT_FALSE(Environment::has(u8"VINE_SYSTEM_TEST_VARIABLE"));
+}
+#endif
+
+TEST(SystemTest, EnvironmentListsEveryVariable)
+{
+    const auto variables = Environment::variables();
+    ASSERT_FALSE(variables.empty());
+    const bool has_path =
+        std::any_of(variables.begin(), variables.end(), [](const std::pair<String, String>& entry) { return entry.first == String(u8"PATH"); });
+    EXPECT_TRUE(has_path);
+}
+
+TEST(SystemTest, DirectoryRootsHaveNoTrailingSeparator)
+{
+    const String roots[] = { Directories::temporary(), Directories::home(), Directories::data(), Directories::config(), Directories::cache() };
+    for (const String& root : roots) {
+        ASSERT_FALSE(root.empty());
+        const char8_t last = root.back();
+        EXPECT_NE(last, u8'/') << narrow(root);
+        EXPECT_NE(last, u8'\\') << narrow(root);
+    }
+}
+
+TEST(SystemTest, TemporaryAndHomeAreRealDirectories)
+{
+    EXPECT_TRUE(std::filesystem::is_directory(std::filesystem::path(narrow(Directories::temporary()))));
+    EXPECT_TRUE(std::filesystem::is_directory(std::filesystem::path(narrow(Directories::home()))));
+}
+
+TEST(SystemTest, ExecutableDirectoryContainsTheExecutable)
+{
+    const String directory  = Directories::executableDirectory();
+    const String executable = Process::currentExecutablePath();
+    ASSERT_FALSE(directory.empty());
+    ASSERT_FALSE(executable.empty());
+    EXPECT_EQ(narrow(executable).rfind(narrow(directory), 0), 0u) << narrow(directory) << " vs " << narrow(executable);
+}
+
+TEST(SystemTest, MemoryInfoIsFilled)
+{
+    const auto memory = Hardware::memory();
+    EXPECT_GT(memory.totalBytes, 0ull);
+    EXPECT_LE(memory.availableBytes, memory.totalBytes);
+    EXPECT_GT(memory.pageSize, 0u);
+}
+
+TEST(SystemTest, HostIsIdentified)
+{
+    EXPECT_FALSE(Host::hostName().empty());
+    EXPECT_FALSE(Host::userName().empty());
 }
 
 TEST(SystemTest, HardwareDetails)

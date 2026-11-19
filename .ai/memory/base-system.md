@@ -7,7 +7,7 @@
 | File | Holds |
 |---|---|
 | `SystemPlatform.hpp` | The private seam: `detail::` hooks only. Not installed, not exported. |
-| `Process.cpp`, `Hardware.cpp`, `OperatingSystem.cpp` | The policy that is the same everywhere: the pid guard, query-once-and-cache, the "never report zero cores" fallback, and the "unknown" fill-in. |
+| `Process.cpp`, `Hardware.cpp`, `OperatingSystem.cpp`, `Environment.cpp`, `Directories.cpp`, `Host.cpp` | The policy that is the same everywhere: the pid guard, query-once-and-cache, the "never report zero cores" fallback, the "unknown" fill-in, the empty-name guard, the "no trailing separator" rule and the executable-directory derivation. |
 | `SystemWindows.cpp` | Every hook for Windows. |
 | `SystemLinux.cpp` | Every hook for Linux and Android. |
 | `SystemApple.cpp` | Every hook for macOS; disk and process enumeration answer empty by contract. |
@@ -18,10 +18,27 @@
 new file plus one line in that list. Adding a source file needs a reconfigure: the glob has no
 `CONFIGURE_DEPENDS`.
 
+## What the module answers
+
+Static queries only; no handles, no events, no lifetime. `Process`, `OperatingSystem`, `Hardware`,
+`Environment`, `Directories`, `Host`. Deliberately absent: process spawning, network interfaces,
+display/DPI (`window`), power events, and any registry/driver enumeration - each would turn a query
+set into an OS abstraction layer.
+
 ## Traps
 
 - clang-format sorts includes and moves `<tlhelp32.h>`, `<winioctl.h>` and `<winternl.h>` **before**
   `<windows.h>`; keep them in a `// clang-format off` block or the Windows half stops compiling.
+- Windows reports a variable that exists and is *empty* with a required size of 1 and stores 0
+  characters on the second call: existence is decided by the first call's return value alone.
+- `GetEnvironmentStringsW` also returns the per-drive working directories as `=C:=C:\dir`; they are
+  not name/value pairs and are skipped.
+- A dylib on macOS reads the environment array through `_NSGetEnviron()`, not `::environ`.
+- An `XDG_*` value that is not absolute is invalid and must be ignored (specification), so
+  `~/.local/share` and friends are the fallback, not `env + suffix`.
+- `getpwuid_r`, never `getpwuid`: the latter answers from one shared static buffer.
+- `availableBytes` is a snapshot that moves with every allocation on the machine - never cache it,
+  and do not read `MemoryInfo` as "memory free for this process".
 - `/sys/block` lists whole devices only; `/sys/class/block` also lists partitions. Never decide "is a
   partition" from the name: a "contains a digit" test drops `nvme0n1` and `mmcblk0`, i.e. every disk
   of a modern machine.
@@ -39,6 +56,10 @@ new file plus one line in that list. Adding a source file needs a reconfigure: t
 - `DiskInfo` is a volume (with the backing disk's identity) on Windows and a whole block device on
   Linux; `Hardware.hpp` states both.
 - `kind` is `"cdrom"` for an optical drive, whose capacity is 0 while it holds no media.
+- `Directories` answers the *roots* only; `<root>/<organization>/<application>` is appfw's layout.
+  No path carries a trailing separator, and nothing here creates a directory.
+- `Environment` is read-only on purpose: the environment is process-global state shared with every
+  dependency, so this module never sets or clears a variable.
 - Failures are silent by design: an empty string, an empty list or 0 - never an exception, never a
   guess.
 - The Windows and macOS halves are not compiled on Linux; a `-fsyntax-only -Wall -Wextra

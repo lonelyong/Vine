@@ -3,16 +3,26 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <pwd.h>
 #include <signal.h>
 #include <sys/statvfs.h>
+#include <sys/sysinfo.h>
+#include <sys/types.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+
+// Declared by POSIX; written here rather than relied on from a header, because <unistd.h> only
+// exposes it when the feature-test macros happen to allow it.
+extern char** environ;
 
 VN_SYSTEM_NS_BEGIN
 
@@ -271,6 +281,163 @@ std::vector<int> pidsByName(const String& name)
 bool terminatePid(int pid)
 {
     return ::kill(pid, SIGKILL) == 0;
+}
+
+bool environmentVariable(const String& name, String& value)
+{
+    if (name.empty()) {
+        return false;
+    }
+    const char* found = std::getenv(reinterpret_cast<const char*>(name.c_str()));
+    if (found == nullptr) {
+        return false;
+    }
+    value = fromLocal(found);
+    return true;
+}
+
+std::vector<std::pair<String, String>> environmentVariables()
+{
+    std::vector<std::pair<String, String>> result;
+    for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+        const std::string text(*entry);
+        const std::size_t equals = text.find('=');
+        if (equals == std::string::npos) {
+            continue;
+        }
+        result.emplace_back(fromLocal(text.substr(0, equals)), fromLocal(text.substr(equals + 1)));
+    }
+    return result;
+}
+
+namespace
+{
+
+/// An absolute value of @p name, or an empty string: the XDG specification says a relative value is
+/// invalid and must be ignored, and an empty one means "not set".
+String absoluteVariable(const char* name)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr || *value != '/') {
+        return {};
+    }
+    return fromLocal(value);
+}
+
+String below(const String& root, const char8_t* leaf)
+{
+    return root.empty() ? String() : root + leaf;
+}
+
+bool readMeminfoKiB(const std::string& line, const char* key, std::uint64_t& out)
+{
+    const std::size_t key_length = std::strlen(key);
+    if (line.compare(0, key_length, key) != 0) {
+        return false;
+    }
+    unsigned long long kib = 0;
+    if (std::sscanf(line.c_str() + key_length, " %llu", &kib) != 1) {
+        return false;
+    }
+    out = static_cast<std::uint64_t>(kib) * 1024;
+    return true;
+}
+
+} // namespace
+
+String temporaryDirectory()
+{
+    // TMPDIR first: a mount namespace, a systemd unit or a container sets it per process, and the
+    // world-writable /tmp is only the fallback.
+    const String from_variable = absoluteVariable("TMPDIR");
+    return from_variable.empty() ? String(u8"/tmp") : from_variable;
+}
+
+String homeDirectory()
+{
+    const char* value = std::getenv("HOME");
+    return value != nullptr ? fromLocal(value) : String();
+}
+
+String dataDirectory()
+{
+    const String from_variable = absoluteVariable("XDG_DATA_HOME");
+    return from_variable.empty() ? below(homeDirectory(), u8"/.local/share") : from_variable;
+}
+
+String configDirectory()
+{
+    const String from_variable = absoluteVariable("XDG_CONFIG_HOME");
+    return from_variable.empty() ? below(homeDirectory(), u8"/.config") : from_variable;
+}
+
+String cacheDirectory()
+{
+    const String from_variable = absoluteVariable("XDG_CACHE_HOME");
+    return from_variable.empty() ? below(homeDirectory(), u8"/.cache") : from_variable;
+}
+
+void fillMemoryInfo(MemoryInfo& info)
+{
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size > 0) {
+        info.pageSize = static_cast<std::uint32_t>(page_size);
+    }
+
+    // MemTotal / MemAvailable are the kernel's own answer for what a new allocation can get;
+    // sysinfo() is the fallback for kernels that publish no MemAvailable (before 3.14).
+    bool          total_known = false;
+    std::ifstream meminfo("/proc/meminfo");
+    std::string   line;
+    while (std::getline(meminfo, line)) {
+        if (!total_known) {
+            total_known = readMeminfoKiB(line, "MemTotal:", info.totalBytes);
+            continue;
+        }
+        if (readMeminfoKiB(line, "MemAvailable:", info.availableBytes)) {
+            break;
+        }
+    }
+
+    if (total_known && info.availableBytes != 0) {
+        return;
+    }
+    struct sysinfo usage{};
+    if (sysinfo(&usage) == 0) {
+        if (!total_known) {
+            info.totalBytes = static_cast<std::uint64_t>(usage.totalram) * usage.mem_unit;
+        }
+        if (info.availableBytes == 0) {
+            info.availableBytes = static_cast<std::uint64_t>(usage.freeram) * usage.mem_unit;
+        }
+    }
+}
+
+String hostName()
+{
+    char name[256] = {};
+    if (::gethostname(name, sizeof(name)) != 0) {
+        return {};
+    }
+    name[sizeof(name) - 1] = '\0'; // The call does not terminate a name it had to truncate.
+    return fromLocal(name);
+}
+
+String userName()
+{
+    // getpwuid_r, not getpwuid: the latter answers from a shared static buffer, and several threads
+    // may ask at the same time.
+    long buffer_size = ::sysconf(_SC_GETPW_R_SIZE_MAX);
+    if (buffer_size <= 0) {
+        buffer_size = 16384;
+    }
+    std::vector<char> storage(static_cast<std::size_t>(buffer_size));
+    struct passwd     entry{};
+    struct passwd*    found = nullptr;
+    if (::getpwuid_r(::getuid(), &entry, storage.data(), storage.size(), &found) != 0 || found == nullptr) {
+        return {};
+    }
+    return fromLocal(found->pw_name);
 }
 
 } // namespace detail

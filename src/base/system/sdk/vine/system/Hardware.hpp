@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "system_global.hpp"
 
+#include <cstdint>
 #include <vector>
 
 #include <vine/String.hpp>
@@ -15,6 +16,18 @@ struct VN_SYSTEM_API CpuInfo {
     String   model;             // CPU model name; empty where the platform exposes no model string.
     unsigned physicalCores = 0; // Physical core count; never 0 once read through Hardware::cpu().
     unsigned logicalCores  = 0; // Logical core count (includes hyper-threading); never 0 once read through Hardware::cpu().
+};
+
+/**
+ * @brief Describes the system memory.
+ *
+ * @note
+ * - The fields are a snapshot: availableBytes changes with every allocation made anywhere on the machine.
+ */
+struct VN_SYSTEM_API MemoryInfo {
+    std::uint64_t totalBytes     = 0; // Physical memory in bytes; 0 when the platform cannot answer.
+    std::uint64_t availableBytes = 0; // Memory the system can hand to a new allocation; 0 when unknown.
+    std::uint32_t pageSize       = 0; // Smallest unit the platform maps in bytes; 0 when unknown.
 };
 
 /**
@@ -53,6 +66,7 @@ struct VN_SYSTEM_API DiskInfo {
  * - cpu() and motherboard() are built once on first call and then cached; the calls are thread-safe (the cache is a
  *   function-local static, initialised under the language's guard variable).
  * - disks() enumerates the current state on every call, because a volume can appear or disappear while the process runs.
+ * - memory() answers a snapshot on every call; availableBytes is state, not a constant.
  * - The disk space helpers report the volume that contains the given path.
  *
  * @note
@@ -76,6 +90,20 @@ class VN_SYSTEM_API Hardware {
      * @return The motherboard information; borrowed, valid for the lifetime of the process.
      */
     static const MotherboardInfo& motherboard();
+
+    /**
+     * @brief Returns the system memory facts.
+     *
+     * @details
+     * - availableBytes is what the system reports as usable for a new allocation, not "total minus what this process
+     *   asked for": it moves while the process runs, which is why the call is not cached.
+     *
+     * @note
+     * - A field the platform cannot answer is 0, including on a platform the module does not implement.
+     *
+     * @return The memory facts; a snapshot, not state.
+     */
+    static MemoryInfo memory();
 
     /**
      * @brief Enumerates the storage the platform reports as a disk or volume.

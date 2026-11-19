@@ -406,6 +406,169 @@ bool terminatePid(int pid)
     return ok != FALSE;
 }
 
+namespace
+{
+
+/// Reads a variable whose name is ASCII (the environment names this module asks for are).
+String variable(const char* name)
+{
+    String value;
+    environmentVariable(String::fromLocal8Bit(name), value);
+    return value;
+}
+
+} // namespace
+
+bool environmentVariable(const String& name, String& value)
+{
+    if (name.empty()) {
+        return false;
+    }
+    const auto  wide_name = name.toUtf16();
+    const auto* wide_text = reinterpret_cast<const wchar_t*>(wide_name.c_str());
+
+    // The first call asks for the size. A variable that exists and is empty needs one character,
+    // and an absent variable reports 0, so existence and emptiness are decided here and not by the
+    // second call, which stores 0 characters for an empty value.
+    const DWORD required = GetEnvironmentVariableW(wide_text, nullptr, 0);
+    if (required == 0) {
+        return false;
+    }
+    if (required == 1) {
+        value.clear();
+        return true;
+    }
+    std::vector<wchar_t> buffer(required, L'\0');
+    const DWORD          copied = GetEnvironmentVariableW(wide_text, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (copied == 0 || copied >= buffer.size()) {
+        return false;
+    }
+    value = String::fromUtf16(reinterpret_cast<const char16_t*>(buffer.data()), copied);
+    return true;
+}
+
+std::vector<std::pair<String, String>> environmentVariables()
+{
+    std::vector<std::pair<String, String>> result;
+
+    const LPWCH block = GetEnvironmentStringsW();
+    if (block == nullptr) {
+        return result;
+    }
+    for (const wchar_t* entry = block; *entry != L'\0'; entry += std::wcslen(entry) + 1) {
+        // "=C:=C:\dir" is a per-drive working directory, not a name/value pair a caller can use.
+        if (*entry == L'=') {
+            continue;
+        }
+        const wchar_t* equals = std::wcschr(entry, L'=');
+        if (equals == nullptr) {
+            continue;
+        }
+        result.emplace_back(String::fromUtf16(reinterpret_cast<const char16_t*>(entry), static_cast<std::size_t>(equals - entry)),
+                            String::fromUtf16(reinterpret_cast<const char16_t*>(equals + 1)));
+    }
+    FreeEnvironmentStringsW(block);
+    return result;
+}
+
+String temporaryDirectory()
+{
+    std::vector<wchar_t> buffer(MAX_PATH);
+    for (;;) {
+        // Too small a buffer reports the size it needs, including the terminating null.
+        const DWORD length = GetTempPathW(static_cast<DWORD>(buffer.size()), buffer.data());
+        if (length == 0) {
+            return {};
+        }
+        if (length < buffer.size()) {
+            return String::fromUtf16(reinterpret_cast<const char16_t*>(buffer.data()), length);
+        }
+        buffer.resize(length + 1);
+    }
+}
+
+String homeDirectory()
+{
+    const String profile = variable("USERPROFILE");
+    if (!profile.empty()) {
+        return profile;
+    }
+    // A profile that is served from a network share reports the drive and the path separately.
+    return variable("HOMEDRIVE") + variable("HOMEPATH");
+}
+
+String dataDirectory()
+{
+    const String local = variable("LOCALAPPDATA");
+    if (!local.empty()) {
+        return local;
+    }
+    const String home = homeDirectory();
+    return home.empty() ? String() : home + u8"\\AppData\\Local";
+}
+
+String configDirectory()
+{
+    const String roaming = variable("APPDATA");
+    if (!roaming.empty()) {
+        return roaming;
+    }
+    const String home = homeDirectory();
+    return home.empty() ? String() : home + u8"\\AppData\\Roaming";
+}
+
+String cacheDirectory()
+{
+    // Windows has one per-user local root; it does not separate "cache" from "data".
+    return dataDirectory();
+}
+
+void fillMemoryInfo(MemoryInfo& info)
+{
+    MEMORYSTATUSEX status{};
+    status.dwLength = static_cast<DWORD>(sizeof(status));
+    if (GlobalMemoryStatusEx(&status)) {
+        info.totalBytes     = status.ullTotalPhys;
+        info.availableBytes = status.ullAvailPhys;
+    }
+
+    SYSTEM_INFO system_info{};
+    GetSystemInfo(&system_info);
+    info.pageSize = system_info.dwPageSize;
+}
+
+String hostName()
+{
+    constexpr DWORD kCapacity         = 256;
+    wchar_t         buffer[kCapacity] = {};
+    DWORD           size              = kCapacity;
+
+    // The DNS name first: the legacy NetBIOS name is capped at 15 characters.
+    if (!GetComputerNameExW(ComputerNameDnsHostname, buffer, &size)) {
+        size = kCapacity;
+        if (!GetComputerNameW(buffer, &size)) {
+            return {};
+        }
+    }
+    return String::fromUtf16(reinterpret_cast<const char16_t*>(buffer), size);
+}
+
+String userName()
+{
+    DWORD required = 0;
+    GetUserNameW(nullptr, &required); // Fails with ERROR_INSUFFICIENT_BUFFER and reports the size.
+    if (required == 0) {
+        return {};
+    }
+    std::vector<wchar_t> buffer(required, L'\0');
+    DWORD                copied = required;
+    if (!GetUserNameW(buffer.data(), &copied) || copied == 0) {
+        return {};
+    }
+    // The report counts the terminating null.
+    return String::fromUtf16(reinterpret_cast<const char16_t*>(buffer.data()), copied - 1);
+}
+
 } // namespace detail
 
 VN_SYSTEM_NS_END
