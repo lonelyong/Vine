@@ -1,5 +1,7 @@
 #include <vine/system/Hardware.hpp>
 
+#include <cstdint>
+
 #include "SystemPlatform.hpp"
 
 VN_SYSTEM_NS_BEGIN
@@ -62,12 +64,12 @@ std::vector<DiskInfo> Hardware::disks()
     return detail::enumerateDisks();
 }
 
-unsigned long long Hardware::diskTotalSpace(const String& path)
+std::uint64_t Hardware::diskTotalSpace(const String& path)
 {
     return detail::volumeTotalSpace(path);
 }
 
-unsigned long long Hardware::diskFreeSpace(const String& path)
+std::uint64_t Hardware::diskFreeSpace(const String& path)
 {
     return detail::volumeFreeSpace(path);
 }

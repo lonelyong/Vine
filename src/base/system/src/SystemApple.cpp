@@ -59,11 +59,11 @@ void fillCpuInfo(CpuInfo& info)
 {
     int logical = 0;
     if (sysctlValue("hw.logicalcpu", &logical, sizeof(logical)) && logical > 0) {
-        info.logicalCores = static_cast<unsigned>(logical);
+        info.logicalCores = static_cast<std::uint32_t>(logical);
     }
     int physical = 0;
     if (sysctlValue("hw.physicalcpu", &physical, sizeof(physical)) && physical > 0) {
-        info.physicalCores = static_cast<unsigned>(physical);
+        info.physicalCores = static_cast<std::uint32_t>(physical);
     }
 
     char buffer[256] = {};
@@ -94,7 +94,7 @@ std::vector<DiskInfo> enumerateDisks()
     return {};
 }
 
-unsigned long long volumeTotalSpace(const String& path)
+std::uint64_t volumeTotalSpace(const String& path)
 {
     struct statvfs vfs{};
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {
@@ -103,7 +103,7 @@ unsigned long long volumeTotalSpace(const String& path)
     return static_cast<unsigned long long>(vfs.f_blocks) * vfs.f_frsize;
 }
 
-unsigned long long volumeFreeSpace(const String& path)
+std::uint64_t volumeFreeSpace(const String& path)
 {
     struct statvfs vfs{};
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {

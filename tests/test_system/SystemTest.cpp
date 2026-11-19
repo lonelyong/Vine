@@ -18,6 +18,7 @@
 
 using vn::String;
 using vn::system::Directories;
+using vn::system::DiskKind;
 using vn::system::Environment;
 using vn::system::Hardware;
 using vn::system::Host;
@@ -31,6 +32,19 @@ namespace
 std::string narrow(const String& text)
 {
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
+/// The spelling a log or a test message prints for a kind.
+const char* kindText(DiskKind kind)
+{
+    switch (kind) {
+    case DiskKind::Fixed: return "fixed";
+    case DiskKind::Removable: return "removable";
+    case DiskKind::Network: return "network";
+    case DiskKind::CdRom: return "cdrom";
+    case DiskKind::Unknown: break;
+    }
+    return "unknown";
 }
 
 String exeName(const String& path)
@@ -136,10 +150,12 @@ TEST(SystemTest, DisksAreEnumerated)
     ASSERT_FALSE(disks.empty());
     for (const auto& disk : disks) {
         EXPECT_FALSE(disk.name.empty());
-        EXPECT_FALSE(disk.kind.empty());
+        // Unknown is a legitimate answer on a platform that reports a drive it cannot classify;
+        // Linux classifies every whole device it reports.
+        EXPECT_NE(disk.kind, DiskKind::Unknown) << narrow(disk.name);
         // An optical drive reports 0 while it holds no media; every other entry has a capacity.
-        if (disk.kind != String(u8"cdrom")) {
-            EXPECT_GT(disk.capacity, 0ull) << narrow(disk.name);
+        if (disk.kind != DiskKind::CdRom) {
+            EXPECT_GT(disk.capacity, 0ull) << narrow(disk.name) << " kind=" << kindText(disk.kind);
         }
     }
 #endif
@@ -289,7 +305,7 @@ TEST(SystemTest, HardwareDetails)
 
     for (const auto& disk : Hardware::disks()) {
         std::cout << "Disk " << narrow(disk.name) << " model=" << narrow(disk.model) << " serial=" << narrow(disk.serial) << " cap=" << disk.capacity
-                  << " kind=" << narrow(disk.kind) << "\n";
+                  << " kind=" << kindText(disk.kind) << "\n";
     }
     SUCCEED();
 }

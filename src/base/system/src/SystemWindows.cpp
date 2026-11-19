@@ -1,6 +1,7 @@
 #include "SystemPlatform.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <cwchar>
 #include <string>
@@ -173,7 +174,7 @@ void fillDiskIdentity(int disk_number, DiskInfo& disk)
     }
 }
 
-unsigned long long queryVolumeSpace(const String& path, bool free)
+std::uint64_t queryVolumeSpace(const String& path, bool free)
 {
     if (path.empty()) {
         return 0;
@@ -231,7 +232,7 @@ void fillOsInfo(OperatingSystemInfo& info)
 
 void fillCpuInfo(CpuInfo& info)
 {
-    info.logicalCores = static_cast<unsigned>(std::thread::hardware_concurrency());
+    info.logicalCores = static_cast<std::uint32_t>(std::thread::hardware_concurrency());
 
     DWORD size = 0;
     GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &size);
@@ -248,7 +249,7 @@ void fillCpuInfo(CpuInfo& info)
                 ++count;
                 offset += record->Size;
             }
-            info.physicalCores = count;
+            info.physicalCores = static_cast<std::uint32_t>(count);
         }
     }
 
@@ -311,11 +312,11 @@ std::vector<DiskInfo> enumerateDisks()
         disk.name = String::fromUtf16(reinterpret_cast<const char16_t*>(drive_root.c_str()));
 
         switch (GetDriveTypeW(drive_root.c_str())) {
-        case DRIVE_FIXED: disk.kind = u8"fixed"; break;
-        case DRIVE_REMOVABLE: disk.kind = u8"removable"; break;
-        case DRIVE_REMOTE: disk.kind = u8"network"; break;
-        case DRIVE_CDROM: disk.kind = u8"cdrom"; break;
-        default: disk.kind = u8"unknown"; break;
+        case DRIVE_FIXED: disk.kind = DiskKind::Fixed; break;
+        case DRIVE_REMOVABLE: disk.kind = DiskKind::Removable; break;
+        case DRIVE_REMOTE: disk.kind = DiskKind::Network; break;
+        case DRIVE_CDROM: disk.kind = DiskKind::CdRom; break;
+        default: disk.kind = DiskKind::Unknown; break;
         }
 
         ULARGE_INTEGER free_to_caller{}, total{}, free_total{};
@@ -328,12 +329,12 @@ std::vector<DiskInfo> enumerateDisks()
     return result;
 }
 
-unsigned long long volumeTotalSpace(const String& path)
+std::uint64_t volumeTotalSpace(const String& path)
 {
     return queryVolumeSpace(path, false);
 }
 
-unsigned long long volumeFreeSpace(const String& path)
+std::uint64_t volumeFreeSpace(const String& path)
 {
     return queryVolumeSpace(path, true);
 }

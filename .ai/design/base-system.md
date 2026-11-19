@@ -94,12 +94,13 @@ module small enough that a platform half can be read in one pass.
 
 - What it is: `OperatingSystemInfo::version` is the platform's own spelling (Windows
   `major.minor.build`; Linux and macOS the `uname` kernel release); `DiskInfo` is a volume on Windows
-  and a whole block device on Linux; `kind` is a closed set of five words; `exists()` answers
-  existence, not accessibility.
+  and a whole block device on Linux; `kind` is `DiskKind`, a closed set of five values with a stated
+  width; `exists()` answers existence, not accessibility.
 - Why: a caller that reads "10.0.19045" and a caller that reads "6.8.0-45-generic" are not reading
   the same fact, and a header that says "OS version" for both invites a wrong comparison.
-- Boundary: the fields stay strings where the platform's vocabulary is open (architecture, model);
-  they become an `enum` where it is closed, once the change can break the ABI (backlog `B2`).
+- Boundary: a field stays a string where the platform's vocabulary is open (architecture, model); a
+  closed end of the vocabulary is an `enum class` with a stated underlying type (`DiskKind`), so a
+  caller cannot invent a sixth word and a log can print one.
 
 ### 2.5 **Cache only what cannot change** (G10)
 
@@ -162,7 +163,7 @@ module small enough that a platform half can be read in one pass.
   (`MemoryInfo`); `disks()` enumerates the platform's storage; `diskTotalSpace(path)` and
   `diskFreeSpace(path)` answer for the volume holding a path.
 - **Constraints** (C3, C4): core counts are never 0; `disks()` reports whole devices only and never a
-  partition; a `cdrom` may report capacity 0.
+  partition; a `DiskKind::CdRom` entry may report capacity 0.
 - **Requirements** (R4, R5): `availableBytes` is what the system can hand to a new allocation;
   `diskFreeSpace` is space available to the calling user.
 - **Acceptance** (T3).
@@ -224,7 +225,7 @@ module small enough that a platform half can be read in one pass.
 | `cpu()` | `CpuInfo`, cached | never reports 0 cores |
 | `motherboard()` | `MotherboardInfo`, cached | |
 | `memory()` | `MemoryInfo` snapshot | not cached |
-| `disks()` | `std::vector<DiskInfo>` | not cached; real I/O |
+| `disks()` | `std::vector<DiskInfo>`; `kind` is a `DiskKind` | not cached; real I/O |
 | `diskTotalSpace(path)` | Bytes, 0 when unknown | |
 | `diskFreeSpace(path)` | Bytes available to the caller, 0 when unknown | |
 
@@ -266,6 +267,8 @@ module small enough that a platform half can be read in one pass.
 - **C3** `CpuInfo::logicalCores` and `physicalCores` are at least 1 and `physicalCores <=
   logicalCores` after the shared fallback.
 - **C4** `disks()` returns whole devices only; a partition is never reported.
+- **C9** A public value enum states its underlying type: `DiskKind : std::uint8_t`; the value counts
+  and byte counts are `std::uint32_t` / `std::uint64_t`, never `unsigned` or `unsigned long long`.
 - **C5** A query never throws and never reports a reason; its empty value is the whole answer.
 - **C6** `Environment` never writes; names and values cross the seam as UTF-8.
 - **C7** A `Directories` answer carries no trailing separator and never creates anything.
@@ -345,7 +348,6 @@ module small enough that a platform half can be read in one pass.
 | D3 | Error codes or `expected` on every query | Every consumer reads a display fact; a reason nobody acts on costs every signature (`G8`) | none |
 | D4 | Caching every answer | `availableBytes`, volume lists and directory roots change while the process runs; a cache would publish stale facts (`G10`) | none |
 | D5 | Adding process creation, power events or device notifications | Each needs pipes/timeouts or an event loop, i.e. a different kind of module (`G1`, `G8`) | none |
-| D6 | `DiskInfo::kind` as an `enum` in this batch | It changes the ABI; the value stays a five-word string until a batch that already breaks it (backlog `B2`) | none |
 
 ## 8. Tests and Acceptance
 
@@ -371,21 +373,26 @@ halves are not compiled on the Linux build machine; every edit to them is review
 
 ### 9.2 Known Gaps and Backlog
 
-- `B2` in `../backlog/base-system.md`: fixed-width value types (`std::uint32_t` / `std::uint64_t`) and
-  `DiskKind` as an `enum class`, both ABI-breaking and therefore waiting for a batch that already
-  breaks this module's ABI.
-- `B3`: macOS does not implement `findByName()` or `disks()`.
-- macOS reports the Darwin kernel release as `version`; a split into `os_version` and
-  `kernel_version` is part of the same ABI batch.
+- `B3` in `../backlog/base-system.md`: macOS does not implement `findByName()` or `disks()`.
+- `B4`: macOS reports the Darwin kernel release and Linux the distribution-independent kernel release
+  as `version`; splitting the field into `os_version` and `kernel_version` changes the struct and is
+  therefore its own item.
 
 ### 9.3 Compatibility and Migration
 
-- The class set is additive: `Environment`, `Directories` and `Host` are new, and `memory()` extends
-  `Hardware` without changing existing signatures.
-- `DiskInfo::kind` keeps its five-word vocabulary until `B2`; a caller may compare the words today and
-  will migrate in that batch.
-- A platform the module does not implement now answers with defined empty values instead of
-  undefined behaviour, so a port starts by adding one file.
+The ABI batch (`B2`) broke three declarations on purpose; a consumer must recompile, and no source
+change is needed:
+
+- `CpuInfo::physicalCores` / `logicalCores`: `unsigned` -> `std::uint32_t`.
+- `DiskInfo::capacity`, `Hardware::diskTotalSpace()` / `diskFreeSpace()`: `unsigned long long` ->
+  `std::uint64_t`.
+- `DiskInfo::kind`: `String` -> `DiskKind`; a caller that compared words now compares
+  `DiskKind::CdRom` and friends.
+
+The class set stays additive otherwise: `Environment`, `Directories` and `Host` are separate classes
+and `memory()` extends `Hardware` without changing existing signatures. A platform the module does
+not implement answers with defined empty values instead of undefined behaviour, so a port starts by
+adding one file.
 
 ## 10. References
 

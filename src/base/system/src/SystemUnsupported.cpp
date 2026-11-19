@@ -1,5 +1,6 @@
 #include "SystemPlatform.hpp"
 
+#include <cstdint>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -22,7 +23,7 @@ void fillOsInfo(OperatingSystemInfo& info)
 void fillCpuInfo(CpuInfo& info)
 {
     // Core counts are portable, so they are still answered.
-    info.logicalCores = static_cast<unsigned>(std::thread::hardware_concurrency());
+    info.logicalCores = static_cast<std::uint32_t>(std::thread::hardware_concurrency());
 }
 
 void fillMotherboardInfo(MotherboardInfo&)
@@ -33,12 +34,12 @@ std::vector<DiskInfo> enumerateDisks()
     return {};
 }
 
-unsigned long long volumeTotalSpace(const String&)
+std::uint64_t volumeTotalSpace(const String&)
 {
     return 0;
 }
 
-unsigned long long volumeFreeSpace(const String&)
+std::uint64_t volumeFreeSpace(const String&)
 {
     return 0;
 }

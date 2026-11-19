@@ -58,7 +58,9 @@ set into an OS abstraction layer.
   Linux and macOS the `uname` kernel release.
 - `DiskInfo` is a volume (with the backing disk's identity) on Windows and a whole block device on
   Linux; `Hardware.hpp` states both.
-- `kind` is `"cdrom"` for an optical drive, whose capacity is 0 while it holds no media.
+- `kind` is `DiskKind::CdRom` for an optical drive, whose capacity is 0 while it holds no media; the
+  five-value enum states its width (`std::uint8_t`), and the core counts and byte counts are
+  `std::uint32_t` / `std::uint64_t`.
 - `Directories` answers the *roots* only; `<root>/<organization>/<application>` is appfw's layout.
   No path carries a trailing separator, and nothing here creates a directory.
 - `Environment` is read-only on purpose: the environment is process-global state shared with every

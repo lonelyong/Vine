@@ -2,6 +2,7 @@
 
 #include <vine/system/system_global.hpp>
 
+#include <cstdint>
 #include <cstring>
 #include <utility>
 #include <vector>
@@ -85,7 +86,7 @@ std::vector<DiskInfo> enumerateDisks();
  * @param path Any path on the volume; an empty or unresolvable path answers 0.
  * @return Bytes, or 0 when the query has no answer.
  */
-unsigned long long volumeTotalSpace(const String& path);
+std::uint64_t volumeTotalSpace(const String& path);
 
 /**
  * @brief Returns the space on the volume that holds @p path that is available to the calling user.
@@ -96,7 +97,7 @@ unsigned long long volumeTotalSpace(const String& path);
  * @param path Any path on the volume; an empty or unresolvable path answers 0.
  * @return Bytes, or 0 when the query has no answer.
  */
-unsigned long long volumeFreeSpace(const String& path);
+std::uint64_t volumeFreeSpace(const String& path);
 
 /**
  * @brief Returns the current process identifier.

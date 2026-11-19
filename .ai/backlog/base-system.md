@@ -3,20 +3,6 @@
 Scope: `src/base/system`. The current design is `.ai/design/base-system.md`; the live facts and traps
 are in `.ai/memory/base-system.md`.
 
-## B2 — value types that the SDK rule already describes
-
-The repository rule says identifiers, counts and bit masks use a fixed-width unsigned type, and that a
-public value enum states its underlying type. `base/system` predates the rule and is the only module
-still spelling it otherwise:
-
-- `CpuInfo::physicalCores` / `logicalCores`: `unsigned` -> `std::uint32_t`.
-- `DiskInfo::capacity`, `Hardware::diskTotalSpace` / `diskFreeSpace`: `unsigned long long` ->
-  `std::uint64_t`.
-- `DiskInfo::kind`: `String` -> `enum class DiskKind : std::uint8_t`.
-
-All three break the ABI. Trigger: the first batch that already breaks this module's ABI (as the enum
-rule in `.github/copilot-instructions.md` requires), not a comment sweep.
-
 ## B3 — macOS gaps the contract currently admits
 
 - `Process::findByName` is not implemented (no `KERN_PROC` enumeration): the empty list is honest but
@@ -24,3 +10,15 @@ rule in `.github/copilot-instructions.md` requires), not a comment sweep.
 - `Hardware::disks` is not implemented (IOKit): same shape of answer.
 
 Trigger: the first macOS consumer of either call.
+
+## B4 — an OS version and a kernel version are two facts
+
+`OperatingSystemInfo::version` reports the Windows build on Windows but the `uname` kernel release on
+Linux and macOS, so an About panel shows "6.8.0-45-generic" where a user expects a distribution
+version. The split (`os_version` from `/etc/os-release` / `kern.osproductversion` / the Windows build,
+`kernel_version` from `uname`) changes the struct and the per-platform contract, so it is its own
+batch rather than a rider on `B2`.
+
+Trigger: the first consumer that displays the version to a user, or the next ABI batch if that comes
+first.
+

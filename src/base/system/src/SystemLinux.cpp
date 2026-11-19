@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -98,7 +99,7 @@ void fillCpuInfo(CpuInfo& info)
 {
     const long online = sysconf(_SC_NPROCESSORS_ONLN);
     if (online > 0) {
-        info.logicalCores = static_cast<unsigned>(online);
+        info.logicalCores = static_cast<std::uint32_t>(online);
     }
 
     // Physical cores are the distinct (physical id, core id) pairs: /proc/cpuinfo repeats one block
@@ -133,7 +134,7 @@ void fillCpuInfo(CpuInfo& info)
     // Kernels that publish no core id (many ARM and some virtualised x86 ones) leave the list empty;
     // the shared caller then reports the logical count rather than a wrong, smaller number.
     if (!core_ids.empty()) {
-        info.physicalCores = static_cast<unsigned>(core_ids.size());
+        info.physicalCores = static_cast<std::uint32_t>(core_ids.size());
     }
 }
 
@@ -180,15 +181,19 @@ std::vector<DiskInfo> enumerateDisks()
 
         if (name.rfind("sr", 0) == 0) {
             // An optical drive is a disk the caller may want to see; its size is 0 while it holds no
-            // media, which is why DiskInfo::kind exists on the record.
-            disk.kind = u8"cdrom";
+            // media, which is what DiskKind::CdRom tells the caller.
+            disk.kind = DiskKind::CdRom;
+        }
+        else if (name.rfind("nbd", 0) == 0) {
+            // A network block device: the vocabulary has the word, and this is what it means.
+            disk.kind = DiskKind::Network;
         }
         else {
             int removable = 0;
             if (std::ifstream removable_file(entry.path() / "removable"); removable_file) {
                 removable_file >> removable;
             }
-            disk.kind = removable != 0 ? u8"removable" : u8"fixed";
+            disk.kind = removable != 0 ? DiskKind::Removable : DiskKind::Fixed;
         }
 
         disk.model  = fromLocal(readLine(entry.path() / "device" / "model"));
@@ -198,7 +203,7 @@ std::vector<DiskInfo> enumerateDisks()
     return result;
 }
 
-unsigned long long volumeTotalSpace(const String& path)
+std::uint64_t volumeTotalSpace(const String& path)
 {
     struct statvfs vfs{};
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {
@@ -207,7 +212,7 @@ unsigned long long volumeTotalSpace(const String& path)
     return static_cast<unsigned long long>(vfs.f_blocks) * vfs.f_frsize;
 }
 
-unsigned long long volumeFreeSpace(const String& path)
+std::uint64_t volumeFreeSpace(const String& path)
 {
     struct statvfs vfs{};
     if (statvfs(reinterpret_cast<const char*>(path.c_str()), &vfs) != 0 || vfs.f_frsize == 0) {

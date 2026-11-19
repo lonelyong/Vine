@@ -12,10 +12,10 @@ VN_SYSTEM_NS_BEGIN
  * @brief Describes the CPU.
  */
 struct VN_SYSTEM_API CpuInfo {
-    String   vendor;            // CPU vendor, e.g. "GenuineIntel"; empty where the platform exposes no vendor string.
-    String   model;             // CPU model name; empty where the platform exposes no model string.
-    unsigned physicalCores = 0; // Physical core count; never 0 once read through Hardware::cpu().
-    unsigned logicalCores  = 0; // Logical core count (includes hyper-threading); never 0 once read through Hardware::cpu().
+    String        vendor;            // CPU vendor, e.g. "GenuineIntel"; empty where the platform exposes no vendor string.
+    String        model;             // CPU model name; empty where the platform exposes no model string.
+    std::uint32_t physicalCores = 0; // Physical core count; never 0 once read through Hardware::cpu().
+    std::uint32_t logicalCores  = 0; // Logical core count (includes hyper-threading); never 0 once read through Hardware::cpu().
 };
 
 /**
@@ -41,6 +41,23 @@ struct VN_SYSTEM_API MotherboardInfo {
 };
 
 /**
+ * @brief Classifies a storage entry.
+ *
+ * @details
+ * - The five values are the whole vocabulary: a caller compares, a log prints, and no platform invents a
+ *   sixth word for a device that is really one of these.
+ * - `Unknown` is the zero value, so an unclassified device never reads as `Fixed`.
+ */
+enum class DiskKind : std::uint8_t
+{
+    Unknown,   // The platform could not classify the entry.
+    Fixed,     // A fixed (non-removable) volume or disk.
+    Removable, // Removable media.
+    Network,   // A network volume or a network-backed block device.
+    CdRom,     // An optical drive; capacity is 0 while it holds no media.
+};
+
+/**
  * @brief Describes one storage entry as the platform reports it.
  *
  * @details
@@ -49,14 +66,14 @@ struct VN_SYSTEM_API MotherboardInfo {
  * - Linux reports one entry per whole block device ("/dev/sda"), with that device's capacity.
  *
  * @note
- * - An optical drive is kind "cdrom" and reports a capacity of 0 while it holds no media.
+ * - An optical drive is `DiskKind::CdRom` and reports a capacity of 0 while it holds no media.
  */
 struct VN_SYSTEM_API DiskInfo {
-    String             name;         // Volume root (e.g. C:) or device node ("/dev/sda"); never empty.
-    String             model;        // Disk model; empty when unavailable.
-    String             serial;       // Disk serial number; empty when unavailable.
-    unsigned long long capacity = 0; // Total capacity in bytes; 0 for an optical drive without media.
-    String             kind;         // "fixed", "removable", "network", "cdrom" or "unknown".
+    String        name;                         // Volume root (e.g. C:) or device node ("/dev/sda"); never empty.
+    String        model;                        // Disk model; empty when unavailable.
+    String        serial;                       // Disk serial number; empty when unavailable.
+    std::uint64_t capacity = 0;                 // Total capacity in bytes; 0 for an optical drive without media.
+    DiskKind      kind     = DiskKind::Unknown; // What the platform reports the entry to be.
 };
 
 /**
@@ -126,7 +143,7 @@ class VN_SYSTEM_API Hardware {
      * @param path Any path on the volume to query.
      * @return The total capacity in bytes, or 0 when it cannot be determined.
      */
-    static unsigned long long diskTotalSpace(const String& path);
+    static std::uint64_t diskTotalSpace(const String& path);
 
     /**
      * @brief Returns the space of the volume containing the given path that is available to the calling user.
@@ -137,7 +154,7 @@ class VN_SYSTEM_API Hardware {
      * @param path Any path on the volume to query.
      * @return The available space in bytes, or 0 when it cannot be determined.
      */
-    static unsigned long long diskFreeSpace(const String& path);
+    static std::uint64_t diskFreeSpace(const String& path);
 };
 
 VN_SYSTEM_NS_END
