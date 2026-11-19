@@ -34,9 +34,14 @@ VN_RUNTIME_NS_BEGIN
 class VN_RUNTIME_API KeyValueStore {
   public:
     /**
+     * @brief Creates the store.
+     */
+    KeyValueStore();
+
+    /**
      * @brief Destroys the store.
      */
-    virtual ~KeyValueStore() = default;
+    virtual ~KeyValueStore();
 
     /**
      * @brief Returns the stored bytes for a key.
