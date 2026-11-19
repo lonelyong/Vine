@@ -12,11 +12,17 @@ class ProgressRange;
 /**
  * @brief An active progress stage.
  *
- * A scope maps its local range [0, max] onto a portion of the global progress
- * scale taken from a ProgressRange. Steps are allocated with next(), and the
- * scope advances the indicator to its end when completed or destroyed. An
- * empty scope is not attached to any indicator and safely performs no
- * reporting.
+ * @details
+ * - A scope maps its local range [0, max] onto a portion of the global progress scale taken from a
+ *   ProgressRange. Steps are allocated with next(), and the scope advances the indicator to its end when
+ *   completed or destroyed.
+ * - An empty scope is not attached to any indicator and safely performs no reporting.
+ * - One scope belongs to one thread: next() mutates its accounting. Several scopes may report into the same
+ *   indicator concurrently once each has been carved, which is the shape to use for parallel work.
+ *
+ * @warning
+ * - The scope holds a BORROWED indicator: it must be destroyed before that indicator, and a range handed out by
+ *   next() must be destroyed before the scope.
  */
 class VN_PROGRESS_API ProgressScope {
   public:
@@ -24,22 +30,47 @@ class VN_PROGRESS_API ProgressScope {
     friend class ProgressRange;
 
   public:
+    /**
+     * @brief Creates a detached scope that reports nothing.
+     *
+     * @details
+     * - The scope is inactive for its whole lifetime: being neither movable nor assignable, it never takes a
+     *   range over, so every operation on it is a no-op.
+     */
     ProgressScope();
 
-    explicit ProgressScope(const ProgressRange& range, const std::string& name = {}, double max = 1.0);
+    /**
+     * @brief Takes over a range and maps its local [0, max] scale onto it.
+     *
+     * @details
+     * - The range is consumed: it is left empty, because this scope now owns the reporting obligation.
+     * - An empty range - default-constructed or moved-from - yields an inactive scope that reports nothing.
+     *
+     * @param range Portion of the global scale to drive; consumed.
+     * @param name Stage label.
+     * @param max Local range length.
+     */
+    explicit ProgressScope(ProgressRange&& range, const std::string& name = {}, double max = 1.0);
 
     ~ProgressScope();
 
     ProgressScope(const ProgressScope&)            = delete;
     ProgressScope& operator=(const ProgressScope&) = delete;
+    ProgressScope(ProgressScope&&)                 = delete;
+    ProgressScope& operator=(ProgressScope&&)      = delete;
 
   public:
     /**
-     * @brief Allocates the next step and returns the range covering it.
+     * @brief Allocates the next step and hands out the range covering it.
+     *
+     * @details
+     * - The returned range reports the step when it is completed or destroyed, so the statement
+     *   `scope.next(1);` reports it immediately: place the call after the work if the bar must not run ahead.
+     * - Ignoring the result is the common case and is not an error; the temporary reports on the same line.
      *
      * @param step Local step size, in [0, max].
-     * @return The range covering the step, or an empty range if the scope is
-     *         inactive or the step does not advance the progress.
+     * @return The range covering the step, or an empty range if the scope is inactive or the step does not
+     *         advance the progress.
      */
     ProgressRange next(double step = 1.0);
 

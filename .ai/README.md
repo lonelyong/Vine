@@ -20,7 +20,7 @@ applications** (`src/apps/vine` → `Vine.exe`); `tools/<name>` holds **non-inst
 module's own process half (e.g. `src/base/crash/handler`'s `CrashHandler.exe`) stays in the module and
 does not move into `src/apps/`.
 
-## design/ — the living design (56)
+## design/ — the living design (57)
 
 Every design page has the same shape: **one-line purpose → design points (2.x) → features (F#) →
 public interface → caveats (N#) → rejected options (D#, one line + ADR link) → acceptance (T#) →
@@ -60,9 +60,10 @@ related documents**.
 - `appfw-app-info.md` — app identity and app info: `AppInfo` / `AppConfig::info`, `Application::appInfo()`, the about panel and dialogs.
 - `appfw-translation.md` — UI text translation: only appfw and above, source language English, translations Chinese only, the Qt catalogue ships with the module and is embedded (a file may override it), loaded at startup with an English fallback.
 
-**base and the rest (26)**
+**base and the rest (27)**
 - `async-design.md` — the `src/base/async` design (three rules that must hold).
 - `base-crash.md` — crash reporting: `vn::Crash` assembly / report format / handler symbolisation and the crash window.
+- `base-progress.md` — progress primitives: one [0, 1] scale, the move-only reporting handle and the staged scope, coalesced notification, the destruction-order and restart traps, and what appfw adds on top.
 - `brep-operations.md` — runtime B-rep operations: module ownership (`brep` / `brepio` / `geometry`), tessellation and primitive-to-solid contracts, failure representation.
 - `crypto.md` — the crypto module: algorithms only, one object one direction, incremental and one-shot are synonyms, backend initialisation in exactly one place (`detail::ensureLibraryInitialized`); today's implementation (digest / HMAC / HKDF / password hashing / AES-GCM·CBC·CTR / RSA / ECC plus DER, PEM and password-protected PKCS#8 key files) and the gaps (certificate parsing).
 - `geometry-axis-surfaces.md` — axisymmetric analytic surfaces (cylinder / cone / torus): the `Placement` value, the shared "in-plane axis" rule (`Frame.hpp`), rectangularly trimmed surfaces, and where spline surfaces stand.
@@ -88,13 +89,14 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (80)
+## decisions/ — decision records (ADRs) (81)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-19-progress-range-move-only.md` — the progress reporting handle is move-only: a copy that disarmed its source changed a `const` object's state and let assignment drop a pending portion; move assignment now completes the target first, "empty" is one invariant (`parent_scope_ == nullptr`), and a reference-counted handle is rejected because the reporting moment becomes unknowable.
 - `ADR-2026-11-18-plugin-command-attribution.md` — **a command is attributed by the call that registers it, not by the stack it happens to run on**: `PluginLoadContext::registerCommand()` sets the owner tag around that one call and restores it, `PluginManager` holds no tag across a lifecycle hook (the synchronous door pumps, so a suspended hook is not a boundary), and passing the owner per registration (an ABI change for every call site) is rejected.
 - `ADR-2026-11-18-the-frame-carries-its-context.md` — **the frame carries its context, and one clock measures it**:
   `FrameContext` (frame id, interval, area size, ratio) is composed by `RenderEngine::frameContext()` and handed to
@@ -199,7 +201,7 @@ proposals (`T40` / `T41`) keep their arguments where a design page cannot carry 
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
 
-## backlog/ — open work (14)
+## backlog/ — open work (15)
 
 Only items that are **not done and have a trigger**; delete them when done, and delete them when the
 decision is not to do them (the reason goes into an ADR).
@@ -213,6 +215,7 @@ decision is not to do them (the reason goes into an ADR).
 - `appfw-translation.md` — translation open items (runtime switching, the first English catalogue, plugin metadata, the lupdate gate, the deployment rule for the override file).
 - `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation).
 - `base-crash.md` — crash-report open items (last-crash prompt, terminate, stack guarantees, read-only directories, Linux, the upload trigger).
+- `base-progress.md` — progress open items (consumer-less scope accessors, stale-stage detection, the `max <= 0` policy, a non-throwing callback, the appfw plugin-ABI coupling).
 - `brep.md` — runtime B-rep open items (OCCT backend verification, booleans and sewing).
 - `crypto.md` — crypto open items (error-code classification, Argon2 threading mode, configurable write-out scheme, a second AEAD, leak detection).
 - `geom-planar.md` — planar-geometry open items (ellipse / arc / the `ConicCurve` layer, planar queries, `CircleCurve::pointAt`).

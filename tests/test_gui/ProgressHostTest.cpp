@@ -161,21 +161,22 @@ TEST(ProgressHostTest, RangeIsActiveOnceOnly)
 {
     ProgressHost host;
 
-    // range() 返回的 root 是 active 的（C++17 拷贝省略 / move-on-copy 都保证接收方 active）。
     ProgressRange r = host.range();
     EXPECT_TRUE(r.isActive());
 
-    // 一个 root 只能喂给一个顶层 scope：ProgressRange 是 move-on-copy，
-    // 第一个 scope 构造后 r 失效，复用会静默变成空 scope。
-    ProgressScope s1(r, "a", 10);
+    // A root feeds exactly one top-level scope: the scope consumes the move-only range.
+    ProgressScope s1(std::move(r), "a", 10);
     EXPECT_TRUE(s1.isActive());
-    ProgressScope s2(r, "b", 10);
+    EXPECT_FALSE(r.isActive()) << "the consumed range must be empty";
+
+    // Reusing it cannot silently take the root a second time.
+    ProgressScope s2(std::move(r), "b", 10);
     EXPECT_FALSE(s2.isActive());
 
-    // 多阶段应使用嵌套：一个顶层 scope + next() 分配子范围。
+    // Several stages are nested: one top-level scope, sub-ranges allocated with next().
     ProgressScope root = host.scope(u8"whole", 10);
     ProgressRange part = root.next(4);
-    ProgressScope stage(part, "stage", 4);
+    ProgressScope stage(std::move(part), "stage", 4);
     EXPECT_TRUE(stage.isActive());
 }
 

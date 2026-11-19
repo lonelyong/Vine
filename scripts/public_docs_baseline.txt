@@ -388,9 +388,6 @@ src/base/models/sdk/vine/models/PhongMaterial.hpp	return|PhongMaterial::typeName
 src/base/models/sdk/vine/models/TriangleMesh.hpp	brief|TriangleMesh::TriangleMesh
 src/base/models/sdk/vine/models/TriangleMesh.hpp	brief|TriangleMesh::isValid
 src/base/models/sdk/vine/models/TriangleMesh.hpp	return|TriangleMesh::isValid
-src/base/progress/sdk/vine/progress/ProgressRange.hpp	brief|ProgressRange::ProgressRange
-src/base/progress/sdk/vine/progress/ProgressRange.hpp	param|ProgressRange::ProgressRange/1
-src/base/progress/sdk/vine/progress/ProgressScope.hpp	brief|ProgressScope::ProgressScope
 src/base/runtime/sdk/vine/runtime/InMemoryManager.hpp	brief|InMemoryManager::clear
 src/base/runtime/sdk/vine/runtime/InMemoryManager.hpp	brief|InMemoryManager::contains
 src/base/runtime/sdk/vine/runtime/InMemoryManager.hpp	brief|InMemoryManager::count

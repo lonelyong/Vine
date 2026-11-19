@@ -5,6 +5,14 @@
 
 VN_PROGRESS_NS_BEGIN
 
+namespace
+{
+
+/// Smallest local length a scope accepts: a zero-length scope cannot map a step and would complete instantly.
+constexpr double kMinLength = 1e-6;
+
+} // namespace
+
 ProgressScope::ProgressScope() = default;
 
 ProgressScope::ProgressScope(ProgressIndicator* indicator)
@@ -12,16 +20,18 @@ ProgressScope::ProgressScope(ProgressIndicator* indicator)
   , active_(indicator != nullptr)
 {}
 
-ProgressScope::ProgressScope(const ProgressRange& range, const std::string& name, double max)
+ProgressScope::ProgressScope(ProgressRange&& range, const std::string& name, double max)
   : indicator_(range.parent_scope_ != nullptr ? range.parent_scope_->indicator_ : nullptr)
   , parent_(range.parent_scope_)
   , name_(name)
   , start_(range.start_)
   , global_length_(range.delta_)
-  , local_length_(max > 1e-6 ? max : 1e-6)
-  , active_(indicator_ != nullptr && !range.used_)
+  , local_length_(max > kMinLength ? max : kMinLength)
+  , active_(indicator_ != nullptr)
 {
-    range.used_ = true;
+    // The scope owns the reporting obligation from here on: the range must not report the same portion when it
+    // is destroyed, so it is left empty.
+    range.clear();
 }
 
 ProgressScope::~ProgressScope()
@@ -69,7 +79,7 @@ double ProgressScope::localPos() const
     }
 
     const double distance = global_length_ - global;
-    if (distance <= 1e-6) {
+    if (distance <= kMinLength) {
         return local_length_;
     }
 
@@ -124,7 +134,7 @@ double ProgressScope::localToGlobal(double value) const
         return 0.0;
     }
 
-    if (local_length_ - value <= 1e-6) {
+    if (local_length_ - value <= kMinLength) {
         return global_length_;
     }
 

@@ -47,6 +47,11 @@ class VN_PROGRESS_API ProgressIndicator {
 
     ~ProgressIndicator();
 
+    ProgressIndicator(const ProgressIndicator&)            = delete;
+    ProgressIndicator& operator=(const ProgressIndicator&) = delete;
+    ProgressIndicator(ProgressIndicator&&)                 = delete;
+    ProgressIndicator& operator=(ProgressIndicator&&)      = delete;
+
     /**
      * @brief Resets the progress and returns the root range covering the whole
      *        scale.

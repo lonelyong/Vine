@@ -258,9 +258,8 @@ class VN_APPFW_API ProgressHost {
      * @brief Returns the root range covering the whole [0, 1] scale.
      *
      * Pass it to a ProgressScope to map the operation's stages onto the global
-     * progress. The range is one-shot: ProgressRange uses move-on-copy
-     * semantics, so it can be consumed by exactly one ProgressScope, and every
-     * call resets the indicator. Call it once at the start of the operation
+     * progress. The range is a move-only handle: exactly one ProgressScope can take it over (by std::move), and
+     * every call resets the indicator. Call it once at the start of the operation
      * and prefer scope() for the common top-level-stage case.
      *
      * @return The root progress range.
@@ -271,7 +270,7 @@ class VN_APPFW_API ProgressHost {
      * @brief Creates the top-level scope covering the whole [0, 1] scale.
      *
      * Preferred over range(): it hides the one-shot ProgressRange entirely, so
-     * the operation cannot trip over its move-on-copy semantics. The returned
+     * the operation cannot trip over its move-only semantics. The returned
      * scope maps its local [0, max] range onto the global scale; nest further
      * scopes inside it for sub-stages.
      *

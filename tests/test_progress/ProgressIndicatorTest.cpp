@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <memory>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include <vine/progress/ProgressIndicator.hpp>
 #include <vine/progress/ProgressRange.hpp>
@@ -51,16 +54,52 @@ TEST(ProgressIndicatorTest, RangeIsActiveOnceOnly)
 {
     ProgressIndicator indicator;
 
-    // indicator.start() 返回的 root 是 active 的（C++17 拷贝省略 / move-on-copy 都保证接收方 active）。
     ProgressRange r = indicator.start();
     EXPECT_TRUE(r.isActive());
 
-    // 一个 root 只能喂给一个顶层 scope：ProgressRange 是 move-on-copy，
-    // 第一个 scope 构造后 r 失效，复用会静默变成空 scope。
-    ProgressScope s1(r, "a", 10);
+    // A root feeds exactly one top-level scope: the scope consumes the move-only range.
+    ProgressScope s1(std::move(r), "a", 10);
     EXPECT_TRUE(s1.isActive());
-    ProgressScope s2(r, "b", 10);
+    EXPECT_FALSE(r.isActive()) << "the consumed range must be empty";
+
+    // Reusing it cannot silently take the root a second time.
+    ProgressScope s2(std::move(r), "b", 10);
     EXPECT_FALSE(s2.isActive());
+}
+
+TEST(ProgressIndicatorTest, MoveTransfersTheReportingObligation)
+{
+    ProgressIndicator indicator;
+
+    ProgressScope  root = ProgressScope(indicator.start(), "root", 10);
+    ProgressRange  a    = root.next(4);
+    EXPECT_TRUE(a.isActive());
+
+    ProgressRange b = std::move(a);
+    EXPECT_FALSE(a.isActive()) << "the moved-from range must be empty";
+    EXPECT_TRUE(b.isActive());
+
+    b.complete();
+    EXPECT_NEAR(indicator.position(), 0.4, 1e-9);
+    EXPECT_FALSE(b.isActive());
+}
+
+TEST(ProgressIndicatorTest, MoveAssignmentCompletesThePendingPortionFirst)
+{
+    ProgressIndicator indicator;
+
+    ProgressScope root   = ProgressScope(indicator.start(), "root", 10);
+    ProgressRange first  = root.next(4); // 0.4, not reported yet
+    ProgressRange second = root.next(2); // 0.2
+
+    // Replacing a live range must report what it owed, not drop it.
+    first = std::move(second);
+    EXPECT_NEAR(indicator.position(), 0.4, 1e-9);
+    EXPECT_FALSE(second.isActive());
+    EXPECT_TRUE(first.isActive());
+
+    first.complete();
+    EXPECT_NEAR(indicator.position(), 0.6, 1e-9);
 }
 
 TEST(ProgressIndicatorTest, NestedScopesMapOntoTheParentRange)
@@ -69,7 +108,7 @@ TEST(ProgressIndicatorTest, NestedScopesMapOntoTheParentRange)
 
     ProgressScope root = ProgressScope(indicator.start(), "whole", 10);
     ProgressRange part = root.next(4);
-    ProgressScope stage(part, "stage", 4);
+    ProgressScope stage(std::move(part), "stage", 4);
     EXPECT_TRUE(stage.isActive());
 
     stage.next(2); // 子阶段的一半 = 全局的 20%
@@ -171,6 +210,132 @@ TEST(ProgressIndicatorTest, ReportingWithoutACallbackIsHarmless)
         scope.next(1);
     }
     EXPECT_NEAR(indicator.position(), 1.0, 1e-9);
+}
+
+TEST(ProgressIndicatorTest, ConcurrentRangesReportWithoutLosingAStep)
+{
+    ProgressIndicator indicator;
+
+    constexpr int kWorkers   = 8;
+    constexpr int kPerWorker = 4;
+    constexpr int kRanges    = kWorkers * kPerWorker;
+
+    // Allocation belongs to one thread: every range is carved, and every worker is handed its four ranges,
+    // before the threads start. Reporting a pre-allocated range is the part the module supports concurrently.
+    ProgressScope root = ProgressScope(indicator.start(), "concurrent", kRanges);
+
+    std::vector<ProgressRange> ranges;
+    ranges.reserve(kRanges);
+    for (int i = 0; i < kRanges; ++i) {
+        ranges.push_back(root.next(1));
+    }
+
+    std::atomic<bool> stop{ false };
+    std::atomic<bool> out_of_range{ false };
+
+    std::thread reader([&] {
+        while (!stop.load(std::memory_order_acquire)) {
+            const double position = indicator.position();
+            if (position < 0.0 || position > 1.0) {
+                out_of_range.store(true, std::memory_order_relaxed);
+            }
+            std::this_thread::yield();
+        }
+    });
+
+    std::vector<std::thread> workers;
+    workers.reserve(kWorkers);
+    for (int worker = 0; worker < kWorkers; ++worker) {
+        workers.emplace_back([&ranges, worker] {
+            for (int i = worker * kPerWorker; i < (worker + 1) * kPerWorker; ++i) {
+                ranges[static_cast<std::size_t>(i)].complete();
+            }
+        });
+    }
+    for (auto& thread : workers) {
+        thread.join();
+    }
+    stop.store(true, std::memory_order_release);
+    reader.join();
+
+    // The 32 ranges are 1/32 each: a compare-exchange lost to another worker would leave the bar short.
+    EXPECT_NEAR(indicator.position(), 1.0, 1e-9);
+    EXPECT_FALSE(out_of_range.load());
+    for (const auto& range : ranges) {
+        EXPECT_FALSE(range.isActive());
+    }
+}
+
+TEST(ProgressIndicatorTest, ConcurrentScopesReportTheirOwnPortions)
+{
+    ProgressIndicator indicator;
+
+    constexpr int kStages        = 8;
+    constexpr int kStepsPerStage = 100;
+
+    ProgressScope root = ProgressScope(indicator.start(), "stages", kStages);
+
+    // One stage per worker. They are carved while the thread count is still one; ProgressScope is not movable,
+    // so the stages are held behind unique_ptr.
+    std::vector<std::unique_ptr<ProgressScope>> stages;
+    stages.reserve(kStages);
+    for (int i = 0; i < kStages; ++i) {
+        stages.push_back(std::make_unique<ProgressScope>(root.next(1), "stage", kStepsPerStage));
+    }
+
+    std::vector<std::thread> workers;
+    workers.reserve(kStages);
+    for (int stage = 0; stage < kStages; ++stage) {
+        workers.emplace_back([&stages, stage] {
+            for (int step = 0; step < kStepsPerStage; ++step) {
+                stages[static_cast<std::size_t>(stage)]->next(1);
+            }
+        });
+    }
+    for (auto& thread : workers) {
+        thread.join();
+    }
+
+    // Destroying a stage reports its (zero) remainder; the eight stages together are the whole scale.
+    stages.clear();
+    EXPECT_NEAR(indicator.position(), 1.0, 1e-9);
+}
+
+TEST(ProgressIndicatorTest, PositionCallbackIsSafeFromConcurrentReporters)
+{
+    ProgressIndicator indicator;
+
+    std::atomic<int> calls{ 0 };
+    indicator.setPositionCallback([&calls] { calls.fetch_add(1, std::memory_order_relaxed); });
+
+    constexpr int kWorkers = 8;
+    constexpr int kRanges  = 64;
+
+    ProgressScope root = ProgressScope(indicator.start(), "callback", kRanges);
+
+    std::vector<ProgressRange> ranges;
+    ranges.reserve(kRanges);
+    for (int i = 0; i < kRanges; ++i) {
+        ranges.push_back(root.next(1));
+    }
+
+    std::vector<std::thread> workers;
+    workers.reserve(kWorkers);
+    for (int worker = 0; worker < kWorkers; ++worker) {
+        workers.emplace_back([&ranges, worker] {
+            for (int i = worker; i < kRanges; i += kWorkers) {
+                ranges[static_cast<std::size_t>(i)].complete();
+            }
+        });
+    }
+    for (auto& thread : workers) {
+        thread.join();
+    }
+
+    // The mark is a coalescing hint, not a lock, so two reporters may announce the same position. What must
+    // hold is that the run finishes and that the callback is callable from several threads at once.
+    EXPECT_NEAR(indicator.position(), 1.0, 1e-9);
+    EXPECT_GE(calls.load(), kRanges);
 }
 
 } // namespace
