@@ -7,11 +7,14 @@ VN_SYSTEM_NS_BEGIN
 
 /**
  * @brief Describes the operating system the process is running on.
+ *
+ * @note
+ * - Each field carries the platform's own spelling; the three fields are not a normalised version triple.
  */
 struct VN_SYSTEM_API OperatingSystemInfo {
-    String name;         // e.g. "Windows", "Linux", "macOS".
-    String version;      // OS version, e.g. "10.0.19045".
-    String architecture; // CPU architecture, e.g. "x64", "x86", "arm64".
+    String name;         // "Windows", "Linux", "macOS"; "Unknown" on a platform the module does not implement.
+    String version;      // Windows "major.minor.build" (e.g. "10.0.19045"); Linux and macOS report the uname kernel release.
+    String architecture; // "x64", "x86", "arm64", the platform's own machine spelling, or "unknown".
 };
 
 /**
@@ -23,10 +26,12 @@ class VN_SYSTEM_API OperatingSystem {
     /**
      * @brief Returns information about the host operating system.
      *
-     * The info is built once on first call and then cached; the call is
-     * thread-safe.
+     * @details
+     * - The info is built once on first call and then cached; the call is thread-safe (the cache is a function-local
+     *   static, initialised under the language's guard variable).
+     * - A fact the platform cannot answer is reported as "unknown", never as an empty string.
      *
-     * @return The operating system information.
+     * @return The operating system information; borrowed, valid for the lifetime of the process.
      */
     static const OperatingSystemInfo& info();
 };

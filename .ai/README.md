@@ -210,7 +210,7 @@ proposals (`T40` / `T41`) keep their arguments where a design page cannot carry 
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
 
-## backlog/ — open work (15)
+## backlog/ — open work (16)
 
 Only items that are **not done and have a trigger**; delete them when done, and delete them when the
 decision is not to do them (the reason goes into an ADR).
@@ -226,13 +226,14 @@ decision is not to do them (the reason goes into an ADR).
 - `base-crash.md` — crash-report open items (last-crash prompt, terminate, stack guarantees, read-only directories, Linux, the upload trigger).
 - `base-progress.md` — progress open items (consumer-less scope accessors, stale-stage detection, the `max <= 0` policy, a non-throwing callback, the appfw plugin-ABI coupling).
 - `base-runtime.md` — persistent cache backends (file/database) when a consumer appears, real plugin unload, and Windows identity coverage.
+- `base-system.md` — the missing design page for a platform-seam module, the fixed-width value types its SDK predates, and the macOS enumeration gaps.
 - `brep.md` — runtime B-rep open items (OCCT backend verification, booleans and sewing).
 - `crypto.md` — crypto open items (error-code classification, Argon2 threading mode, configurable write-out scheme, a second AEAD, leak detection).
 - `geom-planar.md` — planar-geometry open items (ellipse / arc / the `ConicCurve` layer, planar queries, `CircleCurve::pointAt`).
 - `geometry.md` — spatial-geometry open items (solid intersection, triangle-face types, fourth derivative and offset order, table algorithms and temporary allocation in spline evaluation, the missing intersection pairings).
 - `loaders.md` — loaders open items (ownership and entry point for point-cloud I/O).
 
-## memory/ — module notes (13)
+## memory/ — module notes (14)
 
 - `glossary.md` — **one spelling per concept**: the English code spelling ↔ the words the Chinese pages use, the retired spellings and the false friends; prose always uses the code spelling.
 - `graphics.md` — graphics / vsg live facts: mechanisms, criteria, traps and "why it was decided this way at the time".
@@ -242,6 +243,7 @@ decision is not to do them (the reason goes into an ADR).
 - `appfw.md` — appfw cross-cutting rules (threading / no user code under a lock / lifetime).
 - `async.md` — `src/base/async` facts.
 - `base-runtime.md` — loader identity and retention, the typed cache seam and its outcomes, the detached process-lifetime sweeper, and the overwrite rule.
+- `base-system.md` — `base/system` facts: one platform per file behind `SystemPlatform.hpp`, the CMake `HEADER_FILE_ONLY` rule, the sysfs / windows.h traps, and the per-platform contracts.
 - `imaging.md` — imaging facts.
 - `imageio.md` — imageio facts.
 - `loaders.md` — the loaders layer index.
