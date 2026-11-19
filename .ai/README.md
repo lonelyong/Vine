@@ -193,19 +193,27 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (2)
+## research/ — research and proposals (3)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
-here is deleted. Every proposal and audit this tree carried has been converted except the two below,
+here is deleted. Every proposal and audit this tree carried has been converted except the three below,
 which exist because the third-round audit's open items were left with no home when its page was
-deleted (git is still the archive for the page itself), and because the fifth review's two deferred
-proposals (`T40` / `T41`) keep their arguments where a design page cannot carry them.
+deleted (git is still the archive for the page itself), because the fifth review's two deferred
+proposals (`T40` / `T41`) keep their arguments where a design page cannot carry them, and because the
+sixth review's two P0 findings are a working record for the fix batch that follows.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
 - `graphics-2026-11-18-review-5.md` — the fifth pass: the first-contact example that did not compile,
   four section references that led nowhere, the three derivation verbs written down, the eight-engine
   benchmark, and the two deferred proposals (`T40` `FrameContext`, `T41` the `DiagnosticsRoute` name).
+- `graphics-2026-11-19-review-6.md` — the sixth pass, on the two dimensions the first five rounds did
+  not walk: two P0 correctness defects in the incremental edit path (a chunk that holds only
+  descendants of an edited node is served from the previous snapshot; the re-fold seeds its inherited
+  value from a container row that never holds one), the oracle gap that keeps them green, six P1s
+  (the diagnostics counters, `setDevice`, `FrameResources::releaseAll`, the engine thread's exception
+  barrier, the guide's §3.4/§3.5 residue, vsg's material byte figure), and a section-by-section
+  re-verification of the threading model (`T31` is closed).
 
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
