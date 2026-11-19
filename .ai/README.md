@@ -60,10 +60,11 @@ related documents**.
 - `appfw-app-info.md` — app identity and app info: `AppInfo` / `AppConfig::info`, `Application::appInfo()`, the about panel and dialogs.
 - `appfw-translation.md` — UI text translation: only appfw and above, source language English, translations Chinese only, the Qt catalogue ships with the module and is embedded (a file may override it), loaded at startup with an English fallback.
 
-**base and the rest (27)**
+**base and the rest (28)**
 - `async-design.md` — the `src/base/async` design (three rules that must hold).
 - `base-crash.md` — crash reporting: `vn::Crash` assembly / report format / handler symbolisation and the crash window.
 - `base-progress.md` — progress primitives: one [0, 1] scale, the move-only reporting handle and the staged scope, coalesced notification, the destruction-order and restart traps, and what appfw adds on top.
+- `base-runtime.md` — dynamic library loading (identity is the file, retention is the owner's choice, `lastError` explains a failure) and the typed TTL cache (one detached sweeper per stored type, safe as a static object); the cache interface is kept as a trigger-gated seam.
 - `brep-operations.md` — runtime B-rep operations: module ownership (`brep` / `brepio` / `geometry`), tessellation and primitive-to-solid contracts, failure representation.
 - `crypto.md` — the crypto module: algorithms only, one object one direction, incremental and one-shot are synonyms, backend initialisation in exactly one place (`detail::ensureLibraryInitialized`); today's implementation (digest / HMAC / HKDF / password hashing / AES-GCM·CBC·CTR / RSA / ECC plus DER, PEM and password-protected PKCS#8 key files) and the gaps (certificate parsing).
 - `geometry-axis-surfaces.md` — axisymmetric analytic surfaces (cylinder / cone / torus): the `Placement` value, the shared "in-plane axis" rule (`Frame.hpp`), rectangularly trimmed surfaces, and where spline surfaces stand.
@@ -220,13 +221,14 @@ decision is not to do them (the reason goes into an ADR).
 - `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation).
 - `base-crash.md` — crash-report open items (last-crash prompt, terminate, stack guarantees, read-only directories, Linux, the upload trigger).
 - `base-progress.md` — progress open items (consumer-less scope accessors, stale-stage detection, the `max <= 0` policy, a non-throwing callback, the appfw plugin-ABI coupling).
+- `base-runtime.md` — the cache interface's trigger (consume or retire), real plugin unload, and Windows identity coverage.
 - `brep.md` — runtime B-rep open items (OCCT backend verification, booleans and sewing).
 - `crypto.md` — crypto open items (error-code classification, Argon2 threading mode, configurable write-out scheme, a second AEAD, leak detection).
 - `geom-planar.md` — planar-geometry open items (ellipse / arc / the `ConicCurve` layer, planar queries, `CircleCurve::pointAt`).
 - `geometry.md` — spatial-geometry open items (solid intersection, triangle-face types, fourth derivative and offset order, table algorithms and temporary allocation in spline evaluation, the missing intersection pairings).
 - `loaders.md` — loaders open items (ownership and entry point for point-cloud I/O).
 
-## memory/ — module notes (12)
+## memory/ — module notes (13)
 
 - `glossary.md` — **one spelling per concept**: the English code spelling ↔ the words the Chinese pages use, the retired spellings and the false friends; prose always uses the code spelling.
 - `graphics.md` — graphics / vsg live facts: mechanisms, criteria, traps and "why it was decided this way at the time".
@@ -235,13 +237,14 @@ decision is not to do them (the reason goes into an ADR).
 - `geometry.md` — geometry facts: the SDK class export convention and the five primitives' local space.
 - `appfw.md` — appfw cross-cutting rules (threading / no user code under a lock / lifetime).
 - `async.md` — `src/base/async` facts.
+- `base-runtime.md` — loader identity and retention, the detached process-lifetime cache sweeper, and the overwrite rule.
 - `imaging.md` — imaging facts.
 - `imageio.md` — imageio facts.
 - `loaders.md` — the loaders layer index.
 - `robotics-kinematics.md` — Robotics kinematics facts.
 - `robotics-proximity.md` — Robotics proximity facts.
 
-## bugs/ — bug records (43)
+## bugs/ — bug records (44)
 
 Symptom / root cause / status / files involved / verification, one file per bug; a fixed record keeps
 its history marker, an unfixed one states its status.
@@ -253,6 +256,7 @@ its history marker, an unfixed one states its status.
 - `vsg-resize-distortion.md`
 - `vsg-maximize-black-band.md`
 - `shared-task-batch-resume-uaf.md`
+- `base-runtime-sweeper-static-terminate.md` — the cache's sweeper was a joinable static `std::thread`, so a started cache with static storage duration aborted the process at exit; the state is now immortal and the worker detached.
 - `docking-flyout-under-render.md`
 - `docking-layout-transitions.md`
 - `docking-tab-dangling-client.md`

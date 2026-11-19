@@ -53,7 +53,7 @@ Neither a skipped nor a disabled plugin is a satisfiable dependency, and the log
 - The load list cannot be walked backwards: after an explicit `load("child")` followed by `loadAll()` picking up `parent`, the list is `[child, parent]`, and reverse order would unload `parent` first.
 - A declared cycle (only an explicit `load()` can build one) falls back to the caller's order, so the walk terminates and every plugin is still unloaded.
 - The list is taken before `unload()` is called; one plugin throwing is logged only, and a `false` return means "some plugin threw".
-- `DynamicLibraryLoader` deliberately `d.release()`s the handle, so the plugin code stays mapped ⇒ unloading is de-initialisation, not code removal.
+- `DynamicLibraryLoader::instance()` uses `Retention::KeepMapped`, so the plugin code stays mapped ⇒ unloading is de-initialisation, not code removal. `base-runtime.md` §2.2 owns the policy; this page only depends on it.
 
 ### 2.3 Shutdown order
 
