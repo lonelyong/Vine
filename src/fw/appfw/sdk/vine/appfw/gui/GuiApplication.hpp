@@ -101,8 +101,8 @@ class VN_APPFW_API GuiApplication : public Application {
      * keeps one view per document instance (see CentralDocumentHost for the contracts). What stays with the
      * application is policy - whether opening also selects, whether there are tabs, how many documents may be open.
      *
-     * @return The host, owned by this application and following its lifetime; nullptr when there is no main window
-     *         (a GuiApplication whose window could not be built).
+     * @return The host, owned by this application and following its lifetime; nullptr when the main window has no dock
+     *         panel manager to install the document container into (the window itself is always built).
      */
     raw_ptr<CentralDocumentHost> centralDocumentHost() const;
 

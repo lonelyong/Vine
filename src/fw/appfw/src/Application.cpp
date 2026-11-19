@@ -298,42 +298,41 @@ vn::async::Task<void> Application::startupStart()
 
 vn::async::Task<void> Application::startup()
 {
+    // The framework's half of this beat: the plugins come before anything the host adds (the contract is on the
+    // virtual; loadPluginsAtBoot() keeps the implementation notes next to the work).
+    co_await loadPluginsAtBoot();
+}
+
+vn::async::Task<void> Application::loadPluginsAtBoot()
+{
     auto* const d = dptr();
-
-    // The framework's own startup work comes first: the plugins are what the host's work most easily depends on
-    // (commands, services and UI are what they register), and "load the plugins" is a step every application has to
-    // take - it should not have to be rewritten in every main (turn AppConfig::load_plugins off to manage it).
-    // The timing is the contract: this runs after the startup frame painted its first frame (waited for by
-    // startupStart()), so a plugin that builds windows and render surfaces finds a window system able to dispatch its
-    // notices already (on X11, no dispatch means an empty window). It also has to run on the main thread: a plugin
-    // builds its windows and views in load().
-    if (d->load_plugins && d->plugin_manager != nullptr) {
-        // The asynchronous door (loadAllAsync()): the plugin lifecycle has to run on the application thread (a plugin
-        // builds windows and views in load()), so "a long operation does not block the event loop" can only come from
-        // splitting the work - the plugin sends the half that does not touch the UI to the pool (`vn::async::run`),
-        // and the loop keeps turning until it comes back, which is also how the boot's progress is reported from that
-        // half.
-        // Progress is per PHASE: the manager names a stage before each pass and relabels for each plugin (finding /
-        // creating / loading / finishing), and the startup frame repaints itself synchronously on every report (see
-        // BootSplash::onStartupChanged()) - so a phase boundary is always visible, while the continuous occupancy
-        // INSIDE a phase (the session init() takes a couple of hundred milliseconds) leaves the picture still. That is
-        // deliberate: the startup phase does not turn the event loop for it (that would run everyone else's timers
-        // too, see the comment on PluginManager::loadAllAsync()).
-        const bool loaded = co_await d->plugin_manager->loadAllAsync();
-
-        // The loop may have stopped while the load was running: the boot is abandoned then, and "some plugins failed"
-        // would blame the plugins for a shutdown (see bootAbandoned()).
-        if (bootAbandoned()) {
-            co_return;
-        }
-        if (!loaded && !startupCancelled()) {
-            // A cancellation is not a failure: the manager also returns false when it stops early. And a plugin that
-            // merely failed to load is not one either - the application starts without it.
-            VN_LOGW("Some plugins failed to load; the application starts without them");
-        }
+    if (!d->load_plugins || d->plugin_manager == nullptr) {
+        co_return;
     }
 
-    co_return;
+    // The asynchronous door, not the synchronous one: the plugin lifecycle has to run on the application thread (a
+    // plugin builds windows and views in load()), so "a long operation does not block the event loop" can only come
+    // from splitting the work - the plugin sends the half that does not touch the UI to the pool (`vn::async::run`),
+    // and the loop keeps turning until it comes back.
+    //
+    // Progress is per PHASE: the manager names a stage before each pass and relabels for each plugin (finding /
+    // creating / loading / finishing), and the startup frame repaints itself synchronously on every report (see
+    // BootSplash::onStartupChanged()) - so a phase boundary is always visible, while the continuous occupancy INSIDE a
+    // phase (the session init() takes a couple of hundred milliseconds) leaves the picture still. That is deliberate:
+    // the boot does not turn the event loop for it (that would run everyone else's timers too, see
+    // PluginManager::loadAllAsync()).
+    const bool loaded = co_await d->plugin_manager->loadAllAsync();
+
+    // The loop may have stopped while the load was running: the boot is abandoned then, and a "failed to load" line
+    // would blame the plugins for a shutdown.
+    if (bootAbandoned()) {
+        co_return;
+    }
+    if (!loaded && !startupCancelled()) {
+        // A cancellation is not a failure - the manager returns false when it stops early too - and one plugin that
+        // failed to load does not take the application down either.
+        VN_LOGW("Some plugins failed to load; the application starts without them");
+    }
 }
 
 bool Application::startupCancelled() const
@@ -438,94 +437,87 @@ int Application::run()
 
 vn::async::DetachedTask Application::startupSequence()
 {
-    // The three phases laid out flat (startupStart() → startup() → startupEnd()), readable like sequential code.
-    //
-    // They cannot be three bare calls: a phase returning is not a phase being done (the GUI's first one waits for the
-    // startup frame to really paint). The coroutine straightens "wait for the next phase" into `co_await`: the event
-    // loop gets the control back while the boot waits - which is what "wait for it without holding the message loop"
-    // means.
-    //
-    // After every phase comes a `resumeOnMainThread()`: a phase may finish on another thread (a timer, I/O, the host's
-    // own work posted to the pool), and both the next phase and the end of this boot belong on the application thread.
-    // On the application thread it is a no-op, so the fast path pays nothing.
-    //
-    // Two things end a boot before its last phase without it being a failure: a cancellation (asked for through the
-    // sink, or thrown by token-aware work as TaskCancelledException) and abandonment (the loop stopped while a phase was
-    // waiting). Only a real exception takes failStartup().
+    // Flat on purpose: the three phases, each padded with a resumeOnMainThread(), read as a sequence under one `try`.
+    // The header carries the contract (why each phase has to be a coroutine, why the failing path rejoins after it).
     beginStartupProgress()->stage(translate("appfw", "Starting"));
 
-    bool ok        = true;
-    bool cancelled = false;
+    // How this boot is ending: one variable, because "succeeded, cancelled or failed" is one question and its three
+    // answers take three different exits below.
+    enum class Ending
+    {
+        Succeeded,
+        Cancelled,
+        Failed
+    };
+
+    Ending ending = Ending::Succeeded;
+
+    // After every phase: the boot may be over without that phase having failed - the sink was asked to stop (this
+    // takes the exit for it) or the loop stopped while the phase waited (shutdown() already closed the door).
+    const auto finish_if_over = [this] {
+        if (bootAbandoned()) {
+            return true;
+        }
+        if (!startupCancelled()) {
+            return false;
+        }
+        cancelStartup();
+        return true;
+    };
+
     try {
         co_await startupStart();
         co_await MainThreadDispatcher::resumeOnMainThread();
-        if (bootAbandoned()) {
-            co_return;
-        }
-        if (startupCancelled()) {
-            cancelStartup();
+        if (finish_if_over()) {
             co_return;
         }
         co_await startup();
         co_await MainThreadDispatcher::resumeOnMainThread();
-        if (bootAbandoned()) {
-            co_return;
-        }
-        if (startupCancelled()) {
-            cancelStartup();
+        if (finish_if_over()) {
             co_return;
         }
         co_await startupEnd();
         co_await MainThreadDispatcher::resumeOnMainThread();
     }
     catch (const Exception& error) {
-        // A cancellation can reach here as an exception: the async library spells "the user asked to stop" as
-        // TaskCancelledException (code CANCELLED), and a host that hands the boot's token to sleepFor()/whenAll()/
-        // withCancellation() gets exactly that. Classifying it as a failure would turn a cancel into exit(1), which is
-        // the one thing this shape must not do - the command layer classifies the same exception the same way.
+        // TaskCancelledException is how the async library spells "the user asked to stop" for work that observes the
+        // boot's token - a cancel, not a failure (the command layer classifies it the same way).
         if (error.code() == Exception::CANCELLED) {
-            cancelled = true;
+            ending = Ending::Cancelled;
         }
         else {
             VN_LOGE("the startup phase failed: {}", error.what());
-            ok = false;
+            ending = Ending::Failed;
         }
     }
     catch (const std::exception& error) {
         VN_LOGE("the startup phase failed: {}", error.what());
-        ok = false;
+        ending = Ending::Failed;
     }
     catch (...) {
         VN_LOGE("the startup phase failed with an unknown exception");
-        ok = false;
+        ending = Ending::Failed;
     }
 
-    // A startup exception is NOT swallowed: a failure in any phase (including one the host's own startup work carries
-    // up) closes the reporting door and stops the loop with a non-zero code (see failStartup()) - a failed boot must
-    // not leave a half-started application running. A cancellation takes the other exit (cancelStartup(): not a
-    // failure, but not a finished boot either). The teardown belongs on the application thread as well, and `co_await`
-    // cannot be written inside a catch handler (the failing phase may have thrown on another thread), so both paths
-    // rejoin after the try.
-    if (!ok || cancelled) {
-        co_await MainThreadDispatcher::resumeOnMainThread();
-        if (bootAbandoned()) {
-            // The loop is gone and shutdown() has already closed the door: there is nothing left to stop, and both
-            // exits below would only try to stop a loop that no longer runs.
-            co_return;
-        }
-        if (cancelled) {
-            VN_LOGI("the startup phase was cancelled by the work it was waiting for");
-            cancelStartup();
-        }
-        else {
-            failStartup();
-        }
+    if (ending == Ending::Succeeded) {
+        endStartupProgress(); // Last, so the presenters go back to following what runs next
         co_return;
     }
 
-    // The three phases are through: the boot is over, and the reporting door closes last (so the presenters go back to
-    // following whatever runs next).
-    endStartupProgress();
+    // `co_await` cannot be written inside a catch handler (the failing phase may have thrown on another thread), so the
+    // three exits rejoin here, on the application thread.
+    co_await MainThreadDispatcher::resumeOnMainThread();
+    if (bootAbandoned()) {
+        // The loop is gone and shutdown() has already closed the door: there is nothing left to stop.
+        co_return;
+    }
+    if (ending == Ending::Cancelled) {
+        VN_LOGI("the startup phase was cancelled by the work it was waiting for");
+        cancelStartup();
+    }
+    else {
+        failStartup();
+    }
 }
 
 void Application::shutdown()

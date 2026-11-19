@@ -569,7 +569,8 @@ class VN_APPFW_API Application : public Object {
      * touch what belongs to the main thread - windows, widgets, the render surface, the Qt application object - and
      * reaches it through MainThreadDispatcher::postToMainThread() where it has to.
      *
-     * Nothing here reports progress of its own: the plugin load is reported by PluginManager ("正在加载插件").
+     * Nothing here reports progress of its own: the plugin load is reported by PluginManager ("Loading plugins" and a
+     * per-plugin label).
      *
      * A failure here - an exception out of a leaf's own part, or out of the host's startup work - is fatal: the boot is
      * over and the application exits with a non-zero code. A plugin that merely fails to load is not: the application
@@ -638,6 +639,17 @@ class VN_APPFW_API Application : public Object {
     /// (An exception thrown outside this function's `try` would reach the handler installed with
     /// vn::async::setDetachedExceptionHandler(), or terminate the process.)
     vn::async::DetachedTask startupSequence();
+
+    /// The framework's half of the second beat: loads the plugins when AppConfig::load_plugins asks for it, and returns
+    /// once the load is through.
+    ///
+    /// A step of its own so the virtual stays readable: startup() is the beat a host overrides, and a host's own work
+    /// starts by awaiting it - which is this load. The load reports through PluginManager ("Loading plugins", then one
+    /// label per plugin) and releases what a cancelled or interrupted pass created; it returns early on an abandoned
+    /// boot instead of blaming the plugins for a shutdown.
+    ///
+    /// @return A task that completes once the plugins are loaded, or at once when the configuration disables the load.
+    vn::async::Task<void> loadPluginsAtBoot();
 
     /// The boot failed: tears the progress sink down (so nobody keeps reporting into a dead boot) and stops the main
     /// loop with a non-zero code - run() returns at once, the process exits with that code, and shutdown() still runs

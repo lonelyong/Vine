@@ -48,33 +48,31 @@ class Application {
 };
 ```
 
-`startupSequence()` is a member coroutine (`DetachedTask`, eager) that lays the three beats out flat:
+`startupSequence()` is a member coroutine (`DetachedTask`, eager) that lays the three beats out flat (comments elided;
+the operator flow is the point):
 
 ```cpp
 beginStartupProgress()->stage(translate("appfw", "Starting"));
-bool ok = true, cancelled = false;
+enum class Ending { Succeeded, Cancelled, Failed };   // one question, three different exits
+Ending     ending = Ending::Succeeded;
+const auto finish_if_over = [this] { /* abandoned -> true; cancelled -> cancelStartup(), true; else false */ };
 try {
     co_await startupStart();  co_await MainThreadDispatcher::resumeOnMainThread();
-    if (bootAbandoned()) co_return;                    // the loop stopped while this phase waited
-    if (startupCancelled()) { cancelStartup(); co_return; }
+    if (finish_if_over()) co_return;
     co_await startup();       co_await MainThreadDispatcher::resumeOnMainThread();
-    if (bootAbandoned()) co_return;
-    if (startupCancelled()) { cancelStartup(); co_return; }
+    if (finish_if_over()) co_return;
     co_await startupEnd();    co_await MainThreadDispatcher::resumeOnMainThread();
 }
 catch (const Exception& error) {                       // TaskCancelledException carries CANCELLED
-    cancelled = error.code() == Exception::CANCELLED;
-    ok        = cancelled;
+    ending = error.code() == Exception::CANCELLED ? Ending::Cancelled : Ending::Failed;
 }
-catch (const std::exception&) { ok = false; }
-catch (...) { ok = false; }
-if (!ok || cancelled) {
-    co_await MainThreadDispatcher::resumeOnMainThread();
-    if (bootAbandoned()) co_return;                    // no loop left to stop
-    if (cancelled) { cancelStartup(); } else { failStartup(); }
-    co_return;
-}
-endStartupProgress();
+catch (const std::exception&) { ending = Ending::Failed; }
+catch (...) { ending = Ending::Failed; }
+
+if (ending == Ending::Succeeded) { endStartupProgress(); co_return; }
+co_await MainThreadDispatcher::resumeOnMainThread();    // `co_await` is not allowed in a catch handler
+if (bootAbandoned()) co_return;                        // no loop left to stop
+ending == Ending::Cancelled ? cancelStartup() : failStartup();
 ```
 
 ### 2.2 The thread contract
@@ -133,7 +131,8 @@ the rest of the process.
 ### 3.1.3 F3 Plugin loading
 
 - **Behaviour**: `loadAllAsync()` is the startup door (a coroutine; the manager does not turn the loop); `loadAll()` is the synchronous door
-  (`runToCompletion(task, pump)`, where the pump only dispatches `deliverPostedCalls()`).
+  (`runToCompletion(task, pump)`, where the pump only dispatches `deliverPostedCalls()`). The boot's own half is `Application::loadPluginsAtBoot()`,
+  which `startup()` awaits - so the virtual reads as one call, and a host that overrides it writes `co_await Application::startup()` for exactly that step.
 - **Constraints** (C3): the synchronous door must not use `Task::result()` — it blocks without dispatching, so a hook coming back to the main thread deadlocks.
 - **Requirements** (R3): every exit of a plugin hook writes `co_return;`; the ABI revision the boot runs under is in §9.3.
 - **Acceptance** (T3): `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread`.

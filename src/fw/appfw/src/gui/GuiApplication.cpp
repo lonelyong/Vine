@@ -3,6 +3,7 @@
 #include <cassert>
 #include <coroutine>
 #include <memory>
+#include <utility>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -228,28 +229,32 @@ Theme resolveSystemTheme()
 }
 
 /**
- * @brief 等一个窗口画出首帧，或等到 300 ms 兜底 —— 启动第一拍里的“等”。
+ * @brief Waits for a window's first paint, or for the boot's deadline.
  *
- * 三条来源（首帧信号、超时、以及“挂起前就画过了”）从同一个收口走，只唤醒一次；唤醒**排一拍**再 `resume()`：
- * 首帧信号是在派发那个窗口的 paint 事件里到的，就地唤醒会让后面的加载跑在别人的绘制里——而启动的加载会重画
- * 这个框、最后把它删掉（实测：`QWidget::repaint: Recursive repaint detected` + 段错误）。
+ * Three sources end the wait - the first paint, the deadline, and "it had already painted before the wait armed" - and
+ * all of them go through wake(), which fires once: the two live sources are dropped there, and the members that own
+ * them say so. The resumption is posted rather than run inline, because the first paint signal arrives while that
+ * window's paint event is being dispatched, and resuming there would run the rest of the boot inside somebody else's
+ * paint - which repaints this frame and finally destroys it (measured: `QWidget::repaint: Recursive repaint detected`
+ * followed by a segfault).
  *
- * 逾期不算失败：窗口系统可能永不报“已可见”，那时这里照常放行，由调用方看 `Window::hasPainted()` 判定并告警。
+ * Missing the deadline is not a failure: a window system may never report a window as visible, and the caller tells the
+ * two cases apart with Window::hasPainted() and says so in the log.
  */
 class AwaitStartupFrame {
   public:
     /**
-     * @brief 构造一段等待。
+     * @brief Arms a wait for @p frame's first paint.
      *
-     * @param context Qt 对象，超时定时器挂在它名下（本类不是 QObject）。
-     * @param frame   要等的窗口。
+     * @param context Qt object the wait connects through; this class is not a QObject.
+     * @param frame   The frame to wait for.
      */
     AwaitStartupFrame(QObject* context, Window* frame) noexcept
       : context_(context)
       , frame_(frame)
     {}
 
-    /// 已经画过就不必挂起（有些平台 `show()` 会同步画）。
+    /// Nothing to wait for when the window system painted it already (some platforms paint from show()).
     [[nodiscard]] bool await_ready() const noexcept
     {
         return frame_->hasPainted();
@@ -260,43 +265,36 @@ class AwaitStartupFrame {
         handle_       = handle;
         subscription_ = frame_->first_paint.connect([this] { wake(); });
 
-        timer_ = new QTimer(context_);
+        // Not parented to the context: this object owns the timer, and a parent that died first would leave the
+        // owner deleting a timer Qt had already destroyed. The connection names the context instead, so it dies with it.
+        timer_ = std::make_unique<QTimer>();
         timer_->setSingleShot(true);
-        QObject::connect(timer_, &QTimer::timeout, context_, [this] { wake(); });
+        QObject::connect(timer_.get(), &QTimer::timeout, context_, [this] { wake(); });
         timer_->start(kFirstPaintDeadlineMs);
     }
 
     void await_resume() const noexcept
     {}
 
-    ~AwaitStartupFrame()
-    {
-        // 没等到就析构（应用退出、协程被丢弃）时不留悬挂的订阅与定时器。
-        subscription_ = {};
-        delete timer_;
-    }
-
   private:
-    /// 唯一的收口：三条来源谁先到都只走一次。
+    /// The one way out: whichever source arrives first ends the wait, and only here.
     void wake()
     {
-        const std::coroutine_handle<> handle = handle_;
+        const std::coroutine_handle<> handle = std::exchange(handle_, {});
         if (handle == nullptr) {
             return;
         }
 
-        handle_       = {};
         subscription_ = {};
-        delete timer_;
-        timer_ = nullptr;
+        timer_.reset();
 
-        // 排一拍再唤醒：不跑在某个窗口的绘制里，也不跑在定时器回调里（那里可能正在派发别人的事件）。
+        // Posted, not resumed here: see the class note.
         static_cast<void>(MainThreadDispatcher::postToMainThread([handle] { handle.resume(); }));
     }
 
     QObject*                context_ = nullptr;
     Window*                 frame_   = nullptr;
-    QTimer*                 timer_   = nullptr;
+    std::unique_ptr<QTimer> timer_;
     vn::Connection          subscription_{};
     std::coroutine_handle<> handle_{};
 };
@@ -321,8 +319,9 @@ vn::async::Task<void> GuiApplication::startupStart()
     // looks like: one frame that reports, and no window that grows a ribbon in front of the user.
     frame->show();
 
-    // 启动框上屏本身就是一拍，而这一拍要等首帧（下面那条 await），所以先把相位名报上去：
-    // 进度按相位跳，读者看到的每一段都应该是“正在干什么”，而不是上一拍留下的名字。
+    // Showing the frame is a phase of its own, and this phase waits for its first paint (the `co_await` below), so the
+    // stage name goes up first: progress jumps per phase, and every stretch the reader sees should say what is
+    // happening now rather than carry the previous phase's name.
     if (StartupProgress* progress = StartupProgress::current(); progress != nullptr) {
         progress->stage(vn::appfw::translate("appfw", "Showing the startup frame"));
     }
@@ -458,24 +457,25 @@ vn::async::Task<void> GuiApplication::startupEnd()
     }
     d->boot_ended = true;
 
-    // 最后这一拍也报一次：主窗口上屏、启动框撤走全在这里，读完最后一段就可以收上报口了（见 Application::startupSequence()）。
+    // The last phase reports as well: the main window going up and the frame going away both happen here, and the
+    // reporting door closes right after this phase returns (see Application::startupSequence()).
     if (StartupProgress* progress = StartupProgress::current(); progress != nullptr) {
         progress->stage(vn::appfw::translate("appfw", "Preparing the main window"));
     }
 
-    // The startup progress is still alive here (the framework tears it down once this phase returns: it belongs to the
-    // whole boot, this last phase included), so what is done here is the boot's own face: the main window goes up and
-    // the frame goes away.
+    // The startup progress is still alive here (it belongs to the whole boot, this last phase included), so what is
+    // done here is the boot's own face: the main window goes up and the frame goes away.
     //
-    // The window goes up now, and this is the only place it does: it was created by the constructor and kept off screen
-    // for the whole boot. What shows in the render area until its first frame is the window's own background, not a hole
-    // (see RenderControl).
-    if (d->main_window != nullptr && !d->main_window->isVisible()) {
-        d->main_window->show();
+    // The window goes up now, and this is the only place it does: createWindows() always built it and the boot kept it
+    // off screen, so the user's first sight of it is the finished window. What the render area shows until its first
+    // frame is the window's own background, not a hole (see RenderControl).
+    auto* const window = d->main_window.get();
+    if (!window->isVisible()) {
+        window->show();
     }
 
     if (d->boot_splash == nullptr) {
-        co_return; // No frame was covering the boot: nothing to take away, nothing to bring forward.
+        co_return; // Nothing was covering the boot: nothing to take away, nothing to bring forward.
     }
 
     // The frame goes now that what it covered is up. The window has to be brought forward with it: a stay-on-top frame
@@ -484,16 +484,14 @@ vn::async::Task<void> GuiApplication::startupEnd()
     // started from) - which looks exactly like a window that never showed up.
     d->boot_splash.reset();
 
-    if (d->main_window != nullptr) {
-        // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was never
-        // shown", which are the two ways a frame that closes too early can look like a window that never appeared.
-        VN_LOGI("Startup frame going away: main window visible={}, active={}", d->main_window->isVisible(), d->main_window->isActive());
+    // Diagnostic: tells "the window sat behind something" (visible but not active) apart from "the window was never
+    // shown", the two ways a frame that closes too early can look like a window that never appeared.
+    VN_LOGI("Startup frame going away: main window visible={}, active={}", window->isVisible(), window->isActive());
 
-        if (auto* native = d->main_window->impl<QWidget>()) {
-            native->raise();
-        }
-        d->main_window->activate();
+    if (auto* native = window->impl<QWidget>()) {
+        native->raise();
     }
+    window->activate();
 }
 
 raw_ptr<BootSplash> GuiApplication::bootSplash() const
