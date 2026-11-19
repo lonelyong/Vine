@@ -20,7 +20,7 @@ applications** (`src/apps/vine` → `Vine.exe`); `tools/<name>` holds **non-inst
 module's own process half (e.g. `src/base/crash/handler`'s `CrashHandler.exe`) stays in the module and
 does not move into `src/apps/`.
 
-## design/ — the living design (57)
+## design/ — the living design (59)
 
 Every design page has the same shape: **one-line purpose → design points (2.x) → features (F#) →
 public interface → caveats (N#) → rejected options (D#, one line + ADR link) → acceptance (T#) →
@@ -60,11 +60,12 @@ related documents**.
 - `appfw-app-info.md` — app identity and app info: `AppInfo` / `AppConfig::info`, `Application::appInfo()`, the about panel and dialogs.
 - `appfw-translation.md` — UI text translation: only appfw and above, source language English, translations Chinese only, the Qt catalogue ships with the module and is embedded (a file may override it), loaded at startup with an English fallback.
 
-**base and the rest (28)**
+**base and the rest (29)**
 - `async-design.md` — the `src/base/async` design (three rules that must hold).
 - `base-crash.md` — crash reporting: `vn::Crash` assembly / report format / handler symbolisation and the crash window.
 - `base-progress.md` — progress primitives: one [0, 1] scale, the move-only reporting handle and the staged scope, coalesced notification, the destruction-order and restart traps, and what appfw adds on top.
 - `base-runtime.md` — dynamic library loading (identity is the file, retention is the owner's choice, `lastError` explains a failure) and the cache: one typed `Cache` seam with explicit `Ok`/`Miss`/`Failure` answers, the in-memory implementation that never serialises, one detached sweeper per stored type, and the persistent seam (`KeyValueStore` + `SerializedCache`) whose file/database/network backends live in their own modules.
+- `base-system.md` — the platform query module: one platform family per file behind a private seam, the shared policy (pid guard, query-once-and-cache, zero-core fallback, no trailing separator), the per-platform vocabulary written into the headers (`version` spelling, `exists()` semantics, volume-vs-device, the empty answers), and the traps that cost a defect each.
 - `brep-operations.md` — runtime B-rep operations: module ownership (`brep` / `brepio` / `geometry`), tessellation and primitive-to-solid contracts, failure representation.
 - `crypto.md` — the crypto module: algorithms only, one object one direction, incremental and one-shot are synonyms, backend initialisation in exactly one place (`detail::ensureLibraryInitialized`); today's implementation (digest / HMAC / HKDF / password hashing / AES-GCM·CBC·CTR / RSA / ECC plus DER, PEM and password-protected PKCS#8 key files) and the gaps (certificate parsing).
 - `geometry-axis-surfaces.md` — axisymmetric analytic surfaces (cylinder / cone / torus): the `Placement` value, the shared "in-plane axis" rule (`Frame.hpp`), rectangularly trimmed surfaces, and where spline surfaces stand.

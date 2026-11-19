@@ -1,17 +1,7 @@
 # base/system — open work
 
-Scope: `src/base/system`. Current layout and traps are in `.ai/memory/base-system.md`; the design page
-does not exist yet (see B1).
-
-## B1 — design page for a platform-seam module
-
-`base/system` is the only platform-dependent `base` module without an `.ai/design/` page
-(`core`, `crypto`, `runtime`, `crash`, `progress`, `iobase`, `window` have one). The page has to state
-the per-platform semantics that today live only in the SDK headers: `version` spelling, `exists()`
-permission answer, `DiskInfo` volume-vs-device, and the empty answers of macOS / unsupported platforms.
-
-Trigger: the next contract change in this module, or the first product use of `Hardware`/`Process`.
-Doing it earlier is imagination; doing it later means the page is written from memory.
+Scope: `src/base/system`. The current design is `.ai/design/base-system.md`; the live facts and traps
+are in `.ai/memory/base-system.md`.
 
 ## B2 — value types that the SDK rule already describes
 

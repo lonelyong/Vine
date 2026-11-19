@@ -1,5 +1,8 @@
 # base/system — current facts
 
+Design: `.ai/design/base-system.md` (contracts, design points, per-platform vocabulary, rejected
+options). This page holds only the facts and traps that page does not repeat.
+
 ## Layout: one platform, one file
 
 `src/base/system/src/` holds a shared policy half plus one implementation file per platform family:
