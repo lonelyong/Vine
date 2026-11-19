@@ -292,25 +292,12 @@ inline std::filesystem::path joinVfs(const std::filesystem::path& parent, const 
 }
 
 /**
- * @brief Reports whether one normalized virtual path lies strictly below another.
+ * @brief Reports whether one path is the other or lies below it, on a component boundary.
  *
- * @param parent The ancestor path (normalized); empty denotes the virtual root.
- * @param path The path to test (normalized).
- * @return true when path names an entry inside parent rather than parent itself.
- */
-inline bool isPathBelow(const std::filesystem::path& parent, const std::filesystem::path& path)
-{
-    const std::u8string prefix = parent.empty() ? std::u8string() : parent.generic_u8string() + u8"/";
-    const std::u8string text   = path.generic_u8string();
-    return text.size() > prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
-}
-
-/**
- * @brief Reports whether one physical path is the other or lies below it.
+ * The boundary is what makes this a containment test and not a string prefix test: "/data" contains "/data/x" and not
+ * "/database".
  *
- * The component boundary is what makes this a containment test: "/data" contains "/data/x" and not "/database".
- *
- * @param root The directory a path has to stay inside (canonical or normalized).
+ * @param root The directory a path has to stay inside (normalized, or canonical for real storage).
  * @param path The path to test, spelled the same way.
  * @return true when path is root itself or an entry below it.
  */
@@ -325,6 +312,18 @@ inline bool isSameOrBelow(const std::filesystem::path& root, const std::filesyst
         return false;
     }
     return anchor.empty() || anchor.back() == u8'/' || text[anchor.size()] == u8'/';
+}
+
+/**
+ * @brief Reports whether one normalized virtual path lies strictly below another.
+ *
+ * @param parent The ancestor path (normalized); empty denotes the virtual root.
+ * @param path The path to test (normalized).
+ * @return true when path names an entry inside parent rather than parent itself.
+ */
+inline bool isPathBelow(const std::filesystem::path& parent, const std::filesystem::path& path)
+{
+    return path != parent && isSameOrBelow(parent, path);
 }
 
 /**

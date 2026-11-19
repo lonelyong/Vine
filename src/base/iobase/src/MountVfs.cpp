@@ -220,6 +220,42 @@ Result<std::unique_ptr<VfsEntrySource>> MountVfs::openRead(const std::filesystem
 
 IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const unsigned char> bytes)
 {
+    WritePlan plan;
+    if (const IoError why = planWrite(path, plan); why != IoError::Ok) {
+        return why;
+    }
+    return plan.mount->backend->addFile(plan.local, bytes);
+}
+
+IoError MountVfs::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
+{
+    WritePlan plan;
+    if (const IoError why = planWrite(path, plan); why != IoError::Ok) {
+        return why;
+    }
+    return plan.mount->backend->addFile(plan.local, real_path);
+}
+
+IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
+{
+    WritePlan plan;
+    if (const IoError why = planWrite(path, plan); why != IoError::Ok) {
+        return why;
+    }
+    return plan.mount->backend->addFile(plan.local, fragments);
+}
+
+IoError MountVfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
+{
+    WritePlan plan;
+    if (const IoError why = planWrite(path, plan); why != IoError::Ok) {
+        return why;
+    }
+    return plan.mount->backend->addFile(plan.local, std::move(source));
+}
+
+IoError MountVfs::planWrite(const std::filesystem::path& path, WritePlan& plan) const
+{
     // The verdict is the merged tree's own, not the target backend's: a path the read side already answers for must not
     // be written, and a path no mount covers has nowhere to go. Only then is the owner picked.
     std::filesystem::path normalized;
@@ -227,57 +263,13 @@ IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const uns
         return blocked;
     }
 
-    const std::vector<const Mount*> group  = route(normalized);
-    const Mount*                    target = writeTarget(group, normalized);
+    const Mount* const target = writeTarget(route(normalized), normalized);
     if (target == nullptr) {
-        return IoError::ReadOnly;
+        return IoError::ReadOnly; // no mount of the group accepts a new name here
     }
-    return target->backend->addFile(relativeTo(target->prefix, normalized), bytes);
-}
-
-IoError MountVfs::addFile(const std::filesystem::path& path, const std::filesystem::path& real_path)
-{
-    std::filesystem::path normalized;
-    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
-        return blocked;
-    }
-
-    const std::vector<const Mount*> group  = route(normalized);
-    const Mount*                    target = writeTarget(group, normalized);
-    if (target == nullptr) {
-        return IoError::ReadOnly;
-    }
-    return target->backend->addFile(relativeTo(target->prefix, normalized), real_path);
-}
-
-IoError MountVfs::addFile(const std::filesystem::path& path, std::span<const Fragment> fragments)
-{
-    std::filesystem::path normalized;
-    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
-        return blocked;
-    }
-
-    const std::vector<const Mount*> group  = route(normalized);
-    const Mount*                    target = writeTarget(group, normalized);
-    if (target == nullptr) {
-        return IoError::ReadOnly;
-    }
-    return target->backend->addFile(relativeTo(target->prefix, normalized), fragments);
-}
-
-IoError MountVfs::addFile(const std::filesystem::path& path, std::shared_ptr<DataSource> source)
-{
-    std::filesystem::path normalized;
-    if (const IoError blocked = detail::prepareAddFile(*this, path, normalized); blocked != IoError::Ok) {
-        return blocked;
-    }
-
-    const std::vector<const Mount*> group  = route(normalized);
-    const Mount*                    target = writeTarget(group, normalized);
-    if (target == nullptr) {
-        return IoError::ReadOnly;
-    }
-    return target->backend->addFile(relativeTo(target->prefix, normalized), std::move(source));
+    plan.mount = target;
+    plan.local = relativeTo(target->prefix, normalized);
+    return IoError::Ok;
 }
 
 IoError MountVfs::createDirectory(const std::filesystem::path& path)

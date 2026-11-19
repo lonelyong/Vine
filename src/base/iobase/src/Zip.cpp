@@ -21,6 +21,37 @@ namespace
 /// Bytes one deflate/inflate step may produce or consume; small enough to stay a cache-sized buffer.
 constexpr std::size_t kCodecChunkBytes = 64U * 1024U;
 
+/**
+ * @brief Reads one named entry out of an open archive, verifying it against the directory.
+ *
+ * The two readEntry() overloads differ only in how the archive is opened, so everything after that lives here: the
+ * lookup, the directory check and the read-and-verify rule exist once, and the two entries cannot drift apart.
+ *
+ * @param archive The open archive.
+ * @param name The virtual path to read.
+ * @return The content, IoError::NotFound when the name is not there, IoError::IsADirectory when it marks a directory,
+ *         or what the read reports.
+ */
+Result<std::vector<unsigned char>> readLocatedEntry(zip_t* archive, const std::filesystem::path& name)
+{
+    // The lookup first compares the bytes we hold with the bytes the archive stored, and falls back to comparing
+    // decoded names, so a legacy name is found by what it says rather than by the spelling this side happens to use.
+    detail::LocatedEntry located;
+    if (!detail::locateEntry(archive, name, located)) {
+        return IoError::NotFound;
+    }
+    if (located.is_directory) {
+        return IoError::IsADirectory; // the trailing '/' is how a ZIP marks a directory
+    }
+
+    struct zip_stat st;
+    zip_stat_init(&st);
+    if (zip_stat_index(archive, located.index, 0, &st) != 0) {
+        return IoError::IoFailure;
+    }
+    return detail::readWholeEntry(archive, located.index, static_cast<std::uint64_t>(st.size), (st.valid & ZIP_STAT_CRC) != 0 ? static_cast<std::uint32_t>(st.crc) : 0);
+}
+
 } // namespace
 
 Result<std::vector<unsigned char>> Zip::compress(std::span<const unsigned char> bytes)
@@ -286,57 +317,9 @@ Result<std::vector<unsigned char>> Zip::readEntry(const std::filesystem::path& p
     if (archive == nullptr) {
         return detail::ioErrorOf(error);
     }
-    // The lookup first compares the bytes we hold with the bytes the archive stored, and
-    // falls back to comparing decoded names, so a legacy name is found by what it says
-    // rather than by the spelling this side happens to use.
-    detail::LocatedEntry located;
-    if (!detail::locateEntry(archive, name, located)) {
-        zip_close(archive);
-        return IoError::NotFound;
-    }
-    if (located.is_directory) {
-        zip_close(archive);
-        return IoError::IsADirectory; // the trailing '/' is how a ZIP marks a directory
-    }
-    const zip_int64_t index = located.index;
-
-    struct zip_stat st;
-    zip_stat_init(&st);
-    if (zip_stat_index(archive, index, 0, &st) != 0) {
-        zip_close(archive);
-        return IoError::IoFailure;
-    }
-    if (static_cast<std::uint64_t>(st.size) > detail::kMaxWholeContentBytes) {
-        zip_close(archive);
-        return IoError::CapacityExceeded; // a size the directory states, not one that may be allocated blindly
-    }
-    zip_file_t* const file = zip_fopen_index(archive, index, 0);
-    if (file == nullptr) {
-        zip_close(archive);
-        return IoError::IoFailure;
-    }
-
-    std::vector<unsigned char> out(static_cast<std::size_t>(st.size));
-    zip_uint64_t               total = 0;
-    while (total < st.size) {
-        const zip_int64_t got = zip_fread(file, out.data() + total, st.size - total);
-        if (got <= 0) {
-            break;
-        }
-        total += static_cast<zip_uint64_t>(got);
-    }
-    zip_fclose(file);
+    auto content = readLocatedEntry(archive, name);
     zip_close(archive);
-    if (total != st.size) {
-        return IoError::IoFailure;
-    }
-    // libzip does not look at the checksum while it reads, so the content is
-    // checked here against what the archive directory recorded - the same check
-    // the opened archive performs.
-    if ((st.valid & ZIP_STAT_CRC) != 0 && st.crc != 0 && detail::crc32Of(out) != static_cast<std::uint32_t>(st.crc)) {
-        return IoError::IoFailure;
-    }
-    return out;
+    return content;
 }
 
 Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char> bytes, const std::filesystem::path& name)
@@ -359,55 +342,9 @@ Result<std::vector<unsigned char>> Zip::readEntry(std::span<const unsigned char>
         return why;
     }
 
-    // Same lookup as the file overload: stored bytes first, decoded names second.
-    detail::LocatedEntry located;
-    if (!detail::locateEntry(archive, name, located)) {
-        zip_close(archive);
-        return IoError::NotFound;
-    }
-    if (located.is_directory) {
-        zip_close(archive);
-        return IoError::IsADirectory; // the trailing '/' is how a ZIP marks a directory
-    }
-    const zip_int64_t index = located.index;
-
-    struct zip_stat st;
-    zip_stat_init(&st);
-    if (zip_stat_index(archive, index, 0, &st) != 0) {
-        zip_close(archive);
-        return IoError::IoFailure;
-    }
-    if (static_cast<std::uint64_t>(st.size) > detail::kMaxWholeContentBytes) {
-        zip_close(archive);
-        return IoError::CapacityExceeded; // a size the directory states, not one that may be allocated blindly
-    }
-    zip_file_t* const file = zip_fopen_index(archive, index, 0);
-    if (file == nullptr) {
-        zip_close(archive);
-        return IoError::IoFailure;
-    }
-
-    std::vector<unsigned char> out(static_cast<std::size_t>(st.size));
-    zip_uint64_t               total = 0;
-    while (total < st.size) {
-        const zip_int64_t got = zip_fread(file, out.data() + total, st.size - total);
-        if (got <= 0) {
-            break;
-        }
-        total += static_cast<zip_uint64_t>(got);
-    }
-    zip_fclose(file);
+    auto content = readLocatedEntry(archive, name);
     zip_close(archive);
-    if (total != st.size) {
-        return IoError::IoFailure;
-    }
-    // libzip does not look at the checksum while it reads, so the content is
-    // checked here against what the archive directory recorded - the same check
-    // the opened archive performs.
-    if ((st.valid & ZIP_STAT_CRC) != 0 && st.crc != 0 && detail::crc32Of(out) != static_cast<std::uint32_t>(st.crc)) {
-        return IoError::IoFailure;
-    }
-    return out;
+    return content;
 }
 
 VN_IO_NS_END

@@ -630,48 +630,11 @@ Result<std::vector<unsigned char>> ZipArchive::readStored(const std::filesystem:
     if (handle_ == nullptr) {
         return IoError::IoFailure;
     }
-    if (entry.info.size > detail::kMaxWholeContentBytes) {
-        return IoError::CapacityExceeded; // the directory's claim, which may not be allocated blindly
-    }
 
-    zip_file_t* const file = zip_fopen_index(static_cast<zip_t*>(handle_->archive), static_cast<zip_uint64_t>(entry.source_index), ZIP_FL_UNCHANGED);
-    if (file == nullptr) {
-        return IoError::IoFailure;
-    }
-
-    std::vector<unsigned char> bytes(static_cast<std::size_t>(entry.info.size));
-    std::size_t                done = 0;
-    bool                       ok   = true;
-    while (done < bytes.size()) {
-        const zip_int64_t got = zip_fread(file, bytes.data() + done, bytes.size() - done);
-        if (got < 0) {
-            ok = false;
-            break;
-        }
-        if (got == 0) {
-            break;
-        }
-        done += static_cast<std::size_t>(got);
-    }
-    // Decompression finishes, and the content is checked, only once the stream is
-    // read past its last byte - so this probe is what turns a corrupt entry into an
-    // error instead of silently wrong bytes.
-    if (ok && done == bytes.size()) {
-        std::byte probe{};
-        if (zip_fread(file, &probe, 1) < 0) {
-            ok = false;
-        }
-    }
-    zip_fclose(file);
-    if (!ok || done != bytes.size()) {
-        return IoError::IoFailure;
-    }
-    // libzip's read path does not check the checksum, so the content is verified here
-    // against what the archive directory recorded for the entry.
-    if (entry.info.crc != 0 && detail::crc32Of(bytes) != entry.info.crc) {
-        return IoError::IoFailure;
-    }
-    return bytes;
+    return detail::readWholeEntry(static_cast<zip_t*>(handle_->archive),
+                                  static_cast<zip_int64_t>(entry.source_index),
+                                  entry.info.size,
+                                  entry.info.crc);
 }
 
 Result<std::unique_ptr<VfsEntrySource>> ZipArchive::openRead(const std::filesystem::path& name) const

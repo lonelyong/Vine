@@ -58,6 +58,64 @@ inline std::uint32_t crc32Of(std::span<const unsigned char> bytes) noexcept
 }
 
 /**
+ * @brief Reads one entry's whole content and verifies it against the archive directory.
+ *
+ * The one implementation of "read an entry whole", because the three call sites that spelled it themselves had already
+ * drifted: one did not force the decompressor past the last byte, so damage went unnoticed, and another folded the
+ * checksum in a single call, which truncates the length past 4 GiB.
+ *
+ * The probe past the end is what makes a damaged member a failure: decompression finishes, and the content is checked,
+ * only once the stream is read past its last byte.
+ *
+ * @param archive The open archive.
+ * @param index The entry's index in that archive.
+ * @param size The uncompressed size the directory states.
+ * @param expected_crc The checksum it recorded, or 0 when none is recorded.
+ * @return The content; IoError::CapacityExceeded when the stated size passes kMaxWholeContentBytes, IoError::IoFailure
+ *         when the entry cannot be read whole or does not match what the directory promised.
+ */
+inline Result<std::vector<unsigned char>> readWholeEntry(zip_t* archive, zip_int64_t index, std::uint64_t size, std::uint32_t expected_crc)
+{
+    if (size > kMaxWholeContentBytes) {
+        return IoError::CapacityExceeded; // a size the directory states, not one that may be allocated blindly
+    }
+    zip_file_t* const file = zip_fopen_index(archive, static_cast<zip_uint64_t>(index), ZIP_FL_UNCHANGED);
+    if (file == nullptr) {
+        return IoError::IoFailure;
+    }
+
+    std::vector<unsigned char> bytes(static_cast<std::size_t>(size));
+    std::size_t                done = 0;
+    bool                       ok   = true;
+    while (done < bytes.size()) {
+        const zip_int64_t got = zip_fread(file, bytes.data() + done, bytes.size() - done);
+        if (got < 0) {
+            ok = false;
+            break;
+        }
+        if (got == 0) {
+            break;
+        }
+        done += static_cast<std::size_t>(got);
+    }
+    if (ok && done == bytes.size()) {
+        std::byte probe{};
+        if (zip_fread(file, &probe, 1) < 0) {
+            ok = false;
+        }
+    }
+    zip_fclose(file);
+
+    if (!ok || done != bytes.size()) {
+        return IoError::IoFailure;
+    }
+    if (expected_crc != 0 && crc32Of(bytes) != expected_crc) {
+        return IoError::IoFailure;
+    }
+    return bytes;
+}
+
+/**
  * @brief Maps a libzip error code onto this library's vocabulary.
  *
  * libzip says why an archive could not be opened or written; reporting every reason as InvalidData would hide a

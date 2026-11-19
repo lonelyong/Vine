@@ -303,6 +303,26 @@ class VN_IOBASE_API MountVfs : public Vfs {
     };
 
     /**
+     * @brief Where a write to one path goes.
+     */
+    struct WritePlan {
+        const Mount*          mount{ nullptr }; // Target mount; set only by a successful plan.
+        std::filesystem::path local;            // The path as the target mount spells it.
+    };
+
+    /**
+     * @brief Settles every rule a write to a new file passes, and names the mount it lands on.
+     *
+     * The path is judged on the merged tree before an owner is picked, so the verdict is what a reader sees; a path
+     * no mount of the group accepts writes for has nowhere to go.
+     *
+     * @param path The virtual path as the caller spelled it.
+     * @param plan Receives the target mount and the path inside it; untouched on failure.
+     * @return IoError::Ok, what prepareAddFile() reported, or IoError::ReadOnly when no mount accepts the write.
+     */
+    [[nodiscard]] IoError planWrite(const std::filesystem::path& path, WritePlan& plan) const;
+
+    /**
      * @brief Selects the mounts that can answer one normalized path.
      *
      * @param normalized The normalized path.

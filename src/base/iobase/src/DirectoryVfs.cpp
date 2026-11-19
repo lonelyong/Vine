@@ -34,6 +34,43 @@ IoError failureOf(const std::error_code& ec)
 }
 
 /**
+ * @brief Reads what a real path is, telling "nothing is there" apart from "the query failed".
+ *
+ * std::filesystem::status answers file_type::not_found for a missing path - and may still set ENOENT while doing it -
+ * and file_type::none when it could not look at all. Reading the error code instead of the type is what used to turn a
+ * missing path into a failure and a permission problem into an answer about the path.
+ *
+ * @param path The real path to query.
+ * @param type Receives the type; file_type::not_found means nothing is there.
+ * @return IoError::Ok when the query answered (even with not_found), or why it did not.
+ */
+IoError typeOf(const std::filesystem::path& path, std::filesystem::file_type& type)
+{
+    std::error_code ec;
+    type = std::filesystem::status(path, ec).type();
+    return type == std::filesystem::file_type::none ? failureOf(ec) : IoError::Ok;
+}
+
+/**
+ * @brief Moves a finished staging file onto its target, dropping it when the move fails.
+ *
+ * @param staging The complete file to publish.
+ * @param target The path it replaces.
+ * @return IoError::Ok on success, or the failure of the move; nothing is left behind either way.
+ */
+IoError publishStaging(const std::filesystem::path& staging, const std::filesystem::path& target)
+{
+    std::error_code ec;
+    std::filesystem::rename(staging, target, ec);
+    if (ec) {
+        std::error_code ignored;
+        std::filesystem::remove(staging, ignored);
+        return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
+    }
+    return IoError::Ok;
+}
+
+/**
  * @brief Writes a file by streaming into a sibling staging file and publishing it when the content is complete.
  *
  * A source can stop halfway (a broken stream, a length it cannot deliver), and a half-written file would look like
@@ -63,12 +100,7 @@ IoError writeThroughTemporary(const std::filesystem::path& real, const std::func
         }
     }
 
-    std::filesystem::rename(staging, real, ec);
-    if (ec) {
-        std::filesystem::remove(staging, ec);
-        return IoError::IoFailure;
-    }
-    return IoError::Ok;
+    return publishStaging(staging, real);
 }
 
 } // namespace
@@ -141,15 +173,12 @@ Result<VfsEntryInfo> DirectoryVfs::stat(const std::filesystem::path& path) const
         return error;
     }
 
-    // The type decides, not the error code: MSVC also sets it for a missing
-    // path, where the standard only asks for file_type::not_found.
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
-    }
-    if (ec) {
-        return IoError::IoFailure;
     }
     if (type == std::filesystem::file_type::directory) {
         return VfsEntryInfo{ std::move(norm), VfsEntryKind::Directory, 0 };
@@ -158,9 +187,10 @@ Result<VfsEntryInfo> DirectoryVfs::stat(const std::filesystem::path& path) const
         return IoError::NotFound; // a device, socket, pipe or similar
     }
 
+    std::error_code      ec;
     const std::uintmax_t bytes = std::filesystem::file_size(real, ec);
     if (ec) {
-        return IoError::IoFailure;
+        return failureOf(ec);
     }
     return VfsEntryInfo{ std::move(norm), VfsEntryKind::File, static_cast<std::uint64_t>(bytes) };
 }
@@ -174,37 +204,35 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
         return error;
     }
 
-    // The type decides, not the error code: MSVC also sets it for a missing
-    // path, where the standard only asks for file_type::not_found.
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
-    }
-    if (ec) {
-        return IoError::IoFailure;
     }
     if (type != std::filesystem::file_type::directory) {
         return IoError::NotADirectory;
     }
 
+    std::error_code           ec;
     std::vector<VfsEntryInfo> children;
     for (std::filesystem::directory_iterator it(real, ec), end; !ec && it != end; it.increment(ec)) {
         const std::filesystem::directory_entry& entry = *it;
 
-        std::error_code                  entry_ec;
-        const std::filesystem::file_type entry_type = entry.status(entry_ec).type();
+        std::filesystem::file_type entry_type{};
+        if (const IoError why = typeOf(entry.path(), entry_type); why != IoError::Ok) {
+            return why; // the entry cannot be examined at all
+        }
         if (entry_type == std::filesystem::file_type::not_found) {
             continue; // a dangling link, or an entry that vanished between the walk and the query
-        }
-        if (entry_type == std::filesystem::file_type::none) {
-            return failureOf(entry_ec); // the entry cannot be examined at all
         }
         const bool is_dir = entry_type == std::filesystem::file_type::directory;
         if (!is_dir && entry_type != std::filesystem::file_type::regular) {
             continue; // stat() refuses these too, so the listing does not offer them
         }
-        if (entry.is_symlink(entry_ec) && !staysInsideRoot(entry.path())) {
+        std::error_code link_ec;
+        if (entry.is_symlink(link_ec) && !staysInsideRoot(entry.path())) {
             continue; // a link that leaves the root is not part of this tree
         }
 
@@ -249,21 +277,22 @@ IoError DirectoryVfs::remove(const std::filesystem::path& path)
         return IoError::InvalidPath; // the root cannot be removed
     }
 
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (ec) {
-        return IoError::IoFailure;
-    }
+
+    std::error_code ec;
     if (type == std::filesystem::file_type::directory && !std::filesystem::is_empty(real, ec)) {
-        return ec ? IoError::IoFailure : IoError::NotEmpty;
+        return ec ? failureOf(ec) : IoError::NotEmpty;
     }
 
     std::filesystem::remove(real, ec);
     if (ec) {
-        return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
+        return failureOf(ec);
     }
     return IoError::Ok;
 }
@@ -283,17 +312,18 @@ IoError DirectoryVfs::removeAll(const std::filesystem::path& path)
         return IoError::InvalidPath; // the root cannot be removed
     }
 
-    std::error_code ec;
-    if (std::filesystem::status(real, ec).type() == std::filesystem::file_type::not_found) {
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
+    if (type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (ec) {
-        return IoError::IoFailure;
-    }
 
+    std::error_code ec;
     std::filesystem::remove_all(real, ec);
     if (ec) {
-        return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
+        return failureOf(ec);
     }
     return IoError::Ok;
 }
@@ -313,23 +343,24 @@ IoError DirectoryVfs::createDirectory(const std::filesystem::path& path)
         return IoError::AlreadyExists; // the root always exists
     }
 
-    // The type decides, not the error code: MSVC also sets it for a missing
-    // path, where the standard only asks for file_type::not_found - and a host may set ENOENT for one too, so an
-    // error code alone would turn "nothing is there" into a failure. file_type::none is what a failed query leaves.
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    // The root always exists, and a failed query is reported rather than answered.
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type != std::filesystem::file_type::not_found) {
-        return type == std::filesystem::file_type::none ? failureOf(ec) : IoError::AlreadyExists;
+        return IoError::AlreadyExists; // already a directory, or a file owns the name
     }
 
-    const std::filesystem::file_type parent_type = std::filesystem::status(real.parent_path(), ec).type();
-    if (parent_type == std::filesystem::file_type::none) {
-        return failureOf(ec); // the query failed, so nothing is known about the parent
+    std::filesystem::file_type parent_type{};
+    if (const IoError why = typeOf(real.parent_path(), parent_type); why != IoError::Ok) {
+        return why;
     }
     if (parent_type != std::filesystem::file_type::directory) {
         return parent_type == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
     }
 
+    std::error_code ec;
     std::filesystem::create_directory(real, ec);
     if (ec) {
         return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
@@ -352,18 +383,18 @@ IoError DirectoryVfs::createDirectories(const std::filesystem::path& path)
         return IoError::Ok; // the root always exists
     }
 
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type == std::filesystem::file_type::directory) {
         return IoError::Ok; // already there
-    }
-    if (type == std::filesystem::file_type::none) {
-        return failureOf(ec); // the query failed, so nothing is known about the path
     }
     if (type != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // a file owns the name
     }
 
+    std::error_code ec;
     std::filesystem::create_directories(real, ec);
     if (ec) {
         if (ec == std::errc::permission_denied) {
@@ -384,17 +415,14 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::file
         return prepared;
     }
 
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real_path, ec).type();
-    if (type == std::filesystem::file_type::not_found) {
-        return IoError::NotFound;
+    std::filesystem::file_type source_type{};
+    if (const IoError why = typeOf(real_path, source_type); why != IoError::Ok) {
+        return why;
     }
-    if (ec) {
-        return IoError::IoFailure;
+    if (source_type != std::filesystem::file_type::regular) {
+        return IoError::NotFound; // nothing is there, or it is not a regular file
     }
-    if (type != std::filesystem::file_type::regular) {
-        return IoError::NotFound; // only regular files can be brought in
-    }
+    // Last, once nothing else can refuse: a call that writes nothing leaves no directory behind either.
     if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
         return parent;
     }
@@ -402,16 +430,14 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::file
     // A directory backend copies the file right away, streaming it - and publishes it the way the other two overloads
     // do, so a copy that dies halfway leaves no half-file under the real name.
     const std::filesystem::path staging = detail::temporaryPathFor(real);
+    std::error_code             ec;
     std::filesystem::copy_file(real_path, staging, ec);
-    if (!ec) {
-        std::filesystem::rename(staging, real, ec);
-    }
     if (ec) {
         std::error_code ignored;
         std::filesystem::remove(staging, ignored);
-        return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
+        return failureOf(ec);
     }
-    return IoError::Ok;
+    return publishStaging(staging, real);
 }
 
 IoError DirectoryVfs::rename(const std::filesystem::path& from, const std::filesystem::path& to)
@@ -441,31 +467,34 @@ IoError DirectoryVfs::rename(const std::filesystem::path& from, const std::files
         return IoError::InvalidPath; // a tree cannot move into itself
     }
 
-    std::error_code ec;
-    if (std::filesystem::status(source_real, ec).type() == std::filesystem::file_type::not_found) {
+    std::filesystem::file_type source_type{};
+    if (const IoError why = typeOf(source_real, source_type); why != IoError::Ok) {
+        return why;
+    }
+    if (source_type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (ec) {
-        return failureOf(ec);
+
+    std::filesystem::file_type target_type{};
+    if (const IoError why = typeOf(target_real, target_type); why != IoError::Ok) {
+        return why; // nothing is known about the target, so it cannot be called free
     }
-    const std::filesystem::file_type existing = std::filesystem::status(target_real, ec).type();
-    if (existing == std::filesystem::file_type::none) {
-        return failureOf(ec); // the query failed, so it is unknown whether the target is free
-    }
-    if (existing != std::filesystem::file_type::not_found) {
+    if (target_type != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // never overwrite, on any platform
     }
-    const std::filesystem::file_type parent_type = std::filesystem::status(target_real.parent_path(), ec).type();
-    if (parent_type == std::filesystem::file_type::none) {
-        return failureOf(ec); // the query failed, so nothing is known about the parent
+
+    std::filesystem::file_type parent_type{};
+    if (const IoError why = typeOf(target_real.parent_path(), parent_type); why != IoError::Ok) {
+        return why;
     }
     if (parent_type != std::filesystem::file_type::directory) {
         return parent_type == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
     }
 
+    std::error_code ec;
     std::filesystem::rename(source_real, target_real, ec);
     if (ec) {
-        return ec == std::errc::permission_denied ? IoError::PermissionDenied : IoError::IoFailure;
+        return failureOf(ec);
     }
     return IoError::Ok;
 }
@@ -481,13 +510,12 @@ Result<std::vector<unsigned char>> DirectoryVfs::read(const std::filesystem::pat
 
     // The type decides, not the error code: MSVC also sets it for a missing
     // path, where the standard only asks for file_type::not_found.
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
-    }
-    if (ec) {
-        return IoError::IoFailure;
     }
     if (type == std::filesystem::file_type::directory) {
         return IoError::IsADirectory;
@@ -618,13 +646,12 @@ Result<std::unique_ptr<VfsEntrySource>> DirectoryVfs::openRead(const std::filesy
 
     // The type decides, not the error code: MSVC also sets it for a missing
     // path, where the standard only asks for file_type::not_found.
-    std::error_code                  ec;
-    const std::filesystem::file_type type = std::filesystem::status(real, ec).type();
+    std::filesystem::file_type type{};
+    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
+        return why;
+    }
     if (type == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
-    }
-    if (ec) {
-        return IoError::IoFailure;
     }
     if (type == std::filesystem::file_type::directory) {
         return IoError::IsADirectory;
@@ -637,9 +664,10 @@ Result<std::unique_ptr<VfsEntrySource>> DirectoryVfs::openRead(const std::filesy
     if (!in) {
         return IoError::IoFailure;
     }
+    std::error_code      ec;
     const std::uintmax_t size = std::filesystem::file_size(real, ec);
     if (ec) {
-        return IoError::IoFailure;
+        return failureOf(ec);
     }
     // The size is captured here and never re-read: like every reader, this one
     // describes the entry as it was opened, so a file that grows underneath it
@@ -679,6 +707,7 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::shared_ptr
     if (const IoError settled = source->error(); settled != IoError::Ok) {
         return settled; // the source already knows it cannot deliver, so nothing is written
     }
+    // Last, once nothing else can refuse: a call that writes nothing leaves no directory behind either.
     if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
         return parent;
     }
@@ -700,6 +729,7 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, std::span<const
     if (detail::hasDatalessFragment(fragments)) {
         return IoError::InvalidData; // a piece that claims bytes it does not have
     }
+    // Last, once nothing else can refuse: a call that writes nothing leaves no directory behind either.
     if (const IoError parent = ensureWriteParent(real); parent != IoError::Ok) {
         return parent;
     }
