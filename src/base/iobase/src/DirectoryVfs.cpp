@@ -34,21 +34,23 @@ IoError failureOf(const std::error_code& ec)
 }
 
 /**
- * @brief Reads what a real path is, telling "nothing is there" apart from "the query failed".
+ * @brief Reads what a path is, telling "nothing is there" apart from "the query failed".
  *
  * std::filesystem::status answers file_type::not_found for a missing path - and may still set ENOENT while doing it -
  * and file_type::none when it could not look at all. Reading the error code instead of the type is what used to turn a
  * missing path into a failure and a permission problem into an answer about the path.
  *
  * @param path The real path to query.
- * @param type Receives the type; file_type::not_found means nothing is there.
- * @return IoError::Ok when the query answered (even with not_found), or why it did not.
+ * @return The type - file_type::not_found is an answer, not a failure - or why the query could not look at the path.
  */
-IoError typeOf(const std::filesystem::path& path, std::filesystem::file_type& type)
+Result<std::filesystem::file_type> fileTypeOf(const std::filesystem::path& path)
 {
-    std::error_code ec;
-    type = std::filesystem::status(path, ec).type();
-    return type == std::filesystem::file_type::none ? failureOf(ec) : IoError::Ok;
+    std::error_code                  ec;
+    const std::filesystem::file_type type = std::filesystem::status(path, ec).type();
+    if (type == std::filesystem::file_type::none) {
+        return failureOf(ec); // the query failed, so nothing is known about the path
+    }
+    return type;
 }
 
 /**
@@ -173,17 +175,17 @@ Result<VfsEntryInfo> DirectoryVfs::stat(const std::filesystem::path& path) const
         return error;
     }
 
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (type == std::filesystem::file_type::directory) {
+    if (type.value() == std::filesystem::file_type::directory) {
         return VfsEntryInfo{ std::move(norm), VfsEntryKind::Directory, 0 };
     }
-    if (type != std::filesystem::file_type::regular) {
+    if (type.value() != std::filesystem::file_type::regular) {
         return IoError::NotFound; // a device, socket, pipe or similar
     }
 
@@ -204,14 +206,14 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
         return error;
     }
 
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto dir_type = fileTypeOf(real);
+    if (!dir_type.ok()) {
+        return dir_type.error();
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (dir_type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (type != std::filesystem::file_type::directory) {
+    if (dir_type.value() != std::filesystem::file_type::directory) {
         return IoError::NotADirectory;
     }
 
@@ -220,15 +222,15 @@ Result<std::vector<VfsEntryInfo>> DirectoryVfs::list(const std::filesystem::path
     for (std::filesystem::directory_iterator it(real, ec), end; !ec && it != end; it.increment(ec)) {
         const std::filesystem::directory_entry& entry = *it;
 
-        std::filesystem::file_type entry_type{};
-        if (const IoError why = typeOf(entry.path(), entry_type); why != IoError::Ok) {
-            return why; // the entry cannot be examined at all
+        const auto entry_type = fileTypeOf(entry.path());
+        if (!entry_type.ok()) {
+            return entry_type.error(); // the entry cannot be examined at all
         }
-        if (entry_type == std::filesystem::file_type::not_found) {
+        if (entry_type.value() == std::filesystem::file_type::not_found) {
             continue; // a dangling link, or an entry that vanished between the walk and the query
         }
-        const bool is_dir = entry_type == std::filesystem::file_type::directory;
-        if (!is_dir && entry_type != std::filesystem::file_type::regular) {
+        const bool is_dir = entry_type.value() == std::filesystem::file_type::directory;
+        if (!is_dir && entry_type.value() != std::filesystem::file_type::regular) {
             continue; // stat() refuses these too, so the listing does not offer them
         }
         std::error_code link_ec;
@@ -277,16 +279,16 @@ IoError DirectoryVfs::remove(const std::filesystem::path& path)
         return IoError::InvalidPath; // the root cannot be removed
     }
 
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
 
     std::error_code ec;
-    if (type == std::filesystem::file_type::directory && !std::filesystem::is_empty(real, ec)) {
+    if (type.value() == std::filesystem::file_type::directory && !std::filesystem::is_empty(real, ec)) {
         return ec ? failureOf(ec) : IoError::NotEmpty;
     }
 
@@ -312,11 +314,11 @@ IoError DirectoryVfs::removeAll(const std::filesystem::path& path)
         return IoError::InvalidPath; // the root cannot be removed
     }
 
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
 
@@ -344,20 +346,20 @@ IoError DirectoryVfs::createDirectory(const std::filesystem::path& path)
     }
 
     // The root always exists, and a failed query is reported rather than answered.
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type != std::filesystem::file_type::not_found) {
+    if (type.value() != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // already a directory, or a file owns the name
     }
 
-    std::filesystem::file_type parent_type{};
-    if (const IoError why = typeOf(real.parent_path(), parent_type); why != IoError::Ok) {
-        return why;
+    const auto parent_type = fileTypeOf(real.parent_path());
+    if (!parent_type.ok()) {
+        return parent_type.error();
     }
-    if (parent_type != std::filesystem::file_type::directory) {
-        return parent_type == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
+    if (parent_type.value() != std::filesystem::file_type::directory) {
+        return parent_type.value() == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
     }
 
     std::error_code ec;
@@ -383,14 +385,14 @@ IoError DirectoryVfs::createDirectories(const std::filesystem::path& path)
         return IoError::Ok; // the root always exists
     }
 
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type == std::filesystem::file_type::directory) {
+    if (type.value() == std::filesystem::file_type::directory) {
         return IoError::Ok; // already there
     }
-    if (type != std::filesystem::file_type::not_found) {
+    if (type.value() != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // a file owns the name
     }
 
@@ -415,11 +417,11 @@ IoError DirectoryVfs::addFile(const std::filesystem::path& path, const std::file
         return prepared;
     }
 
-    std::filesystem::file_type source_type{};
-    if (const IoError why = typeOf(real_path, source_type); why != IoError::Ok) {
-        return why;
+    const auto source_type = fileTypeOf(real_path);
+    if (!source_type.ok()) {
+        return source_type.error();
     }
-    if (source_type != std::filesystem::file_type::regular) {
+    if (source_type.value() != std::filesystem::file_type::regular) {
         return IoError::NotFound; // nothing is there, or it is not a regular file
     }
     // Last, once nothing else can refuse: a call that writes nothing leaves no directory behind either.
@@ -467,28 +469,28 @@ IoError DirectoryVfs::rename(const std::filesystem::path& from, const std::files
         return IoError::InvalidPath; // a tree cannot move into itself
     }
 
-    std::filesystem::file_type source_type{};
-    if (const IoError why = typeOf(source_real, source_type); why != IoError::Ok) {
-        return why;
+    const auto source_type = fileTypeOf(source_real);
+    if (!source_type.ok()) {
+        return source_type.error();
     }
-    if (source_type == std::filesystem::file_type::not_found) {
+    if (source_type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
 
-    std::filesystem::file_type target_type{};
-    if (const IoError why = typeOf(target_real, target_type); why != IoError::Ok) {
-        return why; // nothing is known about the target, so it cannot be called free
+    const auto target_type = fileTypeOf(target_real);
+    if (!target_type.ok()) {
+        return target_type.error(); // nothing is known about the target, so it cannot be called free
     }
-    if (target_type != std::filesystem::file_type::not_found) {
+    if (target_type.value() != std::filesystem::file_type::not_found) {
         return IoError::AlreadyExists; // never overwrite, on any platform
     }
 
-    std::filesystem::file_type parent_type{};
-    if (const IoError why = typeOf(target_real.parent_path(), parent_type); why != IoError::Ok) {
-        return why;
+    const auto parent_type = fileTypeOf(target_real.parent_path());
+    if (!parent_type.ok()) {
+        return parent_type.error();
     }
-    if (parent_type != std::filesystem::file_type::directory) {
-        return parent_type == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
+    if (parent_type.value() != std::filesystem::file_type::directory) {
+        return parent_type.value() == std::filesystem::file_type::not_found ? IoError::NotFound : IoError::NotADirectory;
     }
 
     std::error_code ec;
@@ -510,17 +512,17 @@ Result<std::vector<unsigned char>> DirectoryVfs::read(const std::filesystem::pat
 
     // The type decides, not the error code: MSVC also sets it for a missing
     // path, where the standard only asks for file_type::not_found.
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (type == std::filesystem::file_type::directory) {
+    if (type.value() == std::filesystem::file_type::directory) {
         return IoError::IsADirectory;
     }
-    if (type != std::filesystem::file_type::regular) {
+    if (type.value() != std::filesystem::file_type::regular) {
         return IoError::NotFound;
     }
 
@@ -646,17 +648,17 @@ Result<std::unique_ptr<VfsEntrySource>> DirectoryVfs::openRead(const std::filesy
 
     // The type decides, not the error code: MSVC also sets it for a missing
     // path, where the standard only asks for file_type::not_found.
-    std::filesystem::file_type type{};
-    if (const IoError why = typeOf(real, type); why != IoError::Ok) {
-        return why;
+    const auto type = fileTypeOf(real);
+    if (!type.ok()) {
+        return type.error();
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (type.value() == std::filesystem::file_type::not_found) {
         return IoError::NotFound;
     }
-    if (type == std::filesystem::file_type::directory) {
+    if (type.value() == std::filesystem::file_type::directory) {
         return IoError::IsADirectory;
     }
-    if (type != std::filesystem::file_type::regular) {
+    if (type.value() != std::filesystem::file_type::regular) {
         return IoError::NotFound;
     }
 
