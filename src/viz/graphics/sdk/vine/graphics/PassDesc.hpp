@@ -107,9 +107,10 @@ struct VN_GRAPHICS_API PassDesc {
     /// Name-based declared inputs, in declaration order: the sugar over the object-typed ones.
     std::vector<String> input_names;
 
-    /// Whether this pass clears its target, or unset for the KIND's own policy: a Screen pass never clears
-    /// (it composites over what is already there), a Scene pass does. Stating one is how a declaration
-    /// overrides that (the transparent pass tests depth without clearing, for instance).
+    /// Whether this pass clears its target's COLOUR attachments, or unset for the KIND's own policy: a Screen pass
+    /// never clears (it composites over what is already there), a Scene pass does. It is ONE OF TWO independent
+    /// dimensions - `clear_depth` is the other - so a pass that keeps the picture and resets only depth states `false`
+    /// here and `true` there (a HUD overlay owning the depth inside its rectangle).
     std::optional<bool> clear_enabled;
     /// The colour its target is cleared to, or unset for the kind's own default (the #333333 grey a hand-built
     /// pass clears to — a surface that has its own colour states it here).
@@ -121,7 +122,10 @@ struct VN_GRAPHICS_API PassDesc {
     /// Colours for attachments 1..N-1, in attachment order (see ClearPolicy): an absent entry is transparent
     /// black. This is what a G-buffer needs (a normal image cleared to (0,0,1,0) rather than the pass' colour).
     std::vector<Colorf> clear_extra_colors;
-    /// Whether the depth attachment is cleared with it, or unset for the kind's own policy.
+    /// Whether the depth attachment is cleared, or unset for the kind's own policy: it follows `clear_enabled` for a
+    /// pass that clears (a Scene pass clears both, a Screen pass neither), and a pass that clears NO colour clears no
+    /// depth either unless it says so here. `clear_enabled = false` + `clear_depth = true` is therefore a DEPTH-ONLY
+    /// clear, applied inside the pass' viewport (see ClearPolicy for what each target can express).
     std::optional<bool> clear_depth;
 
     /// A sub-rectangle of the target to draw into (unset = the whole of it).

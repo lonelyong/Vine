@@ -234,7 +234,10 @@ vn::intrusive_ptr<PassChain> builderChain(vn::raw_ptr<RenderEngine> engine,
     hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
     hud.camera = vn::intrusive_ptr<Camera>(gizmo->camera());
     hud.content = vn::intrusive_ptr<Scene>(gizmo->content());
-    hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
+    hud.viewport = gizmo->boxViewport();
+    hud.clear_enabled = false;                  // keep the picture it is drawn over
+    hud.clear_depth   = true;                   // ...and own the depth inside the box
+    hud.depth_mode    = DepthMode::TestAndWrite; // so the marker's arrows occlude each other
     pipeline->addOverlay(u8"gizmo", gizmo.get(), hud);
 
     return pipeline;

@@ -1,5 +1,6 @@
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -7,8 +8,10 @@
 #include <vsg/app/ProjectionMatrix.h>
 #include <vsg/app/ViewMatrix.h>
 #include <vsg/app/Window.h>
+#include <vsg/commands/Command.h>
 #include <vsg/maths/vec3.h>
 #include <vsg/nodes/Group.h>
+#include <vsg/vk/CommandBuffer.h>
 
 #include <vine/backend_vsg/internal/TargetObjects.hpp>
 
@@ -52,6 +55,44 @@ std::optional<vn::graphics::RenderTarget::DepthFormat> toDepthFormat(VkFormat fo
     }
 }
 
+/**
+ * @brief A DEPTH-ONLY clear of one rectangle, recorded where it sits inside the window's render pass.
+ *
+ * @details
+ * - The window's frame is ONE render pass instance (see the file note), so a later pass cannot begin one to reset the
+ *   depth it is about to draw against. `vkCmdClearAttachments` clears a sub-rectangle of the attachments of the
+ *   instance that is ALREADY open, so the reset happens exactly where the pass asked for it: one command, no second
+ *   render pass, no attachment layout work - and the COLOUR attachments are not named, so the picture underneath
+ *   survives, which is the whole difference between a HUD owning its depth and a HUD clearing the screen.
+ * - The value is `kReverseZFarDepth`, the backend's far plane: every fragment the pass records is nearer than it (see
+ *   ClearPlan for why the value is the far plane and not 1.0).
+ * - Core Vulkan 1.0, so it is called by name like every other core command here (the entry points that need loading
+ *   are the extension commands, see VsgVulkanEntryPoints).
+ */
+class ClearDepthRect : public ::vsg::Inherit<::vsg::Command, ClearDepthRect> {
+  public:
+    explicit ClearDepthRect(const VkRect2D& in_rect)
+      : rect(in_rect)
+    {}
+
+    VkRect2D rect{};
+
+    void record(::vsg::CommandBuffer& commandBuffer) const override
+    {
+        VkClearAttachment attachment{};
+        attachment.aspectMask              = VK_IMAGE_ASPECT_DEPTH_BIT;
+        attachment.colorAttachment         = 0U; // read only for a colour aspect, which this one is not
+        attachment.clearValue.depthStencil = VkClearDepthStencilValue{ core::kReverseZFarDepth, 0U };
+
+        VkClearRect clear{};
+        clear.rect           = rect;
+        clear.baseArrayLayer = 0U;
+        clear.layerCount     = 1U;
+
+        ::vkCmdClearAttachments(commandBuffer, 1U, &attachment, 1U, &clear);
+    }
+};
+
 } // namespace
 
 struct WindowTarget::Data {
@@ -60,6 +101,9 @@ struct WindowTarget::Data {
     ::vsg::ref_ptr<::vsg::View>        content_view;  // The window's own view (see the file note).
     ::vsg::ref_ptr<::vsg::Group>       frame_content; // THIS frame's recorded content (see beginFrame).
     core::TargetShape                  shape;
+    /// The depth-clear commands THIS frame uses, taken from @ref depth_clears in order (see addDepthClear).
+    std::vector<::vsg::ref_ptr<ClearDepthRect>> depth_clears;
+    std::size_t                                 depth_clear_count{ 0 };
 };
 
 WindowTarget::WindowTarget()
@@ -160,6 +204,9 @@ void WindowTarget::beginFrame() noexcept
     if (d->frame_content != nullptr) {
         d->frame_content->children.clear();
     }
+    // The clear commands are REUSED frame to frame (see addDepthClear): a steady HUD frame must not allocate, and a
+    // node per clear per frame would be exactly that. The pool keeps them alive; the frame takes them from the start.
+    d->depth_clear_count = 0;
 }
 
 void WindowTarget::addFrameContent(::vsg::ref_ptr<::vsg::Node> content) noexcept
@@ -167,6 +214,36 @@ void WindowTarget::addFrameContent(::vsg::ref_ptr<::vsg::Node> content) noexcept
     if (content != nullptr && d->frame_content != nullptr) {
         d->frame_content->addChild(content);
     }
+}
+
+void WindowTarget::addDepthClear(const vn::graphics::Viewport& rect) noexcept
+{
+    if (d->frame_content == nullptr || !rect.isValid()) {
+        return;
+    }
+    // The rectangle must lie inside the render area (the whole window, see prepare): a corner HUD whose layout outgrew
+    // the surface is clamped here rather than handed to a command the API rejects.
+    const VkExtent2D extent = d->window->extent2D();
+    const int        left   = std::max(rect.x, 0);
+    const int        top    = std::max(rect.y, 0);
+    const int        right  = std::min(rect.x + rect.width, static_cast<int>(extent.width));
+    const int        bottom = std::min(rect.y + rect.height, static_cast<int>(extent.height));
+    if (right <= left || bottom <= top) {
+        return;
+    }
+    const VkRect2D area{ VkOffset2D{ left, top },
+                         VkExtent2D{ static_cast<std::uint32_t>(right - left), static_cast<std::uint32_t>(bottom - top) } };
+    // ONE NODE PER CLEAR, REUSED: a HUD's clear happens every frame, so allocating its command here would put one
+    // allocation in every steady frame (the gate every backend phase is measured against). The pool only grows on a
+    // frame that needs more clears than any earlier one - a change of shape, not a steady frame's work.
+    if (d->depth_clear_count == d->depth_clears.size()) {
+        d->depth_clears.push_back(ClearDepthRect::create(area));
+    }
+    else {
+        d->depth_clears[d->depth_clear_count]->rect = area;
+    }
+    d->frame_content->addChild(d->depth_clears[d->depth_clear_count]);
+    ++d->depth_clear_count;
 }
 
 void WindowTarget::addContent(::vsg::ref_ptr<::vsg::Node> content) noexcept

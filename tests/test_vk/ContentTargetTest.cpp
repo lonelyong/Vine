@@ -492,7 +492,7 @@ TEST(VkContentTargetTest, TheDepthAttachmentReadsBackAsNormalisedRowMajorValues)
 
     ClearPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    clear.depth = true;
+    clear.clear_depth = true;
 
     EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
@@ -545,7 +545,7 @@ TEST(VkContentTargetTest, AMultisampledTargetsDepthReadsItsResolvePicture)
 
     ClearPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    clear.depth = true;
+    clear.clear_depth = true;
 
     EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
@@ -586,7 +586,7 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
 
     ClearPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    clear.depth = true;
+    clear.clear_depth = true;
 
     // A BUILT D24 target: the SDK's table says a combined depth/stencil image has no plain depth copy, so this
     // backend refuses the read instead of decoding bytes that look like depths and are not.
@@ -690,10 +690,10 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
 
     ClearPolicy lender_clear;
     lender_clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    lender_clear.depth = true;
+    lender_clear.clear_depth = true;
     ClearPolicy borrower_clear;
     borrower_clear.color = Colorf(0.0F, 0.0F, 1.0F, 1.0F); // BLUE: what a REJECTED fragment leaves behind
-    borrower_clear.depth = false;                          // it never clears the depth it borrows
+    borrower_clear.clear_depth = false;                          // it never clears the depth it borrows
 
     const auto passOf = [](RenderTarget* target,
                            const ClearPolicy& clear,
@@ -783,7 +783,7 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
 
     ClearPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    clear.depth = true;
+    clear.clear_depth = true;
 
     const auto paintedPixels = [&backend, &target]() {
         std::vector<std::uint8_t> pixels;

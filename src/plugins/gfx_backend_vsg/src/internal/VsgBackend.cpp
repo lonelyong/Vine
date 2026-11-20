@@ -2387,19 +2387,19 @@ void VsgBackend::announceClear(FrameScratch& scratch, const vn::graphics::ClearP
     if (!scratch.recorder.inPass()) {
         return;
     }
-    // The SDK's policy is linear floats plus a depth flag; the plan's is floats plus a depth VALUE. The colour is
-    // passed THROUGH, with no transfer function: the SDK's contract is that a colour reaching the engine is already
-    // linear, so the only encoding left is the target's own (an sRGB surface encodes on write inside the GPU, and a
-    // linear off-screen target stores the value as it stands - see the SDK's ClearPolicy). Depth keeps the plan's
-    // own far value because the SDK has no depth value to give: one there would be a second place to get the clip
-    // convention wrong.
+    // The SDK's policy states WHICH attachments to clear (colour, depth) and the colour's value; the plan's states the
+    // same pair as a flag plus a value. The colour is passed THROUGH, with no transfer function: the SDK's contract is
+    // that a colour reaching the engine is already linear, so the only encoding left is the target's own (an sRGB
+    // surface encodes on write inside the GPU, and a linear off-screen target stores the value as it stands - see the
+    // SDK's ClearPolicy). Depth keeps the plan's own far value because the SDK has no depth value to give: one there
+    // would be a second place to get the clip convention wrong.
     //
     // WHY TWO SHAPES at all: the backend half speaks DEVICE values (a packed float4 per attachment, the thing a clear
     // plan is compared and submitted with), while the SDK speaks colours with alpha semantics. This function is the
     // one place the two meet, and since the SDK side became linear the translation is a straight copy - the reason it
     // still exists is that neither half should have to know the other's shape.
     core::ClearValues translated;
-    translated.color          = true; // the SDK only announces a policy for a pass that clears its colour
+    translated.color          = policy.clear_color; // which attachments the policy acts on is the SDK's statement
     translated.color_value[0] = policy.color.r;
     translated.color_value[1] = policy.color.g;
     translated.color_value[2] = policy.color.b;
@@ -2410,7 +2410,7 @@ void VsgBackend::announceClear(FrameScratch& scratch, const vn::graphics::ClearP
     for (const vn::Colorf& colour : policy.extra_colors) {
         translated.extra_color_values.push_back({ colour.r, colour.g, colour.b, colour.a });
     }
-    translated.depth = policy.depth;
+    translated.depth = policy.clear_depth;
     (void)scratch.recorder.setClearPolicy(translated);
 }
 

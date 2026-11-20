@@ -38,6 +38,11 @@ class ShaderProgram;
  * - A PASS' OWN FACT, a field of its description (PassDraw::clear): the pass describes the clear its
  *   content expects and every draw of that pass gets it. Nothing is cleared at call time - a backend that
  *   clears through its render pass' load-op applies it when the pass records.
+ * - TWO INDEPENDENT DIMENSIONS: @ref clear_color and @ref clear_depth say WHICH attachments this pass resets, and
+ *   they are not one flag because a HUD overlay needs exactly one of them - "clear the depth inside my rectangle,
+ *   keep the picture underneath" is `clear_color = false, clear_depth = true`, and that pass then occludes itself
+ *   correctly without ever clearing what it is drawn over. The names are the pass DECLARATION's two halves (see
+ *   PassDesc::clear_enabled / PassDesc::clear_depth), which is what these are the resolved form of.
  * - PER ATTACHMENT: @ref color is attachment 0's clear and @ref extra_colors carries the ones the pass states
  *   for the rest, in attachment order. An attachment nobody states a colour for is left TRANSPARENT BLACK
  *   (0,0,0,0) until a fragment writes it - that is the contract, not an omission: it lets a consumer tell
@@ -46,28 +51,61 @@ class ShaderProgram;
  *   there instead of painting every attachment one colour. One that cannot honour these must report it rather
  *   than clearing differently.
  * - DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (reverse-Z here, far = 0 -
- *   see Camera), so a value here would be a second place to get the clip convention wrong. @ref depth is
- *   honoured for off-screen targets (whose depth survives frames through a depth-LOAD pass); the WINDOW is
- *   the exception - its render pass clears depth whatever this says, so a pass needing a previous frame's
- *   depth renders into an off-screen target and composites it.
+ *   see Camera), so a value here would be a second place to get the clip convention wrong.
+ * - WHAT A TARGET CAN EXPRESS IS THE TARGET'S FACT, and a backend that cannot honour a request reports it rather
+ *   than clearing differently (see DiagnosticCategory::UnsupportedRequest). An OFF-SCREEN target expresses every
+ *   combination of the two dimensions through its render-pass variants. The WINDOW is one render pass instance per
+ *   frame: its first pass owns the colour and the depth clear, a LATER pass can still clear the depth inside its own
+ *   rectangle (a scissored clear - a HUD owning its depth), and a later pass that asks for a COLOUR clear is refused
+ *   and reported, because the frame's colour has already been written. A pass that needs a previous frame's depth
+ *   therefore still renders into an off-screen target and composites it.
  * - It lives with the rest of a pass' description, not with the backend interface: a backend is one of its
  *   readers (FrameRecorder::setClearPolicy).
  *
  * @note
- * - A DEFAULT-CONSTRUCTED policy is not "the default clear": this aggregate is only ever built by the pass that
- *   states one (RenderPass::clearPolicy), and that pass' own default colour is the #333333 grey, not the white a
- *   zero-initialised @ref color would be. The initialiser exists so the type can be stored and assigned, not to
+ * - A DEFAULT-CONSTRUCTED policy is not "the default clear": this value is only ever built by the pass that states
+ *   one (RenderPass::clearPolicy), and that pass' own default colour is the #333333 grey, not the white a
+ *   zero-initialised @ref value would be. The initialiser exists so the type can be stored and assigned, not to
  *   describe a clearing frame.
  */
 struct ClearPolicy {
+    /** @brief A policy that clears both dimensions: what an ordinary frame start and an off-screen pass state. */
+    ClearPolicy() = default;
+
+    /** @brief A policy that clears the colour attachments to @p in_color and the depth when @p with_depth.
+     *
+     * @details
+     * - The ordinary spelling, and the one a host reads as "clear to this colour, and keep/drop depth".
+     *
+     * @param in_color    What attachment 0 is cleared to (linear).
+     * @param with_depth  Whether the depth attachment is cleared as well.
+     */
+    ClearPolicy(const Colorf& in_color, bool with_depth)
+      : clear_depth(with_depth)
+      , color(in_color)
+    {}
+
+    /** @brief A policy that clears ONLY the depth: a HUD owning the depth inside its rectangle. */
+    ///
+    /// The spelling of the second dimension alone (see the class note): the colour the pass is drawn over is KEPT, so
+    /// the pass occludes itself against its own depth without ever washing out the picture underneath.
+    [[nodiscard]] static ClearPolicy depthOnly() noexcept
+    {
+        ClearPolicy policy;
+        policy.clear_color = false;
+        return policy;
+    }
+
+    /// Whether the COLOUR attachments are cleared; @ref color is what attachment 0 receives.
+    bool clear_color{ true };
+    /// Whether the DEPTH attachment is cleared, to the backend's reverse-Z far plane (see the class note).
+    bool clear_depth{ true };
     /// Colour attachment 0 is cleared to (the only colour a single-attachment target reads).
     ///
     /// LINEAR light, and the only spelling this module takes: an encoded colour is decoded by whoever holds it
     /// (`Color::toLinear()`), because a conversion here would be the engine handling an encoding it cannot see the
     /// source of. Alpha is a coverage fraction and is not encoded in either direction.
     Colorf color{};
-    /// Whether the depth buffer is cleared too (honoured off-screen; the window always clears depth).
-    bool depth = true;
     /// Colours for attachments 1..N-1, in attachment order (see the per-attachment note above).
     ///
     /// An absent entry is transparent black, which is what an auxiliary attachment (normals, ids) means by

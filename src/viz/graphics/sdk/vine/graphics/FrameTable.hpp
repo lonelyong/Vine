@@ -50,12 +50,14 @@ struct VN_GRAPHICS_API PassRow {
     raw_ptr<const RenderTarget> target = nullptr;
     /// Whether it runs this frame. A disabled pass is LISTED (its row is part of the picture) and skipped.
     bool enabled                       = true;
-    /// Whether it clears its target before it draws (see ClearPolicy: the pass' own clear, not "a clear happened").
-    bool clears                        = false;
-    /// The colour attachment 0 is cleared to when @ref clears is true (linear, like every authored colour).
+    /// Whether it clears its target's COLOUR attachments before it draws (see ClearPolicy: the pass' own clear, not
+    /// "a clear happened"). One of the two dimensions - @ref clears_depth is the other, and a pass may state either.
+    bool clears_color                 = false;
+    /// The colour attachment 0 is cleared to when @ref clears_color is true (linear, like every authored colour).
     Colorf clear_color{};
-    /// Whether that clear includes depth.
-    bool clears_depth = true;
+    /// Whether it clears the target's DEPTH attachment before it draws (a depth-only clear is `clears_color == false`
+    /// and this true).
+    bool clears_depth = false;
     /// The sub-rectangle of the target it draws into, or nullopt for the whole target.
     std::optional<Viewport> viewport;
     /// The depth band its draws are mapped into, or nullopt for the whole depth buffer (see DepthRange).

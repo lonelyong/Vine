@@ -44,6 +44,8 @@ const vn::graphics::ShaderProgramDescriptionPtr& VsgExecutor::defaultProgramText
 void VsgExecutor::setWindow(WindowTarget* window) noexcept
 {
     window_ = window;
+    // A different target is a different episode: what it can express is its own fact (see window_colour_clear_).
+    window_colour_clear_.rearm();
 }
 
 void VsgExecutor::addTarget(const void* identity, TargetObjects* target, const char* label) noexcept
@@ -257,10 +259,9 @@ bool VsgExecutor::recordWindow(const core::CompiledPass&                  pass,
         return false;
     }
 
-    // ONE graph, ONE clear: the first window pass of the frame brings the graph up to date (its render area
-    // follows the window's live extent, and its clear values are that pass' clear policy) and puts the graph
-    // into the command graph at the position that pass has in the plan. Later window passes stack on what it
-    // left - the swapchain's render pass cannot express a second clear (see WindowTarget).
+    // ONE graph, ONE COLOUR CLEAR: the first window pass of the frame brings the graph up to date (its render area
+    // follows the window's live extent, and its clear values are that pass' clear policy) and puts the graph into the
+    // command graph at the position that pass has in the plan. Later window passes stack on what it left.
     if (!window_recorded_) {
         window_->prepare(pass.clear);
         // The window's content is THE FRAME'S: what the last recorded frame put in the retained view is
@@ -272,6 +273,26 @@ bool VsgExecutor::recordWindow(const core::CompiledPass&                  pass,
         // sample is the PRESENT PATH as a whole, not one view of the swapchain (see WindowTarget).
         command_graph->addChild(recordedChild(window_->graph(), pass, /*window*/ true));
         window_recorded_ = true;
+    }
+    else if (pass.clear.color || pass.clear.depth) {
+        // A LATER WINDOW PASS still owns the DEPTH it draws against - inside its own rectangle - but not the colour:
+        // the frame's colour has been written and the swapchain's load operation was the frame's (see WindowTarget).
+        // The depth half is honoured as a scissored clear of the pass' rectangle, recorded here so it lands BEFORE this
+        // pass' content; the colour half is REPORTED, because a pass that asked for a clear and was quietly given a
+        // different picture is a defect nobody can trace from the outside (see DiagnosticCategory).
+        if (pass.clear.depth) {
+            window_->addDepthClear(pass.viewport);
+        }
+        if (pass.clear.color && window_colour_clear_.shouldReport()) {
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                vn::String::fromUtf8("pass " + std::to_string(pass.pass) +
+                                                     " asks to clear the window's colour, but the swapchain's render pass "
+                                                     "was already begun by this frame's first window pass: the colour "
+                                                     "clear is not performed (its depth clear is). State the colour clear "
+                                                     "on the pass that draws underneath, or draw this content into an "
+                                                     "off-screen target and composite it"));
+        }
     }
 
     for (const PassContent& packet : content) {

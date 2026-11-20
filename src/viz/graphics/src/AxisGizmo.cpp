@@ -1,41 +1,56 @@
 ﻿#include <vine/graphics/AxisGizmo.hpp>
 
-#include <cstdint>
 #include <utility>
 
-#include <vine/Colorf.hpp>
-#include <vine/models/Array.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
-#include <vine/graphics/Material.hpp>
-#include <vine/graphics/Node.hpp>
+#include <vine/graphics/Light.hpp>
 #include <vine/graphics/Scene.hpp>
 
-#include "OverlayMesh.hpp"
 #include "PixelGeometry.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(AxisGizmo, Object);
 
+namespace
+{
+
+/// Ambient floor of the marker's own rig: an arrow's colour stays readable where the key light does not reach.
+constexpr float kAmbientIntensity = 0.45f;
+/// Key light of the marker's own rig: enough shading to read a shaft as a cylinder and a tip as a cone.
+constexpr float kKeyIntensity = 0.75f;
+
+} // namespace
+
 AxisGizmo::AxisGizmo()
 {
-    // Framing camera: square perspective that fits the unit sticks at the
+    // Framing camera: square perspective that fits the unit marker at the
     // mirror distance. The view is overwritten every frame by Orientation
     // mirroring; only the framing distance and projection are kept. Owned by
     // this gizmo so the pass' raw camera pointer never dangles.
     camera_ = make_intrusive<Camera>();
-    // Framing distance chosen so the unit sticks fill most of the square
+    // Framing distance chosen so the unit marker fills most of the square
     // sub-viewport (half-height = 3.3 * tan(22.5) ~ 1.37 world units maps a
-    // length-1 stick to ~73% of the half box).
+    // length-1 arrow to ~73% of the half box).
     camera_->lookAt(vn::math::Vec3d(0.0, 0.0, 3.3), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera_->setPerspective(45.0, 0.05, 20.0);
     // The picture's shape is the camera's (see Camera), and the box this camera frames is a SQUARE
     // (see onSurfaceResized) - so it is 1:1, stated here where the camera is configured rather than left to
     // whatever the rectangle it ends up drawing into happens to be.
     camera_->setAspect(1.0);
+
+    // The marker carries its OWN light rig: a HUD overlay is drawn in its own scene, whose only other source of light
+    // would be the backends' flat ambient fallback - which leaves the arrows as colour silhouettes, with no shading
+    // to read a shaft as a cylinder or a tip as a cone. The key light follows the camera (see applyMirror), so the
+    // face the camera sees is the lit one from every orbit.
+    ambient_   = Light::createAmbient();
+    ambient_->setIntensity(kAmbientIntensity);
+    key_light_ = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    key_light_->setIntensity(kKeyIntensity);
+
     rebuild();
 }
 
@@ -53,18 +68,34 @@ Viewport AxisGizmo::boxViewport() const
 
 void AxisGizmo::setAxisLength(double length)
 {
-    if (length > 0.0 && length != axis_length_) {
-        axis_length_ = length;
+    if (length > 0.0 && length != style_.length) {
+        style_.length = length;
         rebuild();
     }
 }
 
 void AxisGizmo::setThickness(double thickness)
 {
-    if (thickness > 0.0 && thickness != thickness_) {
-        thickness_ = thickness;
+    if (thickness > 0.0 && thickness != style_.tip_radius) {
+        // An arrow's widest radius is its cone's; the shaft keeps the share a default marker gives it, so a thicker
+        // marker stays an arrow rather than becoming a spike on a hairline.
+        style_.tip_radius   = thickness;
+        style_.shaft_radius = thickness * kAxesShaftToTipRatio;
         rebuild();
     }
+}
+
+void AxisGizmo::setStyle(const AxesStyle& style)
+{
+    if (style != style_) {
+        style_ = style;
+        rebuild();
+    }
+}
+
+const AxesStyle& AxisGizmo::axesStyle() const
+{
+    return style_;
 }
 
 void AxisGizmo::setBoxSize(int size)
@@ -106,7 +137,9 @@ void AxisGizmo::onSurfaceResized(int width, int height)
         return;
     }
     // Convert the host's logical surface size into device pixels, which is the space the backend's native
-    // surface uses for viewports.
+    // surface uses for viewports. The box and its margin are DEVICE pixels (the same unit the readout next door
+    // states): a host on a high-DPI display that wants a larger gizmo states a larger size, so nothing is scaled
+    // twice here.
     const detail::DeviceSize device = detail::toDeviceSize(detail::LogicalSize{ surface_w_, surface_h_ }, detail::PixelRatio{ pixel_ratio_ });
     if (!device.isValid()) {
         return;
@@ -149,57 +182,33 @@ void AxisGizmo::onFrame(const FrameContext&)
 void AxisGizmo::applyMirror()
 {
     applyCameraMirror(camera_.get(), source_camera_, MirrorMode::Orientation);
+
+    // The key light travels from the eye towards what the framing camera looks at, so the side the camera sees is the
+    // lit one at every orbit (a world-fixed light would leave an arrow flat exactly when the view arrives from its far
+    // side). The framing camera always looks at the marker's origin - applyCameraMirror() builds it that way.
+    if (key_light_ != nullptr) {
+        const vn::math::Vec3d forward = camera_->target() - camera_->eye();
+        if (forward.length() > 1.0e-9) {
+            key_light_->setDirection(forward.normalized());
+        }
+    }
 }
 
 void AxisGizmo::rebuild()
 {
-    using vn::math::Vec3f;
-    const float l = static_cast<float>(axis_length_);
-    const float t = static_cast<float>(thickness_);
+    // ONE geometry, ONE draw: the marker's three arrows share a vertex stream and are told apart by their vertex
+    // colour (see makeAxesMarker). What the gizmo adds to that geometry is its camera, its light rig and its box - the
+    // arrows' streams are a prototype's, shared with every other marker built from the same style.
+    auto axes = makeAxesMarker(style_);
+    axes->setName(u8"axis_gizmo");
 
-    struct Stick {
-        Vec3f  mn;
-        Vec3f  mx;
-        Colorf color;
-    };
-
-    const Stick sticks[3] = {
-        { Vec3f(0.0f, -t,   -t),   Vec3f(l, t, t), Colorf(0.9f, 0.2f, 0.2f,  1.0f) },
-        { Vec3f(-t,   0.0f, -t),   Vec3f(t, l, t), Colorf(0.2f, 0.8f, 0.2f,  1.0f) },
-        { Vec3f(-t,   -t,   0.0f), Vec3f(t, t, l), Colorf(0.2f, 0.4f, 0.95f, 1.0f) },
-    };
+    auto root = make_intrusive<Group>();
+    root->addChild(axes);
 
     auto scene = make_intrusive<Scene>();
-    // Single root: one identity Group owns the three axis sticks.
-    auto root  = make_intrusive<Group>();
-    for (const auto& stick : sticks) {
-        vn::models::Vec3fArray  positions;
-        vn::models::Vec3fArray  normals;
-        vn::models::UInt32Array indices;
-        detail::appendBox(positions, normals, indices, stick.mn, stick.mx);
-
-        auto geometry = make_intrusive<Geometry>();
-        geometry->setPositions(packAttribute(positions));
-        geometry->setNormals(packAttribute(normals));
-
-        auto material = make_intrusive<Material>();
-        // Flat unshaded sticks: the gizmo is lit by a pure ambient light, so the shading term is
-        // base_colour * ambient and the stick's colour IS what lands on screen, whatever the view
-        // direction (a directional headlight used to make the sticks go dark/black when the camera
-        // looked along a diagonal).
-        material->setBaseColor(stick.color);
-
-        Primitive stick_draw;
-        stick_draw.topology = Topology::Triangles;
-        stick_draw.indices  = Primitive::IndexSpan::whole(packIndices(indices));
-        stick_draw.material = material;
-        geometry->setPrimitive(0U, std::move(stick_draw));
-
-        auto group = make_intrusive<Group>();
-        group->addChild(geometry);
-        root->addChild(group);
-    }
     scene->setRoot(root);
+    scene->addLight(ambient_);
+    scene->addLight(key_light_);
     content_ = std::move(scene);
 }
 

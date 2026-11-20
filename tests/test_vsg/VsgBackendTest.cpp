@@ -1600,7 +1600,7 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
 
     vn::graphics::ClearPolicy clear;
     clear.color = vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F);                 // attachment 0: red
-    clear.depth = false;                                              // there is no depth attachment
+    clear.clear_depth = false;                                              // there is no depth attachment
     clear.extra_colors.push_back(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F)); // attachment 1: green
 
     backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::Disabled).value());
@@ -4719,6 +4719,71 @@ TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
     EXPECT_EQ(backend->framesPresented(), 5U) << "the window's frames present; the off-screen ones never do";
     EXPECT_GT(evidence.progress->completed, 0U) << "the off-screen session's evidence reached the device clock (the watermark is the minimum over sources)";
     EXPECT_LE(evidence.progress->completed, evidence.progress->submitted);
+
+    backend->shutdown();
+}
+
+TEST(VsgBackendTest, ALaterWindowPassResetsOnlyTheDepthItOwns)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    // A HUD OWNS THE DEPTH INSIDE ITS BOX (see ClearPolicy's two dimensions): the window's frame is ONE render pass,
+    // so a later window pass can reset only the DEPTH - a scissored vkCmdClearAttachments at that pass' viewport,
+    // recorded where it sits - while the colour it is drawn over stays. Its COLOUR half cannot be reset (the frame's
+    // colour has already been written), and that half is REPORTED instead of being dropped: a pass that asked for a
+    // clear and was quietly given another picture is a defect nobody can trace from the outside.
+    vn::intrusive_ptr<vn::backend_vsg::VsgBackend>      backend(new vn::backend_vsg::VsgBackend());
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    vn::graphics::SurfaceTargetResult              why    = vn::graphics::SurfaceTargetResult::Ok;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> window = backend->createSurfaceTarget(nullptr, &why);
+    ASSERT_NE(window, nullptr);
+    ASSERT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_EQ(backend->diagnosticCount(), 0U) << "a healthy session reports nothing";
+
+    // Two window passes are two identities (a backend keys retained per-pass state by the object).
+    const vn::intrusive_ptr<vn::graphics::RenderPass> picture_identity(new vn::graphics::RenderPass());
+    const vn::intrusive_ptr<vn::graphics::RenderPass> overlay_identity(new vn::graphics::RenderPass());
+
+    vn::graphics::FrameDescription frame;
+
+    // The picture: the pass that draws underneath owns the frame's clear, both attachments.
+    vn::graphics::FrameDescription::Pass picture;
+    picture.pass  = picture_identity.get();
+    picture.order = 0;
+    vn::graphics::PassDraw paint;
+    paint.clear       = vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    paint.state.depth = vn::graphics::DepthMode::TestAndWrite;
+    picture.draw      = std::move(paint);
+    frame.passes.push_back(std::move(picture));
+
+    // The HUD: keeps the colour, owns the depth inside its own rectangle.
+    vn::graphics::FrameDescription::Pass hud;
+    hud.pass  = overlay_identity.get();
+    hud.order = 1;
+    vn::graphics::PassDraw overlay;
+    overlay.viewport  = vn::graphics::Viewport{ 8, 8, 32, 32 };
+    overlay.clear     = vn::graphics::ClearPolicy::depthOnly();
+    overlay.state.depth = vn::graphics::DepthMode::TestAndWrite;
+    hud.draw          = std::move(overlay);
+    frame.passes.push_back(std::move(hud));
+
+    EXPECT_EQ(backend->executeFrame(frame, window), vn::graphics::PresentOutcome::Presented);
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "a depth-only clear is served, not reported";
+
+    // The COLOUR half of a LATER clear cannot be served: it is reported (once per episode) instead of dropped.
+    frame.passes[1].draw->clear = vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), false };
+    EXPECT_EQ(backend->executeFrame(frame, window), vn::graphics::PresentOutcome::Presented);
+    EXPECT_GE(backend->diagnosticCount(), 1U) << "the colour clear a later window pass cannot have is reported";
+    const bool unsupported_reported =
+        std::any_of(reported.begin(), reported.end(), [](const vn::graphics::RenderDiagnostic& diagnostic) {
+            return diagnostic.category == vn::graphics::DiagnosticCategory::UnsupportedRequest;
+        });
+    EXPECT_TRUE(unsupported_reported) << "and it says WHY, not just that something went wrong";
 
     backend->shutdown();
 }

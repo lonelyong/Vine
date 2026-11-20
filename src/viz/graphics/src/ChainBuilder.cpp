@@ -78,9 +78,15 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         auto gizmo = make_intrusive<AxisGizmo>();
         gizmo->setSourceCamera(options.gizmo.source_camera);
         gizmo->setPixelRatio(options.gizmo.pixel_ratio);
-        gizmo->setBoxSize(options.gizmo.box_size);
-        gizmo->setAxisLength(options.gizmo.axis_length);
-        gizmo->setThickness(options.gizmo.thickness);
+        if (options.gizmo.box_size > 0) {
+            gizmo->setBoxSize(options.gizmo.box_size);
+        }
+        // One style, one rebuild: the two scalars the options carry are the marker's length and its widest radius.
+        AxesStyle style;
+        style.length       = options.gizmo.axis_length;
+        style.tip_radius   = options.gizmo.thickness;
+        style.shaft_radius = style.tip_radius * kAxesShaftToTipRatio;
+        gizmo->setStyle(style);
 
         // The gizmo is CONTENT (its scene, its framing camera, its box); the pass that draws it is a
         // declaration like every other one - which is why the name and the HUD placement are stated here instead
@@ -93,9 +99,14 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         desc.camera        = intrusive_ptr<Camera>(gizmo->camera());
         desc.content       = intrusive_ptr<Scene>(gizmo->content());
         desc.viewport      = gizmo->boxViewport();
-        // A HUD draws over the main content each frame: never clears, and no depth occlusion (always on top).
+        // A HUD OWNS THE DEPTH INSIDE ITS BOX: the pass keeps the colour it is drawn over and resets only the depth in
+        // its rectangle, then tests and writes - so the marker's arrows occlude each other like the solids they are,
+        // while the scene underneath is never occluded by them. The two halves are independent on purpose (see
+        // ClearPolicy); stating only `depth_mode` would test the arrows against the SCENE's depth, which has nothing to
+        // do with their own.
         desc.clear_enabled = false;
-        desc.depth_mode    = DepthMode::Disabled;
+        desc.clear_depth   = true;
+        desc.depth_mode    = DepthMode::TestAndWrite;
         // Registered through the same public entry a host uses (see PassChain::addOverlay): the recipe states the
         // overlay's CONTENT, the label its pass carries, and how it re-anchors itself - a third overlay is another
         // call, not a change to PassChain. The layout ANSWERS the rectangle the pass draws into.

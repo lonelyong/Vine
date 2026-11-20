@@ -70,8 +70,14 @@ Colorf RenderPass::clearColor(int attachment) const
 
 bool RenderPass::shouldClearDepth() const noexcept
 {
-    // The kind's own policy is the fallback: a Scene pass clears, a Screen pass composites over what is there.
-    return desc_.clear_depth.value_or(desc_.kind != PassKind::Screen);
+    // A STATEMENT WINS. Otherwise the KIND's policy answers a pass that CLEARS: a Scene pass clears both attachments,
+    // a Screen pass composites over what is there and clears neither. A pass that clears no colour has opted out of
+    // clearing, and depth is not implied by it - a depth-only clear is asked for by stating it (see
+    // PassDesc::clear_depth), which is what a HUD overlay does to own a clean depth range inside its own rectangle.
+    if (desc_.clear_depth.has_value()) {
+        return *desc_.clear_depth;
+    }
+    return desc_.kind != PassKind::Screen && isClearEnabled();
 }
 
 bool RenderPass::isClearEnabled() const noexcept
@@ -91,14 +97,23 @@ PassRenderState RenderPass::stateOverrides() const noexcept
 
 std::optional<ClearPolicy> RenderPass::clearPolicy() const
 {
-    // The ONE place "does this pass clear, and how" is answered: a pass that does not clear says nothing, so a backend
-    // can tell "clears to this colour" from "draws over what is already there".
-    if (!isClearEnabled()) {
+    // The ONE place "does this pass clear, and how" is answered: a pass that clears NOTHING says nothing, so a backend
+    // can tell "clears these attachments" from "draws over what is already there".
+    //
+    // THE TWO DIMENSIONS ARE INDEPENDENT (see ClearPolicy): the colour clear is what `clear_enabled` states and the
+    // depth one what `clear_depth` states, so a pass may ask for either alone - a HUD owns its depth and keeps the
+    // colour it is drawn over.
+    const bool colour = isClearEnabled();
+    const bool depth  = shouldClearDepth();
+    if (!colour && !depth) {
         return std::nullopt;
     }
     // One value, one authority: the per-attachment colours travel WITH the single-colour spelling, so a backend reads
     // one policy rather than a list plus a fallback.
-    ClearPolicy policy{ clearColor(0), shouldClearDepth() };
+    ClearPolicy policy;
+    policy.clear_color  = colour;
+    policy.clear_depth  = depth;
+    policy.color        = clearColor(0);
     policy.extra_colors = desc_.clear_extra_colors;
     return policy;
 }

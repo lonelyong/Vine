@@ -481,6 +481,12 @@ class VN_BACKEND_VSG_API VsgExecutor {
     bool                       profiling_{ false };       // Wrap each pass for measurement (see setProfiling).
     std::vector<ProfileEntry>  profile_entries_;          // The wrapped passes of the last recorded frame.
     bool                       window_recorded_{ false }; // Whether this frame's window graph is in the graph.
+    /// Whether "a later window pass cannot clear the frame's colour" has been said (see recordWindow).
+    ///
+    /// An EPISODE is a registered window plus the host's declarations: a later colour clear cannot become expressible
+    /// while the frame keeps one render pass per window, so one report is enough - and setWindow re-arms it, because a
+    /// different target is a different answer.
+    vn::graphics::ReportOnce    window_colour_clear_;
     std::vector<core::PassId>  recorded_;                 // Passes recorded, in record order.
     std::uint64_t              skipped_{ 0 };             // Passes not recorded this frame.
     /// THE FRAME THIS DRIVER IS RUNNING (see FrameDrive): the scratch, the window and the upload numbers of one

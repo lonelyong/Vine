@@ -12,6 +12,7 @@
 #include <vine/backend_vsg/internal/ClearPlan.hpp>
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
+#include <vine/graphics/Viewport.hpp>
 
 namespace vsg
 {
@@ -35,11 +36,16 @@ class Window;
  * ONE GRAPH FOR THE WHOLE WINDOW, and that is the platform's decision, not a simplification. vsg's render
  * graph over a window resolves the image's framebuffer WHILE RECORDING (the image index is only known once
  * the frame's image is acquired), and the window's render pass has fixed load operations - so every window
- * pass shares one begin/end render pass, and with it ONE clear. That clear is the first window pass' policy
- * (in execution order): the pass that draws underneath owns what the picture starts from, and a later pass
- * (a HUD layer, say) stacks on top of what is already there. An off-screen pass could clear per pass because
- * a target may build variants of its render pass; the swapchain's pass cannot, and pretending otherwise
- * would erase the earlier passes.
+ * pass shares one begin/end render pass, and with it ONE COLOUR CLEAR. That clear is the first window pass'
+ * policy (in execution order): the pass that draws underneath owns what the picture starts from, and a later
+ * pass (a HUD layer, say) stacks on top of what is already there.
+ *
+ * A LATER PASS CAN STILL RESET THE DEPTH IT DRAWS AGAINST, inside its own rectangle: `vkCmdClearAttachments`
+ * clears a sub-rectangle of the CURRENT framebuffer's attachments without ending the render pass - exactly the
+ * depth half a second render pass would have bought (see @ref addDepthClear). What stays impossible is a later
+ * COLOUR clear: the frame's colour has already been written and the swapchain's load operation is the frame's.
+ * A pass that asks for one is REPORTED (see DiagnosticCategory::UnsupportedRequest, by the executor) rather
+ * than quietly given a different picture.
  *
  * ONE VIEW FOR THE WHOLE WINDOW - and, measured in M4c, NOT the thing that keeps the window's pipelines apart
  * from an off-screen pass' ones. vsg compiles a pipeline per VIEW ID, and a graphics pipeline is only usable
@@ -120,6 +126,20 @@ class VN_BACKEND_VSG_API WindowTarget {
 
     /** @brief Adds one pass' recorded content to THIS frame's picture, in the order it is called. */
     void addFrameContent(::vsg::ref_ptr<::vsg::Node> content) noexcept;
+
+    /** @brief Records a DEPTH-ONLY clear of @p rect into this frame's window content, at the current position.
+     *
+     * @details
+     * - The one clear a LATER window pass can still own (see the file note): the rectangle is that pass' viewport in
+     *   device pixels, and only the DEPTH attachment is named, so the picture underneath survives - a HUD that wants
+     *   a clean depth range inside its box while it is drawn over the scene.
+     * - Appended to the frame's content list in call order, so it lands between the pass before it and the pass that
+     *   asked for it. The rectangle is clamped to the window (a clear outside the render area is not recordable); one
+     *   that ends up empty records nothing.
+     *
+     * @param rect The rectangle to clear, in device pixels with a top-left origin (see vn::graphics::Viewport).
+     */
+    void addDepthClear(const vn::graphics::Viewport& rect) noexcept;
 
     /** @brief Adds content that stays for the session's life (the session's own root, see the file note). */
     void addContent(::vsg::ref_ptr<::vsg::Node> content) noexcept;

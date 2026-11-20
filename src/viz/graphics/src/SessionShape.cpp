@@ -127,7 +127,7 @@ FrameTable SessionShape::frameTable() const
         row.layer_mask    = pass->layerMask();
         row.target        = pass->renderTarget();
         row.enabled       = pass->isEnabled();
-        row.clears        = pass->isClearEnabled();
+        row.clears_color  = pass->isClearEnabled();
         row.clear_color   = pass->clearColor();
         row.clears_depth  = pass->shouldClearDepth();
         row.inputs        = pass->inputNames();

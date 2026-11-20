@@ -196,7 +196,7 @@ struct Scene {
     pass.target        = scene.gbuffer.get();
     pass.clear         = ClearPolicy{};
     pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
-    pass.clear->depth  = true;
+    pass.clear->clear_depth  = true;
     pass.state.depth   = DepthMode::TestAndWrite;
     pass.draws.push_back(gbufferDraw(scene));
 

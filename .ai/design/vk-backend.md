@@ -379,11 +379,15 @@ and every cache has a witness a test can read.**
 
 ### 3.1.4 F4 Offscreen targets
 
-- **Behaviour**: `TargetObjects` holds the colour / sample buffer / depth / depth-resolve images and views, three render-pass variants (clear depth, load depth, load
-  everything) and one framebuffer. An MSAA target resolves colour into the single-sample image; depth resolves through `vkCreateRenderPass2`'s
+- **Behaviour**: `TargetObjects` holds the colour / sample buffer / depth / depth-resolve images and views, **four** render-pass variants (clear everything, load depth, load
+  everything, and **load colour + clear depth** - the HUD pass that keeps the picture and owns the depth inside its rectangle) and one framebuffer. The WINDOW keeps the
+  same four variants (`WindowTarget::renderPass(load_color, load_depth)`), so a later window pass loads the picture and resets only the depth its content tests against.
+  An MSAA target resolves colour into the single-sample image; depth resolves through `vkCreateRenderPass2`'s
   `pDepthStencilResolveAttachment` (`sample0`); a depth-only target is a shadow map; a `shareDepth` target borrows another target's depth view.
 - **Constraints**: `C5`, `C8`, `N2`.
-- **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`.
+- **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`, and
+  `BackendParityTest.ADepthOnlyClearKeepsThePictureOnBothBackends` (the four render-pass variants agree with the vsg backend
+  pixel for pixel).
 - **Caveat**: `P4`, `P15` (even the **dependencies** must agree between variants).
 
 ### 3.1.5 F5 Content drawing

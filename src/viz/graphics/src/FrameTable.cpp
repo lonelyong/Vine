@@ -20,11 +20,13 @@ std::string pointerText(const void* pointer)
     return buffer;
 }
 
-/** @brief A pass' clear as the colour it clears to, or a dash when it does not clear at all. */
+/** @brief A pass' clear as what it resets, or a dash when it clears nothing (the two dimensions are independent). */
 std::string clearText(const PassRow& pass)
 {
-    if (!pass.clears) {
-        return "-";
+    if (!pass.clears_color) {
+        // DEPTH ALONE is a real answer (a HUD owning the depth inside its rectangle): printing the #333333 grey here
+        // would name a clear that never happens, and printing "-" would hide one that does.
+        return pass.clears_depth ? std::string("depth") : std::string("-");
     }
     // The SPACE is part of the text: "rgba(51,51,51,255)" reads the same whether it means encoded samples or linear
     // light, and telling which one this is was the whole point (see ClearPolicy). Three decimals is finer than an
@@ -37,7 +39,7 @@ std::string clearText(const PassRow& pass)
                   static_cast<double>(pass.clear_color.g),
                   static_cast<double>(pass.clear_color.b),
                   static_cast<double>(pass.clear_color.a));
-    return std::string(color) + (pass.clears_depth ? ",depth)" : ")");
+    return std::string(color) + (pass.clears_depth ? ",depth" : "");
 }
 
 /** @brief A pass' declared input names, or a dash when it declared none. */

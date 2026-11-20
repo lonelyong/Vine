@@ -162,6 +162,10 @@ struct WindowTarget::Impl {
 
     VkRenderPass pass_clear{ VK_NULL_HANDLE };
     VkRenderPass pass_load{ VK_NULL_HANDLE };
+    /// Colour LOADed, depth CLEARed: the HUD pass that keeps the picture and owns the depth inside its rectangle.
+    VkRenderPass pass_load_color{ VK_NULL_HANDLE };
+    /// Colour CLEARed, depth LOADed: a later pass that resets the picture and keeps testing against the depth.
+    VkRenderPass pass_load_depth{ VK_NULL_HANDLE };
 
     VkSemaphore image_available{ VK_NULL_HANDLE };
     /// ONE PRESENT-WAIT SEMAPHORE PER SWAPCHAIN IMAGE, indexed by the acquired image (see renderFinishedOfAcquiredImage).
@@ -273,7 +277,9 @@ struct WindowTarget::Impl {
         }
 
         if (!createWindowRenderPass(*device.table, device.device, format, false, false, pass_clear) ||
-            !createWindowRenderPass(*device.table, device.device, format, true, true, pass_load)) {
+            !createWindowRenderPass(*device.table, device.device, format, true, true, pass_load) ||
+            !createWindowRenderPass(*device.table, device.device, format, true, false, pass_load_color) ||
+            !createWindowRenderPass(*device.table, device.device, format, false, true, pass_load_depth)) {
             if (why != nullptr) {
                 *why = vn::String(u8"vk: the window's render pass could not be created");
             }
@@ -341,6 +347,14 @@ struct WindowTarget::Impl {
             if (pass_load != VK_NULL_HANDLE) {
                 device.table->vkDestroyRenderPass(device.device, pass_load, nullptr);
                 pass_load = VK_NULL_HANDLE;
+            }
+            if (pass_load_color != VK_NULL_HANDLE) {
+                device.table->vkDestroyRenderPass(device.device, pass_load_color, nullptr);
+                pass_load_color = VK_NULL_HANDLE;
+            }
+            if (pass_load_depth != VK_NULL_HANDLE) {
+                device.table->vkDestroyRenderPass(device.device, pass_load_depth, nullptr);
+                pass_load_depth = VK_NULL_HANDLE;
             }
             if (depth_view != VK_NULL_HANDLE) {
                 device.table->vkDestroyImageView(device.device, depth_view, nullptr);
@@ -652,7 +666,18 @@ bool WindowTarget::acquire(vn::String* why)
 
 VkRenderPass WindowTarget::renderPass(const bool load_color, const bool load_depth) const noexcept
 {
-    return load_color && impl->pass_load != VK_NULL_HANDLE ? impl->pass_load : impl->pass_clear;
+    // The four combinations a pass can ask for, one render pass each (see the Impl fields); a variant that could not be
+    // built falls back to the CLEAR pass, which is the answer a frame's first pass needs.
+    if (load_color) {
+        if (load_depth) {
+            return impl->pass_load != VK_NULL_HANDLE ? impl->pass_load : impl->pass_clear;
+        }
+        return impl->pass_load_color != VK_NULL_HANDLE ? impl->pass_load_color : impl->pass_clear;
+    }
+    if (load_depth) {
+        return impl->pass_load_depth != VK_NULL_HANDLE ? impl->pass_load_depth : impl->pass_clear;
+    }
+    return impl->pass_clear;
 }
 
 VkFramebuffer WindowTarget::framebuffer() const noexcept

@@ -152,22 +152,30 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] Colorf clearColor(int attachment = 0) const;
 
     /**
-     * @brief Returns whether the depth buffer is cleared.
+     * @brief Returns whether this pass asks for a CLEARED DEPTH attachment.
      *
      * @details
-     * - A REQUEST, not the state - hence "should" rather than the is/has prefix: a backend may not be able to honour
-     *   it (the window surface always clears depth), which is what its documentation records.
+     * - A REQUEST, not the state - hence "should" rather than the is/has prefix: what a target can express is the
+     *   target's fact, and a backend that cannot honour the request reports it (see DiagnosticCategory).
+     * - The DEPTH half of the pass' clear; the colour half is isClearEnabled, and the two are independent, so a HUD
+     *   overlay can clear its own depth region and keep the picture underneath.
+     * - Unstated, the KIND's policy answers for a pass that CLEARS: a Scene pass clears both attachments, a Screen
+     *   pass neither. A pass that clears no colour does not imply depth - only an explicit `clear_depth = true` asks
+     *   for a depth-only clear (see PassDesc::clear_depth).
      *
-     * @return True when this pass asks for a cleared depth buffer (the default for a Scene pass, never for a Screen
-     *         pass).
+     * @return True when this pass asks for a cleared depth buffer.
      */
     [[nodiscard]] bool shouldClearDepth() const noexcept;
 
     /**
-     * @brief Returns whether the colour/depth buffer is cleared before this pass.
+     * @brief Returns whether this pass asks for CLEARED COLOUR attachments.
      *
-     * @return True when the pass clears (the default for a Scene pass, never for a Screen pass: a composite draws over
-     *         what is already there).
+     * @details
+     * - The COLOUR half of the pass' clear; the depth half is shouldClearDepth, `clearPolicy()` states both, and a
+     *   pass that asks for neither announces no clear at all.
+     *
+     * @return True when the pass clears its colour attachments (the default for a Scene pass, never for a Screen
+     *         pass: a composite draws over what is already there).
      */
     [[nodiscard]] bool isClearEnabled() const noexcept;
 

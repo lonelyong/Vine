@@ -12,7 +12,7 @@
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/Scene.hpp>
 
-#include "OverlayMesh.hpp"
+#include "MeshAppend.hpp"
 #include "PixelGeometry.hpp"
 
 VN_GRAPHICS_NS_BEGIN

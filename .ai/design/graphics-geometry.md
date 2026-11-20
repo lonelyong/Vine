@@ -126,6 +126,7 @@ This file defines the current design of graphics geometry: channels, primitives,
 | F31 | Point cloud | `PointCloud`: `setPositions()` replaces the point set as a whole, `normals()` / `colors()` are optional, `computeAabb()` caches the box; constraint C8, requirement R7, acceptance T10. | Landed |
 | F32 | Triangle tree cache | `Mesh` caches a `Bvh<double>`: `buildBvh()` adds one primitive per triangle (the id is the triangle index, the rule lives in `vn::geom::spatial::buildTriangleBvh()`), and `bvh()` serves ray queries; any setter that changes triangles or face topology drops the tree; `setBvh()` only accepts a tree that is already built and covers this mesh's triangle count. | Landed |
 | F33 | The draw frame's triangle tree | One `Bvh<double>` per draw, derived on demand and invalidated by the stream key: `prepareBvh()` builds or shares one (a built tree is sealed, default leaf capacity 64), `bvh()` is read-only query (`hasBvh()` is its boolean form), `adoptBvh()` accepts an existing tree, `clearBvh()` drops them all; picking uses the tree when there is one and falls back to a linear scan when there is not. | Landed |
+| F34 | Coordinate-frame marker | `makeAxesMarker(style)` builds ONE geometry and ONE primitive holding the style's arrows (a cylinder shaft closed by a cone tip each, from `tessellateSolid()`), told apart by VERTEX COLOUR; a process-wide, bounded prototype cache shares the vertex/index/colour streams between every marker of the same style, so N markers read one upload. | Landed |
 
 #### 3.6.1 F28 Unified triangle mesh
 
@@ -202,6 +203,30 @@ This file defines the current design of graphics geometry: channels, primitives,
 - **Caveat** (N18): the sealed callback's second parameter is the **leaf box** rather than the primitive box (`geometry-bvh.md` `R7`). Picking ignores that parameter, so it is unaffected;
   a new consumer that relies on it for "where is this triangle" must either build the primitive box itself or not seal.
 
+#### 3.6.6 F34 Coordinate-frame marker
+
+- **Behaviour**: `makeAxesMarker(AxesStyle)` returns the geometry of one coordinate-frame marker: the arrows `axis_mask`
+  names, each a cylinder shaft closed by a cone tip (`vn::geom::spatial::tessellateSolid()`, rotated from +Z onto its
+  axis), `length` long with proportions stated as fractions of it. All arrows are ONE primitive over ONE vertex stream;
+  their colours are the per-vertex colour channel, which the shading multiplies into the material's base colour.
+- **Behaviour**: every call returns a NEW geometry node reading the streams of a prototype built once per style (a
+  process-wide, mutex-guarded cache). A node has one parent (`Group::addChild` reparents), so two placements are two
+  geometries - and they share every vertex, index and colour byte, which is one device upload for any number of markers.
+- **Constraint** (C13): a style with no axis (`axis_mask == 0`) or a non-positive `length` builds a geometry with no
+  channels and no primitive: "draw nothing" is the absence of a draw, not a hidden node.
+- **Constraint** (C14): the prototype cache keys on the style's exact fields (`AxesStyle::operator==`), keeps at most
+  32 styles, and past that bound builds without keeping the result; a published prototype is immutable.
+- **Requirement** (R10): the marker states its own material (white, diffuse), so its vertex colours reach the frame
+  unchanged; a caller that wants the marker shaded like its content sets its own material on the returned geometry.
+- **Acceptance** (T13): `AxesMarkerTest.TheThreeArrowsAreOneDraw` / `EveryTipReachesTheStyledLength` /
+  `EachArrowCarriesItsColour` / `AMaskLeavesTheOtherArrowsOut` / `AnEmptyStyleBuildsNothingToDraw` /
+  `MarkersOfOneStyleShareTheirStreams`, and `AxisGizmoTest.BuildsOneAxesMarker`.
+- **Caveat** (N19): `axis_mask` is a BUILD parameter: hiding an arrow is a different marker, not a runtime switch. A
+  caller that needs both states holds two markers, which is cheap exactly because the streams are shared.
+- **Caveat** (N20): a marker's transform is its NODE's and its instance stream is unused: hundreds of frames that must
+  each be shown, hidden or restyled independently are that many draws. A field that only moves together should be one
+  geometry with an instance stream instead (`R1`, `R2`).
+
 ## 4. Public Interface
 
 ### 4.1 `Geometry`
@@ -218,6 +243,7 @@ This file defines the current design of graphics geometry: channels, primitives,
 | `triangleCount(draw)` | One draw's triangle count; a count only, building and caching nothing, for a consumer's threshold policy |
 | `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | Instance convenience for default primitive 0 |
 | `geometryFromShape()` / `packAttribute()` / `packIndices()` | The bridge and packing |
+| `makeAxesMarker()` / `AxesStyle` | A coordinate-frame marker's geometry: the arrows of one style as one draw, reading streams shared with every marker of that style (F34) |
 
 ### 4.2 `Primitive`
 
@@ -281,6 +307,10 @@ This file defines the current design of graphics geometry: channels, primitives,
 | C8 | Point cloud channel layout: 3 floats per point for positions and normals, 4 floats per point for colours, all in `Buffer<float>`. |
 | C9 | The triangle tree only describes the triangles already stored: primitive id == triangle index, any setter that changes triangles or face topology drops the tree, and an unbuilt tree answers no candidates. |
 | C10 | The draw frame's tree is cached per draw and invalidated by the key: any mismatch in the position/index buffers, their revisions, the segment, the slice, the topology or the geometry revision = no tree. |
+| C11 | Only a triangle-topology draw can have a tree; `prepareBvh()` on a line or point draw returns false and takes no tree. |
+| C12 | A tree the engine builds is sealed, with leaf capacity `kPickTreeLeafSize` (64) unless the caller passes its own builder; sealing itself is not optional. |
+| C13 | A marker whose style names no axis, or whose length is not positive, is a geometry with no channels and no primitive. |
+| C14 | The marker prototype cache is exact-keyed, bounded (32 styles), immutable once published, and a style past the bound is built without being kept. |
 
 ### 5.2 Requirements (R#)
 
@@ -295,6 +325,7 @@ This file defines the current design of graphics geometry: channels, primitives,
 | R7 | A point cloud's normal/colour channels are consumed only when their length equals `pointCount()`, and are otherwise dropped rather than re-indexed (the same rule as N11). |
 | R8 | When bulk rays are needed, build the tree once with `Mesh::buildBvh()` and then query, rather than scanning triangles linearly inside the picking loop. |
 | R9 | The draw frame's tree is explicitly `prepareBvh()`ed before interaction starts; several draws over one index segment share one tree; `geometryFromMesh()` adopts the mesh's tree, and a triangulated Quad/Mixed adopts nothing. The first consumer is the model viewer: it calls it once per draw with ≥512 triangles when building the scene (the threshold is its policy, `kPickTreeTriangleCount`). |
+| R10 | A coordinate-frame marker states its own white diffuse material, so its vertex colours are what reaches the frame; shading it like its content is the caller's explicit choice. |
 
 ### 5.3 Invariants (N#)
 
@@ -317,6 +348,9 @@ This file defines the current design of graphics geometry: channels, primitives,
 | N15 | `Mesh::bvh()` is a cache: `setPositions()` / `setIndices()` / `MixedMesh::setFaceOffsets()` clear it, normals/UV/colour do not; an unbuilt tree returns no candidates and does not degrade into a full scan. |
 | N16 | A published tree is immutable: `buildBvh()` publishes a new object when it rebuilds, and `clearBvh()` only stops publishing without touching the objects already handed out, so whoever holds `sharedBvh()` can never read a half-built tree. |
 | N17 | `Geometry::bvh(draw)` only answers a tree whose "key still holds"; when the data moved without a new `prepareBvh()` it returns `nullptr` (picking falls back to the linear scan) rather than the old tree. |
+| N18 | A tree changes no semantics, only the cost; the witness is `triangleTestCount()`, and the sealed callback's second parameter is the leaf box (`geometry-bvh.md` `R7`). |
+| N19 | `AxesStyle::axis_mask` is a build parameter: hiding an arrow means a different marker, not a runtime toggle. |
+| N20 | Markers of one style share streams, not draws or nodes: N independently controlled frames are N draws. A field that only moves together belongs in one geometry with an instance stream. |
 
 ## 6. Caveats and Traps
 
@@ -375,6 +409,7 @@ This file defines the current design of graphics geometry: channels, primitives,
 | T10 | Point cloud: an empty cloud is unusable, three-scalar packing and buffer identity, independent channels, a position change clears the box cache; `PointCloudTest`. |
 | T11 | Triangle indices in the same order as `toTriangleMesh()`, one primitive per triangle, ray-picking pruning, invalidation rules, no tree for an invalid mesh, accepting a foreign tree; `MeshBvhTest.cpp` (in `tests/test_geom_spatial`). |
 | T12 | The draw frame's tree: a hand-built geometry can build one and use it for picking, hits and `triangleIndex` are the same with and without a tree, the triangle test count drops, the same key shares, mesh source geometry adopts, a triangulated Quad adopts nothing; `tests/test_graphics/GraphicsTest.cpp`'s `GeometryTest.*Tree*` / `RayIntersectionTest.APreparedTree*`. The model viewer prepares the trees of large draws when it builds the scene: `ModelViewerTest.ALargeMeshGetsItsPickTreePreparedWhenTheSceneIsBuilt`. |
+| T13 | Markers: three arrows are one primitive and one draw, each tip reaches the styled length, each arrow carries its own vertex colour, a mask leaves the other arrows out, an empty style draws nothing, and two markers of one style share their vertex and index buffers while hiding one leaves the other visible; `AxesMarkerTest.*` and `AxisGizmoTest.BuildsOneAxesMarker`. |
 
 ## 9. Status and Evolution
 

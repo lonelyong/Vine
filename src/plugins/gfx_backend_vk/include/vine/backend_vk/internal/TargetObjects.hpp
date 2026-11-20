@@ -114,6 +114,10 @@ struct TargetObjects {
     /// The variant that LOADs every attachment, for a pass that announces no clear at all (a screen pass): colour and
     /// depth keep what earlier passes wrote. Only valid on a NON-fresh attachment set.
     VkRenderPass render_pass_load{ VK_NULL_HANDLE };
+    /// The variant that LOADs the COLOUR and CLEARs the depth: a HUD pass that keeps the picture it is drawn over and
+    /// owns the depth inside its rectangle (see ClearPolicy's two independent dimensions). Null for a target that
+    /// cannot express it - a depth-only one (no colour to load) or one whose depth is BORROWED (it may never clear).
+    VkRenderPass render_pass_load_color{ VK_NULL_HANDLE };
     /// Binds the attachments IN THE ORDER the render pass declares them: every sample buffer, then (on a multisampled
     /// target) every resolve image, then the depth view when present. Compatible with ALL render-pass variants.
     VkFramebuffer framebuffer{ VK_NULL_HANDLE };
@@ -240,13 +244,24 @@ struct TargetObjects {
         return colorCount() * (isMultisampled() ? 2U : 1U);
     }
 
-    /** @brief Gets the render pass that serves a pass' load ops (see the three variants above). */
+    /** @brief Gets the render pass that serves a pass' two load ops, one per attachment (see the variants above). */
+    ///
+    /// The four combinations are the four statements a clear policy can make. A variant a target could not build (a
+    /// depth-only target has no colour to load, a borrower may never clear its depth) falls back to the CLEAR pass,
+    /// which is the safe answer: it erases what a LOAD would have had to name, and a target that cannot express the
+    /// request has already been reported by the compiler.
     [[nodiscard]] VkRenderPass renderPassFor(bool load_depth, bool load_color) const noexcept
     {
-        if (load_color && render_pass_load != VK_NULL_HANDLE) {
-            return render_pass_load;
+        if (load_color) {
+            if (load_depth) {
+                return render_pass_load != VK_NULL_HANDLE ? render_pass_load : render_pass;
+            }
+            return render_pass_load_color != VK_NULL_HANDLE ? render_pass_load_color : render_pass;
         }
-        return load_depth && render_pass_load_depth != VK_NULL_HANDLE ? render_pass_load_depth : render_pass;
+        if (load_depth) {
+            return render_pass_load_depth != VK_NULL_HANDLE ? render_pass_load_depth : render_pass;
+        }
+        return render_pass;
     }
 
     /** @brief Gets the pipeline compatibility of this target's shape. */

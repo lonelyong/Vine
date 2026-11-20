@@ -626,6 +626,14 @@ bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllo
         destroyTarget(table, device, allocator, images);
         return false;
     }
+    // COLOUR LOAD + DEPTH CLEAR: the HUD pass (see ClearPolicy). It needs a colour attachment to load and a depth of
+    // its OWN to clear - a borrowing target's depth is the lender's and is LOADed by every variant (see the class
+    // note), so that case has no such pass and `renderPassFor` answers the CLEAR one instead.
+    if (!images.depth_borrowed && images.hasDepth() && images.colorCount() != 0U &&
+        !createRenderPass(table, device, images, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_LOAD_OP_CLEAR, images.render_pass_load_color)) {
+        destroyTarget(table, device, allocator, images);
+        return false;
+    }
     if (!createAttachments(table, device, allocator, images)) {
         destroyTarget(table, device, allocator, images);
         return false;
@@ -658,6 +666,9 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAl
 {
     destroyAttachments(table, device, allocator, images);
     if (device != VK_NULL_HANDLE) {
+        if (images.render_pass_load_color != VK_NULL_HANDLE) {
+            table.vkDestroyRenderPass(device, images.render_pass_load_color, nullptr);
+        }
         if (images.render_pass_load_depth != VK_NULL_HANDLE) {
             table.vkDestroyRenderPass(device, images.render_pass_load_depth, nullptr);
         }
@@ -671,6 +682,7 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAl
     images.render_pass            = VK_NULL_HANDLE;
     images.render_pass_load_depth = VK_NULL_HANDLE;
     images.render_pass_load       = VK_NULL_HANDLE;
+    images.render_pass_load_color = VK_NULL_HANDLE;
     images.framebuffer            = VK_NULL_HANDLE;
     images.depth_borrowed         = false;
     images.borrowed_depth_view    = VK_NULL_HANDLE;

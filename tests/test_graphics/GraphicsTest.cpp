@@ -10,6 +10,7 @@
 #include <vine/Colorf.hpp>
 #include <vine/geom/spatial/Aabb.hpp>
 #include <vine/geom/spatial/Ray.hpp>
+#include <vine/graphics/AxesMarker.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/ChainPresets.hpp>
@@ -4111,7 +4112,7 @@ TEST(RenderEngineTest, FrameTableDescribesThePassesInTheOrderTheyWillRun)
     EXPECT_EQ(plan.passes[0].camera, camera.get());
     EXPECT_EQ(plan.passes[0].target, target.get());
     EXPECT_TRUE(plan.passes[0].enabled);
-    EXPECT_FALSE(plan.passes[0].clears);
+    EXPECT_FALSE(plan.passes[0].clears_color);
     ASSERT_TRUE(plan.passes[0].viewport.has_value());
     EXPECT_EQ(plan.passes[0].viewport->width, 30);
     ASSERT_EQ(plan.passes[0].inputs.size(), 1u);
@@ -4122,7 +4123,7 @@ TEST(RenderEngineTest, FrameTableDescribesThePassesInTheOrderTheyWillRun)
     // A pass with no target draws to the WINDOW - said by a null target, exactly as the pass itself says it.
     EXPECT_EQ(plan.passes[1].name, u8"present");
     EXPECT_EQ(plan.passes[1].target, nullptr);
-    EXPECT_TRUE(plan.passes[1].clears);
+    EXPECT_TRUE(plan.passes[1].clears_color);
     EXPECT_EQ(plan.passes[1].clear_color, Color(128, 128, 128, 255).toLinear()) << "the plan carries the linear colour, not the bytes that produced it";
     EXPECT_FALSE(plan.passes[1].clears_depth);
     EXPECT_FALSE(plan.passes[1].viewport.has_value()) << "no viewport: the whole target";
@@ -4451,7 +4452,35 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     EXPECT_FLOAT_EQ(backend->last_clear_policy.color.r, authored.r) << "the announced colour is the linear one the host authored, not its bytes";
     EXPECT_FLOAT_EQ(backend->last_clear_policy.color.g, authored.g);
     EXPECT_FLOAT_EQ(backend->last_clear_policy.color.b, authored.b);
-    EXPECT_FALSE(backend->last_clear_policy.depth);
+    EXPECT_FALSE(backend->last_clear_policy.clear_depth);
+}
+
+TEST(RenderEngineTest, APassMayClearDepthAndKeepTheColourItIsDrawnOver)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    engine->initialize();
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    // A HUD pass: it KEEPS the colour it is drawn over and owns the depth inside its box. The two halves of a clear are
+    // independent dimensions (see ClearPolicy), so that declaration reaches the backend as exactly that pair - which is
+    // what lets a marker's own arrows occlude each other without ever occluding the scene underneath.
+    PassDesc hud_desc;
+    hud_desc.camera        = cam;
+    hud_desc.content       = content;
+    hud_desc.viewport      = Viewport{ 8, 8, 64, 64 };
+    hud_desc.clear_enabled = false; // the picture stays
+    hud_desc.clear_depth   = true;  // ...and the box' depth is the pass' own
+    (void)vn::test::applyPassForTest(*engine, std::move(hud_desc), 0);
+
+    engine->frame();
+
+    ASSERT_EQ(backend->clear_calls, 1) << "a depth-only clear IS a clear: the backend must be told";
+    EXPECT_FALSE(backend->last_clear_policy.clear_color) << "the picture underneath stays";
+    EXPECT_TRUE(backend->last_clear_policy.clear_depth) << "the depth inside the box is the pass' own";
 }
 
 TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
@@ -5673,8 +5702,8 @@ TEST(SceneViewViewportTest, TheOverlayBoxSitsInTheAreaCorner)
     // viewport must not move anything.
     const Viewport box = pipeline->gizmoPass()->viewport();
     EXPECT_EQ(box.x, 16);
-    EXPECT_EQ(box.y, 300 - 16 - 96);
-    EXPECT_EQ(box.width, 96);
+    EXPECT_EQ(box.y, 300 - 16 - kAxisGizmoBoxSize);
+    EXPECT_EQ(box.width, kAxisGizmoBoxSize);
 }
 
 // 应用自己上屏时，视图**不被建链** —— 那条"表里有声明就不建自己的链"的规则归渲染控件（SurfaceWindow::init 先看
@@ -6193,7 +6222,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     ASSERT_TRUE(described.clear.has_value());
     EXPECT_EQ(backend->clear_calls, 1);
     EXPECT_EQ(described.clear->color, backend->last_clear_policy.color);
-    EXPECT_EQ(described.clear->depth, backend->last_clear_policy.depth);
+    EXPECT_EQ(described.clear->clear_depth, backend->last_clear_policy.clear_depth);
     EXPECT_EQ(described.state.depth, backend->pass_state.depth);
     EXPECT_EQ(described.state.polygonMode, backend->pass_state.polygonMode);
     EXPECT_DOUBLE_EQ(cam->aspect(), 32.0 / 18.0) << "形状是 CAMERA 的状态（描述里没有这个字段），投影与剔除读的是同一个数";
@@ -6762,7 +6791,7 @@ TEST(PassChainTest, ForwardPathBuildsWindowPass)
     EXPECT_EQ(plan.passes[0].content, content.get());
     EXPECT_EQ(plan.passes[0].camera, cam.get());
     EXPECT_EQ(plan.passes[0].target, nullptr) << "no target: the window";
-    EXPECT_TRUE(plan.passes[0].clears);
+    EXPECT_TRUE(plan.passes[0].clears_color);
     EXPECT_EQ(engine->contentOf(pipeline->presentingPass()), content.get());
     EXPECT_EQ(pipeline->offscreenTarget(), nullptr);
 }
@@ -7957,12 +7986,13 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     // engine's back), the HUD stage's order, and no clear.
     EXPECT_EQ(gizmo_row->order, passStageOrder(PassStage::Overlay) + opts.gizmo.order);
     EXPECT_EQ(readout_row->order, passStageOrder(PassStage::Overlay) + opts.fps.order);
-    EXPECT_FALSE(gizmo_row->clears) << "a HUD draws over the picture it is on, it never washes it out";
+    EXPECT_FALSE(gizmo_row->clears_color) << "a HUD draws over the picture it is on, it never washes it out";
+    EXPECT_TRUE(gizmo_row->clears_depth) << "the marker owns the depth inside its box, so its arrows occlude each other";
     EXPECT_EQ(gizmo_row->camera, gizmo->camera());
     EXPECT_EQ(gizmo_row->content, gizmo->content());
     EXPECT_EQ(readout_row->camera, readout->camera());
     EXPECT_EQ(readout_row->content, readout->content());
-    EXPECT_EQ(gizmo_pass->depthMode(), DepthMode::Disabled) << "a HUD is always on top";
+    EXPECT_EQ(gizmo_pass->depthMode(), DepthMode::TestAndWrite) << "depth test + write: the arrows are solids that occlude each other";
 
     // And the per-frame work is LIVE: the mirror happens because the CHAIN updates its overlays before the frame
     // (FrameUpdate / PassChain::update), which is what SurfaceWindow::renderFrame does once per frame.
@@ -8538,23 +8568,177 @@ TEST(CameraMirrorTest, FullViewAdoptsSourcePose)
     EXPECT_NEAR(cam->target().y, src->target().y, 1e-9);
 }
 
+// ============ Axes marker ============
+
+TEST(AxesMarkerTest, TheThreeArrowsAreOneDraw)
+{
+    const auto marker = makeAxesMarker();
+    ASSERT_NE(marker.get(), nullptr);
+
+    // One primitive whatever the arrow count: the arrows differ by VERTEX COLOUR, not by node or by draw (see
+    // makeAxesMarker), which is what lets a scene of hundreds of frames stay cheap.
+    ASSERT_EQ(marker->primitiveCount(), 1u);
+    // (2 + 4 * 16) shaft vertices + (3 * 16 + 1) tip vertices, three times.
+    EXPECT_EQ(marker->positionCount(), 3u * 115u);
+    EXPECT_EQ(marker->normalCount(), marker->positionCount());
+    ASSERT_TRUE(marker->hasColors());
+    EXPECT_EQ(marker->colorCount(), marker->positionCount());
+    EXPECT_EQ(marker->texcoordComponents(), 0u);
+    // (4 * 16) shaft triangles + (2 * 16) tip triangles, three times.
+    EXPECT_EQ(marker->primitive(0)->indices.span().size(), 3u * 288u);
+}
+
+TEST(AxesMarkerTest, EveryTipReachesTheStyledLength)
+{
+    AxesStyle style;
+    style.length = 2.0;
+
+    const auto             marker    = makeAxesMarker(style);
+    const AttributeChannel* positions = marker->buffer(attributeLocation(VertexAttribute::Position));
+    ASSERT_NE(positions, nullptr);
+
+    float max_x = 0.0f;
+    float max_y = 0.0f;
+    float max_z = 0.0f;
+    for (const vn::math::Vec3f& vertex : positions->vec3View()) {
+        max_x = std::max(max_x, vertex.x);
+        max_y = std::max(max_y, vertex.y);
+        max_z = std::max(max_z, vertex.z);
+    }
+    // Each arrow's tip is the furthest point along its own axis, and a marker is built from the style's length.
+    EXPECT_NEAR(max_x, static_cast<float>(style.length), 1.0e-5);
+    EXPECT_NEAR(max_y, static_cast<float>(style.length), 1.0e-5);
+    EXPECT_NEAR(max_z, static_cast<float>(style.length), 1.0e-5);
+}
+
+TEST(AxesMarkerTest, EachArrowCarriesItsColour)
+{
+    AxesStyle style;
+    style.x_color = Colorf(1.0f, 0.0f, 0.0f, 1.0f);
+    style.y_color = Colorf(0.0f, 1.0f, 0.0f, 1.0f);
+    style.z_color = Colorf(0.0f, 0.0f, 1.0f, 1.0f);
+
+    const auto             marker = makeAxesMarker(style);
+    const AttributeChannel* colors = marker->buffer(Geometry::kColorLocation);
+    ASSERT_NE(colors, nullptr);
+    ASSERT_EQ(colors->components, 4u);
+
+    const std::span<const float> scalars = colors->scalars();
+    ASSERT_GE(scalars.size(), 4u * 3u * 115u);
+    // The arrows are authored in mask order, so the first vertex belongs to the X arrow and the 116th to the Y one.
+    EXPECT_FLOAT_EQ(scalars[0], 1.0f);
+    EXPECT_FLOAT_EQ(scalars[1], 0.0f);
+    EXPECT_FLOAT_EQ(scalars[4u * 115u + 1u], 1.0f);
+    EXPECT_FLOAT_EQ(scalars[8u * 115u + 2u], 1.0f);
+}
+
+TEST(AxesMarkerTest, AMaskLeavesTheOtherArrowsOut)
+{
+    AxesStyle style;
+    style.axis_mask = kAxisX | kAxisZ;
+
+    const auto             marker    = makeAxesMarker(style);
+    ASSERT_NE(marker.get(), nullptr);
+    EXPECT_EQ(marker->positionCount(), 2u * 115u);
+
+    const AttributeChannel* positions = marker->buffer(attributeLocation(VertexAttribute::Position));
+    ASSERT_NE(positions, nullptr);
+    float max_y = 0.0f;
+    for (const vn::math::Vec3f& vertex : positions->vec3View()) {
+        max_y = std::max(max_y, vertex.y);
+    }
+    // Only the X and Z arrows were built: their rims reach the tip radius, never the arrow's length.
+    EXPECT_LE(max_y, static_cast<float>(style.tip_radius + 1.0e-5));
+}
+
+TEST(AxesMarkerTest, AnEmptyStyleBuildsNothingToDraw)
+{
+    AxesStyle no_axes;
+    no_axes.axis_mask = 0u;
+    const auto empty = makeAxesMarker(no_axes);
+    ASSERT_NE(empty.get(), nullptr);
+    EXPECT_EQ(empty->positionCount(), 0u) << "a marker with no arrows is a geometry with no channels";
+    EXPECT_EQ(empty->primitiveCount(), 0u) << "and therefore collects no draw";
+
+    AxesStyle no_length;
+    no_length.length = 0.0;
+    EXPECT_EQ(makeAxesMarker(no_length)->positionCount(), 0u);
+}
+
+TEST(AxesMarkerTest, MarkersOfOneStyleShareTheirStreams)
+{
+    const auto first  = makeAxesMarker(AxesStyle{});
+    const auto second = makeAxesMarker(AxesStyle{});
+    ASSERT_NE(first.get(), nullptr);
+    ASSERT_NE(second.get(), nullptr);
+    ASSERT_NE(first.get(), second.get()) << "two placements are two nodes: a node has one parent";
+
+    // One set of buffers serves both, so hundreds of markers upload their arrows once.
+    EXPECT_EQ(first->buffer(attributeLocation(VertexAttribute::Position))->values.get(),
+              second->buffer(attributeLocation(VertexAttribute::Position))->values.get());
+    EXPECT_EQ(first->primitive(0)->indices.values.get(), second->primitive(0)->indices.values.get());
+
+    // A different style is a different marker.
+    AxesStyle other;
+    other.segments  = 8;
+    const auto third = makeAxesMarker(other);
+    EXPECT_NE(first->buffer(attributeLocation(VertexAttribute::Position))->values.get(),
+              third->buffer(attributeLocation(VertexAttribute::Position))->values.get());
+
+    // The DRAW is not shared: hiding one marker leaves the other alone.
+    first->setVisible(false);
+    EXPECT_TRUE(second->isVisible());
+}
+
 // ============ AxisGizmo ============
 
-TEST(AxisGizmoTest, BuildsThreeColouredSticks)
+TEST(AxisGizmoTest, BuildsOneAxesMarker)
 {
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     ASSERT_NE(gizmo->content(), nullptr);
+
+    // ONE geometry and ONE draw for the whole marker: the arrows differ by vertex colour, not by node. What the gizmo
+    // adds to it is the camera and the box.
     const auto* content = dynamic_cast<const Group*>(gizmo->content()->root().get());
     ASSERT_NE(content, nullptr);
-    ASSERT_EQ(content->children().size(), 3u);
-    for (const auto& node : content->children()) {
-        const auto* group = dynamic_cast<const Group*>(node.get());
-        ASSERT_NE(group, nullptr);
-        ASSERT_EQ(group->children().size(), 1u);
-    }
+    ASSERT_EQ(content->children().size(), 1u);
+
+    const auto* marker = dynamic_cast<const Geometry*>(content->children().front().get());
+    ASSERT_NE(marker, nullptr);
+    EXPECT_EQ(marker->primitiveCount(), 1u);
+    EXPECT_TRUE(marker->hasColors());
     EXPECT_NE(gizmo->camera(), nullptr);
     // A HUD overlay draws over the main content: what says so is the DECLARATION that shows it (no clear, depth
     // disabled), which the build writes - see PassChainTest.TheHudOverlaysAreDeclarationsToo.
+}
+
+TEST(AxisGizmoTest, TheMarkerCarriesItsOwnLightRig)
+{
+    auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
+    ASSERT_NE(gizmo->content(), nullptr);
+
+    // A marker is shaded by the gizmo's OWN rig, not by the host's scene and not by the backends' flat fallback: an
+    // ambient floor plus one directional key light (see AxisGizmo).
+    const std::vector<LightPtr>& lights = gizmo->content()->lights();
+    ASSERT_EQ(lights.size(), 2u);
+    const auto key_light = std::find_if(lights.begin(), lights.end(), [](const LightPtr& light) { return light->hasDirection(); });
+    ASSERT_NE(key_light, lights.end());
+    const auto ambient_light = std::find_if(lights.begin(), lights.end(), [](const LightPtr& light) { return !light->hasDirection(); });
+    ASSERT_NE(ambient_light, lights.end());
+    EXPECT_GT((*ambient_light)->intensity(), 0.0f) << "an arrow must stay readable where the key light does not reach";
+    EXPECT_GT((*key_light)->intensity(), 0.0f);
+
+    // The key light is locked to the camera: mirroring a view from -Z makes it travel towards +Z, so the side the
+    // camera sees is the lit one at every orbit.
+    auto src = intrusive_ptr<Camera>(new Camera());
+    src->lookAt(Vec3d(0.0, 0.0, -10.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+    gizmo->setSourceCamera(src.get());
+    gizmo->onFrame(FrameContext{});
+
+    const Vec3d direction = (*key_light)->direction();
+    EXPECT_NEAR(direction.x, 0.0, 1.0e-9);
+    EXPECT_NEAR(direction.y, 0.0, 1.0e-9);
+    EXPECT_NEAR(direction.z, 1.0, 1.0e-9);
 }
 
 TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
@@ -8563,11 +8747,11 @@ TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
     gizmo->onSurfaceResized(800, 600);
 
     const Viewport vp = gizmo->boxViewport();
-    EXPECT_EQ(vp.width, 96);
-    EXPECT_EQ(vp.height, 96);
+    EXPECT_EQ(vp.width, kAxisGizmoBoxSize);
+    EXPECT_EQ(vp.height, kAxisGizmoBoxSize);
     EXPECT_EQ(vp.x, 16);
-    EXPECT_EQ(vp.y, 600 - 16 - 96);
-    // The box is square, so the camera that frames the sticks is projected for a square picture - stated where the
+    EXPECT_EQ(vp.y, 600 - 16 - kAxisGizmoBoxSize);
+    // The box is square, so the camera that frames the marker is projected for a square picture - stated where the
     // camera is made (see Camera and AxisGizmo's constructor) rather than derived from this rectangle later.
     EXPECT_DOUBLE_EQ(gizmo->camera()->aspect(), 1.0);
 }
@@ -8586,11 +8770,11 @@ TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
     EXPECT_EQ(vp.height, 0);
 
     // A surface that DOES fit the box still gets it: the clamp only bites where the box cannot fit.
-    gizmo->onSurfaceResized(100, 128);
+    gizmo->onSurfaceResized(100, 200);
     const Viewport fitted = gizmo->boxViewport();
-    EXPECT_EQ(fitted.width, 96);
-    EXPECT_EQ(fitted.height, 96);
-    EXPECT_EQ(fitted.y, 128 - 16 - 96);
+    EXPECT_EQ(fitted.width, kAxisGizmoBoxSize);
+    EXPECT_EQ(fitted.height, kAxisGizmoBoxSize);
+    EXPECT_EQ(fitted.y, 200 - 16 - kAxisGizmoBoxSize);
 }
 
 TEST(AxisGizmoTest, OrientationMirrorTracksSource)
@@ -13077,7 +13261,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     EXPECT_EQ(plan.passes[0].name, vn::String(u8"declared_pass"));
     EXPECT_EQ(plan.passes[0].order, passStageOrder(PassStage::Shading)) << "the stage is the order: nobody picks an order number for a declared pass";
     EXPECT_EQ(plan.passes[0].target, target.get());
-    EXPECT_TRUE(plan.passes[0].clears);
+    EXPECT_TRUE(plan.passes[0].clears_color);
     EXPECT_EQ(engine->resolve(u8"SceneColor"), target.get()) << "and it published the name it declared";
 
     // A DISABLED declaration keeps its row and costs nothing.

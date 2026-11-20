@@ -196,7 +196,7 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
     pass.target        = target;
     pass.clear         = ClearPolicy{};
     pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.clear->depth  = true;
+    pass.clear->clear_depth  = true;
     pass.draws.push_back(std::move(draw));
     entry.draw = std::move(pass);
 

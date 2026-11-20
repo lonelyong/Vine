@@ -607,6 +607,54 @@ TEST_F(BackendParityTest, TheSameClearIsTheSamePicture)
     EXPECT_EQ(centre[3], 255);
 }
 
+TEST_F(BackendParityTest, ADepthOnlyClearKeepsThePictureOnBothBackends)
+{
+    // THE HUD LAYER'S CLEAR (see ClearPolicy's two dimensions): a later pass into the SAME target loads the colour and
+    // resets only the depth - "the marker owns the depth inside its box, the scene underneath stays". What this pins:
+    // the picture the first pass drew is still there (the colour was LOADed, not cleared), the depth really was reset
+    // (the second pass is recorded with no draws and a clear of its own), and both backends answer the same picture.
+    RenderTarget* const shared = target();
+
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFragmentStage, u8"parity_depth_only_clear");
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
+    const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    // Two passes are two identities (a backend keys retained per-pass state by the object), so the frame owns them.
+    const intrusive_ptr<vn::graphics::RenderPass> painting_identity(new vn::graphics::RenderPass());
+    const intrusive_ptr<vn::graphics::RenderPass> overlay_identity(new vn::graphics::RenderPass());
+
+    FrameDescription frame;
+
+    FrameDescription::Pass painting;
+    painting.pass  = painting_identity.get();
+    painting.order = 0;
+    PassDraw paint;
+    paint.target      = shared;
+    paint.clear       = ClearPolicy{ Colorf(0.0F, 0.0F, 0.0F, 1.0F), true };
+    paint.state.depth = DepthMode::TestAndWrite;
+    paint.draws.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
+    painting.draw = std::move(paint);
+    frame.passes.push_back(std::move(painting));
+
+    FrameDescription::Pass overlay;
+    overlay.pass  = overlay_identity.get();
+    overlay.order = 1;
+    PassDraw cleaned;
+    cleaned.target      = shared;
+    cleaned.clear       = ClearPolicy::depthOnly(); // the colour is LOADed and the depth is CLEARed
+    cleaned.state.depth = DepthMode::TestAndWrite;
+    overlay.draw = std::move(cleaned);
+    frame.passes.push_back(std::move(overlay));
+
+    const Ran reference = run(*vsg, frame, shared);
+    const Ran candidate = run(*vk, frame, shared);
+
+    expectTheSameRecord(reference, candidate, 2, 1, "depth-only clear over a drawn picture");
+    expectTheSamePicture(reference, candidate, "depth-only clear over a drawn picture");
+    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+        << "the colour was LOADed: the triangle the first pass drew is still the picture";
+}
+
 TEST_F(BackendParityTest, TheSameTriangleIsTheSamePicture)
 {
     // ONE OPAQUE DRAW through the engine ABI: the vertex stage reads the camera push and the draw block, the

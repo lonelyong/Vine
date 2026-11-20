@@ -64,13 +64,14 @@ struct VN_GRAPHICS_API AxisGizmoOptions {
      */
     double pixel_ratio = 1.0;
 
-    /** @brief Side length of the square gizmo viewport, in device pixels. */
-    int box_size = 96;
+    /** @brief Side length of the square gizmo viewport, in device pixels; 0 keeps the gizmo's own default
+     *  (`kAxisGizmoBoxSize`). */
+    int box_size = 0;
 
-    /** @brief Stick length in world units (default 1). */
+    /** @brief Arrow length in world units (default 1). */
     double axis_length = 1.0;
 
-    /** @brief Stick cross-section half extent in world units (default 0.09). */
+    /** @brief The marker arrow's widest radius, as a fraction of @ref axis_length (default 0.09). */
     double thickness = 0.09;
 
     /** @brief Stacking offset inside the HUD stage (default 10).

@@ -6,7 +6,9 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "AxesMarker.hpp"
 #include "FrameUpdate.hpp"
+#include "Light.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -14,14 +16,18 @@ VN_GRAPHICS_NS_BEGIN
 class Camera;
 class Scene;
 
+/// @brief Default side of the gizmo's square box, in DEVICE pixels (the unit the readout next door states).
+inline constexpr int kAxisGizmoBoxSize = 128;
+
 /**
- * @brief The axis-gizmo HUD's CONTENT: three coloured sticks, and the camera that frames them.
+ * @brief The axis-gizmo HUD's CONTENT: one coordinate-frame marker, and the camera that frames it.
  *
  * @details
- * - What this owns is the half a pass cannot: its content scene (three sticks along +X red, +Y green,
- *   +Z blue), the framing camera they are drawn with, and the BOX (a device-pixel rectangle in the
- *   bottom-left corner of the area it belongs to) they are projected into. It is deliberately NOT a
- *   pass: a pass is a DECLARATION now (see PassDesc), so whoever shows this gizmo declares one -
+ * - What this owns is the half a pass cannot: its content scene (a marker built by makeAxesMarker - three
+ *   arrows along +X red, +Y green, +Z blue), the light rig that shades it, the framing camera they are drawn with,
+ *   and the BOX (a device-pixel rectangle in the bottom-left corner of the area it belongs to) they are projected
+ *   into. It is deliberately NOT a pass: a pass is a DECLARATION now (see PassDesc), so whoever shows this gizmo
+ *   declares one -
  *   `content` = this object's scene, `camera` = this object's camera, `viewport` = boxViewport() -
  *   and registers this object with the chain as the overlay whose update() mirrors the source camera's
  *   orientation (MirrorMode::Orientation) onto the framing one (see FrameUpdate).
@@ -40,8 +46,9 @@ class Scene;
  * hud.camera          = intrusive_ptr<Camera>(gizmo->camera());
  * hud.content         = intrusive_ptr<Scene>(gizmo->content());
  * hud.viewport        = gizmo->boxViewport();
- * hud.clear_enabled   = false;
- * hud.depth_mode      = DepthMode::Disabled;
+ * hud.clear_enabled   = false;                     // the picture it is drawn over stays
+ * hud.clear_depth     = true;                      // ...and the depth inside the box is the marker's own
+ * hud.depth_mode      = DepthMode::TestAndWrite;   // so the arrows occlude each other like solids
  * chain->addOverlay(u8"gizmo", gizmo.get(), hud);   // the chain updates it before each frame
  * \endcode
  */
@@ -49,32 +56,63 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, p
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a gizmo with three unit axis sticks.
+    /** @brief Constructs a gizmo with one unit coordinate-frame marker.
      *
      * @details
-     * - The pass never clears (it draws over the previous content). Its sub-viewport defaults to a
-     *   96px box at the origin corner until its owner reports a surface size (see onSurfaceResized).
+     * - The declaration a caller writes for it clears DEPTH only (see the class example): the marker owns the depth
+     *   inside its box and never clears the colour it is drawn over. Its sub-viewport defaults to a 128px box at the
+     *   origin corner until its owner reports a surface size (see onSurfaceResized).
      */
     AxisGizmo();
 
     /** @brief Destroys the gizmo. */
     ~AxisGizmo() override;
 
-    /** @brief Sets the stick length in world units.
+    /** @brief Sets the whole marker style: which arrows, their proportions, their resolution and their colours.
      *
-     * @param length Positive stick length (default 1).
+     * @details
+     * - The content is rebuilt when the style differs from the current one, and LEFT ALONE when it does not - so a
+     *   host may call this on configuration without paying for a rebuild per call.
+     * - This is the one setter that can express everything the marker is; `setAxisLength()` and `setThickness()`
+     *   are the two scalars hosts change most often, and each rebuilds the content once.
+     *
+     * @param style Marker style (see AxesStyle).
+     */
+    void setStyle(const AxesStyle& style);
+
+    /** @brief Gets the marker style the content is built from.
+     *
+     * @return The style.
+     */
+    [[nodiscard]] const AxesStyle& axesStyle() const;
+
+    /** @brief Sets the arrow length in world units.
+     *
+     * @details
+     * - The marker's proportions are fractions of this length, so the whole marker scales with it.
+     *
+     * @param length Positive arrow length, tip to origin (default 1).
      */
     void setAxisLength(double length);
 
-    /** @brief Sets the stick cross-section half extent in world units.
+    /** @brief Sets the arrow's widest radius, as a fraction of the arrow length.
      *
-     * @param thickness Positive half thickness (default 0.09).
+     * @details
+     * - The widest radius of an arrow is its cone's; the shaft takes the same share of it that a default marker
+     *   uses (kAxesShaftToTipRatio), so a thicker arrow stays an arrow instead of becoming a spike on a hairline.
+     *
+     * @param thickness Positive fraction of the axis length (default 0.09).
      */
     void setThickness(double thickness);
 
-    /** @brief Sets the on-screen box size in device pixels.
+    /** @brief Sets the on-screen box size in DEVICE pixels.
      *
-     * @param size Side length of the square gizmo viewport (default 96).
+     * @details
+     * - The same unit the FPS readout states its box in: the surface size is converted to device pixels with the
+     *   pixel ratio (see onSurfaceResized), and this box is fitted inside it as stated - a host on a high-DPI
+     *   display that wants a larger gizmo states a larger number here.
+     *
+     * @param size Side length of the square gizmo viewport (default kAxisGizmoBoxSize).
      */
     void setBoxSize(int size);
 
@@ -105,10 +143,10 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, p
     /** @brief Gets the content scene drawn by the gizmo. */
     raw_ptr<Scene> content() const;
 
-    /** @brief Gets the camera that frames the sticks (the one a declaration states as its camera). */
+    /** @brief Gets the camera that frames the arrows (the one a declaration states as its camera). */
     raw_ptr<Camera> camera() const;
 
-    /** @brief Gets the device-pixel rectangle the sticks are drawn into (the viewport a declaration states).
+    /** @brief Gets the device-pixel rectangle the marker is drawn into (the viewport a declaration states).
      *
      * @details
      * - The box follows the surface (onSurfaceResized) and the area origin (setAreaOrigin); a
@@ -173,17 +211,20 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, p
 
     /// Owned framing camera (the one a declaration states; the gizmo keeps it alive).
     intrusive_ptr<Camera> camera_;
-    /// Content scene holding the three sticks (owned).
+    /// Content scene holding the marker (owned).
     intrusive_ptr<Scene> content_;
-    /// The box the sticks are drawn into, in device pixels (see boxViewport).
+    /// The box the marker is drawn into, in device pixels (see boxViewport).
     Viewport box_{};
     /// Source camera followed each frame (non-owning).
     raw_ptr<Camera> source_camera_ = nullptr;
-    double          axis_length_   = 1.0;
-    double          thickness_     = 0.09;
-    double          pixel_ratio_   = 1.0;
+    /// The light rig the marker is shaded by; both are added to the content scene (see rebuild).
+    intrusive_ptr<Light> ambient_;
+    intrusive_ptr<Light> key_light_;
+    /// How the marker looks; the content is rebuilt when it changes (see setStyle).
+    AxesStyle style_{};
+    double    pixel_ratio_ = 1.0;
     int             margin_px_     = 16;
-    int             size_px_       = 96;
+    int             size_px_       = kAxisGizmoBoxSize;
     int             surface_w_     = 0;
     int             surface_h_     = 0;
     int             area_x_        = 0;

@@ -588,7 +588,10 @@ PassDesc hud;
 hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
 hud.camera = vn::intrusive_ptr<Camera>(gizmo->camera());
 hud.content = vn::intrusive_ptr<Scene>(gizmo->content());
-hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
+hud.viewport = gizmo->boxViewport();
+hud.clear_enabled = false; // 它画在上面的画面保留
+hud.clear_depth = true; // 盒子里的深度归箭头自己（只清深度、不清颜色）
+hud.depth_mode = DepthMode::TestAndWrite; // 所以三根轴像实体一样互相遮挡
 // 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->onFrame(context) 镜像源相机朝向。
 pipeline->addOverlay(u8"gizmo", gizmo.get(), hud);
 

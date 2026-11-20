@@ -1571,16 +1571,22 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         vn::graphics::RenderPassCompatibility compatibility{};
 
         if (item.window) {
-            // A WINDOW PASS: the swapchain's image, the window's render pass. The first pass into a frame's image
-            // clears both attachments; a later pass into the same image loads what the earlier one wrote.
-            const bool load = !first_window_pass;
-            render_pass     = window->renderPass(load, load);
-            framebuffer     = window->framebuffer();
-            extent          = VkExtent2D{ window->width(), window->height() };
-            color_count     = 1U;
-            has_depth       = true;
-            compatibility   = window->compatibility();
-            first_window_pass = false;
+            // A WINDOW PASS: the swapchain's image, the window's render pass. WHAT IT LOADS is the pass' OWN policy, one
+            // attachment at a time (see ClearPolicy's two independent dimensions): the first pass into the frame's image
+            // can clear either or both (an image nobody wrote cannot be loaded), and a later pass loads what the earlier
+            // one wrote EXCEPT the attachment it asks to clear - which is how a HUD owns the depth inside its rectangle
+            // and keeps the picture underneath.
+            const bool has_clear  = draw.clear.has_value();
+            const bool written    = !first_window_pass;
+            const bool load_color = written && (!has_clear || !draw.clear->clear_color);
+            const bool load_depth = written && (!has_clear || !draw.clear->clear_depth);
+            render_pass           = window->renderPass(load_color, load_depth);
+            framebuffer           = window->framebuffer();
+            extent                = VkExtent2D{ window->width(), window->height() };
+            color_count           = 1U;
+            has_depth             = true;
+            compatibility         = window->compatibility();
+            first_window_pass     = false;
         }
         else {
             images = item.images;
@@ -1632,8 +1638,10 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
             const bool has_clear  = draw.clear.has_value();
             const bool drawn_into = !images->fresh.load(std::memory_order_relaxed);
-            const bool load_color = !has_clear && drawn_into;
-            const bool load_depth = has_clear ? (!draw.clear->depth && drawn_into) : drawn_into;
+            // ONE ANSWER PER ATTACHMENT (see ClearPolicy): a pass that clears only the depth loads the colour it is drawn
+            // over and resets the depth, which is what a HUD pass asks for.
+            const bool load_color = has_clear ? (!draw.clear->clear_color && drawn_into) : drawn_into;
+            const bool load_depth = has_clear ? (!draw.clear->clear_depth && drawn_into) : drawn_into;
             render_pass           = images->renderPassFor(load_depth, load_color);
             framebuffer           = images->framebuffer;
             extent                = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
