@@ -528,7 +528,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     vn::graphics::FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value()) << "this backend keeps its own frame counters";
     EXPECT_EQ(report.counters->passes, 0U);
-    EXPECT_EQ(report.counters->draws, 0U);
+    EXPECT_EQ(report.counters->draw_packets, 0U);
     EXPECT_EQ(report.counters->invalid_schedules, 0U);
 
     // A DRAWN frame: the numbers a host reads here ARE the backend's own instrumentation (the same ones a
@@ -549,7 +549,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
     EXPECT_EQ(report.counters->passes, 1U) << "one pass scope ran";
-    EXPECT_EQ(report.counters->draws, 1U) << "and it recorded one draw";
+    EXPECT_EQ(report.counters->draw_packets, 1U) << "and it recorded one draw";
     EXPECT_EQ(report.counters->invalid_schedules, 0U) << "nothing was cyclic";
 
     // The retention numbers come out of the SAME answer, and they agree with the backend's own accessor.
@@ -590,7 +590,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     EXPECT_EQ(report.progress->submitted, submitted_before + 1U) << "a drawn frame is handed to the queue";
     EXPECT_LE(report.progress->completed, report.progress->submitted);
 
-    // And the capability the SDK asks before it plans an off-screen pass is answered by the same value.
+    // And the capability the SDK asks before it plans an off-full-screen pass is answered by the same value.
     EXPECT_TRUE(backend->capabilities().render_targets) << "the off-screen half is served";
 }
 
@@ -853,7 +853,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     offscreen->attachColor(RenderTarget::ColorFormat::RGBA8);
     offscreen->setSize(64, 64);
 
-    // The content of the off-screen pass: a red triangle under a view-block program.
+    // The content of the off-full-screen pass: a red triangle under a view-block program.
     const TriangleFixture triangle = makeTriangle();
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
@@ -867,7 +867,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     const vn::intrusive_ptr<RenderPass> window_pass(new RenderPass());
 
     // The SCREEN's clear is blue and the TARGET's is green, so a window pixel says which one a frame ended
-    // with: the screen draw covers the window, so a pixel the screen draw touched is the TARGET's picture -
+    // with: the full-screen draw covers the window, so a pixel the full-screen draw touched is the TARGET's picture -
     // the triangle, or the target's clear.
     const vn::graphics::ClearPolicy offscreen_clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
     const vn::graphics::ClearPolicy window_clear{ vn::Colorf(0.0F, 0.0F, 0.25F, 1.0F), true };
@@ -922,7 +922,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     const auto left   = host.waitForPixel(kWidth / 4, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
     const auto right  = host.pixel(3 * kWidth / 4, kHeight / 2);
     const auto corner = host.pixel(2, 2);
-    EXPECT_TRUE(isRed(left)) << "the triangle drawn into the TARGET reached the window through the screen draw: got (" << static_cast<int>(left[0]) << ", "
+    EXPECT_TRUE(isRed(left)) << "the triangle drawn into the TARGET reached the window through the full-screen draw: got (" << static_cast<int>(left[0]) << ", "
                              << static_cast<int>(left[1]) << ", " << static_cast<int>(left[2]) << ") read-error " << static_cast<int>(host.readError())
                              << " (see HostWindowReadTest: a refusal is not a black pixel)";
     EXPECT_TRUE(isGreenClear(right)) << "the rest of the window is the TARGET's clear, not the window's own";
@@ -1554,13 +1554,13 @@ TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
     const vn::graphics::Capabilities caps = backend->capabilities();
     EXPECT_TRUE(caps.render_targets);
     EXPECT_TRUE(caps.presentation);
-    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::Wireframe)) << "the device floor requires fillModeNonSolid";
-    EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering)) << "the device floor requires samplerAnisotropy";
+    EXPECT_TRUE(caps.features.supports(vn::graphics::Features::Feature::Wireframe)) << "the device floor requires fillModeNonSolid";
+    EXPECT_TRUE(caps.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering)) << "the device floor requires samplerAnisotropy";
     EXPECT_GE(caps.limits.max_anisotropy, 1.0F);
-    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering), caps.limits.max_anisotropy > 1.0F)
+    EXPECT_EQ(caps.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering), caps.limits.max_anisotropy > 1.0F)
         << "the feature bit and the limit are the same device fact";
     EXPECT_GE(caps.limits.max_color_attachments, 4U) << "the G-buffer carries four colour attachments";
-    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::GpuTimings), backend->capabilities().supports(vn::graphics::Capabilities::Feature::GpuTimings))
+    EXPECT_EQ(caps.features.supports(vn::graphics::Features::Feature::GpuTimings), backend->capabilities().features.supports(vn::graphics::Features::Feature::GpuTimings))
         << "the answer is the device's, and asking again does not change it";
 }
 
@@ -1667,8 +1667,8 @@ TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
     const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
 
     vn::graphics::ClearPolicy clear;
-    clear.color = vn::Color(128, 128, 128, 255).toLinear(); // ≈ 0.2159: the light #808080 stands for
-    clear.depth = false;                                    // there is no depth attachment
+    clear.color       = vn::Color(128, 128, 128, 255).toLinear(); // ≈ 0.2159: the light #808080 stands for
+    clear.clear_depth = false;                                    // there is no depth attachment
 
     backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::Disabled).value());
 
@@ -4140,7 +4140,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
 
     // The same pair the material case uses: clip-space positions passed through, and a fragment stage
     // shading with the material's own base colour - so one probe at the window's centre sees whichever
-    // drawing call drew LAST.
+    // draw packet drew LAST.
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
         ShaderStage vertex;
@@ -4188,7 +4188,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
     const auto drive = [&] {
-        // Depth off, so the second drawing call is simply the one whose colour the probe sees - the pass states it
+        // Depth off, so the second draw packet is simply the one whose colour the probe sees - the pass states it
         // once, for its whole content (see PassRenderState).
         backend->executeFrame(
             TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthMode::Disabled).content(commands, camera.get()).value());
@@ -4206,7 +4206,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
     EXPECT_EQ(tight_storage->overflows(), 1U) << "the frame's second draw block was refused";
     EXPECT_EQ(tight_storage->growthNeeded().draws, 2U) << "the frame TRIED two blocks: that is the request";
     EXPECT_EQ(tight_storage->capacityBytes(), tight_capacity) << "the storage itself never grows";
-    ASSERT_EQ(backend->diagnosticCount(), 1U) << "the refused drawing call is reported once";
+    ASSERT_EQ(backend->diagnosticCount(), 1U) << "the refused draw packet is reported once";
     EXPECT_NE(std::string::npos, messages.back().find("budget is full"));
     const auto dropped = host.waitForPixel(
         kWidth / 2,
@@ -4444,7 +4444,7 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
 TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryCommand)
 {
     // THE TRIGGER SCALE ITSELF, MADE A RECIPE. The design log names ~2000 drawables as the size at which the
-    // 1024-block budget stops being generous; this case drives that shape - ONE drawing call carrying 2000
+    // 1024-block budget stops being generous; this case drives that shape - ONE draw packet carrying 2000
     // commands - against the DEFAULT budgets, and pins what settling in costs:
     //
     //   * frame 1 asks for 2000 draw blocks (one per command) - and 976 are refused, with the call's own
@@ -4918,8 +4918,8 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
     //    nothing is presented.
     const vn::graphics::PrepareReport report = backend->prepareFrame(frame(), window_target);
     EXPECT_EQ(report.outcome, vn::graphics::PrepareReport::Outcome::Prepared);
-    EXPECT_EQ(report.passes, 1U) << "one pass issues drawing calls";
-    EXPECT_EQ(report.draws, 1U) << "and one drawing call is what it needs";
+    EXPECT_EQ(report.passes, 1U) << "one pass issues draw packets";
+    EXPECT_EQ(report.draws, 1U) << "and one draw packet is what it needs";
     EXPECT_GT(report.halves, 0U) << "a half is what the first frame would have compiled";
     EXPECT_GT(report.sets, 0U) << "and the declared set the program's blocks live in";
     EXPECT_GT(report.uploads, 0U) << "and the geometry's streams";
@@ -4953,7 +4953,7 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
     // THE COUNTERS DESCRIBE THE FRAME THAT JUST ENDED (see FrameCounters), and no frame has run yet: the warm-up
     // records nothing, so its answer is zero rather than what a later frame will say.
     EXPECT_EQ(warmed.counters->passes, 0U);
-    EXPECT_EQ(warmed.counters->draws, 0U);
+    EXPECT_EQ(warmed.counters->draw_packets, 0U);
 
     backend->executeFrame(frame(), window_target);
 
@@ -4966,7 +4966,7 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
     const vn::graphics::FrameReport ran = backend->frameReport();
     ASSERT_TRUE(ran.counters.has_value());
     EXPECT_EQ(ran.counters->passes, 1U) << "the frame recorded the one pass the value names";
-    EXPECT_EQ(ran.counters->draws, 1U) << "and the one drawing call it issues";
+    EXPECT_EQ(ran.counters->draw_packets, 1U) << "and the one draw packet it issues";
     EXPECT_EQ(backend->framesPresented(), 1U) << "this one really was a frame";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "the prepared frame recorded silently";
 

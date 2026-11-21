@@ -26,7 +26,7 @@
 #include <vine/String.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
@@ -49,7 +49,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -216,8 +216,8 @@ struct TexturedScene {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -229,7 +229,7 @@ struct TexturedScene {
     pass.target       = scene.target.get();
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     scene.frame.passes.push_back(std::move(entry));
@@ -262,7 +262,7 @@ TEST(VkPrepareUploadTest, APreparedTexturedFrameUploadsNothingWhenItRuns)
     ASSERT_TRUE(prepared.prepared()) << "outcome " << static_cast<int>(prepared.outcome);
     EXPECT_EQ(prepared.uploads, 3U) << "2 stream uploads (positions + indices) + 1 texture image";
     EXPECT_EQ(prepared.passes, 1U);
-    EXPECT_EQ(prepared.draws, 1U);
+    EXPECT_EQ(prepared.draw_packets, 1U);
 
     // PREPARE IS NOT A FRAME: the transfer batch it submitted moved nothing on the frame clock, and no frame's upload
     // numbers exist yet (see FrameProgress / FrameReport).
@@ -314,7 +314,7 @@ TEST(VkPrepareUploadTest, ASecondPrepareSubmitsNothing)
     EXPECT_EQ(again.halves, 0U);
     EXPECT_EQ(again.pipelines, 0U);
     EXPECT_EQ(again.passes, first.passes) << "the shape of the frame asked for does not move";
-    EXPECT_EQ(again.draws, first.draws);
+    EXPECT_EQ(again.draw_packets, first.draw_packets);
 
     // AND NEITHER PREPARE WAS A FRAME, however much it submitted (see FrameProgress).
     const FrameReport after_both = backend->frameReport();

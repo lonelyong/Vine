@@ -97,7 +97,7 @@ class VN_GRAPHICS_API RenderBackendFactory {
      *
      * @details
      * - The engine owns the pipeline and drives content per pass, so a backend is not bound to a Vine scene or
-     *   camera: its content slots are created lazily from the drawing calls a frame's value carries, keyed by the
+     *   camera: its content slots are created lazily from the draw packets a frame's value carries, keyed by the
      *   pass identity its entry names (see FrameDescription::Pass).
      * - THE CREATION INPUT is @p desc (see DeviceDesc): `Probe` (the default) is a device that brings up a window of
      *   its own, `None` one that presents nothing at all (created without a window), and `Handle` one made for the

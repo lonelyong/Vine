@@ -348,7 +348,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *
      * @details
      * - "This chain draws that content" is a property of the CHAIN, not of its window pass: a deferred recipe draws
-     *   the scene in its G-buffer pass and shows the result through a screen pass, so asking the window pass would
+     *   the scene in its G-buffer pass and shows the result through a full-screen pass, so asking the window pass would
      *   answer no for every deferred picture.
      * - It is what a view checks when it adopts a chain (see SceneView::setChain): a chain built for one
      *   scene and adopted by a view holding another draws nothing the view has, and nothing downstream can see it
@@ -362,11 +362,11 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *
      * @details
      * - "Presenting" is the pass whose output is what the window shows, which is not necessarily the pass that draws
-     *   the content: a Deferred chain bakes the picture off-screen and presents it through a screen pass, so a host
+     *   the content: a Deferred chain bakes the picture off-screen and presents it through a full-screen pass, so a host
      *   that wants "the picture pass" (to override its program, see setShadingMode) must ask this, not the content.
      * - It is set by the recipe (PassChain::build), because only the recipe knows what its chain ends with.
      *
-     * @return The presenting pass (the order-0 window pass, or a ScreenPass for the Deferred presets), or null when
+     * @return The presenting pass (the order-0 window pass, or a FullscreenPass for the Deferred presets), or null when
      *         nothing was built.
      */
     raw_ptr<RenderPass> presentingPass() const;
@@ -397,7 +397,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *   cannot write pass state outside the one rectangle it is about - the chain states that rectangle itself
      *   (see PassChain::resize).
      */
-    using OverlayLayout = std::function<Viewport(int width, int height, double pixel_ratio)>;
+    using OverlayPlacement = std::function<Viewport(int width, int height, double pixel_ratio)>;
 
     /** @brief Adds a HUD overlay: a pass registered under @p role, plus the content that lays itself out.
      *
@@ -417,10 +417,10 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *                (not enforced unique: the first match answers).
      * @param content The overlay's content object, or null for a pass with no content half.
      * @param desc    Declaration of the HUD pass that draws it.
-     * @param layout  Lays the overlay out for a surface size (see OverlayLayout).
+     * @param layout  Lays the overlay out for a surface size (see OverlayPlacement).
      * @return The registered pass, or null when the engine is gone or that pass was already registered.
      */
-    raw_ptr<RenderPass> addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayLayout layout = {});
+    raw_ptr<RenderPass> addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayPlacement layout = {});
 
     /** @brief Does the per-frame work of this chain's overlays, in registration order.
      *
@@ -530,7 +530,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief Resizes the off-screen targets and re-anchors the HUD overlays for a new surface size.
      *
      * @details
-     * - Creator-maintained sizing: the host calls this on surface changes (e.g. from a SceneView::addSurfaceLayout
+     * - Creator-maintained sizing: the host calls this on surface changes (e.g. from a SceneView::addSurfaceResizeHandler
      *   step) so a deferred G-buffer tracks the window (the backend rebuilds the off-screen attachments on the next
      *   frame) and an axis-gizmo overlay stays pinned to its corner.
      * - The overlays own their box (the object computes it from the surface size and the area origin it was pointed
@@ -660,7 +660,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
         String            role;
         raw_ptr<Object>   content{ nullptr };
         raw_ptr<FrameUpdate> update{ nullptr }; // the content as a per-frame updater, when it implements one
-        OverlayLayout     layout;
+        OverlayPlacement  layout;
     };
 
     /** @brief Sets the extra scene this chain draws (see ChainDesc::transparent); the builder's call. */

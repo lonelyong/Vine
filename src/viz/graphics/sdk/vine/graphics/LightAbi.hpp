@@ -11,12 +11,12 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief How many typed lights one drawing call can have lit - the light block's slot count.
+ * @brief How many typed lights one draw packet can have lit - the light block's slot count.
  *
  * @details
  * - The light block (`VineLightsBlock` below, declared once in the GLSL `shaders/vine_params.glsl` and packed by
  *   packLightBlock) carries one ambient plus this many typed lights, in announcement order: directional, point and
- *   spot alike. A drawing call that announces more has the extra ones reported (a `ChannelIgnored` warning, once per
+ *   spot alike. A draw packet that announces more has the extra ones reported (a `ChannelIgnored` warning, once per
  *   episode - a backend reports the difference `packLightBlock` returns) rather than refused.
  * - It is a SHADING capacity, not a scene limit: `Scene::addLight` takes any number of lights, because the same
  *   content may be drawn by a program with a different capacity (a host's own lighting stage, or a later block with
@@ -85,7 +85,7 @@ static_assert(offsetof(VineLightsBlock, color_intensity) == 16U + 2U * kMaxLight
 static_assert(offsetof(VineLightsBlock, cone) == 16U + 3U * kMaxLights * 16U, "VineLightsBlock std140 offset");
 
 /**
- * @brief Packs a drawing call's announced lights into the shading block, in view space.
+ * @brief Packs a draw packet's announced lights into the shading block, in view space.
  *
  * @details
  * - THE ONE PACKING RULE: enabled ambient lights fill the ambient slot (the last one wins), enabled directional /
@@ -101,7 +101,7 @@ static_assert(offsetof(VineLightsBlock, cone) == 16U + 3U * kMaxLights * 16U, "V
  * - No camera means no block: with nothing to rotate into, the block stays empty (black) and the count is zero - a pass
  *   that announced no camera is unlit rather than lit by a guess.
  *
- * @param lights The lights the drawing call announced (see `DrawCall::light_values`); empty means "the backend
+ * @param lights The lights the draw packet announced (see `DrawPacket::light_values`); empty means "the backend
  *               default", an ambient-lit scene.
  * @param camera The camera announced with the same call (its view matrix is the world -> view transform).
  * @param out    Receives the block; every field is written, the ambient fill included.
@@ -120,7 +120,7 @@ VN_GRAPHICS_API std::size_t packLightBlock(std::span<const LightValue> lights, c
  * - A light takes a slot only when packLightBlock would give it one: enabled, not ambient, the block not full by then,
  *   and a positional light that was placed.
  *
- * @param lights   The lights the same drawing call announced.
+ * @param lights   The lights the same draw packet announced.
  * @param identity The light's identity (see `LightValue::identity`), as a map states whose shadow it is.
  * @return The slot in [0, kMaxLights), or `kMaxLights` when that light took none (and for a null @p identity).
  */

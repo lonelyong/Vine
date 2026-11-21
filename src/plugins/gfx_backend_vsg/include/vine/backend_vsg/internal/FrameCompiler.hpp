@@ -152,18 +152,18 @@ struct CompiledInput {
     ShadowFacts shadow{};
 };
 
-/** @brief One drawing call, resolved. */
+/** @brief One draw packet, resolved. */
 struct CompiledDraw {
     DrawKind                         kind{ DrawKind::Content }; // Content drawing or a full-screen program.
     CameraSnapshot                   camera{};                  // The camera announced with the call.
     vn::graphics::Viewport           viewport{};                // Resolved: the announced rectangle, or the whole target.
     std::span<const LightRef>        lights{};                  // The consumed lights; empty = the backend default.
-    const void*                      source{ nullptr };         // Screen draws: the target whose attachments are sampled.
-    vn::graphics::ContentRef         program{};                 // Screen draws: the fragment program to draw with.
-    DynamicState                     dynamic{};                 // Screen draws: the state the PASS gives them (see below).
+    const void*                      source{ nullptr };         // Full-full-screen draws: the target whose attachments are sampled.
+    vn::graphics::ContentRef         program{};                 // Full-full-screen draws: the fragment program to draw with.
+    DynamicState                     dynamic{};                 // Full-full-screen draws: the state the PASS gives them (see below).
     std::span<const CompiledCommand> commands{};                // Content draws: the instances to render.
 
-    // Why a screen draw has its own `dynamic` field rather than resolving per command: a full-screen call has
+    // Why a full-screen draw has its own `dynamic` field rather than resolving per command: a full-screen packet has
     // no commands (there is no geometry to instance, so there is nothing to resolve), and the state it draws
     // with is the pass'. The one half that is NOT simply the pass' is the depth policy: a full-screen draw
     // composites ON TOP of its rectangle, and the engine's canonical triangle sits exactly at the reverse-Z
@@ -177,7 +177,7 @@ struct CompiledPass {
     PassId                        pass{ 0 };           // Pass identity.
     std::uint32_t                 schedule_index{ 0 }; // Position in the execution order (0 = first).
     std::uint32_t                 target_index{ 0 };   // Index into CompiledFrame::targets (the pass' target).
-    vn::graphics::Viewport        viewport{};          // Whole-target rectangle, for the draw calls that announced none.
+    vn::graphics::Viewport        viewport{};          // Whole-target rectangle, for the draw packets that announced none.
     vn::graphics::PassRenderState state{};             // The pass' own state (depth policy + rasterisation override).
     /// The depth band the pass' draws are mapped into ({0, 1} = the whole buffer, see DepthRange).
     vn::graphics::DepthRange depth_range{};
@@ -193,7 +193,7 @@ struct CompiledPass {
     /// producer published a matrix (a map nobody stated how to read is not readable). `light == nullptr` when the
     /// pass samples none, and the shading's switch stays off rather than reading a map that cannot be placed.
     ShadowFacts                   shadow{};
-    std::span<const CompiledDraw> draws{}; // Drawing calls, in the order they were collected.
+    std::span<const CompiledDraw> draws{}; // Draw packets, in the order they were collected.
 };
 
 /**
@@ -302,10 +302,10 @@ class VN_BACKEND_VSG_API FrameCompiler {
     /** @brief Finds the facts for @p target, or nullptr when the backend does not know it. */
     [[nodiscard]] static const TargetFacts* findTarget(const FrameFacts& facts, const void* target) noexcept;
 
-    /** @brief Resolves one pass' drawing calls into the arena (viewports and programs made explicit). */
+    /** @brief Resolves one pass' draw packets into the arena (viewports and programs made explicit). */
     [[nodiscard]] std::span<const CompiledDraw> resolveDraws(const CollectedPass& pass, const vn::graphics::Viewport& whole, const vn::graphics::ContentRef& default_program);
 
-    /** @brief Resolves one drawing call's instances (program and dynamic state made explicit). */
+    /** @brief Resolves one draw packet's instances (program and dynamic state made explicit). */
     [[nodiscard]] std::span<const CompiledCommand>
     resolveCommands(const CollectedDraw& draw, const vn::graphics::ContentRef& default_program, const vn::graphics::PassRenderState& pass_state);
 

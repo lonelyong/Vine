@@ -25,7 +25,7 @@
 using vn::graphics::Camera;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::View;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
@@ -56,7 +56,7 @@ namespace
 ///                frame's bind step wrote.
 FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
 {
-    // The view the frame was DESCRIBED for: values only, exactly what a pass hands over (see DrawCall). The
+    // The view the frame was DESCRIBED for: values only, exactly what a pass hands over (see DrawPacket). The
     // clip box is [-1, 1]^3 with the eye on +Z, and the content below is authored to sit inside it.
     CameraSnapshot camera;
     camera.present    = true;
@@ -66,14 +66,14 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawCall draw;
-    draw.kind       = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind       = DrawPacket::Kind::Scene;
     draw.view.camera = camera;
     draw.content    = content;
     draw.view.layer_mask = vn::graphics::kAllLayers;
 
     PassDraw pass;
-    pass.draws.push_back(draw);
+    pass.packets.push_back(draw);
 
     FrameDescription frame;
     frame.passes.emplace_back();
@@ -110,10 +110,10 @@ SnapshotSource* frameSourceFor(PublicationStore& store, Scene& scene)
 const std::vector<DrawItem>& commandsOf(const FrameDescription& frame)
 {
     static const std::vector<DrawItem> kNone;
-    if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->draws.empty()) {
+    if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->packets.empty()) {
         return kNone;
     }
-    const auto& commands = frame.passes.front().draw->draws.front().commands;
+    const auto& commands = frame.passes.front().draw->packets.front().commands;
     return commands != nullptr ? *commands : kNone;
 }
 
@@ -253,10 +253,10 @@ TEST(FrameExpandTest, PerPassAndWholeFrameFormsGiveTheSamePicture)
     PassDraw&       pass       = *piecewise.passes.front().draw;
     bindSceneDraws(pass, source);
     expandPass(pass);
-    ASSERT_EQ(pass.draws.size(), 1U);
+    ASSERT_EQ(pass.packets.size(), 1U);
     const std::size_t first_pass_commands = commandsOf(piecewise).size();
     EXPECT_EQ(first_pass_commands, 1U);
-    pass.draws.front().commands.reset(); // a second pass describes itself from scratch
+    pass.packets.front().commands.reset(); // a second pass describes itself from scratch
     bindSceneDraws(pass, source);
     expandPass(pass);
     EXPECT_EQ(commandsOf(piecewise).size(), first_pass_commands);
@@ -273,7 +273,7 @@ TEST(FrameExpandTest, PerPassAndWholeFrameFormsGiveTheSamePicture)
 TEST(FrameExpandTest, BindSceneDrawsBindsOnlyWhatNothingBoundYet)
 {
     // THE BIND STEP is "whose publication answers this view" and nothing else: a draw that already names a source, a
-    // screen draw and a draw nothing was published for all stay exactly as they are.
+    // full-screen draw and a draw nothing was published for all stay exactly as they are.
     auto root = intrusive_ptr<Group>(new Group());
     root->addChild(triangleAt(0.0));
 
@@ -289,21 +289,21 @@ TEST(FrameExpandTest, BindSceneDrawsBindsOnlyWhatNothingBoundYet)
     ASSERT_NE(source, other_source) << "two stores publish the same content as two pictures";
 
     PassDraw pass;
-    pass.draws.emplace_back(); // scene draw, nothing bound
-    pass.draws.back().kind = DrawCall::Kind::Scene;
-    pass.draws.emplace_back(); // screen draw
-    pass.draws.back().kind = DrawCall::Kind::Screen;
-    pass.draws.emplace_back(); // scene draw already naming a source
-    pass.draws.back().kind    = DrawCall::Kind::Scene;
-    pass.draws.back().content = other_source;
+    pass.packets.emplace_back(); // scene draw, nothing bound
+    pass.packets.back().kind = DrawPacket::Kind::Scene;
+    pass.packets.emplace_back(); // full-screen draw
+    pass.packets.back().kind = DrawPacket::Kind::Fullscreen;
+    pass.packets.emplace_back(); // scene draw already naming a source
+    pass.packets.back().kind    = DrawPacket::Kind::Scene;
+    pass.packets.back().content = other_source;
 
     bindSceneDraws(pass, source);
-    EXPECT_EQ(pass.draws[0].content, source) << "an unbound scene draw is pointed at the publication";
-    EXPECT_EQ(pass.draws[1].content, nullptr) << "a screen draw names no content";
-    EXPECT_EQ(pass.draws[2].content, other_source) << "a draw that already names a source keeps it";
+    EXPECT_EQ(pass.packets[0].content, source) << "an unbound scene draw is pointed at the publication";
+    EXPECT_EQ(pass.packets[1].content, nullptr) << "a full-screen draw names no content";
+    EXPECT_EQ(pass.packets[2].content, other_source) << "a draw that already names a source keeps it";
 
     bindSceneDraws(pass, nullptr);
-    EXPECT_EQ(pass.draws[0].content, source) << "nothing published changes nothing - the bind is not a clear";
+    EXPECT_EQ(pass.packets[0].content, source) << "nothing published changes nothing - the bind is not a clear";
 }
 
 TEST(FrameExpandTest, ADrawNoPublicationAnswersDrawsNothing)
@@ -312,8 +312,8 @@ TEST(FrameExpandTest, ADrawNoPublicationAnswersDrawsNothing)
     // backend records nothing - never a quiet read of the live content instead.
     FrameDescription frame = onePassFrame(nullptr);
     expandFrame(frame);
-    ASSERT_EQ(frame.passes.front().draw->draws.size(), 1U);
-    EXPECT_EQ(frame.passes.front().draw->draws.front().commands, nullptr) << "no source, no collection";
+    ASSERT_EQ(frame.passes.front().draw->packets.size(), 1U);
+    EXPECT_EQ(frame.passes.front().draw->packets.front().commands, nullptr) << "no source, no collection";
     EXPECT_TRUE(commandsOf(frame).empty());
 }
 
@@ -343,8 +343,8 @@ TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
 
     PassDraw described;
     ASSERT_TRUE(pass.describe(scene.get(), described));
-    ASSERT_EQ(described.draws.size(), 1U);
-    const View& view = described.draws.front().view;
+    ASSERT_EQ(described.packets.size(), 1U);
+    const View& view = described.packets.front().view;
 
     // The description took the camera AS A VALUE and the area the pass stated: the two halves a host could not
     // restate differently.
@@ -361,8 +361,8 @@ TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
     bindSceneDraws(described, source);
 
     expandPass(described);
-    ASSERT_NE(described.draws.front().commands, nullptr) << "the expansion collected through the View";
-    const std::vector<DrawItem>& described_commands = *described.draws.front().commands;
+    ASSERT_NE(described.packets.front().commands, nullptr) << "the expansion collected through the View";
+    const std::vector<DrawItem>& described_commands = *described.packets.front().commands;
 
     // The pure select, fed the very same value, answers the same list.
     const vn::graphics::detail::SceneSnapshotPtr snapshot = source->snapshot();

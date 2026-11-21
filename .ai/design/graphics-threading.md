@@ -22,7 +22,7 @@
 
 Content (scene graph, geometry, material, camera) is edited synchronously by the host on the UI thread — that is the document editor's core feel and cannot become asynchronous;
 while a frame's GPU-side work (compiling, uploading, recording, submitting, presenting, residency accounting) must be able to run in parallel with interaction, or the UI and rendering lock each other out.
-Measured (Release): 2000 drawables with a moving camera, the frame's select 337–340 µs, production miss (`SnapshotSource::collectDrawItems`) 435–443 µs, and 10000 drawables 2.3–3.1 ms / 3.4–3.6 ms (`tests/test_graphics/SelectTest.cpp`'s `MeasureWhatOneSelectCostsWithAMovingCamera`, 2026-11-13; the old 1597 µs/frame timed the direct collector that is no longer on the frame path), the backend recording baseline 33 allocations / one recorded triangle (vsg's own fixture; vk's recording window - 85 per steady frame with one drawing call - and the whole chain frame - ≈1966 - are measured apart in `vk-backend.md` 9.1).
+Measured (Release): 2000 drawables with a moving camera, the frame's select 337–340 µs, production miss (`SnapshotSource::collectDrawItems`) 435–443 µs, and 10000 drawables 2.3–3.1 ms / 3.4–3.6 ms (`tests/test_graphics/SelectTest.cpp`'s `MeasureWhatOneSelectCostsWithAMovingCamera`, 2026-11-13; the old 1597 µs/frame timed the direct collector that is no longer on the frame path), the backend recording baseline 33 allocations / one recorded triangle (vsg's own fixture; vk's recording window - 85 per steady frame with one draw packet - and the whole chain frame - ≈1966 - are measured apart in `vk-backend.md` 9.1).
 
 The hard part is not "starting a thread" but **who writes the content**: the backend's "fact rows" read from live content (`Geometry::revision()`, a primitive's instance handle),
 and collection walks the scene graph. As soon as rendering is on another thread, the two sides must have some relationship: share (locks), copy (a per-frame snapshot), or hand over (one writer).
@@ -239,15 +239,15 @@ There is exactly one answer to "when does this copy expire": the publication val
     new); all three are immutable values **cached by revision** (`X::description()`).
   - `ContentRef` (`id + revision`) is the fact tables' key: a `DrawItem` carries `geometry_ref` / `material_ref`, and `program_description`
     carries its own id+revision.
-  - `LightValue` (new) is the light's value half; when a pass describes itself (`RenderPass::describe` / `ScreenPass::describe`) it snapshots the scene's lights into
-    `DrawCall::light_values`, and the program override at the same time into `PassDraw::program_override_description`.
+  - `LightValue` (new) is the light's value half; when a pass describes itself (`RenderPass::describe` / `FullscreenPass::describe`) it snapshots the scene's lights into
+    `DrawPacket::light_values`, and the program override at the same time into `PassDraw::program_override_description`.
 - **Why** (`G1` / `G4` / `G10`): the **only class of real UB** is the UI changing lights/material/program while the engine thread reads the same non-atomic field (R3-1).
   The value channel makes "frame N draws the value it described with" value semantics rather than a convention; and each command saves 3 `intrusive_ptr` atomic increments/decrements.
   "Make the revision atomic" fixes one field only, and neither the lights nor the program text, and is **rejected** (`D12`).
 - **The diagnostic route was the second shape of that UB, and is no longer** (`G6`): a backend reports on the engine thread while the host may report its own findings at any
   time (`DiagnosticsHandle::report`), so the route's counters are relaxed atomics and its sink is copied out under a lock and invoked with none held. A sink may therefore be
   entered by two threads at once: one that touches shared state has to serialise it (§2.4).
-- **Boundary**: the lights' live-pointer channel is gone: `DrawCall::lights` and `FrameRecorder`'s object-shaped
+- **Boundary**: the lights' live-pointer channel is gone: `DrawPacket::lights` and `FrameRecorder`'s object-shaped
   `setLights` are both gone, and `light_values` is the only channel. The live pointers that remain are `DrawItem::geometry/material/program`
   and `PassDraw::program_override`: they carry **identity and lifetime** (stream binding needs objects, residency accounting needs shares, `releaseContent` needs to ask "who else
   holds it"), and the recording side reads only the **invariant** (id) from them — revision / isTransparent / light values all come from values. Deleting them would need a
@@ -403,7 +403,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | `Scene::publishedSnapshot()` | the handle of the scene's latest publication: what a frame build takes by default | new |
 | `RenderEngine::bindSnapshot(scene, ref)` | **override**: this engine draws `ref` instead (until the next bind) | new; it is only an override, not a required step |
 | `SceneView::publishContent()` / `PassChain::publishContent()` | the host's once-per-frame publication (the view + the chain-owned scenes) | new |
-| `RenderEngine::frame() → FrameOutcome` | build + hand over (`Submitted`) or run in place (`Ran`); `NotReady` + `EngineNotReadyReason` means nothing is driving it | exists |
+| `RenderEngine::frame() → FrameCallOutcome` | build + hand over (`Submitted`) or run in place (`Ran`); `NotReady` + `EngineNotReadyReason` means nothing is driving it | exists |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline` (default) / `EngineThread`; decides the lifetime | exists |
 | `RenderEngine::waitForFrame(n, timeout)` | the only explicit wait | exists |
 | `RenderEngine::presentRecord()` / `presentedCamera()` | the previous frame's present outcome / that frame's camera snapshot (N17); both are the two halves of `frameResult()` | exists |

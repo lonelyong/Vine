@@ -1,4 +1,4 @@
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/Light.hpp>
@@ -9,28 +9,28 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-VN_OBJECT_META_IMPL(ScreenPass, vn::graphics::RenderPass);
+VN_OBJECT_META_IMPL(FullscreenPass, vn::graphics::RenderPass);
 
-ScreenPass::ScreenPass()
-  : RenderPass(PassKind::Screen)
+FullscreenPass::FullscreenPass()
+  : RenderPass(PassKind::Fullscreen)
 {
     // Nothing to state: "draws through a program over its resolved inputs, clears nothing" is what the KIND means
-    // (see RenderPass::isClearEnabled / shouldClearDepth), so a screen pass cannot be built that halves it.
+    // (see RenderPass::isClearEnabled / shouldClearDepth), so a full-screen pass cannot be built that halves it.
 }
 
-ScreenPass::~ScreenPass() = default;
+FullscreenPass::~FullscreenPass() = default;
 
-raw_ptr<RenderTarget> ScreenPass::sourceTarget() const
+raw_ptr<RenderTarget> FullscreenPass::sourceTarget() const
 {
     return source_;
 }
 
-raw_ptr<ShaderProgram> ScreenPass::program() const
+raw_ptr<ShaderProgram> FullscreenPass::program() const
 {
     return desc_.program.get();
 }
 
-void ScreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
+void FullscreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
 {
     source_ = nullptr;
     for (const ImageSource& input : inputs) {
@@ -41,14 +41,14 @@ void ScreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
     }
 }
 
-bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
+bool FullscreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
 {
     if (source_ == nullptr) {
         // Nothing was resolved to sample: this pass issues nothing at all, not even a target - which is what
-        // keeps a screen pass whose input never resolved out of the frame entirely (the engine reports it).
+        // keeps a full-screen pass whose input never resolved out of the frame entirely (the engine reports it).
         return false;
     }
-    // A screen pass is content-agnostic, so a null scene is not its "nothing to issue" - the gate above is. The
+    // A full-screen pass is content-agnostic, so a null scene is not its "nothing to issue" - the gate above is. The
     // output target, the sub-viewport and the clear are the inherited ones (one mapping for both kinds of pass).
     (void)scene;
     fillPassFacts(out);
@@ -57,24 +57,24 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         // declarations (RenderEngine::collectPlanProblems), so this path stays silent and draws nothing.
         return true;
     }
-    DrawCall draw;
-    draw.kind        = DrawCall::Kind::Screen;
+    DrawPacket draw;
+    draw.kind        = DrawPacket::Kind::Fullscreen;
     draw.view.camera = CameraSnapshot::of(*camera());
     draw.source      = source_;
     draw.program     = desc_.program;
-    // Its text as a value, taken with the pointer (see DrawCall::program_description): the recorder reads the
+    // Its text as a value, taken with the pointer (see DrawPacket::program_description): the recorder reads the
     // value, so a program edited while a frame is in flight keeps the text it was described with.
     draw.program_description = desc_.program != nullptr ? desc_.program->description() : ShaderProgramDescriptionPtr{};
     // Forward the content scene's lights so the backend can push them to the
     // fullscreen fragment program (mirrors how scene passes feed their lights).
-    // A pass with no scene announces NONE rather than an empty set: a screen pass is content-agnostic, and
+    // A pass with no scene announces NONE rather than an empty set: a full-screen pass is content-agnostic, and
     // "there is no scene" is not a statement about the lighting.
     if (scene != nullptr) {
-        // THE SCENE'S ONE SHARED SET (see LightSet): a screen pass and a scene pass of the same frame hold the same
+        // THE SCENE'S ONE SHARED SET (see LightSet): a full-screen pass and a scene pass of the same frame hold the same
         // value, so a light edited while the frame records cannot change what it lights and nothing is copied per pass.
         draw.light_values = scene->lightSet();
     }
-    out.draws.push_back(std::move(draw));
+    out.packets.push_back(std::move(draw));
     return true;
 }
 

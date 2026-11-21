@@ -53,7 +53,7 @@ std::span<const std::byte> bytesOf(const Block& block) noexcept
 }
 
 /**
- * @brief Says WHY a pass has content drawing calls but no compiled content half.
+ * @brief Says WHY a pass has content draw packets but no compiled content half.
  *
  * WHY IT EXISTS. The pass-level refusal named only the symptom ("no compiled content half was built"), which
  * sends the reader to the sampled inputs - while a half is missing for one of FOUR different reasons: the
@@ -73,7 +73,7 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
             continue;
         }
         if (draw.commands.empty()) {
-            return "the pass records a content drawing call with no commands";
+            return "the pass records a content draw packet with no commands";
         }
         const core::CompiledCommand& command = draw.commands.front();
         const DrawNeeds              needs   = drawNeeds(pass, command, facts);
@@ -99,7 +99,7 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
                "vertex layout is one this backend cannot declare): program '" +
                (named.empty() ? std::string("<none>") : std::string(named)) + "'";
     }
-    return "the pass has no content drawing call";
+    return "the pass has no content draw packet";
 }
 
 /// @brief How many of the announced lights the block is supposed to carry (a DISABLED light is not a drop).
@@ -353,7 +353,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
     const Scope::Entry* screen_half  = nullptr;
     bool                has_content  = false;
     for (const Scope::Entry& entry : scope_.entries) {
-        if (entry.kind == core::DrawKind::Screen) {
+        if (entry.kind == core::DrawKind::Fullscreen) {
             screen_half = screen_half == nullptr ? &entry : screen_half;
         }
         else {
@@ -414,20 +414,20 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             if (empty_episode.shouldReport()) {
                 diagnostics_.report(vn::graphics::DiagnosticSeverity::Info,
                                     vn::graphics::DiagnosticCategory::ContentSkipped,
-                                    vn::String::fromUtf8("a drawing call was not recorded: its rectangle is empty (a host "
+                                    vn::String::fromUtf8("a draw packet was not recorded: its rectangle is empty (a host "
                                                          "whose render area is not laid out yet reports one)"));
             }
             continue;
         }
 
-        if (draw.kind == core::DrawKind::Screen) {
+        if (draw.kind == core::DrawKind::Fullscreen) {
             // The half is found by the program the PLAN names (identity plus revision): the stages are already
             // compiled in the layer the entry names, so nothing here needs the facts table - the geometry-shaped
             // half of the content lookup has no counterpart in a call that draws no geometry.
             const Scope::Entry* half         = nullptr;
             bool                same_program = false;
             for (const Scope::Entry& entry : scope_.entries) {
-                if (entry.kind != core::DrawKind::Screen || entry.program.id != draw.program.id) {
+                if (entry.kind != core::DrawKind::Fullscreen || entry.program.id != draw.program.id) {
                     continue;
                 }
                 same_program = true;
@@ -437,7 +437,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                 }
             }
             if (half == nullptr || half->pipelines == nullptr || half->draws == nullptr) {
-                reportRefused("a full-screen drawing call",
+                reportRefused("a full-screen draw packet",
                               same_program ? "the pass' program is compiled at a different revision"
                                            : "no compiled full-screen half was built for the pass' program");
                 complete = false;
@@ -445,7 +445,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             }
 
             // The set this call binds is the PASS' (the source's attachments, the map, the call's block), so
-            // it is built per call: a full-screen call has ONE block and it is the call's own (see
+            // it is built per call: a full-screen packet has ONE block and it is the call's own (see
             // makeScreenSet). A pass whose call is refused says why - the rest of the pass still draws.
             //
             // What it NEEDS is answered before anything is built (see api/DrawNeeds): its source among the pass'
@@ -453,10 +453,10 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             // same answer the warm-up path reads, so the pipeline this call compiles is the one it promised.
             const DrawNeeds needs = drawNeeds(pass, draw, inputs);
             if (!resolving) {
-                // PREPARING: the identity is all a full-screen call offers to build ahead of time. Its set is the
+                // PREPARING: the identity is all a full-screen packet offers to build ahead of time. Its set is the
                 // CALL's (its own light and shadow block offsets), so it is built when the call is recorded.
                 if (!half->draws->prepare(needs.keyFor(compatibility))) {
-                    reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
+                    reportRefused("a full-screen draw packet", "its pipeline for this target could not be built");
                     complete = false;
                 }
                 continue;
@@ -464,7 +464,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             // THE CALL THE RECORDING WILL RUN (see api/FrameHead): everything it binds is resolved here - the
             // set, the map, the identity's pipeline - so the recording reads no table and takes no lock.
             FrameHead::DrawPlan call;
-            if (!resolveScreenDraw(draw, *half, pass, compatibility, inputs, needs, call)) {
+            if (!resolveFullscreenDraw(draw, *half, pass, compatibility, inputs, needs, call)) {
                 complete = false;
                 continue;
             }
@@ -472,7 +472,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             continue;
         }
 
-        // The packing of the lights is the drawing call's, not the command's: the contract announces lights for
+        // The packing of the lights is the draw packet's, not the command's: the contract announces lights for
         // ONE call (every command of the call shares them), so one block serves the whole call and the block
         // bytes are written before the first command is recorded - the same "one announcement, one call" rule
         // the viewport follows.
@@ -484,7 +484,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         }
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
         if (resolving && !lights.valid) {
-            reportRefused("the drawing call's light block", "the frame's block budget is full");
+            reportRefused("the draw packet's light block", "the frame's block budget is full");
             complete = false;
             continue;
         }
@@ -500,7 +500,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         }
         (void)shadow_on;
         if (resolving && !shadow.valid) {
-            reportRefused("the drawing call's shadow block", "the frame's block budget is full");
+            reportRefused("the draw packet's shadow block", "the frame's block budget is full");
             complete = false;
             continue;
         }
@@ -633,7 +633,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
     return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer.layoutFor(texture_count, depth_count), ContentPipeline::kInputSet, set);
 }
 
-bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
+bool ContentPass::resolveFullscreenDraw(const core::CompiledDraw&            draw,
                                     const Scope::Entry&                  entry,
                                     const core::CompiledPass&            pass,
                                     const core::RenderPassCompatibility& compatibility,
@@ -643,7 +643,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
 {
     ContentPipeline* const layer = entry.pipelines;
     if (layer == nullptr) {
-        reportRefused("a full-screen drawing call", "no compiled full-screen half was built for the pass' program");
+        reportRefused("a full-screen draw packet", "no compiled full-screen half was built for the pass' program");
         return false;
     }
 
@@ -672,14 +672,14 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         return false;
     }();
     if (declares_source_textures && !has_source) {
-        reportRefused("a full-screen drawing call",
+        reportRefused("a full-screen draw packet",
                       "its program samples the source's textures and the call named no source among the pass' "
                       "inputs");
         return false;
     }
 
     // THE FULL-SCREEN ABI'S SOURCE IS THE WHOLE TARGET. The plan narrows a ProducedImage input to the one image
-    // it names (the content path binds exactly that), but a full-screen call's binding N reads the source's
+    // it names (the content path binds exactly that), but a full-screen packet's binding N reads the source's
     // attachment N (see BuiltinShaders::screenCopyProgram). The caller therefore offers the whole target in
     // `screen_colors` for a call's source; `colors` is the fallback for a ProducedTarget input, where the two
     // are the same list.
@@ -700,7 +700,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         }
         if (index == map_index) {
             if (!inputs[index].colors.empty()) {
-                reportRefused("a full-screen drawing call",
+                reportRefused("a full-screen draw packet",
                               "the shadow map's input offers colour textures the full-screen ABI has no binding "
                               "for (the map is its depth)");
                 return false;
@@ -708,7 +708,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
             continue;
         }
         if (index >= pass.inputs.size() || pass.inputs[index].kind != vn::graphics::ImageSource::Kind::ImportedTexture) {
-            reportRefused("a full-screen drawing call",
+            reportRefused("a full-screen draw packet",
                           "one of the pass' inputs is neither the call's source nor the shadow map nor an "
                           "imported texture, and the full-screen ABI has no binding for its images");
             return false;
@@ -725,7 +725,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
     const bool            declares_map = vn::backend_vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
     vn::backend_vsg::SamplerImage map_image;
     if (declares_map && !vn::backend_vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image)) {
-        reportRefused("a full-screen drawing call",
+        reportRefused("a full-screen draw packet",
                       "its program declares `vn_shadow_map` and this pass resolved no readable map (the depth is "
                       "not sampleable, or the producer published no matrix)");
         return false;
@@ -759,7 +759,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
     std::sort(imported_bindings.begin(), imported_bindings.end());
     imported_bindings.erase(std::unique(imported_bindings.begin(), imported_bindings.end()), imported_bindings.end());
     if (imported_bindings.size() != imported_indices.size()) {
-        reportRefused("a full-screen drawing call",
+        reportRefused("a full-screen draw packet",
                       imported_bindings.size() < imported_indices.size() ? "the pass declares imported textures its program has no free sampler binding for"
                                                                          : "its program samples a texture the pass does not offer at the binding its text "
                                                                            "declares");
@@ -801,7 +801,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         const BlockStorage::Block written     = scope_.storage->writeLights(bytesOf(lights_block));
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
         if (!written.valid) {
-            reportRefused("the drawing call's light block", "the frame's block budget is full");
+            reportRefused("the draw packet's light block", "the frame's block budget is full");
             return false;
         }
         lights_offset = written.offset;
@@ -814,7 +814,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         const BlockStorage::Block written   = scope_.storage->writeShadows(bytesOf(shadow_block));
         (void)shadow_on;
         if (!written.valid) {
-            reportRefused("the drawing call's shadow block", "the frame's block budget is full");
+            reportRefused("the draw packet's shadow block", "the frame's block budget is full");
             return false;
         }
         shadow_offset = written.offset;
@@ -832,7 +832,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
     const auto sampler       = layer->inputSampler();
     const auto depth_sampler = layer->depthSampler();
     if (needs_set && (set_layout == nullptr || sampler == nullptr || depth_sampler == nullptr || scope_.storage->buffer() == nullptr)) {
-        reportRefused("a full-screen drawing call", "its sampled set could not be built");
+        reportRefused("a full-screen draw packet", "its sampled set could not be built");
         return false;
     }
     ::vsg::Descriptors                                  descriptors;
@@ -859,7 +859,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
             const std::size_t   bytes  = role == AbiBlockRole::Lights ? sizeof(lights_block) : role == AbiBlockRole::ShadowBlock ? sizeof(shadow_block) : 0U;
             const std::uint64_t offset = role == AbiBlockRole::Lights ? lights_offset : shadow_offset;
             if (bytes == 0U) {
-                reportRefused("a full-screen drawing call", "its program declares a block this path cannot fill");
+                reportRefused("a full-screen draw packet", "its program declares a block this path cannot fill");
                 return false;
             }
             // The descriptor names the whole buffer at offset 0; the CALL's offset is the bind's. A range that
@@ -883,7 +883,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         if (source != nullptr && declared.binding < colours) {
             const ::vsg::ref_ptr<::vsg::ImageView>& view = source_colors[declared.binding];
             if (view == nullptr) {
-                reportRefused("a full-screen drawing call", "the source offers no attachment at one of its bindings");
+                reportRefused("a full-screen draw packet", "the source offers no attachment at one of its bindings");
                 return false;
             }
             descriptors.push_back(
@@ -907,7 +907,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         if (imported_slot < imported_bindings.size() && declared.binding == imported_bindings[imported_slot]) {
             const InputImages& imported = inputs[imported_indices[imported_slot]];
             if (imported.colors.empty() || imported.colors.front() == nullptr) {
-                reportRefused("a full-screen drawing call", "an imported input offers no image view");
+                reportRefused("a full-screen draw packet", "an imported input offers no image view");
                 return false;
             }
             const ::vsg::ref_ptr<::vsg::Sampler> chosen = imported.color_samplers.empty() ? sampler : imported.color_samplers.front();
@@ -922,15 +922,15 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         }
         // A binding the layout declares (the text names it) that neither the source, the map nor an imported
         // input fills: the text samples something this pass does not offer, said by NAME rather than left to
-        // read undefined data (a material's own map is the name this can be: a full-screen call has no
+        // read undefined data (a material's own map is the name this can be: a full-screen packet has no
         // drawable to take one from).
-        reportRefused("a full-screen drawing call",
+        reportRefused("a full-screen draw packet",
                       "it samples a texture this pass does not offer at the "
                       "binding its text declares");
         return false;
     }
     if (imported_slot != imported_bindings.size()) {
-        reportRefused("a full-screen drawing call", "an imported texture has no declared sampler binding in its program");
+        reportRefused("a full-screen draw packet", "an imported texture has no declared sampler binding in its program");
         return false;
     }
 
@@ -949,7 +949,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         if (set == nullptr) {
             set = ::vsg::DescriptorSet::create(set_layout, descriptors);
             if (set == nullptr) {
-                reportRefused("a full-screen drawing call", "its sampled set could not be created");
+                reportRefused("a full-screen draw packet", "its sampled set could not be created");
                 return false;
             }
             if (cache != nullptr) {
@@ -958,7 +958,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         }
         samples = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer->layoutFor(colours, depths), 0U, set);
         if (samples == nullptr) {
-            reportRefused("a full-screen drawing call", "its sampled set could not be bound");
+            reportRefused("a full-screen draw packet", "its sampled set could not be bound");
             return false;
         }
         samples->dynamicOffsets = std::move(dynamic_offsets);
@@ -966,9 +966,9 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
 
     // THE CALL THE RECORDING WILL RUN (see api/FrameHead): the set it binds, the identity's pipeline and the
     // state are all resolved here - and the pipeline is what the recording binds, never a layer lookup.
-    ContentDraw::ScreenDraw& full_screen = call.screen_draw;
+    ContentDraw::FullscreenDraw& full_screen = call.fullscreen_draw;
     call.draws                           = entry.draws;
-    call.screen                          = true;
+    call.fullscreen                          = true;
     // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the counts it carries are the source's colours and the
     // source's own depth - the map and the block are the text's own declarations, so they cannot vary with the
     // pass - and it states no `depth_sampleable`, because the full-screen ABI's depth question is answered by the
@@ -978,7 +978,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
     full_screen.pipeline                 = identity.pipeline;
     full_screen.variant                  = identity.variant;
     if (full_screen.pipeline == nullptr) {
-        reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
+        reportRefused("a full-screen draw packet", "its pipeline for this target could not be built");
         return false;
     }
     full_screen.dynamic           = draw.dynamic;
@@ -1197,7 +1197,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
     // all resolved here - the recording adds a node and reads nothing.
     ContentDraw::Draw& record = call.draw;
     call.draws                = entry->draws;
-    call.screen               = false;
+    call.fullscreen           = false;
     // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the same value the warm-up path reads, so this draw cannot
     // be compiled for an identity the answer does not name. The variant is identity like the layout is, and so
     // is the topology the half's pipeline BAKES (the API accepts a dynamically set topology only within the
@@ -1378,7 +1378,7 @@ void ContentPass::reportRefusedSummary()
         }
         diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                             vn::graphics::DiagnosticCategory::ContentSkipped,
-                            vn::String::fromUtf8(std::to_string(row.count) + " drawing call(s) were not drawn for one reason - " + row.what +
+                            vn::String::fromUtf8(std::to_string(row.count) + " draw packet(s) were not drawn for one reason - " + row.what +
                                                  " is not drawn: " + row.why +
                                                  " (the first one is named above; the rest are the same fact about the same pass)"));
     }
@@ -1458,7 +1458,7 @@ void ContentPass::reportMaterialSlots(const MaterialFacts& material)
 
 void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera)
 {
-    // The episode rule the SDK states for dropped lights: a drawing call whose lights ALL fit (or which announced
+    // The episode rule the SDK states for dropped lights: a draw packet whose lights ALL fit (or which announced
     // none) ends the episode, and a call that lost some is reported once - not once per call, because a scene has
     // one light list and would otherwise fill the log with the same sentence per drawable.
     if (announced == 0U || represented >= announced) {
@@ -1473,7 +1473,7 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
     // guessing whether the pass went dark, lit by a fill, or lit by a partial list.
     std::string message;
     if (!has_camera) {
-        message = std::to_string(announced) + " announced light(s) are not lit: the drawing call announced no";
+        message = std::to_string(announced) + " announced light(s) are not lit: the draw packet announced no";
         message += " camera, so there is no view space to light in (the pass draws unlit)";
     }
     else if (represented == 0U) {

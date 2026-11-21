@@ -249,7 +249,7 @@ class ContentPipeline {
     ContentPipeline& operator=(const ContentPipeline&) = delete;
 
   public:
-    /** @brief Gets which drawing call this layer compiles pipelines for (see core::DrawKind). */
+    /** @brief Gets which draw packet this layer compiles pipelines for (see core::DrawKind). */
     [[nodiscard]] core::DrawKind kind() const noexcept;
 
     /** @brief Gets the bindings and push ranges the layer was built from. */

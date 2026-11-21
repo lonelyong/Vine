@@ -11,7 +11,7 @@
 
 #include "Diagnostics.hpp"
 #include "FrameDescription.hpp"
-#include "FrameStats.hpp"
+#include "FrameReport.hpp"
 #include "RenderDevice.hpp"
 #include "RenderFrameExecutor.hpp"
 #include "RenderPass.hpp"

@@ -64,14 +64,17 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Gets the orbit centre (target point). */
     Vec3d orbitCenter() const;
 
-    /** @brief Gets the orbit radius (eye-to-centre distance). */
-    double orbitRadius() const;
-
-    /** @brief Sets the orbit radius (eye-to-centre distance).
+    /** @brief Gets the orbit distance (eye-to-centre).
      *
-     * @param radius Distance from eye to orbit centre.
+     * @return Distance from eye to orbit centre.
      */
-    void setOrbitRadius(double radius);
+    double orbitDistance() const;
+
+    /** @brief Sets the orbit distance (eye-to-centre).
+     *
+     * @param distance Distance from eye to orbit centre.
+     */
+    void setOrbitDistance(double distance);
 
     /** @brief Pans the camera based on screen-space deltas.
      *
@@ -83,16 +86,18 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
      */
     void pan(double screenDx, double screenDy);
 
-    /** @brief Zooms by a multiplicative factor.
+    /** @brief Dollies by a multiplicative factor: moves the eye along the view, changing no field of view.
      *
      * @details
-     * - Keeps the current anchor fixed on screen when it lies on the cursor ray (see zoomToCursor());
+     * - Keeps the current anchor fixed on screen when it lies on the cursor ray (see dollyToCursor());
      *   otherwise scales the eye-to-centre distance. The distance is multiplied by the factor, so a
-     *   factor below 1 moves the camera closer (zoom in) and a factor above 1 moves it away (zoom out).
+     *   factor below 1 moves the camera closer and a factor above 1 moves it away.
+     * - It is a DOLLY, not a zoom: the projection is untouched, which is what keeps an orthographic view's
+     *   extent unchanged and lets the eye travel through the scene.
      *
-     * @param factor Zoom factor; <1 zooms in, >1 zooms out.
+     * @param factor Dolly factor; <1 moves closer, >1 moves away.
      */
-    void zoom(double factor);
+    void dolly(double factor);
 
     /** @brief Moves the camera forward/backward in first-person mode.
      *
@@ -128,29 +133,35 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Restores the view captured when the manipulator was constructed. */
     void home() override;
 
-    /** @brief Sets whether wheel zoom keeps the cursor anchor fixed on screen.
+    /** @brief Sets whether a wheel dolly keeps the cursor anchor fixed on screen.
      *
      * @details
-     * - When enabled, zooming towards a picked point keeps that world point under the cursor; the orbit
-     *   centre slides towards the anchor so successive rotations orbit around the zoomed region.
+     * - When enabled, dollying towards a picked point keeps that world point under the cursor; the orbit
+     *   centre slides towards the anchor so successive rotations orbit around the region just approached.
      *
-     * @param enabled True to zoom towards the cursor anchor.
+     * @param enabled True to dolly towards the cursor anchor.
      */
-    void setZoomToCursor(bool enabled);
+    void setDollyToCursor(bool enabled);
 
-    /** @brief Returns whether wheel zoom anchors to the cursor. */
-    bool zoomToCursor() const;
+    /** @brief Returns whether a wheel dolly anchors to the cursor.
+     *
+     * @return true when the picked anchor stays under the cursor (see setDollyToCursor).
+     */
+    bool dollyToCursor() const;
 
     /** @brief Sets the minimum eye-to-centre distance.
      *
      * Distance 0 (the default) derives the minimum from the camera near plane.
      *
-     * @param distance Minimum distance; <= 0 means auto.
+     * @param distance Minimum orbit distance; <= 0 means auto.
      */
-    void setMinDistance(double distance);
+    void setMinOrbitDistance(double distance);
 
-    /** @brief Gets the configured minimum distance (0 = auto). */
-    double minDistance() const;
+    /** @brief Gets the configured minimum orbit distance (0 = auto).
+     *
+     * @return Minimum distance; 0 means the near plane decides.
+     */
+    double minOrbitDistance() const;
 
     /** @brief Sets the scene used for picking / anchor / fitToScreen.
      *
@@ -272,11 +283,11 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     double home_pitch_    = 0.0;
     double home_roll_     = 0.0;
 
-    bool   zoom_to_cursor_ = true;
-    double min_distance_   = 0.0; // 0 => derive from the near plane.
+    bool   dolly_to_cursor_     = true;
+    double min_orbit_distance_ = 0.0; // 0 => derive from the near plane.
 
     // Current interaction anchor (pick point, scene centre or origin): the
-    // rotate pivot and the pan/zoom depth reference / zoom-to-cursor anchor.
+    // rotate pivot and the pan/dolly depth reference / dolly-to-cursor anchor.
     Vec3d anchor_{ 0.0, 0.0, 0.0 };
     bool  anchor_on_ray_ = false; // anchor was a geometry hit on the cursor ray.
 
@@ -291,7 +302,7 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     // Sensitivity of drag-based interactions (radians / pixels).
     double drag_sensitivity_ = 0.01;
-    // Zoom factor per wheel notch.
+    // Dolly factor per wheel notch.
     double wheel_factor_     = 1.15;
     // First-person movement step per key event (world units).
     double move_step_        = 0.5;

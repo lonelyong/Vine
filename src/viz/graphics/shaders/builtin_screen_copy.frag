@@ -1,12 +1,12 @@
 #version 450
 // The plain screen copy: one colour attachment of the source target, sampled 1:1 through the
 // canonical full-screen triangle (see builtin_fullscreen.vert). This is the text behind what a bare
-// ScreenPass used to get implicitly — now it is a PROGRAM the host names, so a copy that wants
+// FullscreenPass used to get implicitly — now it is a PROGRAM the host names, so a copy that wants
 // different filtering, a colour transform or a tonemap is a different program, not a backend
 // setting.
 //
 // The BINDING is the attachment: binding N reads the source's colour attachment N, which is the
-// full-screen program ABI (see ScreenPass::setProgram). screenCopyProgram(N) emits this same text
+// full-screen program ABI (see FullscreenPass::setProgram). screenCopyProgram(N) emits this same text
 // with N substituted, which is why the line below is spelled exactly as the factory looks for it.
 layout(location = 0) in vec2 vn_uv;
 layout(location = 0) out vec4 vn_out_color;

@@ -132,9 +132,6 @@ struct VN_GRAPHICS_API Limits {
  *   (RenderEngine::capabilities) without knowing the backend contract, so this must not drag that in.
  */
 struct VN_GRAPHICS_API Capabilities {
-    /// The old spelling of Features::Feature, kept so `Capabilities::Feature::Wireframe` keeps compiling.
-    using Feature = Features::Feature;
-
     /// Off-screen render targets are built, drawn into and sampled (see RenderDevice::setRenderTarget); false
     /// means a non-null target is ignored and the pass draws into the default framebuffer.
     bool render_targets{ false };
@@ -153,28 +150,6 @@ struct VN_GRAPHICS_API Capabilities {
 
     /// The numbers this backend reports (see Limits).
     Limits limits{};
-
-    /**
-     * @brief Answers one feature (the old spelling; see Features::supports).
-     *
-     * @param feature Feature to ask about.
-     * @return true when this backend reports it.
-     */
-    [[nodiscard]] bool supports(Feature feature) const noexcept
-    {
-        return features.supports(feature);
-    }
-
-    /**
-     * @brief The bit @p feature occupies (the old spelling; see Features::bit).
-     *
-     * @param feature Feature to spell.
-     * @return The bit a backend sets to answer true.
-     */
-    [[nodiscard]] static constexpr std::uint32_t bit(Feature feature) noexcept
-    {
-        return Features::bit(feature);
-    }
 };
 
 VN_GRAPHICS_NS_END

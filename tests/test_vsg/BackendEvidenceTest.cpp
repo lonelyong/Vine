@@ -273,7 +273,7 @@ TEST(CoreDiagnosticsTest, AnEpisodeReportsItselfOnceAndReArms)
         return diagnostics.reportOnce(episode,
                                       DiagnosticSeverity::Warning,
                                       DiagnosticCategory::PassProtocolViolation,
-                                      vn::String(u8"a drawing call with no scope"));
+                                      vn::String(u8"a draw packet with no scope"));
     };
 
     EXPECT_TRUE(report());
@@ -352,7 +352,7 @@ TEST(CoreAllocationGateTest, EveryAlignmentTheLanguageAllowsIsServed)
     // alignment to `posix_memalign`, which rejects anything below `sizeof(void*)` with EINVAL; libLLVM's JIT
     // asks for alignment 4 while compiling the first pipeline of a device case (measured: `allocate_buffer`
     // with a 4-aligned 512-byte block), took the refused block as `std::bad_alloc`, and aborted the suite
-    // before its first drawing call. Every device case in `test_vsg` was dead, and nothing said so - which
+    // before its first draw packet. Every device case in `test_vsg` was dead, and nothing said so - which
     // is what this case is for.
     //
     // The alignments below are the powers of two a compiler may ask for, small ones included: 1 is what an
@@ -449,7 +449,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     // a claim about vsg, not about this backend. What this backend OWNS in that path is its BOOKKEEPING, and
     // that is what the ceilings below are.
     //
-    // Measured on 2026-09-24 (MSVC Debug, one pass, one drawing call, steady content): a frame's
+    // Measured on 2026-09-24 (MSVC Debug, one pass, one draw packet, steady content): a frame's
     // `VsgExecutor::record` asks for 12 allocations, and they split like this -
     //
     //   * 7 - one `ContentPass` construction: two `std::vector<ReportOnce>` sized per entry (four counted
@@ -458,7 +458,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     //   * 3 - the pass' `vsg::RenderGraph` and the clear values it carries - NODES, i.e. the deliberate half
     //         (the previous frame's graph may still be in flight, see the executor's note).
     //
-    // None of the first two grow with the frame's CONTENT (they are per pass, not per drawing call), and a
+    // None of the first two grow with the frame's CONTENT (they are per pass, not per draw packet), and a
     // frame's per-call cost is dominated by the nodes: `test_vsg`'s own fixture measures ~33 allocations for
     // ONE recorded triangle, and a readback/multi-pass frame is bigger still. So the ceilings stay ceilings
     // instead of zeros - the fix (caller-owned scratch for the plan, and episode rows owned by whoever decides
@@ -645,9 +645,9 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
           const auto* steady = compile_frame(one_target);
           return steady != nullptr && steady->passes.size() == 1U;
       },
-      [&]() { return static_cast<std::uint64_t>(observe.counters().draws); },
+      [&]() { return static_cast<std::uint64_t>(observe.counters().draw_packets); },
       // THE COUNTER ANSWERS THE FRAME, NOT A RUNNING TOTAL (see FrameCounters): the phase records one pass with
-      // two drawing calls, so the sample reads 2 whatever it read before it. (It used to be an increment, which
+      // two draw packets, so the sample reads 2 whatever it read before it. (It used to be an increment, which
       // is the shape of the defect the parity suite found: the counters never started the next frame from zero.)
       [](std::uint64_t /*before*/, std::uint64_t after) { return after == 2U; },
     });

@@ -114,7 +114,7 @@ class StubBackend : public vn::graphics::RenderBackend {
             present_targets.push_back(present_to);
         }
         for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
-            draws += entry.draw.has_value() ? entry.draw->draws.size() : 0u;
+            draws += entry.draw.has_value() ? entry.draw->packets.size() : 0u;
         }
         // The frame's tail is the executor's (see RenderFrameExecutor::executeFrame): this stub presents through the
         // target the frame named, exactly as the real device does.
@@ -164,7 +164,7 @@ class StubBackend : public vn::graphics::RenderBackend {
     int initialize_calls{ 0 };
     int shutdown_calls{ 0 };
     int target_calls{ 0 };
-    /// How many frames the control's views ran, how many drawing calls they carried, and what each frame named as
+    /// How many frames the control's views ran, how many draw packets they carried, and what each frame named as
     /// the surface it resolves to: the stub's own reading of the value the engine handed over (see
     /// RenderFrameExecutor::executeFrame).
     ///
@@ -492,7 +492,7 @@ TEST(RenderControlTest, TheSurfaceSizeAndRatioReachTheViewTogether)
     int    got_w  = 0;
     int    got_h  = 0;
     double got_pr = 0.0;
-    host.control()->view()->addSurfaceLayout([&](int w, int h, double ratio) {
+    host.control()->view()->addSurfaceResizeHandler([&](int w, int h, double ratio) {
         got    = true;
         got_w  = w;
         got_h  = h;

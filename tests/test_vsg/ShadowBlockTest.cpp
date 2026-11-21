@@ -170,7 +170,7 @@ vn::math::Mat4d mixedProducerMatrix()
     return vp;
 }
 
-/// @brief A drawing call with a camera and a light list, as the packing consumes them.
+/// @brief A draw packet with a camera and a light list, as the packing consumes them.
 CompiledDraw drawWith(const CameraSnapshot& camera, std::span<const LightRef> lights, std::vector<LightRef>& storage)
 {
     storage.assign(lights.begin(), lights.end());
@@ -464,7 +464,7 @@ TEST(ShadowBlockTest, ASpotCasterPacksTheSameBlockAsADirectionalOne)
 TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 {
     // THE PICTURE. One frame, two passes: a depth-only shadow map written by the engine's shadow pass (the WHOLE map
-    // is a caster at depth 0.5), then a receiver drawn in four bands, one drawing call each, where the call is what
+    // is a caster at depth 0.5), then a receiver drawn in four bands, one draw packet each, where the call is what
     // differs - and each band has a different reason to be dark or lit:
     //
     //   band 0: the map's owner, casting        -> the sun's term is scaled to zero   (ambient only)

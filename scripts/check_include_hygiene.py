@@ -198,7 +198,7 @@ SEAM_SHARED_HEADERS = frozenset((
     "DrawAbi.hpp",
     "DrawState.hpp",
     "FrameGate.hpp",
-    "FrameStats.hpp",
+    "FrameReport.hpp",
     "Geometry.hpp",
     "LightAbi.hpp",
     "MaterialAbi.hpp",

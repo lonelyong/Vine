@@ -48,9 +48,9 @@ class Window;
  * than quietly given a different picture.
  *
  * ONE VIEW FOR THE WHOLE WINDOW - and, measured in M4c, NOT the thing that keeps the window's pipelines apart
- * from an off-screen pass' ones. vsg compiles a pipeline per VIEW ID, and a graphics pipeline is only usable
+ * from an off-full-screen pass' ones. vsg compiles a pipeline per VIEW ID, and a graphics pipeline is only usable
  * in a compatible render pass; the window's render pass comes from vsg, with the surface's format and its own
- * dependencies, so it is NOT compatible with an off-screen pass of the same engine shape. The window's
+ * dependencies, so it is NOT compatible with an off-full-screen pass of the same engine shape. The window's
  * content is recorded under its own stable view, and what that buys is a view id of its own; what it does NOT
  * buy is a separately compiled VkPipeline - vsg reuses an implementation whose pipeline STATES compare equal
  * whatever render pass it was built for, and a view with no state overrides adds no difference. The separation

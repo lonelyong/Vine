@@ -123,7 +123,7 @@ DrawNeeds drawNeeds(const core::CompiledPass& pass, const core::CompiledCommand&
 DrawNeeds drawNeeds(const core::CompiledPass& pass, const core::CompiledDraw& draw, std::span<const InputImages> inputs)
 {
     DrawNeeds out;
-    out.kind              = core::DrawKind::Screen;
+    out.kind              = core::DrawKind::Fullscreen;
     out.program           = draw.program;
     out.topology          = draw.dynamic.topology;
     out.color_attachments = pass.color_attachments;

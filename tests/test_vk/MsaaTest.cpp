@@ -12,7 +12,7 @@
  *     camera, and the centre pixels must be equal - multisampling changes edges, never the colour of a covered pixel.
  *   - A COUNT THE DEVICE CANNOT BUILD IS REFUSED, NEVER LOWERED (ADR-2026-11-14): asking above the device's limit,
  *     or for a number that is not one of the counts (three), builds nothing, reports it ONCE (`UnsupportedRequest`),
- *     answers `NotReady` from `readColorBuffer` and records no drawing call - running the same frame again must not
+ *     answers `NotReady` from `readColorBuffer` and records no draw packet - running the same frame again must not
  *     report it a second time.
  *   - A DEPTH A SHADER SAMPLES RESOLVES WITH THE COLOUR (backlog T40): a multisampled target whose depth may be sampled
  *     builds, draws and reads back; the DEPTH side of that promise is pinned where a shader can actually read it - see
@@ -41,7 +41,7 @@
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/DrawItem.hpp>
@@ -62,7 +62,7 @@ using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -167,7 +167,7 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
 }
 
 /// @brief One scene draw of the full-screen triangle through @p program.
-[[nodiscard]] DrawCall constantDraw(const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Geometry>& geometry)
+[[nodiscard]] DrawPacket constantDraw(const intrusive_ptr<ShaderProgram>& program, const intrusive_ptr<Geometry>& geometry)
 {
     DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program             = program;
@@ -176,15 +176,15 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -197,7 +197,7 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
     pass.clear         = ClearPolicy{};
     pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.clear->clear_depth  = true;
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -321,7 +321,7 @@ TEST(VkMsaaTest, AMultisampledTargetResolvesTheSamePicture)
     EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::CompileFailed), 0U)
         << "the constant-colour program has to compile on this backend";
     EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::ContentSkipped), 0U)
-        << "a drawing call into the multisampled target was skipped";
+        << "a draw packet into the multisampled target was skipped";
     for (const RenderDiagnostic& message : driver_messages) {
         EXPECT_NE(message.severity, DiagnosticSeverity::Error)
             << "the driver rejected an object of the multisampled frame: "
@@ -363,7 +363,7 @@ TEST(VkMsaaTest, AnOverLimitRequestIsRefusedNotLowered)
     // NOTHING WAS BUILT, SO NOTHING WAS DRAWN: the frame's own counters say so, and the readback has no picture.
     const FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
-    EXPECT_EQ(report.counters->draws, 0U) << "a pass whose target was not built recorded a drawing call";
+    EXPECT_EQ(report.counters->draw_packets, 0U) << "a pass whose target was not built recorded a draw packet";
     std::vector<std::uint8_t> pixels;
     ReadbackResult            why = ReadbackResult::Ok;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "a target that was not built answered pixels";
@@ -375,7 +375,7 @@ TEST(VkMsaaTest, AnOverLimitRequestIsRefusedNotLowered)
         << "the same unbuildable request was reported again: the report is supposed to happen ONCE per device";
     const FrameReport again = backend->frameReport();
     ASSERT_TRUE(again.counters.has_value());
-    EXPECT_EQ(again.counters->draws, 0U);
+    EXPECT_EQ(again.counters->draw_packets, 0U);
 
     EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::CompileFailed), 0U);
     for (const RenderDiagnostic& message : driver_messages) {
@@ -414,7 +414,7 @@ TEST(VkMsaaTest, ACountTheDeviceDoesNotOfferIsRefusedToo)
         << "a count the device does not offer has to be reported";
     const FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
-    EXPECT_EQ(report.counters->draws, 0U) << "the pass recorded a drawing call into a target that was not built";
+    EXPECT_EQ(report.counters->draw_packets, 0U) << "the pass recorded a draw packet into a target that was not built";
 
     std::vector<std::uint8_t> pixels;
     ReadbackResult            why = ReadbackResult::Ok;
@@ -465,7 +465,7 @@ TEST(VkMsaaTest, ASampleableDepthResolvesWithTheColour)
         << "a multisampled target with a depth attachment is served now (see TargetObjects::depthPicture)";
     const FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
-    EXPECT_EQ(report.counters->draws, 1U) << "the pass into the multisampled depth-attached target was skipped";
+    EXPECT_EQ(report.counters->draw_packets, 1U) << "the pass into the multisampled depth-attached target was skipped";
 
     std::vector<std::uint8_t> pixels;
     ReadbackResult            why = ReadbackResult::Failed;

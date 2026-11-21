@@ -29,7 +29,7 @@
 /**
  * @brief Recording a compiled pass' CONTENT, from the three tables to the graph the executor will place.
  *
- * WHERE THIS SITS. The plan (CompiledPass) says what the pass means: which drawing calls, which viewport, which
+ * WHERE THIS SITS. The plan (CompiledPass) says what the pass means: which draw packets, which viewport, which
  * dynamic state. The tables (ContentFacts) say what the identities in it ARE: this geometry's channels, this
  * program's stages, this material's bytes. This layer is the one that puts the two together - and it is the last
  * place a mistake can still be caught cheaply, because everything above it is a plan and everything below it is
@@ -48,7 +48,7 @@
  * declaration order) and the count travels in the pipeline's identity - so a pipeline is compiled against
  * exactly the sampled shape its pass binds, and a second draw of the same pass binds the set once.
  *
- * WHERE THE IDENTITY COMES FROM, AND WHY THAT IS NOT THIS FILE. What one drawing call needs - the vertex layout,
+ * WHERE THE IDENTITY COMES FROM, AND WHY THAT IS NOT THIS FILE. What one draw packet needs - the vertex layout,
  * the variant the drawable's material and geometry imply, the program row for that variant, and the counts the
  * pipeline key carries - is answered by `drawNeeds` (api/DrawNeeds), and this layer READS that answer instead of
  * deriving it. The warm-up path (api/CompiledPrograms, and the `prepare()` entry that drives it) reads the same
@@ -62,7 +62,7 @@
  * match the plan. Both halves of the input ABI are bound (colour attachments and a sampleable depth), and
  * WHICH one an input offers is the plan's fact - the caller is checked against it rather than asked.
  *
- * BOTH DRAWING CALLS BIND THE SAME LIGHT BLOCK. The forward content path and the full-screen deferred path
+ * BOTH DRAW PACKETS BIND THE SAME LIGHT BLOCK. The forward content path and the full-screen deferred path
  * read their lights from one block (see LightBlock): the content path binds it in its own set, the full-screen
  * path in set 0 at the binding both paths give it. A full-screen program therefore declares a light block +
  * shadow block instead of a push, and this layer writes both per call and reports dropped lights for BOTH kinds
@@ -77,7 +77,7 @@
  * own. A command whose pair no half was built for is refused, and the message says WHICH of the two did not
  * match, because the two have different fixes (compile the program / compile the layout).
  *
- * THE OTHER DRAWING CALL: FULL-SCREEN PASSES. A `DrawKind::Screen` drawing call draws the same pass' declared
+ * THE OTHER DRAW PACKET: FULL-SCREEN PASSES. A `DrawKind::Fullscreen` draw packet draws the same pass' declared
  * inputs through a program of its own - no geometry, no vertex streams, no material - so its half is an entry
  * of its own KIND (see `Scope::Entry::kind`): a full-screen pipeline layer, looked up by the plan's program
  * identity and revision. Nothing about the lookup is geometry-shaped, which is why a screen entry carries no
@@ -85,9 +85,9 @@
  * but the set they are bound in is the FULL-SCREEN ABI's (see ContentPipeline): the call's source (named by
  * idENTITY the plan resolved) offers bindings 0.. for its attachments, the shadow map takes the binding its
  * text declares, and the call's own shadow block takes its own - the pass builds that set per call, because
- * a full-screen call has ONE block and it is the call's. The state it draws with is the plan's
- * `CompiledDraw::dynamic` (a full-screen call has no per-command state to resolve), and its lights arrive in the
- * same block the content path binds (see `recordScreenDraw`).
+ * a full-screen packet has ONE block and it is the call's. The state it draws with is the plan's
+ * `CompiledDraw::dynamic` (a full-screen packet has no per-command state to resolve), and its lights arrive in the
+ * same block the content path binds (see `recordFullscreenDraw`).
  */
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -129,7 +129,7 @@ struct InputSetCache {
         /// @brief The layout the set was built against.
         ///
         /// It is part of the key because two CALL KINDS sample the same images: a content pass' input set lives
-        /// in set 1 of its pipeline layout and a full-screen call's set in set 0 of its own, and both are built
+        /// in set 1 of its pipeline layout and a full-screen packet's set in set 0 of its own, and both are built
         /// from the pass' inputs - so the views alone would let one kind answer for the other, with a layout
         /// mismatch the driver refuses.
         const ::vsg::DescriptorSetLayout*    layout{ nullptr };
@@ -184,7 +184,7 @@ class VN_BACKEND_VSG_API ContentPass {
     struct Scope {
         /** @brief One compiled half: one program's stages against one vertex layout, for ONE variant. */
         struct Entry {
-            core::DrawKind           kind{ core::DrawKind::Content }; // Which drawing call this half serves.
+            core::DrawKind           kind{ core::DrawKind::Content }; // Which draw packet this half serves.
             vn::graphics::ContentRef program{};                       // The program identity AND revision the plan names.
             core::VertexLayoutKey    layout{};                        // The vertex layout its pipeline declares (content).
             ContentPipeline*         pipelines{ nullptr };            // The pipeline layer over that stage text.
@@ -240,9 +240,9 @@ class VN_BACKEND_VSG_API ContentPass {
         /// resolved width to it. 1.0 - the default - is the one width every device accepts, so a caller that does
         /// not state the limit gets a legal draw rather than an invalid call.
         float max_line_width{ 1.0F };
-        /// Episode state of the light-drop report: a drawing call whose announced lights all fit the block
+        /// Episode state of the light-drop report: a draw packet whose announced lights all fit the block
         /// re-arms it, so "the host announced lights the block cannot carry" is said once per episode rather
-        /// than once per drawing call (see `record`). The episode's END is the caller's decision - a scope
+        /// than once per draw packet (see `record`). The episode's END is the caller's decision - a scope
         /// that lives for one frame reports once per frame, and one that lives for the session reports once.
         vn::graphics::ReportOnce lights_dropped;
         /// The CALLER's episode state for the same report as @ref lights_dropped, when it keeps one: null
@@ -250,7 +250,7 @@ class VN_BACKEND_VSG_API ContentPass {
         /// block"), and the frame path builds a scope per pass per frame, so the caller that wants it once
         /// per session owns the state and hands it in (api/ContentAssembly does).
         vn::graphics::ReportOnce* lights_dropped_episode{ nullptr };
-        /// The CALLER's episode state for "a drawing call was not recorded: its rectangle is empty": one
+        /// The CALLER's episode state for "a draw packet was not recorded: its rectangle is empty": one
         /// FACT about the session (a host whose render area is not laid out yet repeats it in every frame
         /// and every pass), so the caller that lives longer owns the state. Null means the recorder's own.
         vn::graphics::ReportOnce* empty_rectangle_episode{ nullptr };
@@ -315,7 +315,7 @@ class VN_BACKEND_VSG_API ContentPass {
      *   values (see api/FrameHead - the vk `FrameHead::DrawPlan` shape). The recording then reads no table and takes no
      *   lock, which is what lets two drivers' content phases overlap.
      * - The refusals are said HERE (they are facts about content, and the resolution is where the tables are
-     *   read), so a call that resolves has nothing left to refuse: a refused drawing call is simply not in the
+     *   read), so a call that resolves has nothing left to refuse: a refused draw packet is simply not in the
      *   plan, and its sentence has already been reported.
      * - The caller owns the plan's registry (see FrameHead::beginPass) and must keep it alive until the plan is
      *   recorded: it is the pass' state memory, and the recording is its second phase.
@@ -339,7 +339,7 @@ class VN_BACKEND_VSG_API ContentPass {
     /** @brief Ensures everything @p pass needs to be recorded, and records NOTHING.
      *
      * @details
-     * - THE WARM-UP VERB OF @ref record, over the SAME walk: the compiled half of every drawing call, the pass'
+     * - THE WARM-UP VERB OF @ref record, over the SAME walk: the compiled half of every draw packet, the pass'
      *   sampled-input set, the block sets a drawable's material picks, the stream uploads and the pipeline identity
      *   `ContentPipeline::acquire` answers are all ensured here, so the frame that records the same declarations
      *   finds them and builds nothing (`R23`; `T33` pins the deltas).
@@ -450,8 +450,8 @@ class VN_BACKEND_VSG_API ContentPass {
      * One set per pass: the inputs are a property of the pass, so every draw of the content kind binds the
      * same set, and the registry's "already bound" answer (see StateRegistry) is what keeps the second draw
      * from re-issuing it. The set lives at `ContentPipeline::kInputSet` (1, after the declared block sets),
-     * which is where a content layer's sampled inputs live - a full-screen call's set is built by
-     * `recordScreenDraw` instead, in the ABI its own text declares.
+     * which is where a content layer's sampled inputs live - a full-screen packet's set is built by
+     * `recordFullscreenDraw` instead, in the ABI its own text declares.
      *
      * @param pass   The compiled pass whose inputs are being bound.
      * @param inputs The images the caller offered, already checked against the plan.
@@ -461,11 +461,11 @@ class VN_BACKEND_VSG_API ContentPass {
      */
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> makeInputSet(const core::CompiledPass& pass, std::span<const InputImages> inputs, ContentPipeline& layer);
 
-    /** @brief Resolves one FULL-SCREEN drawing call into @p call; false when it was refused (and reported).
+    /** @brief Resolves one FULL-SCREEN draw packet into @p call; false when it was refused (and reported).
      *
-     * A full-screen call reads ONE produced input - its source, named by the idENTITY the plan resolved - plus
+     * A full-screen packet reads ONE produced input - its source, named by the idENTITY the plan resolved - plus
      * the pass' imported textures and the shadow map (by name, wherever its text declares them), through the half
-     * its program names, with the plan's `CompiledDraw::dynamic` - a full-screen call has no per-command state to
+     * its program names, with the plan's `CompiledDraw::dynamic` - a full-screen packet has no per-command state to
      * resolve.
      *
      * IT BUILDS THE SET ITSELF, and that is the difference from a content half: the source's attachments, the
@@ -473,7 +473,7 @@ class VN_BACKEND_VSG_API ContentPass {
      * they live (see ContentPipeline). The source's attachments take 0..C-1, its depth follows (skipping bindings
      * the text names for something else), and the imported textures fill the text's remaining declared sampler
      * bindings in input declaration order. The block is the call's own (its lights and camera are), so the set is
-     * built per call; the engine's passes make one full-screen call each.
+     * built per call; the engine's passes make one full-screen packet each.
      *
      * WHAT IT REFUSES, and each by name: a source that is not one of the pass' declared inputs; a produced input
      * that is not the source; a text that declares `vn_shadow_map` when the pass resolved no readable map (a text
@@ -485,7 +485,7 @@ class VN_BACKEND_VSG_API ContentPass {
      * from it (there is no push block any more - see LightBlock), so the set this layer builds carries a light
      * block and, when the text declares one, the shadow's.
      *
-     * @param draw          The compiled full-screen call.
+     * @param draw          The compiled full-screen packet.
      * @param entry         The screen half its program names (resolved by the caller).
      * @param pass          The compiled pass (its colour attachment count, its inputs and its resolved shadow).
      * @param compatibility The target's shape (the pipeline key's half - the plan names the target, this layer
@@ -497,7 +497,7 @@ class VN_BACKEND_VSG_API ContentPass {
      * @param call          The plan's call to fill.
      * @return true when resolved; false when the half could not resolve it (already reported).
      */
-    bool resolveScreenDraw(const core::CompiledDraw&            draw,
+    bool resolveFullscreenDraw(const core::CompiledDraw&            draw,
                            const Scope::Entry&                  entry,
                            const core::CompiledPass&            pass,
                            const core::RenderPassCompatibility& compatibility,
@@ -511,7 +511,7 @@ class VN_BACKEND_VSG_API ContentPass {
     /** @brief Reports a refused command for a reason that is not a table miss. */
     void reportRefused(const char* what, const char* why);
 
-    /** @brief How many drawing calls this layer skipped because their rectangle was empty.
+    /** @brief How many draw packets this layer skipped because their rectangle was empty.
      *
      * A draw whose viewport covers zero area writes nothing, and recording it would issue a viewport with a
      * zero width - the VUID the application's first frames were measured to raise while the host's render area
@@ -557,7 +557,7 @@ class VN_BACKEND_VSG_API ContentPass {
      */
     [[nodiscard]] vn::graphics::ReportOnce& lightsEpisode() noexcept;
 
-    /** @brief One reason a drawing call was refused, and how many calls it cost (see reportRefused).
+    /** @brief One reason a draw packet was refused, and how many calls it cost (see reportRefused).
      *
      * A scene with broken content has MANY broken draws, and a message per draw is a flood the host cannot
      * read - while the host still needs to know what was lost. So the FIRST refusal of a reason is reported
@@ -567,7 +567,7 @@ class VN_BACKEND_VSG_API ContentPass {
     struct RefusalRow {
         const char*   what{ nullptr }; // The thing that was refused (a static string from the call site).
         const char*   why{ nullptr };  // The reason, in the first refusal's own words.
-        std::uint64_t count{ 0 };      // How many drawing calls this reason refused.
+        std::uint64_t count{ 0 };      // How many draw packets this reason refused.
     };
 
     /** @brief Adds @p what / @p why to the refusal ledger and says whether this is the FIRST of them.
@@ -578,7 +578,7 @@ class VN_BACKEND_VSG_API ContentPass {
      */
     [[nodiscard]] bool noteRefusal(const char* what, const char* why);
 
-    /** @brief Reports one line per reason that refused more than one drawing call (see RefusalRow).
+    /** @brief Reports one line per reason that refused more than one draw packet (see RefusalRow).
      *
      * Called at the END of a pass (see `record`): the ledger is the pass' own, so the count means "in this
      * pass, this frame".

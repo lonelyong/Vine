@@ -37,7 +37,7 @@
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/PrepareReport.hpp>
@@ -57,7 +57,7 @@ using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::ImageSource;
 using vn::graphics::PassDraw;
@@ -1248,8 +1248,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     };
     const auto claim_pass_samples = [&](const PassDraw& draw, const FrameDescription::Pass& entry) -> bool {
         bool every = true;
-        for (const DrawCall& description : draw.draws) {
-            if (description.kind == DrawCall::Kind::Screen && !claim_sampled(description.source)) {
+        for (const DrawPacket& description : draw.packets) {
+            if (description.kind == DrawPacket::Kind::Fullscreen && !claim_sampled(description.source)) {
                 every = false;
             }
         }
@@ -1273,18 +1273,21 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // WHAT THE FRAME'S SHAPE RECORDS (see FrameCounters): a scope enters the plan when it has an effect - it drew
         // something, or it announced a clear (a clear is the pass' own load-op, so a clear-only pass is a real pass
         // with no draws). The reference recorder states the same rule, which is what makes the two reports comparable.
-        std::uint64_t calls = 0U;
-        for (const DrawCall& description : draw.draws) {
-            calls += vn::graphics::isDrawingCall(description) ? 1U : 0U;
+        std::uint64_t packets = 0U;
+        std::uint64_t draws   = 0U;
+        for (const DrawPacket& description : draw.packets) {
+            packets += vn::graphics::packetDraws(description) ? 1U : 0U;
+            draws += vn::graphics::drawItemsOf(description);
         }
-        // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
-        // be built recorded nothing (see the sample-count refusals in TargetTable::ensure) - reporting its calls would
-        // say a frame drew when nothing reached the queue.
+        // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a draw packet is recorded, and a pass whose target could not
+        // be built recorded nothing (see the sample-count refusals in TargetTable::ensure) - reporting its packets
+        // would say a frame drew when nothing reached the queue.
         const bool has_effect = vn::graphics::passHasEffect(draw);
-        const auto count_pass = [&counters, calls, has_effect]() {
+        const auto count_pass = [&counters, packets, draws, has_effect]() {
             if (has_effect) {
                 ++counters.passes;
-                counters.draws += calls;
+                counters.draw_packets += packets;
+                counters.draws += draws;
             }
         };
         if (draw.target == nullptr) {
@@ -1439,7 +1442,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     // is complete by now (the device submits synchronously), so nothing still names them.
     scratch.beginFrame();
     // The pass count was taken from the frame's shape above (a pass whose draws were all skipped is still a pass
-    // that ran); what the loop below adds is the drawing calls this backend actually recorded.
+    // that ran); what the loop below adds is the draw packets this backend actually recorded.
 
     // ─── THE FRAME HEAD: EVERY CACHE CONSULTATION HAPPENS HERE ───────────────────────────────────────────────────
     // One hold of the cache's lock answers what this frame draws with - programs, streams, pipelines and every texture
@@ -1458,11 +1461,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         frame_head.beginFrame(runnable_passes.size());
         for (const Runnable& item : runnable_passes) {
             const PassDraw&   pass_draw = *item.draw;
-            FrameHead::Pass&  pass_head = frame_head.beginPass(pass_draw.draws.size());
-            for (std::size_t draw_index = 0; draw_index < pass_draw.draws.size(); ++draw_index) {
-                const DrawCall& description = pass_draw.draws[draw_index];
+            FrameHead::Pass&  pass_head = frame_head.beginPass(pass_draw.packets.size());
+            for (std::size_t draw_index = 0; draw_index < pass_draw.packets.size(); ++draw_index) {
+                const DrawPacket& description = pass_draw.packets[draw_index];
                 FrameHead::Call&        call        = pass_head.draws[draw_index];
-                if (description.kind == DrawCall::Kind::Screen) {
+                if (description.kind == DrawPacket::Kind::Fullscreen) {
                     call.plans.resize(1U);
                     FrameHead::DrawPlan& plan = call.plans.front();
                     (void)owner.caches.planDraw(description,
@@ -1473,7 +1476,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                                 plan,
                                                 call.refusal,
                                                 cache_lock);
-                    // The destination's stand-in and shadow sampler: a screen draw samples the target it names, so its
+                    // The destination's stand-in and shadow sampler: a full-screen draw samples the target it names, so its
                     // slots are the source's views (assembled where the source is, below), not a material's.
                     owner.caches.resolveTextures(nullptr, commands, frame_head, plan, call.refusal, cache_lock, uploadBatch());
                     continue;
@@ -1530,8 +1533,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 
         // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
         // barrier is unambiguously allowed (before any render pass instance begins).
-        for (const DrawCall& description : draw.draws) {
-            if (description.kind != DrawCall::Kind::Screen || description.source == nullptr) {
+        for (const DrawPacket& description : draw.packets) {
+            if (description.kind != DrawPacket::Kind::Fullscreen || description.source == nullptr) {
                 continue;
             }
             const std::shared_ptr<TargetObjects> source_entry = owner.target_table.lookup(description.source);
@@ -1684,13 +1687,13 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         pass_begin.pClearValues      = clear_values.data();
 
         owner.device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
-        // WHAT THIS PASS DRAWS: the frame head's plans and resolved bindings, in the drawing call's own order. Every
+        // WHAT THIS PASS DRAWS: the frame head's plans and resolved bindings, in the draw packet's own order. Every
         // command inside a call becomes one GPU draw (M3: the plan selected the pipeline, one `DrawItem` = one
         // indexed draw). The frame's DRAWING-CALL count was taken from the frame's shape above - a call is the
         // description, not its commands.
         const FrameHead::Pass&  pass_head = frame_head.passes()[pass_index];
-        for (std::size_t draw_index = 0; draw_index < draw.draws.size(); ++draw_index) {
-            const DrawCall& description = draw.draws[draw_index];
+        for (std::size_t draw_index = 0; draw_index < draw.packets.size(); ++draw_index) {
+            const DrawPacket& description = draw.packets[draw_index];
             const FrameHead::Call&  call        = pass_head.draws[draw_index];
             // THE HEAD'S REFUSAL IS REPORTED WHERE THE DRAW IS (see planDraw): the code travels with the sentence
             // instead of being guessed at the sink, and a call whose later commands DID resolve still records them.
@@ -1704,7 +1707,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 }
             }
             ContentRefusal refusal;
-            if (description.kind == DrawCall::Kind::Screen) {
+            if (description.kind == DrawPacket::Kind::Fullscreen) {
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
                 ContentDraw::ScreenSource source{};
@@ -1714,7 +1717,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                     source.images = source_entry->colors;
                     source.views  = source_entry->color_views;
                 }
-                (void)recorder.recordScreen(commands,
+                (void)recorder.recordFullscreen(commands,
                                             static_cast<int>(extent.width),
                                             static_cast<int>(extent.height),
                                             description,
@@ -1993,12 +1996,13 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
     // was handed, exactly as the frame path ends it (see ReportOnce).
     bool content_refused{ false };
 
-    // THE SHAPE OF THE FRAME ASKED FOR, computed by the SDK (see FrameShape): one definition, so this backend and the
-    // reference one cannot report different shapes for the same frame - and the rule is the one a recorded frame's
+    // THE WORKLOAD THE FRAME ASKS FOR, computed by the SDK (see FrameCounts): one definition, so this backend and the
+    // reference one cannot report different counts for the same frame - and the rule is the one a recorded frame's
     // `FrameCounters` follows (a pass that draws something or announces a clear).
-    const vn::graphics::FrameShape shape = vn::graphics::frameShapeOf(frame);
-    report.passes = shape.passes;
-    report.draws  = shape.draws;
+    const vn::graphics::FrameCounts counts = vn::graphics::frameCountsOf(frame);
+    report.passes       = counts.passes;
+    report.draw_packets = counts.draw_packets;
+    report.draws        = counts.draws;
 
     // A WARM-UP WRITES TARGETS TOO (an attachment build, a texture copy into one), so it takes the same
     // claims a frame does - and gives them back on every path out of here (`P3`).
@@ -2097,9 +2101,9 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                 }
             }
 
-            for (const DrawCall& description : draw.draws) {
+            for (const DrawPacket& description : draw.packets) {
                 ContentRefusal refusal;
-                if (description.kind == DrawCall::Kind::Screen) {
+                if (description.kind == DrawPacket::Kind::Fullscreen) {
                     FrameHead::DrawPlan plan;
                     (void)owner.caches.planDraw(description, draw, compatibility, render_pass, color_count, plan, refusal, cache_lock);
                 }
@@ -2126,7 +2130,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
             // command buffer (see ContentCaches::resolveTextures), so the frame then finds them resident and records
             // nothing. A pass whose batch could not be opened is still prepared; the next frame uploads it.
             if (batch != VK_NULL_HANDLE) {
-                owner.caches.preparePass(batch, draw.draws, cache_lock);
+                owner.caches.preparePass(batch, draw.packets, cache_lock);
             }
         }
     }
@@ -2738,15 +2742,15 @@ bool Device::initialize()
     // Anisotropy additionally requires a limit above 1: a bit saying "anisotropy is available" beside a factor of 1
     // would advertise a quality setting that cannot do anything.
     if (wanted_features.fillModeNonSolid == VK_TRUE) {
-        impl->caps.features.bits |= Capabilities::bit(Capabilities::Feature::Wireframe);
+        impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::Wireframe);
     }
     if (wanted_features.samplerAnisotropy == VK_TRUE && properties.limits.maxSamplerAnisotropy > 1.0F) {
-        impl->caps.features.bits |= Capabilities::bit(Capabilities::Feature::AnisotropicFiltering);
+        impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::AnisotropicFiltering);
     }
     // GPU TIMINGS IS A DEVICE FACT, not a promise this backend measures anything yet (see Feature::GpuTimings): the
     // device can write timestamps for graphics and compute work.
     if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
-        impl->caps.features.bits |= Capabilities::bit(Capabilities::Feature::GpuTimings);
+        impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::GpuTimings);
     }
     // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the set this
     // device offers is the INTERSECTION of the two (a device whose depth tops out lower is the binding side). That
@@ -2757,9 +2761,9 @@ bool Device::initialize()
     impl->caps.limits.max_samples             = largestSampleCount(impl->supported_sample_counts);
     // THE LIMITS TRAVEL BESIDE THE BITS, and each is the device's own answer: "anisotropy exists" and "how much of
     // it" are different facts, and so are "wide lines are allowed" and "how wide".
-    impl->caps.limits.max_anisotropy          = impl->caps.supports(Capabilities::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
+    impl->caps.limits.max_anisotropy          = impl->caps.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
     impl->caps.limits.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
-    // THE DEVICE'S OWN COUNT: an off-screen pass here can reference as many colour attachments as the render pass
+    // THE DEVICE'S OWN COUNT: an off-full-screen pass here can reference as many colour attachments as the render pass
     // takes, and capping that below what the device offers would be an amputation nothing in this backend needs.
     impl->caps.limits.max_color_attachments   = properties.limits.maxColorAttachments;
 

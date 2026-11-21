@@ -142,7 +142,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * @details
      * - Attachment 0 defaulting to the #333333 grey the main WINDOW pass was written against is the value stated
      *   in the space it is DISPLAYED in and decoded once (see kDefaultClearColor); nothing in the engine names a
-     *   colour for the off-screen targets its builders create, so an off-screen pass that wants one states it.
+     *   colour for the off-screen targets its builders create, so an off-full-screen pass that wants one states it.
      * - Attachments 1 and beyond are not that value: an unstated attachment is transparent black, so a consumer can
      *   tell "nothing drawn here" from data (see ClearPolicy).
      *
@@ -375,17 +375,17 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Describes what this pass issues this frame: its target, its state and its drawing calls.
+     * @brief Describes what this pass issues this frame: its target, its state and its draw packets.
      *
      * @details
      * - THE EXTENSION POINT: what a pass does is data, and a subclass that draws something else fills in a different
-     *   description (ScreenPass draws a full-screen program instead of collected geometry).
+     *   description (FullscreenPass draws a full-screen program instead of collected geometry).
      * - ONE CALL, because nothing here needs a backend: the picture's shape is the camera's, and the VIEW it states
      *   is collected by the frame's expansion step (see DrawListSource / `expandPass`), so a whole frame's worth of
      *   requests can be assembled before anything runs.
-     * - A pass that issues NOTHING this frame answers false (a scene pass with no scene, a screen pass with no
+     * - A pass that issues NOTHING this frame answers false (a scene pass with no scene, a full-screen pass with no
      *   resolved source): nothing is announced at all, which keeps "this pass is not running" distinguishable from
-     *   "this pass has no picture" (an empty PassDraw::draws).
+     *   "this pass has no picture" (an empty PassDraw::packets).
      *
      * @param scene Content scene to draw (a scene pass with none issues nothing; a content-agnostic pass ignores it).
      * @param out   Receives the description; untouched when this returns false.
@@ -431,7 +431,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
 
     /// The declaration this pass IS: one storage for every fact the pass states.
     ///
-    /// Protected because a subclass that states something of its own (ScreenPass names the program it draws through)
+    /// Protected because a subclass that states something of its own (FullscreenPass names the program it draws through)
     /// writes it here instead of keeping a second copy of a fact the base already owns.
     PassDesc desc_;
 

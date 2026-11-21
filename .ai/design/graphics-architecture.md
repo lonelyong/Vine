@@ -45,7 +45,7 @@ It satisfies `G1` / `G4`; for `G1` it gives up "one instance, several contents".
 
 2.7 **A change that can fail is visible from the return value**: `applyPlan` returns the three-state `PlanResult` (`Applied` / `Invalid` + problems /
 `Refused` + `PlanRefusal::Busy`), `bindPassContent` / `PassRegistry::bindContent` return whether a registered pass was hit,
-`frame()`'s `FrameOutcome` answers only Ran / Submitted (`NotReady` + `EngineNotReadyReason` is a precondition, not a frame ending),
+`frame()`'s `FrameCallOutcome` answers only Ran / Submitted (`NotReady` + `EngineNotReadyReason` is a precondition, not a frame ending),
 `prepare()` reuses the same `EngineNotReadyReason`.
 Why: a silent no-op lets the host take "did not take effect" for "took effect"; the return value is the only answer the call site can judge by. Boundary: `removePass` stays idempotent and returns nothing —
 removing an unregistered pass and removing an already removed pass are the same result. It satisfies `G4` / `G6`; the price is one ignorable return value per call site.
@@ -95,7 +95,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 
 | Extension point | Where it touches today (actual files) | Places |
 |---|---|---|
-| A **pass kind** (e.g. compute) | `PassDesc.hpp`'s `PassKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `ScreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend recording by `DrawCall::Kind` | 6–8 |
+| A **pass kind** (e.g. compute) | `PassDesc.hpp`'s `PassKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `FullscreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend recording by `DrawPacket::Kind` | 6–8 |
 | A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.cpp`'s `colorFormatOf` / `depthFormatOf`; vk `ContentImages.cpp`'s `formatOf`; vsg `VsgSceneRules.cpp`'s format mapping | 4 |
 | A **pass declaration field** | `PassDesc.hpp`; `Plan.cpp` (diff and validation); `FrameDescription.hpp`'s `PassDraw`; each backend's recorder | 4+ |
 | A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; vsg's binding | 4 |
@@ -169,9 +169,9 @@ removing an unregistered pass and removing an already removed pass are the same 
     * **Three questions.** For a candidate member: (a) without it, would a host have to GUESS? (b) without it, would a host
       have to open a backend header? (c) is it only "this backend has the ability"? Answers (a) or (b) admit it; (c) alone
       excludes it.
-    * **Three admissions, each a host decision.** Something to BRANCH on before drawing (`Capabilities::supports`,
+    * **Three admissions, each a host decision.** Something to BRANCH on before drawing (`Capabilities::features.supports`,
       `Limits::max_samples`); something to REQUEST whose refusal is classified (`ReadbackOutcome::Unsupported` means "this
-      device never will", and a host gates its feature on it); something to READ and act on (`FrameStats::residency` for
+      device never will", and a host gates its feature on it); something to READ and act on (`FrameReport::retention` for
       trimming, `FrameReport`, `PrepareReport`).
     * **Three exclusions.** A resource TYPE or handle - a host never names a GPU object, and the SDK's only `void*` members
       name content identities (`DrawState::material`, `Geometry::Facts::buffer`) or a window (`DeviceDesc::native_handle`);
@@ -207,7 +207,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | F2 | Window target | `WindowPresentTarget`: window handle + swapchain; one target per window. |
 | F3 | Area | `RenderArea`: size + present table; created by `RenderEngine::createArea()`; one area, one picture. |
 | F4 | View | `SceneView`: camera + scene + manipulator + input + the adopted `PassChain`; answers "which pass draws me" (input ownership is in `appfw-render-view.md` §2.1 / §2.4). |
-| F5 | Engine | `RenderEngine`: `initialize` / `shutdown` / `frame() → FrameOutcome`, device borrowing, size, capabilities, reports. |
+| F5 | Engine | `RenderEngine`: `initialize` / `shutdown` / `frame() → FrameCallOutcome`, device borrowing, size, capabilities, reports. |
 
 ### 3.2 The engine's three facades
 
@@ -242,7 +242,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 |---|---|---|
 | F18 | Declarative presentation | `RenderArea::present(view)` / `present(pass)`; who draws this surface is answered once by the view/surface. |
 | F19 | Multiple windows | **One device can serve several engines** (one engine / one area / one `Viewer` per window); destroying a window does not take the other windows with it. One engine driving several windows is rejected (one frame one surface, see §7 D2 and ADR-2026-11-13). |
-| F20 | Size | The single owner of the surface size is `RenderArea`; views follow through `resize` / `addSurfaceLayout`. |
+| F20 | Size | The single owner of the surface size is `RenderArea`; views follow through `resize` / `addSurfaceResizeHandler`. |
 
 ## 4. Public Interface
 
@@ -251,7 +251,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Interface | Purpose |
 |---|---|
 | `initialize()` / `shutdown()` | Lifetime |
-| `frame()` | Compile and execute one frame; returns `FrameOutcome` (Ran / Submitted; `NotReady` + `EngineNotReadyReason`) |
+| `frame()` | Compile and execute one frame; returns `FrameCallOutcome` (Ran / Submitted; `NotReady` + `EngineNotReadyReason`) |
 | `passes()` / `outputs()` / `diagnostics()` | The three facades |
 | `device()` / `setDevice()` | Borrow/install a device |
 | `createArea()` | Create the one area |
@@ -293,7 +293,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | `SceneView::setEngine()` / `setScene()` / `setCamera()` | Binding |
 | `SceneView::setChain()` / `chain()` | Adopt the recipe |
 | `SceneView::presentingPass()` | Forward the surface's question |
-| `SceneView::resize()` / `addSurfaceLayout()` | Follow the size |
+| `SceneView::resize()` / `addSurfaceResizeHandler()` | Follow the size |
 | `RenderArea::present(view)` / `present(pass)` | Declare presentation |
 | `RenderArea::resize(w, h, ratio)` | The single definition of the surface size |
 
@@ -325,7 +325,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | N4 | One area, one picture; multi-cell layout belongs to the application layer, do not add a second area to the engine. |
 | N5 | `Camera` carries its own aspect; a pass rectangle inconsistent with the camera shape is reported at compile time. |
 | N6 | The backend materialises `FrameDescription.passes` only; do not reorder or build a dependency graph on the recording path. |
-| N7 | `frame()`'s `FrameOutcome` only says whether it ran (Ran / Submitted) or the engine was not up (NotReady + reason); if it ran but drew nothing, read `frameReport()`, do not infer the drawing result from the return value. |
+| N7 | `frame()`'s `FrameCallOutcome` only says whether it ran (Ran / Submitted) or the engine was not up (NotReady + reason); if it ran but drew nothing, read `frameReport()`, do not infer the drawing result from the return value. |
 
 ## 6. Caveats and Traps
 

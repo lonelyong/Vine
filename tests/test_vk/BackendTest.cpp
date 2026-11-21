@@ -103,7 +103,7 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     // THE FEATURE BITS ARE ANSWERS ABOUT THIS SESSION, and each is checked against the limit that has to travel beside
     // it: "anisotropy is available" next to a factor of 1 would advertise a quality setting that cannot do anything,
     // and a line-width range below 1 would be no range at all.
-    EXPECT_EQ(capabilities.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering), capabilities.limits.max_anisotropy > 1.0F);
+    EXPECT_EQ(capabilities.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering), capabilities.limits.max_anisotropy > 1.0F);
     EXPECT_GE(capabilities.limits.max_anisotropy, 1.0F);
     EXPECT_GE(capabilities.limits.max_line_width, 1.0F);
     // THE DEVICE'S OWN COLOUR SLOT COUNT: Vulkan guarantees at least 4, and an MRT pass may use every one.

@@ -50,7 +50,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -158,8 +158,8 @@ void main()
 /// @brief One frame with one pass clearing @p target and drawing @p commands.
 [[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, std::shared_ptr<const std::vector<DrawItem>> commands)
 {
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
 
@@ -170,7 +170,7 @@ void main()
     pass.target       = target;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;
@@ -342,7 +342,7 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
     // THE FRAME HEAD IS THE ONLY PLACE A FRAME CONSULTS THE DEVICE'S CACHES (S6c-1): a steady frame resolves every
     // program, stream, pipeline and texture slot under ONE hold, and the recording path then works from values (see
     // FrameHead::DrawPlan). The witness is the cache's own acquisition counter: if a later edit goes back to
-    // resolving per drawing call, the delta below grows with the number of commands and this case fails.
+    // resolving per draw packet, the delta below grows with the number of commands and this case fails.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     if (!backend->initialize()) {
@@ -381,7 +381,7 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
     const std::uint64_t after_first = device->contentCacheCounters().cache_lock_acquisitions;
     const std::uint64_t first_delta = after_first - before_first;
 
-    // FRAME TWO: one drawing call, STEADY (nothing to build).
+    // FRAME TWO: one draw packet, STEADY (nothing to build).
     const std::uint64_t before_steady = device->contentCacheCounters().cache_lock_acquisitions;
     (void)backend->executeFrame(one_command, nullptr);
     const std::uint64_t steady_delta = device->contentCacheCounters().cache_lock_acquisitions - before_steady;
@@ -454,7 +454,7 @@ TEST(VkFrameHeadTest, AFrameReportsWhatItSpentOnTheCacheLock)
     const vn::graphics::FrameReport six = backend->frameReport();
     ASSERT_TRUE(six.locking.has_value());
     EXPECT_EQ(six.locking->acquisitions, steady.locking->acquisitions)
-        << "the cache-lock work grew with the number of drawing calls";
+        << "the cache-lock work grew with the number of draw packets";
     EXPECT_EQ(six.locking->waits, 0U) << "a serial loop waited for a lock nobody else held";
 
     backend->shutdown();

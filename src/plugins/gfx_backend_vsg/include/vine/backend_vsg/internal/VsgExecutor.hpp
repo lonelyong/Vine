@@ -11,7 +11,7 @@
 #include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/ReportOnce.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>

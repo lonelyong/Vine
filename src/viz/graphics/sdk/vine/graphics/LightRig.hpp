@@ -18,8 +18,8 @@ class Scene;
  *   can light any number of scenes and no Light object is shared behind the caller's back.
  * - The two presets every viewer starts with: `studio()` - the classic three-point set (one ambient fill plus
  *   a key and a fill from opposite sides), which gives shape to an arbitrary model without the host knowing
- *   where its camera is (the safe default); `headlight(direction)` - one directional light travelling along
- *   the camera's view direction (VTK's automatic light, made explicit).
+ *   where its camera is (the safe default); `directionalFromView(direction)` - one directional light travelling
+ *   along the view direction the caller states (aimed once: it does not track the camera, so call it again to re-aim).
  * - Where to put them is the scene's business: `scene.addLighting(LightRig::studio())` appends,
  *   `scene.setLighting(...)` replaces whatever the scene had.
  *
@@ -57,13 +57,17 @@ class VN_GRAPHICS_API LightRig {
     static LightRig studio();
 
     /**
-     * @brief Builds a single headlight travelling along @p direction.
+     * @brief Builds a single directional light travelling along @p direction.
+     *
+     * @details
+     * - The light is AIMED ONCE, from the view direction the caller reads; it is not attached to a camera, so an
+     *   orbit leaves it where it was. Call this again and re-add the rig to re-aim it.
      *
      * @param direction View direction of the camera being lit (world space); defaults to looking down -Z, which
      *                  is where a camera starts.
      * @return The rig (1 directional entry).
      */
-    static LightRig headlight(const vn::math::Vec3d& direction = vn::math::Vec3d(0.0, 0.0, -1.0));
+    static LightRig directionalFromView(const vn::math::Vec3d& direction = vn::math::Vec3d(0.0, 0.0, -1.0));
 
   public:
     /**

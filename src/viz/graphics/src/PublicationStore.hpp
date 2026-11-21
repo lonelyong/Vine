@@ -83,7 +83,7 @@ class PublicationStore {
      * @brief Gets the source that answers @p snapshot for @p scene, attaching one on first use.
      *
      * @details
-     * - THE FRAME'S BIND STEP READS THIS (see `detail::bindSceneDraws`): a scene drawing call is pointed at the source
+     * - THE FRAME'S BIND STEP READS THIS (see `detail::bindSceneDraws`): a scene draw packet is pointed at the source
      *   of the publication the frame took, so the expansion asks a publication and never the live tree.
      * - One source per (content, publication): two frames that took two publications do not share a collector, and
      *   the sources no frame names any more are dropped by `beginFrame` (see the class note).

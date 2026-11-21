@@ -86,8 +86,8 @@ Everything not shareable is **one copy per session**, so it needs no lock: owner
   The latter is the one at the start of this section and the former is its consequence — the two numbers are stated separately, never merged into "a steady-state frame takes
   0" (that is the recording path's claim, not the whole frame's).
 - **Shape**: one `ContentCaches` lock is taken **at the frame head**, and `planDraw` (both overloads) / `resolveTextures` hand the result **by value** to the driver
-  (`FrameHead`: one `FrameHead::DrawPlan` per draw call, with the frame-level texture / sampler facts hanging off the head); texture uploads are recorded into the frame's
-  command buffer at the frame head as well; `record` / `recordScreen` read only those values. A whole frame's acquisition count is a constant **4** (1 at the frame head +
+  (`FrameHead`: one `FrameHead::DrawPlan` per draw packet, with the frame-level texture / sampler facts hanging off the head); texture uploads are recorded into the frame's
+  command buffer at the frame head as well; `record` / `recordFullscreen` read only those values. A whole frame's acquisition count is a constant **4** (1 at the frame head +
   1 each for the frame head's and the frame tail's bookkeeping + 1 in `endFrame`) and **does not grow with the draw count** (`VkFrameHeadTest`).
 - **vsg's shape**: the same principle lands on vsg's two halves. The **frame head** (`openFrameHead`) resolves, under one content lock, the pass numbering / targets /
   sampled targets / content tracking / target fact tables / storage growth and records the upload baseline; **collection and plan compilation** read only the session scratch
@@ -150,7 +150,7 @@ recording path); what the wiring decides is "who may build and who copies".
   `backend/RetirementQueue.hpp` is already "park + release when due"; **vsg already uses both** (`d->clock` / `d->retirement`, borrowed per session). vk adopting them means the
   two backends share one completion evidence (`G6`) instead of vk growing a second counter (`G7`).
 - **Who is who**: **a frame driver is a clock window** (what `DeviceClock` issues is a `graphics::FrameDriverId`, a u32; an offscreen session registers one too). The three
-  spellings are already unified on it: `DeviceClock::WindowId` survives only as one `@deprecated` alias.
+  spellings are unified on it: `DeviceClock::WindowId` is deleted (`BC-32`), so `FrameDriverId` is the only spelling.
 - **What release means**: `releaseContent` / `releaseRenderTarget` record **each session's `submitted`** at the time of the call, and the object is destroyed only once the
   device watermark passes it; so those two verbs **may be called while another session is framing**. The contract text at `RenderDevice.hpp:302`–`308` already says exactly
   this ("a device that retires asynchronously parks the free until every session is past it") — this page only makes vk such a device.
@@ -409,13 +409,13 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 - **The content phase is split into three**: `commitFrameThrough` is **resolution** (one content lock: `applyTargetPlans`, material arena growth, `resolveContent`),
   **recording** (no device lock: `FrameHead::record` turns values into vsg nodes), and **submission** (the content lock again: `executor.record`, the sweep, the session
   submission, the upload delta and the counter publication). Recording reads no device table, so `C3` holds for vsg.
-- **`internal/FrameHead`: one frame's resolved values**. One `DrawPlan` per draw call: the recorder of the half it hit (`ContentDraw*`), the resolved `ContentDraw::Draw` /
-  `ScreenDraw` (identity + pipeline + variant id + dynamic state + geometry span count), the block bindings, the push blocks, the vertex / index bindings; one slot per pass,
+- **`internal/FrameHead`: one frame's resolved values**. One `DrawPlan` per draw packet: the recorder of the half it hit (`ContentDraw*`), the resolved `ContentDraw::Draw` /
+  `FullscreenDraw` (identity + pipeline + variant id + dynamic state + geometry span count), the block bindings, the push blocks, the vertex / index bindings; one slot per pass,
   carrying its own `core::StateRegistry` (the state memory that spans the resolution and recording phases). It is the vsg counterpart of vk's `FrameHead::DrawPlan`:
   **a value that owns the objects it names** (all `ref_ptr`s), with one extra lifetime pin: `CompiledPrograms::pin()` lends the halves' producers to the plan, so another
   driver's frame-head sweep cannot release a recorder this frame still needs (the retirement park knows nothing about "an unsubmitted frame has not handed it over yet").
 - **Two APIs, resolution half and recording half**: `ContentDraw::plan(key)` (resolution, taking the layer and the variant pool, under the content lock) and
-  `ContentDraw::record` / `recordScreen` (recording, binding only the resolved pipeline, touching neither the layer nor the pool); `core::StateRegistry` therefore gained a
+  `ContentDraw::record` / `recordFullscreen` (recording, binding only the resolved pipeline, touching neither the layer nor the pool); `core::StateRegistry` therefore gained a
   `resolve(variant, …)` overload — recording uses a value instead of looking the pool up again, which is also the precondition for two drivers' recordings to really run at
   the same time. `ContentPass::resolve` is the side-effect-free resolution half; `record` is just the "resolve + record" convenience entry (tests and
   `ContentAssembly::record` use it).
@@ -546,7 +546,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 ### 6.6 P6 A snapshot that misses an entry
 
 - How it fails: the snapshot covers only "the identities obvious in the frame value" (a command's geometry / program) and misses pass-level or implicit ones (a shadow map's
-  visibility, a screen draw's source target) ⇒ a miss and a lock every frame.
+  visibility, a full-screen draw's source target) ⇒ a miss and a lock every frame.
 - How to detect it: R3's lock count is not 0 in the steady state.
 - How to prevent it: the snapshot's input is the same frame value recording uses (one traversal, two results), not a second enumeration written by hand.
 
@@ -583,7 +583,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 | D4 | a session = a window (keeping vsg's shape) | `G1`: an offscreen session is not a window; `G5`: tying one concept to another makes both grow crooked | this page §2.1 |
 | D5 | the engine allocating the session object itself | `G1`: the GPU objects' owner must be the device; `G10`: the engine should not be responsible for a command pool's lifetime | this page §2.8 |
 | D6 | readback borrowing some session's frame machinery | `G4`: readback reads "what has completed", unrelated to "who just submitted"; borrowing either one makes them wait for each other | this page §2.7 |
-| D7 | renaming `DeviceClock::WindowId` to `SessionId` now | `G8`: no consumer needs that spelling; a type alias first (`SessionId = WindowId`), the rename left for when a second API family exists (**superseded by `ADR-2026-11-16-redesign-seam-and-vocabulary`**: the three spellings are unified as `FrameDriverId`, and `WindowId` survives only as one `@deprecated` alias) | this page §2.6 |
+| D7 | renaming `DeviceClock::WindowId` to `SessionId` now | `G8`: no consumer needs that spelling; a type alias first (`SessionId = WindowId`), the rename left for when a second API family exists (**superseded by `ADR-2026-11-16-redesign-seam-and-vocabulary`**: the three spellings are unified as `FrameDriverId`, and `WindowId` was deleted by `BC-32`) | this page §2.6 |
 | D8 | landing it in one go (no stages) | `G11`: a half-split tree is worse than an unsplit one — every step must be verifiable on its own | ADR §9 |
 
 ## 8. Tests and Acceptance

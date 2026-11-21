@@ -119,7 +119,7 @@ struct CompiledPrograms::Data {
             // pipeline was created with (see core::PipelineKey::topology), so a layer built for one topology can
             // only ever serve the draws that state it.
             settings.topology                      = key.topology;
-            std::unique_ptr<ContentPipeline> layer = key.kind == core::DrawKind::Screen
+            std::unique_ptr<ContentPipeline> layer = key.kind == core::DrawKind::Fullscreen
                                                          ? ContentPipeline::createScreen(program.abi, program.shaders, settings)
                                                          : ContentPipeline::create(program.abi, *geometry, program.shaders, settings);
 
@@ -161,10 +161,10 @@ CompiledPrograms::halvesFor(const core::CompiledPass& pass, const ContentFacts& 
     d->entries.clear();
 
     for (const core::CompiledDraw& draw : pass.draws) {
-        if (draw.kind == core::DrawKind::Screen) {
+        if (draw.kind == core::DrawKind::Fullscreen) {
             // The full-screen ABI is the engine's and carries no variant: a screen program is one text, and
             // it draws without a vertex layout (see api/ContentSources).
-            const FactResult<ProgramFacts> program = findProgram(facts, draw.program, ProgramVariant{}, core::DrawKind::Screen);
+            const FactResult<ProgramFacts> program = findProgram(facts, draw.program, ProgramVariant{}, core::DrawKind::Fullscreen);
             if (!program.found()) {
                 continue; // the recorder reports the miss; no half is invented for it
             }
@@ -213,7 +213,7 @@ void CompiledPrograms::sweep(const ContentFacts& facts, core::FrameTimeline& tim
             return false;
         }
         // A full-screen half has no vertex layout: the program is its whole pin (see api/ContentSources).
-        return key.kind == core::DrawKind::Screen || layout_is_live(key);
+        return key.kind == core::DrawKind::Fullscreen || layout_is_live(key);
     };
     (void)d->halves.retireUnpinned([&pinned](const Data::Key& key, const std::shared_ptr<Data::Half>&) { return pinned(key); }, timeline, retirement);
 

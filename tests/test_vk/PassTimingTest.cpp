@@ -16,7 +16,7 @@
 #include <vine/Colorf.hpp>
 #include <vine/String.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>

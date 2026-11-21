@@ -42,7 +42,7 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  * - MULTISAMPLING IS A SHAPE FACT, AND IT ADDS A SECOND IMAGE PER ATTACHMENT. A target whose shape says `samples > 1`
  *   is drawn into MULTISAMPLED colour images and the render pass RESOLVES them into single-sample ones at the end of
  *   its subpass. `colors` / `color_views` are then the RESOLVE images - the picture this device hands out, which is
- *   what a screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
+ *   what a full-screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
  *   `multisample_color_views` are the sample buffers, which nothing samples and nothing reads back. The DEPTH is
  *   resolved the same way into `depth_resolve` / `depth_resolve_view` (`sample0`, so multisampling cannot change the
  *   depth a later pass tests against): `depthPicture()` / `depthPictureView()` name whichever depth image is the
@@ -111,7 +111,7 @@ struct TargetObjects {
     /// The variant whose depth attachment is LOADed (a pass that preserves the depth an earlier pass wrote); null for
     /// a colour-only target, where the two variants are the same thing.
     VkRenderPass render_pass_load_depth{ VK_NULL_HANDLE };
-    /// The variant that LOADs every attachment, for a pass that announces no clear at all (a screen pass): colour and
+    /// The variant that LOADs every attachment, for a pass that announces no clear at all (a full-screen pass): colour and
     /// depth keep what earlier passes wrote. Only valid on a NON-fresh attachment set.
     VkRenderPass render_pass_load{ VK_NULL_HANDLE };
     /// The variant that LOADs the COLOUR and CLEARs the depth: a HUD pass that keeps the picture it is drawn over and
@@ -126,7 +126,7 @@ struct TargetObjects {
     /// ATOMIC because the frame body is its only writer and takes no lock (see the class note); relaxed is enough -
     /// every decision a reader outside the gate takes from it is a hint that the gate re-checks.
     std::atomic<bool> fresh{ true };
-    /// True after a screen draw sampled this target: its colour images (the PICTURE - the resolve images on a
+    /// True after a full-screen draw sampled this target: its colour images (the PICTURE - the resolve images on a
     /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the device transitions them back before the
     /// next pass writes them (or before a readback reads them).
     bool color_sampled{ false };

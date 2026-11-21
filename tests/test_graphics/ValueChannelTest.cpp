@@ -10,7 +10,7 @@
  *   * frame N+1 - published and described after the edit - must see the new ones.
  *
  * The gates are `program_description` / `material_description` / `material_ref` on the collected command, and
- * `DrawCall::light_values`. A recorder that re-read a live object would pass the "N+1 sees the new values" half
+ * `DrawPacket::light_values`. A recorder that re-read a live object would pass the "N+1 sees the new values" half
  * and fail the "N stayed the same" half; under ThreadSanitizer it would also report the race this case makes real.
  */
 
@@ -43,7 +43,7 @@ using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::graphics::Camera;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::geometryFromShape;
 using vn::graphics::Geometry;
@@ -84,14 +84,14 @@ FrameDescription describedFrame(RenderPass& pass, const intrusive_ptr<Scene>& sc
     return frame;
 }
 
-/// @brief The commands the frame's one drawing call collected (empty when it collected nothing).
+/// @brief The commands the frame's one draw packet collected (empty when it collected nothing).
 const std::vector<DrawItem>& commandsOf(const FrameDescription& frame)
 {
     static const std::vector<DrawItem> kNone;
-    if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->draws.empty()) {
+    if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->packets.empty()) {
         return kNone;
     }
-    const auto& commands = frame.passes.front().draw->draws.front().commands;
+    const auto& commands = frame.passes.front().draw->packets.front().commands;
     return commands != nullptr ? *commands : kNone;
 }
 
@@ -170,8 +170,8 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
         captured_program      = commands.front().program_description;
         captured_material     = commands.front().material_description;
         captured_material_ref = commands.front().material_ref;
-        if (!frame.passes.empty() && frame.passes.front().draw.has_value() && !frame.passes.front().draw->draws.empty()) {
-            captured_lights = frame.passes.front().draw->draws.front().light_values;
+        if (!frame.passes.empty() && frame.passes.front().draw.has_value() && !frame.passes.front().draw->packets.empty()) {
+            captured_lights = frame.passes.front().draw->packets.front().light_values;
         }
     });
 
@@ -215,9 +215,9 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     ASSERT_NE(next_commands.front().material_description, nullptr);
     EXPECT_EQ(next_commands.front().material_description->values().base_color, (Colorf{ 0.1F, 0.9F, 0.1F, 1.0F }));
     ASSERT_TRUE(next.passes.front().draw.has_value());
-    ASSERT_TRUE(next.passes.front().draw->draws.front().light_values != nullptr);
-    ASSERT_EQ(next.passes.front().draw->draws.front().light_values->size(), 1U);
-    EXPECT_EQ(next.passes.front().draw->draws.front().light_values->values().front().color, (Colorf{ 1.0F, 0.7F, 0.2F, 1.0F }));
+    ASSERT_TRUE(next.passes.front().draw->packets.front().light_values != nullptr);
+    ASSERT_EQ(next.passes.front().draw->packets.front().light_values->size(), 1U);
+    EXPECT_EQ(next.passes.front().draw->packets.front().light_values->values().front().color, (Colorf{ 1.0F, 0.7F, 0.2F, 1.0F }));
 }
 
 TEST(ValueChannelTest, EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves)
@@ -249,21 +249,21 @@ TEST(ValueChannelTest, EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves)
 
     const FrameDescription a = describedFrame(first, scene, store);
     const FrameDescription b = describedFrame(second, scene, store);
-    const vn::graphics::LightSetPtr& lights_a = a.passes.front().draw->draws.front().light_values;
-    const vn::graphics::LightSetPtr& lights_b = b.passes.front().draw->draws.front().light_values;
+    const vn::graphics::LightSetPtr& lights_a = a.passes.front().draw->packets.front().light_values;
+    const vn::graphics::LightSetPtr& lights_b = b.passes.front().draw->packets.front().light_values;
     ASSERT_NE(lights_a, nullptr);
     ASSERT_NE(lights_b, nullptr);
     EXPECT_EQ(lights_a, lights_b) << "two passes of one scene copied the light set twice";
 
     // A STEADY FRAME REUSES IT: nothing moved, so the scene answers the same value and no copy is made.
     const FrameDescription next = describedFrame(first, scene, store);
-    EXPECT_EQ(next.passes.front().draw->draws.front().light_values, lights_a) << "a steady frame rebuilt the light set";
+    EXPECT_EQ(next.passes.front().draw->packets.front().light_values, lights_a) << "a steady frame rebuilt the light set";
 
     // A LIGHT EDIT IS A NEW SET, and it carries the new numbers: the cache is keyed by each light's revision (a light
     // announces nothing on the graph), so an edit reaches the next description exactly as it reached the live vector.
     light->setColor(Colorf{ 1.0F, 0.7F, 0.2F, 1.0F });
     const FrameDescription edited = describedFrame(first, scene, store);
-    const vn::graphics::LightSetPtr& lights_edited = edited.passes.front().draw->draws.front().light_values;
+    const vn::graphics::LightSetPtr& lights_edited = edited.passes.front().draw->packets.front().light_values;
     ASSERT_NE(lights_edited, nullptr);
     EXPECT_NE(lights_edited, lights_a) << "the edit reused the old set";
     ASSERT_EQ(lights_edited->size(), 1U);

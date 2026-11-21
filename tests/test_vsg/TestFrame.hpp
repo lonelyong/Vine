@@ -135,7 +135,7 @@ class TestFrame {
         return *this;
     }
 
-    /** @brief Adds one CONTENT drawing call to the open pass: its collected commands, through @p camera.
+    /** @brief Adds one CONTENT draw packet to the open pass: its collected commands, through @p camera.
      *
      * @param commands The commands to draw (copied into the value, which owns what it carries).
      * @param camera   The view the draw is projected and lit with.
@@ -143,16 +143,16 @@ class TestFrame {
      */
     TestFrame& content(const std::vector<vn::graphics::DrawItem>& commands, const vn::graphics::Camera* camera)
     {
-        vn::graphics::DrawCall draw;
-        draw.kind = vn::graphics::DrawCall::Kind::Scene;
-        // A frame carries the VIEW as a value (see DrawCall::view); a test that still holds the object names it.
+        vn::graphics::DrawPacket draw;
+        draw.kind = vn::graphics::DrawPacket::Kind::Scene;
+        // A frame carries the VIEW as a value (see DrawPacket::view); a test that still holds the object names it.
         draw.view.camera = camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{};
         draw.commands = std::make_shared<const std::vector<vn::graphics::DrawItem>>(commands);
-        description().draws.push_back(std::move(draw));
+        description().packets.push_back(std::move(draw));
         return *this;
     }
 
-    /** @brief Adds one full-screen drawing call to the open pass: @p source's colour, through @p program.
+    /** @brief Adds one full-screen draw packet to the open pass: @p source's colour, through @p program.
      *
      * @param source  The target whose colour attachments are sampled.
      * @param program The fragment program to draw with.
@@ -161,12 +161,12 @@ class TestFrame {
      */
     TestFrame& screen(vn::graphics::RenderTarget* source, vn::raw_ptr<const vn::graphics::ShaderProgram> program, const vn::graphics::Camera* camera)
     {
-        vn::graphics::DrawCall draw;
-        draw.kind    = vn::graphics::DrawCall::Kind::Screen;
+        vn::graphics::DrawPacket draw;
+        draw.kind    = vn::graphics::DrawPacket::Kind::Fullscreen;
         draw.view.camera = camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{};
         draw.source  = source;
         draw.program = std::move(program);
-        description().draws.push_back(std::move(draw));
+        description().packets.push_back(std::move(draw));
         return *this;
     }
 

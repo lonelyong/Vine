@@ -1,6 +1,6 @@
 # Glossary: one spelling per concept
 
-> **Status**: living ｜ **Last verified**: 2026-11-18
+> **Status**: living ｜ **Last verified**: 2026-11-20
 > **Scope**: the vocabulary a design page, an ADR or a commit body uses about the render seam, the two
 > backends and the frame model. It is the single mapping between a concept's **code spelling** and the
 > words the Chinese pages use, so prose can be searched and translated without guessing.
@@ -25,11 +25,12 @@
 | `FrameDescription` | 帧描述 | The compiled frame the engine hands the backend: every enabled pass' identity, order and resolved inputs plus what the pass described. |
 | `FrameTable` | 帧表 | The same frame as rows a host may read (`PassRow`); not the plan, not a handle. |
 | `FrameResult` | 帧结果 | What the last ANSWERED frame was: its picture, the world it saw (`FrameQuery`), its counts. |
-| `FrameOutcome` | 调用结果 | What one `frame()` call did (Ran / Submitted); `NotReady` is a precondition, not a frame ending. |
+| `FrameCallOutcome` | 调用结果 | What one `frame()` call did (Ran / Submitted); `NotReady` is a precondition, not a frame ending. |
 | `FrameQuery` | 帧所见 | The publication and the view the picture was taken from (`FrameResult::query`). |
 | pass | pass (not translated) | One `PassDesc`; the only authoring shape. |
-| draw call | 绘制调用 | One `DrawCall`, not one recorded GPU command. |
-| draw item | 可画项 | One `DrawItem`: a scene drawable as this frame sees it (a pass collects a list of them). |
+| draw call | 绘制调用 | ONE submitted drawable - one `DrawItem`, the number a profiler and `FrameCounters::draws` / `FrameResult::draws` / `PrepareReport::draws` count. It is **not** a `DrawPacket`. |
+| draw packet, `DrawPacket` | 绘制包 | One pass' request for ONE view: the `DrawItem`s it submits plus the state and lights they are issued with. `FrameCounters::draw_packets` counts these (one per pass and view); a backend records it as N submissions. |
+| draw item | 可画项 | One `DrawItem`: a scene drawable as this frame sees it (a pass collects a list of them); one submitted item is one draw call. |
 | material values, `MaterialValues` | 材质值 | The read face of a material's values; `Material` is the asset and `MaterialInstance` an instance of it. |
 | content | 内容 | Scene, material, geometry, program and light as engine-owned objects. |
 | target, `RenderTarget` | 目标 | The host's off-screen target; its address is the identity a frame names. |
@@ -65,6 +66,12 @@
 
 ## 2. Retired spellings (do not use in new prose)
 
+**Rule**: a renamed word leaves **no alias** - one spelling per concept. Only a SIGNATURE migration (a return value
+or a parameter list that changed shape) may keep a `[[deprecated]]` forwarder, and it leaves with the batch that
+finishes that migration. Two spellings of one word are a defect even when they compile
+(see `ADR-2026-11-18-public-vocabulary-unification`). No forwarder is in the tree today: the last two
+(`Capabilities::*` and `DeviceClock::WindowId`) left with `BC-32`.
+
 | Retired | Use | Why |
 |---|---|---|
 | `Session` / 会话 (as the design noun) | frame driver / `FrameDriver` | Renamed in S2; `createFrameDriver()` is still the API verb, but the concept is the driver. |
@@ -74,7 +81,16 @@
 | `TargetImages` / `OffscreenTarget` / `HostTargets` | `TargetObjects` / `TargetTable` | S4 (B5a/B5b). |
 | `TargetClaims` | the target table's lease | S4: one table answers map, shape and claims. |
 | `SceneBake` as "the production collector" | `DrawListBake::buildRows` + `selectSnapshot` | The frame compiles draws from the published snapshot. |
-| `RenderCommand` / `DrawDescription` / `MaterialBase` / `EngineNotReady` / `createSession` / `releaseSession` | `DrawItem` / `DrawCall` / `MaterialValues` / `EngineNotReadyReason` / `createFrameDriver` / `releaseFrameDriver` | B12 (2026-11-18): each name now says what the thing is; no aliases kept (see `graphics-rendering.md` 2.10). |
+| `RenderCommand` / `DrawDescription` / `MaterialBase` / `EngineNotReady` / `createSession` / `releaseSession` | `DrawItem` / `DrawPacket` / `MaterialValues` / `EngineNotReadyReason` / `createFrameDriver` / `releaseFrameDriver` | B12 (2026-11-18): each name now says what the thing is; no aliases kept (see `graphics-rendering.md` 2.10). |
+| `visible_instances` / `visibleInstanceCount()` | `instance_count` / `instanceCount()` (capacity: `instanceCapacity()`) | "visible" promised a culling decision that never happened; the value is the draw's `instanceCount` parameter. |
+| `LayoutParticipant` / `OverlayLayout` / `output_slot` / `InstanceSlot` / `hasState()` / `clearState()` / `LightRig::headlight()` | `ResizeParticipant` / `OverlayPlacement` / `output_name` / `InstanceRecord` / `hasRenderState()` / `clearRenderState()` / `LightRig::directionalFromView()` | 2026-11-20 vocabulary batch: one job per word (`layout`/`slot`/`state` no longer carry several), and `headlight` promised camera tracking the light never had. |
+| `OrbitCameraManipulator::zoom()` / `orbitRadius()` / `setMinDistance()` / `zoomToCursor()` | `dolly()` / `orbitDistance()` / `setMinOrbitDistance()` / `dollyToCursor()` | The wheel moves the eye along the view (a dolly); "zoom" means a field-of-view change in the industry, and one distance had two nouns. |
+| `FrameShape` / `frameShapeOf` | `FrameCounts` / `frameCountsOf` (with `draw_packets` / `draws`) | "shape" already meant attachment formats; the value is three counts: passes, draw packets, draws (the last is the number a profiler calls draw calls). |
+| `DrawCall` / `OwnedDraw` / `PassDraw::draws` / `isDrawingCall()` / `drawingCallItems()` | `DrawPacket` / `OwnedDrawPacket` / `PassDraw::packets` / `packetDraws()` / `drawItemsOf()` | 2026-11-20: the value is one view's whole packet, and "draw call" is the industry's word for ONE submitted item. |
+| `draws` (packets) + `draw_items` (items) in the frame reports | `draw_packets` (packets) + `draws` (items) | A report field called `draws` is read against RenderDoc / Nsight; it has to be the item count, and the packet count needs its own name. |
+| `Screen` as a kind / `ScreenPass` | `Fullscreen` / `FullscreenPass` | 2026-11-20: "screen" is the window in this module, and the presenting pass is itself one of these; the kind fills its VIEW. |
+| `FrameOutcome` | `FrameCallOutcome` | It is what one `frame()` CALL did (`NotReady` = no frame happened), not what a frame was. |
+| `Capabilities::Feature` / `Capabilities::supports` / `Capabilities::bit`; `DeviceClock::WindowId`; `FrameStats.hpp` | `Features::Feature` / `features.supports` / `Features::bit`; `FrameDriverId`; `FrameReport.hpp` | The forwarders the glossary had scheduled for removal; a header named after a type that does not exist. <!-- drift-ok --> |
 
 ## 3. False friends
 
@@ -87,3 +103,10 @@
 | content | engine-owned scene, material, geometry, program, light | bytes on the GPU |
 | residency | whether GPU objects exist | memory pressure or an eviction policy |
 | command | `DrawItem`, one scene drawable | one recorded GPU command |
+| shape | a target's attachment formats (`TargetShape` / `TransientShape`), or a frame's counts (`FrameCounts`) | a mesh / geometry shape |
+| layout | a GPU image layout (`ImageLayout`), a vertex input layout, an overlay's placement (`OverlayPlacement`), or a surface-resize step (`ResizeParticipant`) | one job - read the type's own note |
+| slot | a light block index, a content arena index, an engine pass row, a published output name (`output_name`), or an instance record (`InstanceRecord`) | one key space |
+| screen | a full-screen pass (`FullscreenPass`, the `Fullscreen` kind), or a screen-SPACE program (`drawScreenProgram`, `screenCopyProgram`) | the window or the surface - that is the `RenderArea` / `PresentTarget` |
+| target | a `RenderTarget` (off-screen images), a pass' `Target` declaration, or a `PresentTarget` (a presenter) | one type - the three have different lifetimes |
+| outcome / result | `FrameCallOutcome` is what one `frame()` call did; `FrameResult` is what the last ANSWERED frame was | two words for one value |
+| draw call / draw packet | a draw call is one submitted `DrawItem`; a `DrawPacket` is one pass' whole request for one view | two words for one value - the counts `draws` and `draw_packets` follow the same split |

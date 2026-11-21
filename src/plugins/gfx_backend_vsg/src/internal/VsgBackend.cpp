@@ -173,7 +173,7 @@ int graphicsQueueFamily(const ::vsg::Device& device)
     return -1;
 }
 
-/// @brief Whether @p pass draws a full-screen call whose SOURCE is @p target.
+/// @brief Whether @p pass draws a full-screen packet whose SOURCE is @p target.
 ///
 /// The full-screen ABI binds binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram), so
 /// the source's offer is the whole target even when the pass declared it as one ProducedImage. This answers
@@ -185,7 +185,7 @@ bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
         return false;
     }
     for (const core::CompiledDraw& draw : pass.draws) {
-        if (draw.kind == core::DrawKind::Screen && draw.source == target) {
+        if (draw.kind == core::DrawKind::Fullscreen && draw.source == target) {
             return true;
         }
     }
@@ -346,7 +346,7 @@ struct PassOffers {
 
         // The full-screen ABI's compatibility path: binding N reads the source's attachment N, so a call
         // whose source is this input reads the WHOLE target - even when the pass declared the source as one
-        // ProducedImage (ScreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
+        // ProducedImage (FullscreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
         // are built on it). The content path above keeps the narrowed offer.
         if (isScreenSource(pass, input.target)) {
             std::vector<::vsg::ref_ptr<::vsg::ImageView>>& screen_views = input_screen_views[index];
@@ -398,7 +398,7 @@ void resolveContent(ContentAssembly&                                            
         if (!offers.served) {
             continue;
         }
-        // The view block is the PASS' (the content layer's contract), built from the first drawing call's camera -
+        // The view block is the PASS' (the content layer's contract), built from the first draw packet's camera -
         // the engine's passes draw through one camera per scope, so the first is the pass'.
         const vn::graphics::VineViewBlock view_block = buildViewBlock(pass.draws[0].camera, frame_seconds, offers.width, offers.height);
         (void)assembly.resolve(plan, pass, offers.compatibility, input_scratch, std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)));
@@ -1207,13 +1207,13 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
                 (void)d->targets.observe(*input.target);
             }
         }
-        for (const vn::graphics::DrawCall& draw : description.draws) {
+        for (const vn::graphics::DrawPacket& draw : description.packets) {
             if (!draw.view.camera.present) {
-                continue; // a drawing call with no view is no call at all (see DrawCall)
+                continue; // a draw packet with no view issues nothing (see DrawPacket)
             }
-            if (draw.kind == vn::graphics::DrawCall::Kind::Screen) {
+            if (draw.kind == vn::graphics::DrawPacket::Kind::Fullscreen) {
                 // The fragment stage is content like any other: the tables must answer its two texts and their
-                // declarations when the plan records (the store's own walk covers full-screen calls' programs).
+                // declarations when the plan records (the store's own walk covers full-screen packets' programs).
                 const vn::graphics::ShaderProgramDescriptionPtr text =
                     draw.program_description != nullptr ? draw.program_description
                                                         : (draw.program != nullptr ? draw.program->description() : vn::graphics::ShaderProgramDescriptionPtr{});
@@ -1310,18 +1310,18 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
             if (description.depth_range.has_value()) {
                 announceDepthRange(scratch, *description.depth_range);
             }
-            for (const vn::graphics::DrawCall& draw : description.draws) {
+            for (const vn::graphics::DrawPacket& draw : description.packets) {
                 if (draw.light_values != nullptr) {
                     announceLights(scratch, draw.light_values->values());
                 }
                 if (!draw.view.camera.present) {
-                    continue; // a drawing call with no view is no call at all (see DrawCall)
+                    continue; // a draw packet with no view issues nothing (see DrawPacket)
                 }
-                if (draw.kind == vn::graphics::DrawCall::Kind::Screen) {
-                    collectScreenDraw(scratch, draw.source, draw.program.get(), draw.program_description, draw.view.camera);
+                if (draw.kind == vn::graphics::DrawPacket::Kind::Fullscreen) {
+                    collectFullscreenDraw(scratch, draw.source, draw.program.get(), draw.program_description, draw.view.camera);
                 }
                 else if (draw.commands != nullptr) {
-                    // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
+                    // The override is a PASS fact (see PassDraw::program_override), so every draw packet of the
                     // pass is drawn with it; the command list itself is never rewritten. Its TEXT travels with it
                     // (PassDraw::program_override_description), which is what the recorder applies.
                     collectContentDraw(scratch, *draw.commands, draw.view.camera, description.program_override_description);
@@ -1712,12 +1712,13 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
 
     vn::graphics::PrepareReport report;
     report.outcome = vn::graphics::PrepareReport::Outcome::Prepared;
-    // THE SHAPE OF THE FRAME ASKED FOR, computed by the SDK (see FrameShape): the same function the direct backend
+    // THE WORKLOAD THE FRAME ASKS FOR, computed by the SDK (see FrameCounts): the same function the direct backend
     // calls, over the same value, so the two reports agree by construction - and the rule is the one a recorded frame's
     // `FrameCounters` follows (a pass that draws something or announces a clear; a clear-only pass is a real pass).
-    const vn::graphics::FrameShape shape = vn::graphics::frameShapeOf(frame);
-    report.passes = shape.passes;
-    report.draws  = shape.draws;
+    const vn::graphics::FrameCounts counts = vn::graphics::frameCountsOf(frame);
+    report.passes       = counts.passes;
+    report.draw_packets = counts.draw_packets;
+    report.draws        = counts.draws;
     // THE SHAPE THE FRAME ASKED FOR, not what this backend managed to walk (see PrepareReport): a pass the walk above
     // skipped because its target has no objects yet is still counted here, and the build deltas below are what say
     // how much of the request actually became objects. Two numbers, two questions - and neither pretends to be the
@@ -2118,13 +2119,13 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
         // with the feature on). The recorder clamps to it (see ContentPass::Scope::max_line_width).
         answer.limits.max_line_width                        = properties.limits.lineWidthRange[1];
         if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
-            answer.features.bits |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);
+            answer.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::GpuTimings);
         }
         if (physical->getFeatures().fillModeNonSolid == VK_TRUE) {
-            answer.features.bits |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::Wireframe);
+            answer.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::Wireframe);
         }
         if (physical->getFeatures().samplerAnisotropy == VK_TRUE) {
-            answer.features.bits |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::AnisotropicFiltering);
+            answer.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::AnisotropicFiltering);
         }
     }
     return answer;
@@ -2429,7 +2430,7 @@ void VsgBackend::collectContentDraw(FrameScratch&                               
     (void)scratch.recorder.render(commands, camera, program_override.get()); // refusing (a released target) is the recorder's to report
 }
 
-void VsgBackend::collectScreenDraw(FrameScratch&                                   scratch,
+void VsgBackend::collectFullscreenDraw(FrameScratch&                                   scratch,
                                    vn::graphics::RenderTarget*                     source,
                                    vn::raw_ptr<const vn::graphics::ShaderProgram>  program,
                                    const vn::graphics::ShaderProgramDescriptionPtr& program_description,

@@ -304,8 +304,8 @@ std::span<BlockDescriptors* const> BindingSets::setsFor(const core::CompiledPass
     d->candidates.clear();
 
     for (const core::CompiledDraw& draw : pass.draws) {
-        if (draw.kind == core::DrawKind::Screen) {
-            continue; // a full-screen call's set is the pass' own (declaredSets is empty for that ABI)
+        if (draw.kind == core::DrawKind::Fullscreen) {
+            continue; // a full-screen packet's set is the pass' own (declaredSets is empty for that ABI)
         }
         for (const core::CompiledCommand& command : draw.commands) {
             const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);

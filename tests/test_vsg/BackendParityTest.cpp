@@ -9,7 +9,7 @@
  * between two processes would compare files, not answers.
  *
  * WHAT IS COMPARED, AND WHAT IS NOT.
- * - THE RECORD: `FrameReport::counters` (pass scopes, drawing calls) and `PresentOutcome`, for the same call.
+ * - THE RECORD: `FrameReport::counters` (pass scopes, draw packets) and `PresentOutcome`, for the same call.
  *   Both are the SDK's own vocabulary for "what shape was this frame", so the two numbers are comparable by
  *   contract rather than by convention - and where they disagreed, the frame value means two things.
  * - THE PICTURE: `readColorBuffer` of the same target, BYTE for byte. The cases are chosen so that a correct
@@ -48,7 +48,7 @@
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/Light.hpp>
@@ -81,7 +81,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
@@ -333,18 +333,18 @@ void main()
     return command;
 }
 
-/// @brief The shared, immutable list a frame's drawing call carries.
+/// @brief The shared, immutable list a frame's draw packet carries.
 [[nodiscard]] std::shared_ptr<const std::vector<DrawItem>> commandsOf(std::vector<DrawItem> commands)
 {
     return std::make_shared<const std::vector<DrawItem>>(std::move(commands));
 }
 
-/// @brief The drawing call that renders @p commands through the identity camera, announcing @p lights.
-[[nodiscard]] DrawCall sceneDraw(std::shared_ptr<const std::vector<DrawItem>> commands,
+/// @brief The draw packet that renders @p commands through the identity camera, announcing @p lights.
+[[nodiscard]] DrawPacket sceneDraw(std::shared_ptr<const std::vector<DrawItem>> commands,
                                         vn::graphics::LightSetPtr                         lights = nullptr)
 {
-    DrawCall draw;
-    draw.kind         = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind         = DrawPacket::Kind::Scene;
     draw.view.camera  = identityCamera();
     draw.commands     = std::move(commands);
     draw.light_values = std::move(lights);
@@ -353,13 +353,13 @@ void main()
 
 /// @brief A frame with ONE pass: it names @p target, optionally clears it, and issues @p draws.
 ///
-/// @p inputs is what the pass DECLARES to sample (a produced target for a screen draw, an imported texture for a
+/// @p inputs is what the pass DECLARES to sample (a produced target for a full-screen draw, an imported texture for a
 /// material map): the reference backend binds its sampler from that declaration, so a frame that samples an image
 /// without declaring it is incomplete - the same rule the engine follows when it fills FrameDescription::Pass.
 [[nodiscard]] FrameDescription onePass(RenderTarget* target,
                                        std::optional<ClearPolicy> clear,
                                        DepthMode depth,
-                                       std::vector<DrawCall> draws,
+                                       std::vector<DrawPacket> draws,
                                        std::vector<vn::graphics::ImageSource> inputs = {})
 {
     FrameDescription frame;
@@ -373,7 +373,7 @@ void main()
     pass.target       = target;
     pass.clear        = std::move(clear);
     pass.state.depth  = depth;
-    pass.draws        = std::move(draws);
+    pass.packets        = std::move(draws);
     entry.draw        = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -410,7 +410,7 @@ struct Ran {
 }
 
 /// @brief Asserts that @p candidate recorded the same frame shape as @p reference, and both the claimed numbers.
-void expectTheSameRecord(const Ran& reference, const Ran& candidate, std::uint64_t passes, std::uint64_t draws, const char* what)
+void expectTheSameRecord(const Ran& reference, const Ran& candidate, std::uint64_t passes, std::uint64_t packets, const char* what)
 {
     SCOPED_TRACE(what);
     EXPECT_EQ(reference.present, PresentOutcome::Skipped) << "an off-screen frame presents nowhere";
@@ -421,14 +421,14 @@ void expectTheSameRecord(const Ran& reference, const Ran& candidate, std::uint64
     EXPECT_EQ(reference.report.counters->passes, passes) << "the reference backend's pass scopes";
     EXPECT_EQ(candidate.report.counters->passes, reference.report.counters->passes)
         << "the same frame is the same number of pass scopes";
-    EXPECT_EQ(reference.report.counters->draws, draws) << "the reference backend's drawing calls";
-    EXPECT_EQ(candidate.report.counters->draws, reference.report.counters->draws)
-        << "the same frame is the same number of drawing calls";
+    EXPECT_EQ(reference.report.counters->draw_packets, packets) << "the reference backend's draw packets";
+    EXPECT_EQ(candidate.report.counters->draw_packets, reference.report.counters->draw_packets)
+        << "the same frame is the same number of draw packets";
     EXPECT_EQ(candidate.report.counters->invalid_schedules, 0U);
-    std::printf("[parity] %s: passes=%llu draws=%llu (both backends)\n",
+    std::printf("[parity] %s: passes=%llu draw_packets=%llu (both backends)\n",
                 what,
                 static_cast<unsigned long long>(candidate.report.counters->passes),
-                static_cast<unsigned long long>(candidate.report.counters->draws));
+                static_cast<unsigned long long>(candidate.report.counters->draw_packets));
 }
 
 /// @brief Asserts that @p candidate's picture is byte-identical to @p reference's, printing the first differences.
@@ -585,7 +585,7 @@ class BackendParityTest : public ::testing::Test {
 
 TEST_F(BackendParityTest, TheSameClearIsTheSamePicture)
 {
-    // THE SMALLEST FRAME: one pass, one clear, no drawing call. What it pins is that both backends clear to the
+    // THE SMALLEST FRAME: one pass, one clear, no draw packet. What it pins is that both backends clear to the
     // SAME stored bytes - the state every later case starts from.
     RenderTarget* const shared = target();
 
@@ -632,7 +632,7 @@ TEST_F(BackendParityTest, ADepthOnlyClearKeepsThePictureOnBothBackends)
     paint.target      = shared;
     paint.clear       = ClearPolicy{ Colorf(0.0F, 0.0F, 0.0F, 1.0F), true };
     paint.state.depth = DepthMode::TestAndWrite;
-    paint.draws.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
+    paint.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
     painting.draw = std::move(paint);
     frame.passes.push_back(std::move(painting));
 
@@ -683,13 +683,14 @@ TEST_F(BackendParityTest, TheSameTriangleIsTheSamePicture)
 
 TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
 {
-    // T41: `PrepareReport.passes` / `draws` are the ASKED SHAPE of the frame (see vn::graphics::FrameShape), and a
+    // T41: `PrepareReport.passes` / `draw_packets` / `draws` are the WORKLOAD of the frame (see vn::graphics::FrameCounts), and a
     // recorded frame's `FrameCounters` follows the same rule. The three passes below are chosen so every half of the
     // rule is exercised at once:
-    //   - a CLEAR-ONLY pass: no drawing call, but it clears - a real pass a recorder enters;
-    //   - a pass whose only call issues NOTHING (no camera): it announced neither a draw nor a clear;
+    //   - a CLEAR-ONLY pass: no draw packet, but it clears - a real pass a recorder enters;
+    //   - a pass whose only packet issues NOTHING (no camera): it announced neither a draw nor a clear;
     //   - a pass that draws.
-    // The asked shape is therefore TWO passes and ONE call, and both backends must say so - and then record it.
+    // The asked shape is therefore TWO passes and ONE packet carrying ONE draw, and both backends must say so - and
+    // then record it.
     RenderTarget* const shared = target();
 
     const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFragmentStage, u8"parity_prepare_shape");
@@ -699,7 +700,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
     std::optional<ClearPolicy> clear = ClearPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.25F, 1.0F);
 
-    DrawCall idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
+    DrawPacket idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
     idle.view.camera     = CameraSnapshot{}; // present == false: the pass has no view, so it issues no call
 
     // ONE PASS IDENTITY PER ENTRY (a backend keys retained per-pass state by it; two passes never share one).
@@ -721,7 +722,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
 
     std::vector<FrameDescription::Pass>                  frame_passes;
     std::vector<intrusive_ptr<vn::graphics::RenderPass>> pass_objects;
-    auto add = [&](std::optional<ClearPolicy> announced, std::vector<DrawCall> draws) {
+    auto add = [&](std::optional<ClearPolicy> announced, std::vector<DrawPacket> draws) {
         pass_objects.push_back(intrusive_ptr<vn::graphics::RenderPass>(new vn::graphics::RenderPass()));
         FrameDescription::Pass entry;
         entry.pass  = pass_objects.back().get();
@@ -730,7 +731,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
         pass.target      = shared;
         pass.clear       = std::move(announced);
         pass.state.depth = DepthMode::TestAndWrite;
-        pass.draws       = std::move(draws);
+        pass.packets       = std::move(draws);
         entry.draw       = std::move(pass);
         frame_passes.push_back(std::move(entry));
     };
@@ -749,8 +750,10 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
     ASSERT_TRUE(candidate.prepared()) << "the direct backend would not prepare the frame";
     EXPECT_EQ(reference.passes, 2U) << "the reference backend did not report the asked shape";
     EXPECT_EQ(candidate.passes, reference.passes) << "the two backends reported different asked shapes";
-    EXPECT_EQ(reference.draws, 1U) << "the reference backend counted a call that issues nothing";
-    EXPECT_EQ(candidate.draws, reference.draws) << "the two backends counted different drawing calls";
+    EXPECT_EQ(reference.draw_packets, 1U) << "only the packet that issues something counts";
+    EXPECT_EQ(candidate.draw_packets, reference.draw_packets) << "the two backends counted different draw packets";
+    EXPECT_EQ(reference.draws, 1U) << "the one effective packet submits one draw";
+    EXPECT_EQ(candidate.draws, reference.draws) << "the two backends counted different draws";
 
     const Ran reference_run = run(*vsg, frame, shared);
     const Ran candidate_run = run(*vk, frame, shared);
@@ -759,8 +762,50 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
     expectTheSameRecord(reference_run, candidate_run, 2, 1, "clear + idle + drawing");
     ASSERT_TRUE(candidate_run.report.counters.has_value());
     EXPECT_EQ(candidate_run.report.counters->passes, candidate.passes) << "the recorded pass count moved from the asked one";
-    EXPECT_EQ(candidate_run.report.counters->draws, candidate.draws) << "the recorded call count moved from the asked one";
+    EXPECT_EQ(candidate_run.report.counters->draw_packets, candidate.draw_packets) << "the recorded packet count moved from the asked one";
+    EXPECT_EQ(candidate_run.report.counters->draws, candidate.draws) << "the recorded draw count moved from the asked one";
     EXPECT_EQ(*reported, 0) << "the direct backend reported a problem while preparing and recording the frame";
+}
+
+TEST_F(BackendParityTest, ADrawPacketCarriesItsDrawsAndBothBackendsCountThem)
+{
+    // THE TWO NUMBERS ANSWER DIFFERENT QUESTIONS (see FrameCounts): one draw packet carrying two draws is ONE draw
+    // packet and TWO draws - the number a profiler calls draw calls. Both backends must say so, and the asked
+    // counts must be the recorded ones.
+    RenderTarget* const shared = target();
+
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFragmentStage, u8"parity_draws");
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
+    const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    std::optional<ClearPolicy> clear = ClearPolicy{};
+    clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+
+    const FrameDescription frame =
+        onePass(shared,
+                clear,
+                DepthMode::TestAndWrite,
+                { sceneDraw(commandsOf({ commandOf(geometry, program, red), commandOf(geometry, program, red) })) });
+
+    const vn::graphics::PrepareReport reference = vsg->prepareFrame(frame, nullptr);
+    const vn::graphics::PrepareReport candidate = vk->prepareFrame(frame, nullptr);
+    ASSERT_TRUE(reference.prepared()) << "the reference backend would not prepare the frame";
+    ASSERT_TRUE(candidate.prepared()) << "the direct backend would not prepare the frame";
+    EXPECT_EQ(reference.draw_packets, 1U) << "one view's list is one draw packet";
+    EXPECT_EQ(reference.draws, 2U) << "the packet carries two draws";
+    EXPECT_EQ(candidate.draw_packets, reference.draw_packets) << "the two backends counted different draw packets";
+    EXPECT_EQ(candidate.draws, reference.draws) << "the two backends counted different draws";
+
+    const Ran reference_run = run(*vsg, frame, shared);
+    const Ran candidate_run = run(*vk, frame, shared);
+
+    expectTheSameRecord(reference_run, candidate_run, 1, 1, "one packet over two draws");
+    ASSERT_TRUE(reference_run.report.counters.has_value());
+    ASSERT_TRUE(candidate_run.report.counters.has_value());
+    EXPECT_EQ(reference_run.report.counters->draws, 2U) << "the reference backend lost a draw";
+    EXPECT_EQ(candidate_run.report.counters->draws, reference_run.report.counters->draws)
+        << "the same frame is the same number of draws";
+    EXPECT_EQ(candidate_run.report.counters->draw_packets, 1U) << "one view's list is one draw packet";
 }
 
 TEST_F(BackendParityTest, TheNearerFragmentSurvivesOnBothBackends)
@@ -844,8 +889,8 @@ TEST_F(BackendParityTest, TheSameScreenCopySamplesTheSameColours)
     const FrameDescription scene_frame =
         onePass(source, source_clear, DepthMode::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, scene, red) })) });
 
-    DrawCall screen;
-    screen.kind                = DrawCall::Kind::Screen;
+    DrawPacket screen;
+    screen.kind                = DrawPacket::Kind::Fullscreen;
     screen.view.camera         = identityCamera();
     screen.source              = source;
     screen.program             = copy;
@@ -951,7 +996,7 @@ TEST_F(BackendParityTest, TheEngineUnlitProgramDrawsTheSamePictureOnBothBackends
 TEST_F(BackendParityTest, APassWithNoEffectIsNotAScopeOnEitherBackend)
 {
     // A RECORD IS WHAT HAD AN EFFECT (see FrameCounters / the reference recorder): an entry that announces neither a
-    // clear nor a drawing call records nothing on either backend - and the target it never named was never built, so
+    // clear nor a draw packet records nothing on either backend - and the target it never named was never built, so
     // neither backend has a picture to answer with.
     RenderTarget* const shared = target();
 
@@ -972,7 +1017,7 @@ TEST_F(BackendParityTest, APassWithNoEffectIsNotAScopeOnEitherBackend)
 TEST_F(BackendParityTest, AnEntryThatNamesNoPassIsNothingToRunOnBothBackends)
 {
     // THE SDK'S RULE (see RenderFrameExecutor::executeFrame): an entry with a null pass is NOTHING TO RUN. A frame
-    // that would otherwise draw must do nothing at all - no pass scope, no drawing call, no picture.
+    // that would otherwise draw must do nothing at all - no pass scope, no draw packet, no picture.
     RenderTarget* const shared = target();
 
     const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFragmentStage, u8"parity_no_pass");
@@ -989,7 +1034,7 @@ TEST_F(BackendParityTest, AnEntryThatNamesNoPassIsNothingToRunOnBothBackends)
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.clear        = clear;
     pass.state.depth  = DepthMode::TestAndWrite;
-    pass.draws.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
+    pass.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
 
@@ -1040,7 +1085,7 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
     shadow_pass.target      = map;
     shadow_pass.clear       = ClearPolicy{};
     shadow_pass.state.depth = DepthMode::TestAndWrite;
-    shadow_pass.draws.push_back(
+    shadow_pass.packets.push_back(
         sceneDraw(commandsOf({ commandOf(ground, program, material), commandOf(occluder, program, material) })));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
@@ -1056,7 +1101,7 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
     main_pass.target      = picture;
     main_pass.clear       = clear;
     main_pass.state.depth = DepthMode::TestAndWrite;
-    main_pass.draws.push_back(sceneDraw(commandsOf({ commandOf(ground, program, material) }), vn::graphics::LightSet::create(std::move(lights))));
+    main_pass.packets.push_back(sceneDraw(commandsOf({ commandOf(ground, program, material) }), vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
     frame.passes.push_back(std::move(main_entry));
 
@@ -1081,7 +1126,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     // WHY THIS CASE IS WORTH A SECOND FRAME SHAPE. The single-backend cases prove the chain runs on each backend
     // separately, and each of them agrees with whatever ITS OWN binding rule says. What only a two-backend diff can
     // see: whether attachment N lands where the lighting program's sampler N reads it (a shifted row lights a
-    // surface with another surface's albedo), whether the pass' DECLARED input is what the screen call samples (a
+    // surface with another surface's albedo), whether the pass' DECLARED input is what the full-screen packet samples (a
     // backend that samples the wrong target still draws a plausible picture), and whether the light block sits at
     // the binding the program declares - an ambient of 0 and a picture of pure black are indistinguishable when the
     // only instrument is one backend's own output.
@@ -1118,7 +1163,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     gbuffer_pass.clear        = ClearPolicy{};
     gbuffer_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
     gbuffer_pass.state.depth  = DepthMode::TestAndWrite;
-    gbuffer_pass.draws.push_back(sceneDraw(commandsOf({ commandOf(geometry, geometry_program, material) })));
+    gbuffer_pass.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, geometry_program, material) })));
     gbuffer_entry.draw = std::move(gbuffer_pass);
     frame.passes.push_back(std::move(gbuffer_entry));
 
@@ -1129,8 +1174,8 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     // "binding N = attachment N" finds all four G-buffer rows (see ImageSource::producedTarget).
     light_entry.inputs.push_back(vn::graphics::ImageSource::producedTarget(gbuffer));
 
-    DrawCall screen;
-    screen.kind                = DrawCall::Kind::Screen;
+    DrawPacket screen;
+    screen.kind                = DrawPacket::Kind::Fullscreen;
     screen.view.camera         = identityCamera();
     screen.source              = gbuffer;
     screen.program             = light_program;
@@ -1152,7 +1197,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     // The destination carries depth and a full-screen triangle sits at the far plane: the pass draws OVER what the
     // target holds, which is the same policy the SDK's own lighting pass states by carrying no depth at all.
     light_pass.state.depth = DepthMode::Disabled;
-    light_pass.draws.push_back(std::move(screen));
+    light_pass.packets.push_back(std::move(screen));
     light_entry.draw = std::move(light_pass);
     frame.passes.push_back(std::move(light_entry));
 

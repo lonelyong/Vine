@@ -46,7 +46,7 @@ set(SRC_FILE_LIST
 	TargetObjectsTest.cpp
 	ContentStackTest.cpp
 	SampledInputTest.cpp
-	ScreenDrawTest.cpp
+	FullscreenDrawTest.cpp
 	WindowCompositionTest.cpp
 	ViewBlockTest.cpp
 	LightBlockTest.cpp

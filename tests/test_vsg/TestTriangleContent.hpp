@@ -19,7 +19,7 @@ namespace vn::test
 {
 
 /**
- * @brief The content one backend case draws: a program, one geometry and its single drawing call.
+ * @brief The content one backend case draws: a program, one geometry and its single draw packet.
  *
  * @details
  * - Every call builds FRESH buffers, which is what makes it a fresh stream - and therefore a fresh upload - in the

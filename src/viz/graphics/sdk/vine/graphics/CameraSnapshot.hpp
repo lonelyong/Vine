@@ -23,7 +23,7 @@ class Camera;
  * - WHAT IT IS FOR. The collection context (`View`), the view block (`buildViewBlock`) and the CPU light
  *   transform all read these numbers; a pass takes the snapshot once, when it describes itself, so the culling, the
  *   projection and the shading of one frame cannot see a camera that moved in between.
- * - `present` is a FACT, not an optional: "this drawing call named no camera" is a real answer (the call issues
+ * - `present` is a FACT, not an optional: "this draw packet named no camera" is a real answer (the call issues
  *   nothing), and it must not be confused with default-constructed matrices that happen to be zero.
  *
  * @note Carries no shape policy of its own: the projection `Camera::projectionMatrix()` already applied the

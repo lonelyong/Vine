@@ -50,7 +50,7 @@
  * a plan that names it may still be recorded (the same rule as every other borrowed argument in this
  * backend, and the same reason StreamUploads keys its binds by revision).
  *
- * WHY A LOOKUP IS NOT A SCAN. Each lookup runs several times per drawing call per frame (`api/CompiledPrograms`
+ * WHY A LOOKUP IS NOT A SCAN. Each lookup runs several times per draw packet per frame (`api/CompiledPrograms`
  * and `api/ContentPass` both resolve the same three identities), and the tables only GROW: a linear scan is
  * therefore O(rows) per lookup, i.e. O(drawables x rows) per frame - invisible at the content sizes this
  * backend was written for (tens of rows) and a wall at a thousand (measured 2026-09-24: see the design log's
@@ -350,7 +350,7 @@ struct ProgramFacts {
 
     /// Which of the engine's two drawing CALLS this entry describes. It is part of the entry's key and not a
     /// decoration: ONE program object can be described twice at one revision - as content (both stages, the
-    /// content ABI) and as a full-screen call (the engine brings the vertex stage, so only the fragment stage
+    /// content ABI) and as a full-screen packet (the engine brings the vertex stage, so only the fragment stage
     /// is read, and the ABI is the screen one) - and the two entries carry different texts, different
     /// declarations and different pipelines. A lookup that did not name the kind would hand whichever row the
     /// table happened to carry first to a caller expecting the other, which is a wrong picture with no refusal

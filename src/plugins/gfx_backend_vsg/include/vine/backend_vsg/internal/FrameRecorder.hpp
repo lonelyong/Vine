@@ -61,23 +61,23 @@
  *   - SCOPE ATTRIBUTES belong to the pass and are dropped at endPass(): the render target, the
  *     stacking order, the clear policy and the depth mode. A pass that announced them and drew nothing
  *     leaves no trace, so they cannot leak into the next pass.
- *   - ONE ANNOUNCEMENT SERVES ONE DRAWING CALL for the viewport and the lights: a pass that draws
+ *   - ONE ANNOUNCEMENT SERVES ONE DRAW PACKET for the viewport and the lights: a pass that draws
  *     twice in one scope announces again before the second draw, and a draw with no fresh announcement
  *     gets the whole target (viewport) or the backend default (lights). Consuming them here is what
  *     makes that rule mechanical instead of remembered - and the consumed values are recorded ON the
- *     drawing call, so a compiled draw never has to look back at a scope to find them. A CALL WITH
+ *     draw packet, so a compiled draw never has to look back at a scope to find them. A CALL WITH
  *     NOTHING TO DRAW IS STILL A CALL: it consumes its announcements exactly like a call that draws,
- *     but it is NOT recorded as a drawing call - there is nothing in it, and a plan carrying it would
+ *     but it is NOT recorded as a draw packet - there is nothing in it, and a plan carrying it would
  *     describe work that does not exist (measured 2026-09-24: the engine's axis-gizmo pass calls with
  *     an empty list while its surface size is unknown, and that empty draw was what the content layer
  *     refused a whole pass - clear included - over).
  *   - PASS INPUTS are a property of the pass (the engine announces them once per pass and says so), so
- *     they are not consumed by a drawing call.
+ *     they are not consumed by a draw packet.
  * - FRAME-LEVEL SETTINGS ARE LEGAL IN EVERY STATE. setDefaultContentProgram() is a fact the compiler
  *   resolves, and releasing a target is the caller telling this layer a resource is going away -
  *   neither is about a scope, so neither is refused; releasing one a scope announced drops that
  *   announcement (see above).
- * - WHAT IT COUNTS: the pass scopes that enter the plan and the drawing calls collected (Observe, the
+ * - WHAT IT COUNTS: the pass scopes that enter the plan and the draw packets collected (Observe, the
  *   one place a phase gates on). There is deliberately no second tally here.
  */
 VN_BACKEND_VSG_CORE_NS_BEGIN
@@ -116,7 +116,7 @@ using LightRef = vn::graphics::LightValue;
  *
  * @details
  * - It used to be declared here, because the recorder was the first thing that needed it. It is a FRAME value now:
- *   a pass takes it when it describes itself (see DrawCall::camera), the recorder copies it, and nothing
+ *   a pass takes it when it describes itself (see DrawPacket::camera), the recorder copies it, and nothing
  *   reads a `Camera` object while recording - so the type belongs one layer up, next to the camera it snapshots.
  */
 using CameraSnapshot = vn::graphics::CameraSnapshot;
@@ -161,11 +161,11 @@ struct CollectedCommand {
 };
 
 /**
- * @brief ONE DRAWING CALL: what the host announced for it, and what it draws.
+ * @brief ONE DRAW PACKET: what the host announced for it, and what it draws.
  *
  * @details
  * - The granularity is the call, not the command, because that is the granularity the contract
- *   consumes announcements at ("one announcement serves one drawing call") and the granularity the
+ *   consumes announcements at ("one announcement serves one draw packet") and the granularity the
  *   depth mode and the viewport are meaningful at. The commands of a content call share the call's
  *   announcements, which is also why the camera is recorded once per call instead of once per command.
  */
@@ -175,13 +175,13 @@ struct CollectedDraw {
     bool                              has_viewport{ false };     // Whether this call consumed a viewport announcement.
     vn::graphics::Viewport            viewport{};                // The consumed viewport (meaningful when has_viewport).
     std::span<const LightRef>         lights{};                  // The consumed lights; empty = the backend default.
-    const void*                       source{ nullptr };         // Screen draws: the target whose colour attachments are sampled.
-    vn::graphics::ContentRef          program{};                 // Screen draws: the fragment program to draw with.
+    const void*                       source{ nullptr };         // Full-full-screen draws: the target whose colour attachments are sampled.
+    vn::graphics::ContentRef          program{};                 // Full-full-screen draws: the fragment program to draw with.
     std::span<const CollectedCommand> commands{};                // Content draws: the instances to render.
 };
 
 /**
- * @brief One pass scope, as the frame remembers it: its scope attributes and its drawing calls.
+ * @brief One pass scope, as the frame remembers it: its scope attributes and its draw packets.
  *
  * @details
  * - `has_clear` is a fact rather than a default: "the host never announced a clear" and "the host
@@ -204,7 +204,7 @@ struct CollectedPass {
     /// the default" are different pictures, stating the whole buffer and stating nothing ARE the same picture
     /// (see DepthRange). The compiler resolves the default; the recorder keeps what the scope said.
     vn::graphics::DepthRange       depth_range{};
-    std::span<const CollectedDraw> draws{}; // Drawing calls that arrived in the scope, in call order.
+    std::span<const CollectedDraw> draws{}; // Draw packets that arrived in the scope, in call order.
 };
 
 /** @brief One frame's worth of collected intent (see the file note for what is not resolved here). */
@@ -261,7 +261,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool beginPass(PassId pass);
 
-    /** @brief Closes the open pass scope, dropping attributes no drawing call consumed.
+    /** @brief Closes the open pass scope, dropping attributes no draw packet consumed.
      *
      * @return true when a scope was closed and entered the plan (or was dropped as empty); false when
      *         there was no scope to close.
@@ -282,7 +282,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool setRenderTarget(const void* target);
 
-    /** @brief Announces the sub-rectangle for the NEXT drawing call of this scope.
+    /** @brief Announces the sub-rectangle for the NEXT draw packet of this scope.
      *
      * @param x      Left edge in device pixels.
      * @param y      Top edge in device pixels.
@@ -295,7 +295,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
     /** @brief Announces the depth band the open pass maps its draws into.
      *
      * @details
-     * - A SCOPE attribute, not a drawing-call one: every draw of the pass is mapped into the same band, which
+     * - A SCOPE attribute, not a draw-packet one: every draw of the pass is mapped into the same band, which
      *   is the whole point - the band is what makes one pass a single semantic layer.
      * - Unlike the viewport, which waits for the next call, this one applies to the pass from now on, so a
      *   backend never has to keep two half-stated bands in step.
@@ -323,7 +323,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool setPassState(const vn::graphics::PassRenderState& state);
 
-    /** @brief Announces the pass' resolved inputs (a property of the pass, not of one drawing call).
+    /** @brief Announces the pass' resolved inputs (a property of the pass, not of one draw packet).
      *
      * @param inputs Resolved input sources in declaration order; an empty entry means nothing produced it.
      * @return true when it was recorded; false when it was dropped.
@@ -337,7 +337,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs);
 
-    /** @brief Announces the lights for the NEXT drawing call of this scope, as VALUES.
+    /** @brief Announces the lights for the NEXT draw packet of this scope, as VALUES.
      *
      * @details
      * - THE ENTRY THE FRAME PATH USES: a pass snapshots its scene's lights with `Light::value()` when it describes
@@ -349,7 +349,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool setLights(std::span<const vn::graphics::LightValue> lights);
 
-    /** @brief Collects a content drawing call (the SDK's render()).
+    /** @brief Collects a content draw packet (the SDK's render()).
      *
      * @details
      * - What the frame path calls: the commands are VALUES (see DrawItem), and
@@ -369,7 +369,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      *
      * @details
      * - It converts ONCE (`CameraSnapshot::of`) and delegates, so a host or a test that names the object says so in
-     *   one word - while the frame path itself carries the value (see DrawCall::camera). Null means "no view".
+     *   one word - while the frame path itself carries the value (see DrawPacket::camera). Null means "no view".
      *
      * @param commands         Commands to draw, copied into the arena before this call returns.
      * @param camera           The camera to snapshot, or null for a call with no view.
@@ -383,7 +383,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
         return render(commands, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{}, program_override);
     }
 
-    /** @brief Collects a full-screen program drawing call (the screen kind of a frame's draw).
+    /** @brief Collects a full-screen program draw packet (the screen kind of a frame's draw).
      *
      * @param source  Target whose colour attachments are sampled.
      * @param program Fragment program to draw with.
@@ -392,7 +392,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      */
     bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera);
 
-    /** @brief The value spelling: @p program is the fragment program's TEXT (see DrawCall::program_description).
+    /** @brief The value spelling: @p program is the fragment program's TEXT (see DrawPacket::program_description).
      *
      * @param source  Target whose colour attachments are sampled.
      * @param program Fragment program text to draw with.
@@ -456,7 +456,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
 
     /** @brief Copies @p commands into the arena as collected commands, with the pass' program override applied.
      *
-     * @param commands         Commands of one drawing call (borrowed).
+     * @param commands         Commands of one draw packet (borrowed).
      * @param program_override Program text every command is drawn with, or null for each command's own.
      * @return The recorded commands (arena storage, valid until the frame's arena is reset).
      */
@@ -489,7 +489,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
     vn::graphics::Viewport    pending_viewport_{};            // The viewport waiting for a draw.
     std::span<const LightRef> pending_lights_{};              // The lights waiting for a draw.
 
-    std::vector<CollectedDraw> open_draws_;    // The open scope's drawing calls (copied to the arena at endPass).
+    std::vector<CollectedDraw> open_draws_;    // The open scope's draw packets (copied to the arena at endPass).
     std::vector<CollectedPass> passes_;        // The frame's pass scopes (copied to the arena at endFrame).
     CollectedFrame             description_{}; // The published description (arena-backed spans).
 };

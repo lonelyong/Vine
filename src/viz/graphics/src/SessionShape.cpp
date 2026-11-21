@@ -11,7 +11,7 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 
 #include "EngineDiagnostics.hpp"
 #include "FrameResources.hpp"
@@ -336,8 +336,8 @@ intrusive_ptr<RenderPass> SessionShape::makePassNode(const PassDesc& desc)
     // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
     // the engine holds it, it is a hand-built pass (which is also what keeps the escape hatch the same thing).
     intrusive_ptr<RenderPass> node;
-    if (desc.kind == PassKind::Screen) {
-        node = make_intrusive<ScreenPass>();
+    if (desc.kind == PassKind::Fullscreen) {
+        node = make_intrusive<FullscreenPass>();
     }
     else {
         node = make_intrusive<RenderPass>();

@@ -183,7 +183,7 @@ std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& sha
 PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
     PipelineKey key;
-    key.kind                  = vn::graphics::DrawKind::Screen;
+    key.kind                  = vn::graphics::DrawKind::Fullscreen;
     key.program               = vn::test::programRef(1, revision);
     key.compatibility.samples = 1U;
     key.sampled_color_count   = sampled_colors;
@@ -425,7 +425,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // sampler2D`, no set qualifier). A layer that mixed the two would compile a pipeline the draw cannot bind.
     auto layer = screenLayer(screenShaders());
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
-    EXPECT_EQ(layer->kind(), vn::graphics::DrawKind::Screen);
+    EXPECT_EQ(layer->kind(), vn::graphics::DrawKind::Fullscreen);
 
     // A CUBE declaration is refused HERE, unlike a content layer's: the full-screen ABI binds the SOURCE's
     // attachments and depth - 2D views, one per binding - so a text declaring a cube asks for an image this
@@ -532,7 +532,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
             // pending-state rule refuses (VUID-vkUpdateDescriptorSets-None-03047). The set names the buffer,
             // the bind carries the offset.
             EXPECT_EQ(entry.descriptorType, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-                << "a full-screen call's block travels as a dynamic offset, not as a baked descriptor offset";
+                << "a full-screen packet's block travels as a dynamic offset, not as a baked descriptor offset";
         }
     }
 

@@ -159,7 +159,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
  *     destination rectangle with (0, 0) at the TOP-LEFT of the source image AS THE READ-BACK API
  *     RETURNS IT — a copy samples it directly, with no Y flip;
  *   - it declares its own outputs (`layout(location = 0) out vec4 vn_out_color;`);
- *   - source textures arrive at binding 0..N-1 (see ScreenPass::setProgram);
+ *   - source textures arrive at binding 0..N-1 (see FullscreenPass::setProgram);
  *   - there is no vertex buffer and no vertex-side push constant: the triangle is three vertices
  *     generated from gl_VertexIndex.
  * - The engine owns this text (a full-screen triangle is what every fullscreen picture in the engine
@@ -191,9 +191,9 @@ enum class ScreenCopyChannels
  * @brief The built-in plain screen copy: one colour attachment of the source, sampled 1:1.
  *
  * @details
- * - The text behind what a bare ScreenPass used to get implicitly — now a program the host NAMES, so a
+ * - The text behind what a bare FullscreenPass used to get implicitly — now a program the host NAMES, so a
  *   copy that wants different filtering, a colour transform or a tonemap is a different program rather
- *   than a backend setting (see ScreenPass::setProgram).
+ *   than a backend setting (see FullscreenPass::setProgram).
  * - The BINDING is the attachment: @p attachment is written into the fragment stage as its sampler's
  *   binding, which is how the fullscreen program ABI says "the source's attachment N". Use 0 for the
  *   common copy of a target's first colour attachment.

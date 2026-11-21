@@ -5,7 +5,7 @@
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**
- * @brief Packing the shadow block a drawing call shades with (`VineShadowBlock`) from the plan's own facts.
+ * @brief Packing the shadow block a draw packet shades with (`VineShadowBlock`) from the plan's own facts.
  *
  * THE MAP ARRIVES AS A SAMPLED INPUT; THIS BLOCK IS WHAT MAKES IT A SHADOW. A pass samples a shadow by declaring the
  * target the map was rendered into (the frame value's resolved `inputs`), which the sampling path already binds. What
@@ -33,10 +33,10 @@
 VN_BACKEND_VSG_NS_BEGIN
 
 /**
- * @brief Packs the shadow block one drawing call shades with.
+ * @brief Packs the shadow block one draw packet shades with.
  *
  * @param shadow The map the PLAN resolved for the pass (whose it is, and how to read it).
- * @param draw   The drawing call: its camera (the view space the matrix maps from) and its lights (the caster).
+ * @param draw   The draw packet: its camera (the view space the matrix maps from) and its lights (the caster).
  * @param out    Receives the block; every field is written, and the switch is off when the map cannot be used.
  * @return true when the shading is on (`params.x == 1`), false when the call shades unshadowed.
  */

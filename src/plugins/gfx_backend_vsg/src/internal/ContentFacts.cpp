@@ -280,7 +280,7 @@ FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const vn::graphi
     if (revision_known) {
         // The program is here at the revision the plan names, but not AS THIS DRAWABLE'S ENTRY: what is
         // missing is that text of that revision (see api/ProgramVariant - the fixes are "build that variant"),
-        // or the entry of the other kind (a full-screen call answered with the content entry would compile the
+        // or the entry of the other kind (a full-screen packet answered with the content entry would compile the
         // wrong ABI - see ProgramFacts::kind).
         return { nullptr, FactMiss::Unknown };
     }

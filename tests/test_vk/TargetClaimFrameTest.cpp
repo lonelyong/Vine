@@ -40,7 +40,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
@@ -99,20 +99,20 @@ constexpr int kTargetSize = 32;
 }
 
 /// @brief One scene draw with one command (it names a geometry and no program: the pass never gets to draw it).
-[[nodiscard]] DrawCall makeDraw()
+[[nodiscard]] DrawPacket makeDraw()
 {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(DrawItem(makeTriangle(), nullptr, vn::math::Mat4d{}));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -124,7 +124,7 @@ constexpr int kTargetSize = 32;
     pass.target       = target;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     frame.passes.push_back(std::move(entry));

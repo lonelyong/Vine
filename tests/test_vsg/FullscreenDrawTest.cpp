@@ -1,5 +1,5 @@
 /**
- * @brief The full-screen drawing call: the engine's two descriptor ABIs meet in one place, and a pixel says
+ * @brief The full-screen draw packet: the engine's two descriptor ABIs meet in one place, and a pixel says
  * which one was bound.
  *
  * The cases run the CONTENT STACK (no plan, no session): an off-screen target holds a picture, and a
@@ -22,7 +22,7 @@
  * extra attachments are cleared to TRANSPARENT BLACK (see core/ClearPlan), and this engine blends with
  * SRC_ALPHA / ONE_MINUS_SRC_ALPHA, so a copy of a transparent attachment leaves the destination untouched -
  * indistinguishable from "nothing was drawn". A source that means something has to be shaded, which is also
- * what a real screen pass reads.
+ * what a real full-screen pass reads.
  *
  * A content draw and a full-screen draw differ in exactly this: geometry and blocks versus three generated
  * vertices and one sampled set. The counters the fixture checks (`screen_draws`, `input_binds`) exist to tell
@@ -251,8 +251,8 @@ class Fixture {
             return {};
         }
 
-        ContentDraw::ScreenDraw full_screen;
-        full_screen.key.kind                  = DrawKind::Screen;
+        ContentDraw::FullscreenDraw full_screen;
+        full_screen.key.kind                  = DrawKind::Fullscreen;
         full_screen.key.program               = program_ref;
         full_screen.key.compatibility.samples = 1U;
         full_screen.key.sampled_color_count   = source->colorAttachmentCount();
@@ -267,7 +267,7 @@ class Fixture {
         if (full_screen.pipeline == nullptr) {
             return {};
         }
-        return recorder->recordScreen(*registry, full_screen);
+        return recorder->recordFullscreen(*registry, full_screen);
     }
 
     /// @brief Records the CONTENT draw that paints the MRT source (attachment 0 red, attachment 1 green).
@@ -418,7 +418,7 @@ int Fixture::material_identity = 0;
 
 } // namespace
 
-TEST(ScreenDrawTest, TheShippedScreenCopyProgramLandsInsideTheViewportAndNowhereElse)
+TEST(FullscreenDrawTest, TheShippedScreenCopyProgramLandsInsideTheViewportAndNowhereElse)
 {
     Fixture fixture;
     if (!fixture.build(1U, 0)) {
@@ -451,7 +451,7 @@ TEST(ScreenDrawTest, TheShippedScreenCopyProgramLandsInsideTheViewportAndNowhere
     EXPECT_TRUE(isDestinationBlue(right_of_rectangle)) << "a full-screen triangle that ignored the rectangle would paint here too";
 }
 
-TEST(ScreenDrawTest, TheBindingNamesTheAttachmentAndNotTheProgramsFirstOne)
+TEST(FullscreenDrawTest, TheBindingNamesTheAttachmentAndNotTheProgramsFirstOne)
 {
     // The source is painted by a content pass: attachment 0 red, attachment 1 green (see the file note for why
     // the clear colour cannot do this). The program is compiled for binding 1, so the copy must produce the

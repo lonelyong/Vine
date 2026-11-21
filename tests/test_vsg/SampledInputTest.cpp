@@ -295,7 +295,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     command.geometry = geometry;
     command.material = material;
     command.program  = program;
-    // Two drawing calls: the sampled-input set is the PASS', so the second one must not re-issue its bind.
+    // Two draw packets: the sampled-input set is the PASS', so the second one must not re-issue its bind.
     const std::vector<DrawItem> commands{ command, command };
 
     std::vector<RenderTarget*> inputs{ source_handle.get() };
@@ -347,7 +347,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     ASSERT_TRUE(content.record(consumer, facts, destination->shape().compatibility(), images, view_block, content_node));
     ASSERT_TRUE(messages.empty()) << "nothing may be refused: the images match the plan";
     EXPECT_EQ(draws.draws(), 2U);
-    EXPECT_EQ(draws.input_binds(), 1U) << "the pass' inputs are a property of the PASS: one set, bound once for both drawing calls";
+    EXPECT_EQ(draws.input_binds(), 1U) << "the pass' inputs are a property of the PASS: one set, bound once for both draw packets";
 
     // 5. The executor places it, and the pixels say whether the shader read the input.
     VsgExecutor executor(diagnostics);
@@ -395,7 +395,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 
 TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
 {
-    // The sampled-input line's OTHER consumer: a full-screen drawing call. Same pass, same declared input, same
+    // The sampled-input line's OTHER consumer: a full-screen draw packet. Same pass, same declared input, same
     // images - and the same "one set per pass" rule - but the sampler lives at set 0 (the full-screen ABI) and
     // the draw is three generated vertices inside the announced picture-in-picture rectangle. The program is the
     // SDK'S screen copy, so a set bound at the wrong index, an input that never arrived or a rectangle that was
@@ -418,7 +418,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     destination_layout.width                     = kSize;
     destination_layout.height                    = kSize;
     destination_layout.color_formats             = { RenderTarget::ColorFormat::RGBA8 };
-    // A depth attachment, because a window has one: it is what makes the full-screen call's depth policy
+    // A depth attachment, because a window has one: it is what makes the full-screen packet's depth policy
     // visible. The engine's canonical triangle sits at clip z = 0.0, exactly where this pass' depth is cleared
     // to (the reverse-Z far plane), so a draw that inherited the pass' TestAndWrite would be rejected whole and
     // the rectangle would keep the destination's clear colour.
@@ -454,7 +454,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     facts.programs = programs;
 
     // The frame: pass 1 clears the SOURCE (its clear IS the picture), pass 2 copies it into the DESTINATION
-    // through a full-screen call inside a picture-in-picture rectangle.
+    // through a full-screen packet inside a picture-in-picture rectangle.
     FrameArena              arena{ 64 * 1024 };
     Diagnostics             diagnostics;
     std::vector<vn::String> messages;
@@ -523,14 +523,14 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first: the ENGINE scheduled it and handed the order over";
     const vn::backend_vsg::core::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.draws.size(), 1U);
-    ASSERT_EQ(consumer.draws[0].kind, DrawKind::Screen);
+    ASSERT_EQ(consumer.draws[0].kind, DrawKind::Fullscreen);
     EXPECT_EQ(consumer.draws[0].viewport.width, kPictureInPicture.width) << "the rectangle is the call's own";
 
     // The content layer records the pass: the entry is the SCREEN half (kind), so the set it binds is the
     // full-screen ABI's (set 0) over the same images the content path would have bound at set 1.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, vn::test::programRef(*screen_program), {}, screen_pipelines.get(), &screen_draws }
+        ContentPass::Scope::Entry{ DrawKind::Fullscreen, vn::test::programRef(*screen_program), {}, screen_pipelines.get(), &screen_draws }
     };
     ContentPass::Scope scope;
     scope.entries  = halves;

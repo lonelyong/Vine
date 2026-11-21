@@ -25,7 +25,7 @@ VN_GRAPHICS_NS_BEGIN
  *   the shape header stays dependency-free (see that header's note; the same split as `LightAbi.hpp`).
  *
  * @param model      Object -> world matrix, column-major expected (see above).
- * @param opacity    The drawable's EFFECTIVE opacity (`DrawCall::opacity` after resolution).
+ * @param opacity    The drawable's EFFECTIVE opacity (`DrawPacket::opacity` after resolution).
  * @param point_size Point size in framebuffer pixels (`ResolvedRenderState::pointSize`; 1.0 means nobody authored one).
  * @param out        Receives the block; every field is written.
  */

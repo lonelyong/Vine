@@ -125,14 +125,14 @@ Vec3d OrbitCameraManipulator::orbitCenter() const
     return center_;
 }
 
-double OrbitCameraManipulator::orbitRadius() const
+double OrbitCameraManipulator::orbitDistance() const
 {
     return distance_;
 }
 
-void OrbitCameraManipulator::setOrbitRadius(double radius)
+void OrbitCameraManipulator::setOrbitDistance(double distance)
 {
-    distance_ = std::max(radius, kTiny);
+    distance_ = std::max(distance, kTiny);
     apply();
 }
 
@@ -166,7 +166,7 @@ void OrbitCameraManipulator::pan(double screenDx, double screenDy)
     apply();
 }
 
-void OrbitCameraManipulator::zoom(double factor)
+void OrbitCameraManipulator::dolly(double factor)
 {
     if (camera_ == nullptr || factor <= 0.0) {
         return;
@@ -180,7 +180,7 @@ void OrbitCameraManipulator::zoom(double factor)
     // Keep the anchor (a picked world point under the cursor) fixed on screen
     // while zooming: slide the orbit centre laterally so the anchor's screen
     // offset is unchanged after the distance change.
-    if (zoom_to_cursor_ && anchor_on_ray_) {
+    if (dolly_to_cursor_ && anchor_on_ray_) {
         const Vec3d eye     = camera_->eye();
         const Vec3d forward = (center_ - eye).normalized();
         if (forward.length() >= kTiny) {
@@ -306,24 +306,24 @@ void OrbitCameraManipulator::home()
     apply();
 }
 
-void OrbitCameraManipulator::setZoomToCursor(bool enabled)
+void OrbitCameraManipulator::setDollyToCursor(bool enabled)
 {
-    zoom_to_cursor_ = enabled;
+    dolly_to_cursor_ = enabled;
 }
 
-bool OrbitCameraManipulator::zoomToCursor() const
+bool OrbitCameraManipulator::dollyToCursor() const
 {
-    return zoom_to_cursor_;
+    return dolly_to_cursor_;
 }
 
-void OrbitCameraManipulator::setMinDistance(double distance)
+void OrbitCameraManipulator::setMinOrbitDistance(double distance)
 {
-    min_distance_ = distance;
+    min_orbit_distance_ = distance;
 }
 
-double OrbitCameraManipulator::minDistance() const
+double OrbitCameraManipulator::minOrbitDistance() const
 {
-    return min_distance_;
+    return min_orbit_distance_;
 }
 
 void OrbitCameraManipulator::setScene(raw_ptr<Scene> scene)
@@ -726,7 +726,7 @@ void OrbitCameraManipulator::clampEyeOutsideBounds()
 
 double OrbitCameraManipulator::clampDistance(double distance) const
 {
-    double low = min_distance_;
+    double low = min_orbit_distance_;
     if (low <= 0.0) {
         low = camera_ != nullptr ? std::max(camera_->nearPlane() * 1.2, 1e-4) : 1e-3;
     }

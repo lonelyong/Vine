@@ -13,7 +13,7 @@
 #include "CameraSnapshot.hpp"
 #include "FrameContext.hpp"
 #include "InputRouter.hpp"
-#include "LayoutParticipant.hpp"
+#include "ResizeParticipant.hpp"
 #include "PassChain.hpp"
 #include "ReportOnce.hpp"
 
@@ -174,7 +174,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   picture - see RenderArea), so there is no second rectangle to state.
      * - What the one size becomes, in order: the camera aspect and the manipulator's resize, the adopted
      *   pipeline's own resize (its off-screen targets and HUD boxes - a view drawing through a built pipeline
-     *   needs no layout step at all), then every callback registered with addSurfaceLayout().
+     *   needs no resize step at all), then every callback registered with addSurfaceResizeHandler().
      * - A view that PRESENTS a surface forwards this to RenderArea::resize (the size of the thing the picture
      *   ends up in is the SURFACE's fact - recorded there and fanned out), so this entry is the one for a view
      *   that presents nothing; a view that presents later is sized at once from what the surface remembers.
@@ -187,7 +187,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void resize(int width, int height, double pixel_ratio = 0.0);
 
-    /** @brief Registers a creator-managed surface-layout step.
+    /** @brief Registers a creator-managed surface-resize step.
      *
      * @details
      * - The callback receives the new surface size on every surface change and updates whatever its creator owns
@@ -203,11 +203,11 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   PassChain::resize, which takes the ratio for exactly that reason; AxisGizmo / FpsOverlay lay out
      *   logically and apply the ratio themselves).
      *
-     * @param layout Callback taking the new surface width and height the host reported.
+     * @param handler Callback taking the new surface width and height the host reported.
      */
-    void addSurfaceLayout(std::function<void(int width, int height)> layout);
+    void addSurfaceResizeHandler(std::function<void(int width, int height)> handler);
 
-    /** @brief Registers a creator-managed surface-layout step that also wants the device pixel ratio.
+    /** @brief Registers a creator-managed surface-resize step that also wants the device pixel ratio.
      *
      * @details
      * - Same as the two-argument overload plus the ratio: the consumer that needs it lays out in DEVICE pixels
@@ -215,12 +215,12 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   is what keeps a layer-1 host from reaching back into appfw for RenderControl::devicePixelRatio().
      * - The size is again the AREA's size (one area draws one picture), in the host's logical space.
      *
-     * @param layout Callback taking the view's width, height and the host's pixel ratio.
+     * @param handler Callback taking the view's width, height and the host's pixel ratio.
      */
-    void addSurfaceLayout(std::function<void(int width, int height, double pixel_ratio)> layout);
+    void addSurfaceResizeHandler(std::function<void(int width, int height, double pixel_ratio)> handler);
 
-    /** @brief Removes all registered surface-layout steps. */
-    void clearSurfaceLayouts();
+    /** @brief Removes all registered surface-resize steps. */
+    void clearSurfaceResizeHandlers();
 
     /** @brief The surface width (logical px) this view derives its picture from.
      *
@@ -389,8 +389,8 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // The size this view lays its picture out with while it presents NO surface (the host's announcement). A view
     // that presents one reads the SURFACE's numbers instead (see areaWidth / RenderArea::resize): the size of
     // the thing the picture ends up in has one owner, and it is not the view. The steps registered against it live
-    // there too (see LayoutParticipant).
-    LayoutParticipant layout_;
+    // there too (see ResizeParticipant).
+    ResizeParticipant resize_;
 
     /// Pushes `presented_camera_` into the manipulator this view drives, if it has one (never creates one).
     void applyPresentedCamera();

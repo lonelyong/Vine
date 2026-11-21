@@ -10,7 +10,7 @@
 #include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 
 #include "EngineDiagnostics.hpp"
 #include "EngineFrame.hpp"
@@ -223,7 +223,7 @@ bool RenderEngine::initialize()
     // place that resizes a swapchain instead of two, and nothing to keep in step when the target object changes.
     // NO PRE-FRAME WARM-UP. It used to execute every enabled, non-clearing pass once before the first frame, so
     // a backend could see its whole pass set before presenting - which mattered when a frame arrived as a
-    // sequence of calls and content was built lazily inside a drawing call. A frame now arrives as ONE value
+    // sequence of calls and content was built lazily inside a draw packet. A frame now arrives as ONE value
     // (RenderFrameExecutor::executeFrame), so a backend has the whole pass set before it does anything, and the
     // engine's own path to the backend is the same one the first frame takes (see frame()). What is left to
     // pre-build is the backend's own business: the main content is compiled during device initialize().
@@ -302,7 +302,7 @@ PrepareReport RenderEngine::prepare()
     // keeps "prepared" a key rather than a frozen picture.
     detail::EngineFrame& frame = pump_->currentFrame();
     buildContentHalf(frame);
-    // THE EXPANSION IS PART OF THE ANSWER. A compiled half is keyed per DRAWING CALL (its vertex layout, variant and
+    // THE EXPANSION IS PART OF THE ANSWER. A compiled half is keyed per DRAW PACKET (its vertex layout, variant and
     // counts are the command's), so a frame value whose draws carry no collected commands would describe nothing to
     // build - the answer would be trivially zero and the first real frame would still compile. This is the same
     // value step the engine half runs (see FrameExpand): no device call and no submission.
@@ -310,7 +310,7 @@ PrepareReport RenderEngine::prepare()
     return session_->prepareFrame(frame.description, frame.target);
 }
 
-FrameOutcome RenderEngine::frame()
+FrameCallOutcome RenderEngine::frame()
 {
     // A FRAME IS TWO HALVES (design 2.12): one built where the content is, one answered where the device is. Without a
     // frame thread they run one after the other, here; with one, this call builds and hands over, and the picture
@@ -318,16 +318,16 @@ FrameOutcome RenderEngine::frame()
 
     // The two reasons a frame cannot be driven are different answers, and both used to look like a frame that ran
     // and drew nothing: no device to hand anything to, or a device the engine is not attached to. The caller gets
-    // the reason as a value (see FrameOutcome); "ran but issued no draw" stays a FrameReport fact.
+    // the reason as a value (see FrameCallOutcome); "ran but issued no draw" stays a FrameReport fact.
     if (device_ == nullptr) {
-        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NoDevice };
+        return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::NoDevice };
     }
     if (!initialized_) {
-        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
+        return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
     }
     if (session_ == nullptr) {
         // A device that handed out no driver has nothing to run this frame on (see setDevice).
-        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
+        return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
     // The frame will really run, so this is where the frame clock takes its one reading (see frameContext): a
@@ -347,11 +347,11 @@ FrameOutcome RenderEngine::frame()
 
     if (!pump_->threaded()) {
         answerEngineHalf(next);
-        return FrameOutcome{ FrameOutcome::Status::Ran };
+        return FrameCallOutcome{ FrameCallOutcome::Status::Ran };
     }
     detail::EngineFrame* const submitted = &next;
     pump_->submit([this, submitted]() { answerEngineHalf(*submitted); });
-    return FrameOutcome{ FrameOutcome::Status::Submitted };
+    return FrameCallOutcome{ FrameCallOutcome::Status::Submitted };
 }
 
 void RenderEngine::setFrameThreading(FrameThreading mode)
@@ -626,9 +626,16 @@ void RenderEngine::publishFrameAnswer(detail::EngineFrame& frame)
     result.query.snapshot = frame.presented_snapshot;
     result.query.view     = frame.presented_view;
     for (const FrameDescription::Pass& pass : frame.description.passes) {
-        ++result.passes;
-        if (pass.draw.has_value()) {
-            result.draws += static_cast<std::uint32_t>(pass.draw->draws.size());
+        ++result.passes; // every pass the compiled value CARRIED (a clear-only or idle pass is still one)
+        if (!pass.draw.has_value()) {
+            continue;
+        }
+        for (const DrawPacket& draw : pass.draw->packets) {
+            if (!packetDraws(draw)) {
+                continue; // a packet with no view / no program / no commands issues nothing
+            }
+            ++result.draw_packets;
+            result.draws += drawItemsOf(draw);
         }
     }
     const std::size_t reported = diagnosticCount();

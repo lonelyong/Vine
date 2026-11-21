@@ -40,7 +40,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   target and six matrices (backlog S6, not triggered). The depth RESOLVE needs Vulkan 1.2; a device without it
  *   refuses a multisampled target whose depth a shader samples, once, instead of drawing a depth nobody can read.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the frame's passes in the order it carries and records the draws of each
- *   `DrawCall` - an off-screen pass into its target, and a pass naming no target into the acquired image of the
+ *   `DrawPacket` - an off-full-screen pass into its target, and a pass naming no target into the acquired image of the
  *   window the frame presents through. A draw naming no program is reported and left out. The readbacks answer the
  *   targets this device built.
  * - VULKAN LIVENESS. Every handle lives in the implementation object; `shutdown()` returns the device to the state of
@@ -307,7 +307,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
 
     /**
      * @brief Runs the frame's passes and presents the window's picture when a window is named: each pass clears or
-     *        loads its target, then records the drawing calls of every `DrawCall` it carries.
+     *        loads its target, then records the draw packets of every `DrawPacket` it carries.
      *
      * @details
      * - WHICH PASSES RUN. One that names an off-screen target is recorded as one render pass (colour attachments
@@ -316,7 +316,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   A frame that names no presenter, or a pass that names a target this device cannot build, is reported once and
      *   left out.
      * - WHAT A PASS SAMPLES. A pass that DECLARES an input which is a shadow map (a target stating whose shadow it is,
-     *   with a published view-projection) gets that map bound and its `VineShadowBlock` packed per drawing call: a map
+     *   with a published view-projection) gets that map bound and its `VineShadowBlock` packed per draw packet: a map
      *   whose light this call does not announce, or whose light stopped casting, leaves the switch off and shades
      *   nothing. The map's depth image is moved to `SHADER_READ_ONLY_OPTIMAL` before the pass begins (a barrier inside
      *   a render pass is not legal), and back before a later pass writes that depth.
@@ -417,7 +417,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
         std::uint64_t sets_live{ 0 };   ///< Descriptor sets cached NOW.
         /// CACHE LOCK ACQUISITIONS, cumulative (see ContentCaches::lockAcquisitions). THE WITNESS FOR "THE RECORDING
         /// PATH TAKES NO CACHE LOCK": a frame resolves its content once at its head, so this number grows with FRAMES
-        /// and with host verbs, never with the drawing calls inside a frame.
+        /// and with host verbs, never with the draw packets inside a frame.
         std::uint64_t cache_lock_acquisitions{ 0 };
         /// How many of those had to WAIT for another holder (see ContentCaches::lockWaits): zero in a steady
         /// single-engine loop, and the number a regression in the three-phase rule moves first.

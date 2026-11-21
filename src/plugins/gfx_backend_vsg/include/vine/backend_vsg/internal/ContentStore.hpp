@@ -177,7 +177,7 @@ class ContentStore {
      *
      * The walk is what decides the work: every content command names a geometry, a material and a program
      * (the compiler resolves "no program of its own" into the frame's default before the plan exists), and
-     * every full-screen call names a program. For each identity the store builds the entry the object is at
+     * every full-screen packet names a program. For each identity the store builds the entry the object is at
      * NOW, unless it already has it - a steady frame builds nothing.
      *
      * A command's VARIANT (see api/ProgramVariant) is computed from the facts of the same walk (the material

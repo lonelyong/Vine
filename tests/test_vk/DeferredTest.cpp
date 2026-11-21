@@ -61,7 +61,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::ImageSource;
@@ -162,8 +162,8 @@ struct Scene {
     return scene;
 }
 
-/// @brief One scene drawing call: the triangle through the G-buffer program, shaded with the scene's material.
-[[nodiscard]] DrawCall gbufferDraw(const Scene& scene)
+/// @brief One scene draw packet: the triangle through the G-buffer program, shaded with the scene's material.
+[[nodiscard]] DrawPacket gbufferDraw(const Scene& scene)
 {
     DrawItem command(scene.geometry, nullptr, vn::math::Mat4d{});
     command.program              = scene.gbuffer_program;
@@ -174,8 +174,8 @@ struct Scene {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
@@ -198,7 +198,7 @@ struct Scene {
     pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
     pass.clear->clear_depth  = true;
     pass.state.depth   = DepthMode::TestAndWrite;
-    pass.draws.push_back(gbufferDraw(scene));
+    pass.packets.push_back(gbufferDraw(scene));
 
     entry.draw = std::move(pass);
     return entry;
@@ -237,14 +237,14 @@ struct Scene {
     // OVER what the target holds, which is the same policy the SDK's own lighting pass states by having no depth.
     pass.state.depth = DepthMode::Disabled;
 
-    DrawCall draw;
-    draw.kind                 = DrawCall::Kind::Screen;
+    DrawPacket draw;
+    draw.kind                 = DrawPacket::Kind::Fullscreen;
     draw.view.camera               = identityCamera();
     draw.source               = scene.gbuffer.get();
     draw.program              = scene.light_program;
     draw.program_description  = scene.light_program->description();
     draw.light_values         = vn::graphics::LightSet::create({ ambientLight() });
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
 
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
@@ -267,13 +267,13 @@ struct Scene {
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.state.depth  = DepthMode::Disabled;
 
-    DrawCall draw;
-    draw.kind                = DrawCall::Kind::Screen;
+    DrawPacket draw;
+    draw.kind                = DrawPacket::Kind::Fullscreen;
     draw.view.camera              = identityCamera();
     draw.source              = source;
     draw.program             = program;
     draw.program_description = program->description();
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
 
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
@@ -303,7 +303,7 @@ TEST(VkDeferredTest, TheDeferredFrameLightsTheGbuffer)
     ASSERT_EQ(scene.gbuffer->colorCount(), 4) << "the canonical G-buffer is four colour attachments (see defaultGbufferTarget)";
 
     // WHAT THE DRIVER SAYS DURING THE FRAME: the MRT pass, the four RGBA16F attachments and the source transition the
-    // screen draw needs are legal-or-not facts rather than picture facts, and this is the only instrument for them.
+    // full-screen draw needs are legal-or-not facts rather than picture facts, and this is the only instrument for them.
     std::vector<vn::graphics::RenderDiagnostic> driver_messages;
     backend->setDiagnosticSink([&driver_messages](const vn::graphics::RenderDiagnostic& diagnostic) {
         driver_messages.push_back(diagnostic);
@@ -330,20 +330,20 @@ TEST(VkDeferredTest, TheDeferredFrameLightsTheGbuffer)
                 clear[3]);
 
     // THE PIXEL INSIDE THE TRIANGLE IS THE LIT SURFACE: the G-buffer stored the material and the lighting pass
-    // multiplied it by the ambient term, so a zero here means the screen draw never read the G-buffer.
+    // multiplied it by the ambient term, so a zero here means the full-screen draw never read the G-buffer.
     EXPECT_GT(centre[0] + centre[1] + centre[2], 0)
         << "the centre of the lit composite is black: the deferred lighting pass did not shade the G-buffer";
     EXPECT_NE(centre, clear) << "the lit centre is the clear colour, so the picture is indistinguishable from an empty target";
     EXPECT_EQ(centre[3], 255) << "the lighting pass writes an opaque composite";
 
-    // THE FRAME'S SHAPE: two pass scopes, and one drawing call each (the G-buffer pass and the lighting pass).
+    // THE FRAME'S SHAPE: two pass scopes, and one draw packet each (the G-buffer pass and the lighting pass).
     ASSERT_TRUE(backend->frameReport().counters.has_value());
     EXPECT_EQ(backend->frameReport().counters->passes, 2U);
-    EXPECT_EQ(backend->frameReport().counters->draws, 2U);
+    EXPECT_EQ(backend->frameReport().counters->draw_packets, 2U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U)
         << "the SDK's G-buffer and deferred lighting programs have to compile on this backend";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
-        << "a drawing call of the deferred chain was skipped";
+        << "a draw packet of the deferred chain was skipped";
     for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
         EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
             << "the driver rejected an object of the deferred frame: "

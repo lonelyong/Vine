@@ -28,7 +28,7 @@ class Scene;
  *   shows it declares one (see PassDesc): `content` = content(), `camera` = camera(), `viewport` =
  *   boxViewport(), and registers this object with the chain as the overlay whose update() repaints it
  *   (see FrameUpdate).
- * - update() feeds the frame delta the ENGINE measured (see FrameContext) to the @ref Sampler, which counts FRAMES
+ * - update() feeds the frame delta the ENGINE measured (see FrameContext) to the @ref RateWindow, which counts FRAMES
  *   over a window of wall time (default 0.5 s) and publishes a figure about twice a second; a new
  *   figure rewrites the row of bars. No source camera is needed: the digits stay pinned to their
  *   corner while the scene camera orbits.
@@ -138,7 +138,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
      *   changes). At the default 0.5 s a human gets about two figures a second, and the caller only
      *   repaints when the ROUNDED value changes, so a steady frame rate costs no data work at all.
      */
-    struct VN_GRAPHICS_API Sampler {
+    struct VN_GRAPHICS_API RateWindow {
         /** @brief Seconds one published figure averages over: the sampling interval (must be > 0).
          *
          * @details
@@ -148,7 +148,16 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
          */
         double window_seconds{ 0.5 };
 
-        /** @brief Adds one frame's wall time; true when a window closed and a figure is ready. */
+        /**
+         * @brief Adds one frame's wall time.
+         *
+         * @details
+         * - The figure is published when a whole window has elapsed; a clock that did not move is not a frame and
+         *   feeds nothing.
+         *
+         * @param dt_seconds Seconds since the previous frame (must be > 0 to count).
+         * @return true when this delta closed a window, so a new figure is ready (see fps()).
+         */
         bool addFrame(double dt_seconds) noexcept;
 
         /** @brief Gets the figure published last, in frames per second (0 before the first window closes). */
@@ -160,17 +169,17 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
         double        published_{ 0.0 };
     };
 
-    /** @brief Gets the readout's measurement policy (the sampling interval).
+    /** @brief Gets the readout's averaging window (the sampling interval).
      *
      * @details
      * - Exposed because that number IS the readout's behaviour: a host can make it steadier (a longer
      *   window) or quicker to follow a change (a shorter one), and a test can drive the sampling with no
      *   scene at all.
      */
-    [[nodiscard]] Sampler& sampler() noexcept;
+    [[nodiscard]] RateWindow& rateWindow() noexcept;
 
-    /** @brief Gets the readout's measurement policy (see the non-const overload). */
-    [[nodiscard]] const Sampler& sampler() const noexcept;
+    /** @brief Gets the readout's averaging window (see the non-const overload). */
+    [[nodiscard]] const RateWindow& rateWindow() const noexcept;
 
     /** @brief Re-anchors the overlay viewport to the bottom-right corner for a new surface size.
      *
@@ -202,7 +211,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
      *
      * @details
      * - Feeds @p context's `elapsed_seconds` (the engine's interval between the two most recent frames) to the
-     *   sampler, then writes the figures that changed. It reads no clock of its own: one clock in the system is what
+     *   rate window, then writes the figures that changed. It reads no clock of its own: one clock in the system is what
      *   makes this readout agree with anything else that reports a frame rate (BC-25). It touches no backend, which
      *   is why it is a FrameUpdate the chain (or a host driving the engine) calls before each frame.
      *
@@ -215,7 +224,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
     /** @brief Rebuilds the seven-segment content scene. */
     void rebuild();
 
-    /** @brief Feeds one frame delta to the sampler and repaints the row when a window closes.
+    /** @brief Feeds one frame delta to the rate window and repaints the row when a window closes.
      *
      * @details
      * - Writes the shown digits into the row of bars (see writePattern) and does nothing while the value
@@ -260,9 +269,9 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
     int    area_x_        = 0;
     int    area_y_        = 0;
 
-    // The sampler and the value the row currently shows. The interval it is fed is the engine's (see FrameContext):
+    // The rate window and the value the row currently shows. The interval it is fed is the engine's (see FrameContext):
     // this object keeps no clock of its own, so it agrees with every other frame-rate report.
-    Sampler sampler_{};
+    RateWindow rate_window_{};
     int                                   shown_value_ = -1;
 };
 

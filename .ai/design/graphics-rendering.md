@@ -50,8 +50,8 @@ baked value — the half the commands wrote is silently dropped, and the picture
 enables such as `depthBiasEnable`, so an enable must be fixed together with the list. Known violation: `../bugs/vsg-depth-bias-not-declared-dynamic.md`.
 
 2.9 **Capabilities are two questions, readback has one "which image"**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
-the old bit-set spelling (`Capabilities::Feature` / `supports` / `bit`) is kept as inline forwarders, the limit fields become `Capabilities::limits.*`
-(source-level, BC-11). Both readback verbs `readColorBuffer` / `readDepthBuffer` take one `ImageRef` — the same vocabulary as a pass input's "which image";
+the limit fields are `Capabilities::limits.*` (source-level, BC-11), and the feature questions are `Features::supports` / `Features::bit` with `Features::Feature` as the enum.
+The transitive bit-set spelling on `Capabilities` was deleted once its migration was done (BC-32): one question has one spelling. Both readback verbs `readColorBuffer` / `readDepthBuffer` take one `ImageRef` — the same vocabulary as a pass input's "which image";
 the old `(target, attachment)` spelling is kept for one release and forwards (BC-16),
 and so is the old answer shape (`bool` + `ReadbackResult*`): the answer is now the return value,
 `ReadbackOutcome` (its `result` is the four-state `ReadbackResult`), and the two-answer shims are
@@ -66,12 +66,12 @@ every search, every guide table and every reader's head, which is the cost this 
 | Before | Now | What the old name got wrong | Note |
 |---|---|---|---|
 | `RenderCommand` | `DrawItem` | named the engine's artifact instead of the scene's one drawable; the industry order is item, then call | `BC-17` |
-| `DrawDescription` | `DrawCall` | "description" hid that it is *one drawing call* (a pass may issue several) | `BC-18` |
+| `DrawDescription` | `DrawCall` (then `DrawPacket`, see the 2026-11-20 table) | "description" hid that it is *one drawing call* (a pass may issue several) | `BC-18` |
 | `MaterialBase` | `MaterialValues` | a base-class name on the interface that is the **read face of a material's values** (`Material` is the asset, `MaterialInstance` the instance) | `BC-19` |
-| `EngineNotReady` | `EngineNotReadyReason` | the type is a reason (`FrameOutcome::reason`); the name read as a state | `BC-20` |
+| `EngineNotReady` | `EngineNotReadyReason` | the type is a reason (`FrameCallOutcome::reason`); the name read as a state | `BC-20` |
 | `createSession` / `releaseSession` | `createFrameDriver` / `releaseFrameDriver` | the noun became *frame driver* in S2 and the verbs stayed behind | `BC-21` |
 
-- What it is: names only. `DrawItem` is still the per-frame value and `DrawCall` still the per-pass request (`graphics-frame-pipeline.md`
+- What it is: names only. `DrawItem` is still the per-frame value and `DrawPacket` still the per-pass request (`graphics-frame-pipeline.md`
   2.2 / 2.8); `MaterialValues` is still what a description publishes; `EngineNotReadyReason` still shares its enumerators with
   `prepare()`; and `createFrameDriver` still hands out a `RenderFrameExecutor` (that type's name did not change).
 - Why now: the third round registered all five (`C-A3-02` / `C-A3-03` / `C-A3-08`, `A3-17`) and the fourth round corrected the
@@ -81,6 +81,35 @@ every search, every guide table and every reader's head, which is the cost this 
   whose in-tree callers still existed; a migrated *word* has no such callers left after the sweep, and the alias is exactly the
   double spelling the guide's 5.2 table warns about (`G1`). Also rejected: renaming only the cheap words - the register is read as
   one vocabulary, and a half-renamed pair (`DrawItem` beside `DrawDescription`) would be worse than either end.
+
+**The 2026-11-20 batch: a draw packet is not a draw call, and a full-screen pass is not a screen** (`G1` / `G4` / `G12`;
+[`ADR-2026-11-20-draw-packet-and-fullscreen-vocabulary`](../decisions/ADR-2026-11-20-draw-packet-and-fullscreen-vocabulary.md)).
+The same rule as above, applied where the first batch stopped: the value was renamed and the two counts it had forced apart were
+realigned to the industry's meaning.
+
+| Before | Now | What the old name got wrong | Note |
+|---|---|---|---|
+| `DrawCall` / `OwnedDraw` | `DrawPacket` / `OwnedDrawPacket` | the value is one view's whole PACKET of `DrawItem`s; every profiler calls one submitted item a draw call, and the old name had to carry a warning saying so | `BC-28` |
+| `isDrawingCall()` / `drawingCallItems()` / `PassDraw::draws` | `packetDraws()` / `drawItemsOf()` / `PassDraw::packets` | three more spellings of the same retired word (a predicate, a count and the container) | `BC-28` |
+| `draws` (packets) + `draw_items` (items) in `FrameCounts` / `FrameCounters` / `PrepareReport` / `FrameResult` | `draw_packets` + `draws` (items) | a field called `draws` in a frame report is read against RenderDoc; it counts what a profiler calls draw calls | `BC-29` |
+| `PassKind::Screen` / `DrawPacket::Kind::Screen` / `DrawKind::Screen` / `FrameHead::Kind::Screen`; `ScreenPass` | `Fullscreen`; `FullscreenPass` | "screen" is the window in this module, and the presenting pass is itself one of these - the kind fills its VIEW, wherever that lands | `BC-30` |
+| `FrameOutcome` | `FrameCallOutcome` | two English near-synonyms for two subjects; this one is what one `frame()` CALL did (a `NotReady` means no frame happened) | `BC-31` |
+| `Capabilities::Feature` / `supports` / `bit`; `DeviceClock::WindowId`; `FrameStats.hpp` | `Features::Feature` / `features.supports` / `Features::bit`; `FrameDriverId`; `FrameReport.hpp` | two forwarders the glossary had registered for removal, and a header named after a type that does not exist | `BC-32` <!-- drift-ok --> |
+
+- What it is: names plus ONE meaning. `DrawPacket` is the per-view request (`graphics-frame-pipeline.md` 2.2 / 2.8) and
+  `DrawItem` is still what it submits; `draws` now counts `DrawItem`s and `draw_packets` counts requests, so the bench log, the
+  HUD and a profiler agree; `Fullscreen` describes the draw, not the target, so a pip-rectangle pass and a window pass are the
+  same kind.
+- Why: the previous batch had to write the distinction into the header ("ONE DRAWING CALL IS A REQUEST, NOT A SUBMISSION") and to
+  keep two count fields apart by hand; the rename removes the sentence the name made necessary (`G7`).
+- Kept on purpose: `drawScreenProgram` / `screenCopyProgram` / `kScreenFragmentSource` and the vsg plugin's screen-program layer
+  name a **screen-space program** (a fragment stage run over a full-screen triangle), an industry term that does not mean the
+  window; `Camera::screenToWorldRay` and the screen-space scaling helpers name coordinates. The backlog records the shader-side
+  rename with its trigger (it changes a build input and the generated constant).
+- Rejected: keeping the `Capabilities` / `WindowId` forwarders (the glossary had already scheduled them for removal, and the
+  module promises no source or ABI stability); renaming `FrameResult` instead of `FrameCallOutcome` ("result" is the word a host
+  arrives with, and the odd one out was the CALL's value); renaming `PassKind::Scene` to `Content` (a scene pass draws lines and
+  impostors too, and `Content` would read as "anything the engine owns", the full-screen program included).
 
 ## 3. Features
 
@@ -242,7 +271,7 @@ every search, every guide table and every reader's head, which is the cost this 
 | T1 | `RenderTargetTest` / `MsaaTargetTest` / `SdkPixelTest` / `VsgBackendTest`. |
 | T2 | A 1-sample triangle edge has 0 blended pixels; 4 samples > 0; the interior is still a solid colour. |
 | T3 | A 4-sample depth is readable and has no intermediate values; after resolve it matches the 1-sample one point by point. |
-| T4 | `ScreenDrawTest` / `ImageSourceTest` / `SamplerTest` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
+| T4 | `FullscreenDrawTest` / `ImageSourceTest` / `SamplerTest` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
 | T5 | Shadows: the ground darkens with a casting light; without one the evidence is byte-identical. |
 | T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (the current gap is `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
 

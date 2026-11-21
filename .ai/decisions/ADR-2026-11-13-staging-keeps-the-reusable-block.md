@@ -5,7 +5,7 @@
 > **Supersedes**: [ADR-2026-11-10-upload-staging-is-not-retained.md](ADR-2026-11-10-upload-staging-is-not-retained.md)
 > (changing one clause only: no longer "retain nothing")
 > **Scope**: `src/plugins/gfx_backend_vsg/{include,src}/internal/TransferStaging.*`,
-> `src/viz/graphics/sdk/vine/graphics/FrameStats.hpp` (the `FrameUploads` of the same batch),
+> `src/viz/graphics/sdk/vine/graphics/FrameStats.hpp` (the `FrameUploads` of the same batch), <!-- drift-ok -->
 > `tests/test_vsg/UploadScratchTest.cpp`, `.ai/design/{graphics-content-lifecycle,vsg-backend}.md`
 
 ## Background

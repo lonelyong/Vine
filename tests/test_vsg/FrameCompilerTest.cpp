@@ -122,7 +122,7 @@ std::vector<DrawItem> oneCommand()
 
 TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState)
 {
-    // A full-screen drawing call has no commands, so nothing per-command can carry its state: the plan resolves
+    // A full-screen draw packet has no commands, so nothing per-command can carry its state: the plan resolves
     // it here, and the one half that is NOT simply the pass' is the depth policy - the engine's canonical
     // triangle lies exactly at the reverse-Z far plane (z = 0.0, where a window's depth is cleared to), so any
     // depth test rejects the whole overlay. Taking the pass' TestAndWrite would make an overlay vanish on a
@@ -141,7 +141,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     ASSERT_TRUE(r.recorder.setRenderTarget(destination.get()));
     ASSERT_TRUE(r.recorder.setPassInputs(std::vector<RenderTarget*>{ source.get() }));
     ASSERT_TRUE(r.recorder.setViewport(4, 8, 16, 32)); // the picture-in-picture rectangle
-    ASSERT_TRUE(r.recorder.drawScreenProgram(source.get(), screen_program.get(), nullptr)) << "the full-screen call must be collected";
+    ASSERT_TRUE(r.recorder.drawScreenProgram(source.get(), screen_program.get(), nullptr)) << "the full-screen packet must be collected";
     ASSERT_TRUE(r.recorder.render(commands, nullptr)) << "a content draw of the same pass: both kinds coexist";
     ASSERT_TRUE(r.recorder.endPass());
 
@@ -165,10 +165,10 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     ASSERT_EQ(consumer.draws.size(), 2u);
 
     const CompiledDraw& screen = consumer.draws[0];
-    EXPECT_EQ(screen.kind, DrawKind::Screen);
+    EXPECT_EQ(screen.kind, DrawKind::Fullscreen);
     EXPECT_EQ(screen.source, static_cast<const void*>(source.get())) << "the call's source is carried";
     EXPECT_EQ(screen.program, vn::test::programRef(*screen_program));
-    EXPECT_TRUE(screen.commands.empty()) << "a full-screen call has no geometry to instance";
+    EXPECT_TRUE(screen.commands.empty()) << "a full-screen packet has no geometry to instance";
     EXPECT_EQ(screen.viewport.x, 4) << "the announced picture-in-picture rectangle is the draw's own";
     EXPECT_EQ(screen.viewport.y, 8);
     EXPECT_EQ(screen.viewport.width, 16);

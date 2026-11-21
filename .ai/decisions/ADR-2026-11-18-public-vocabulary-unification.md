@@ -70,3 +70,12 @@ The fourth round corrected the register before acting: two of the words the thir
   when the tree was otherwise quiet.
 - The design pages' prose about "the command list" still reads naturally; where a sentence defined the *name* rather than the
   concept it was rewritten rather than sed-replaced.
+
+## Amendment (2026-11-20)
+
+The `DrawDescription` -> `DrawCall` row above is superseded: `DrawCall` is renamed `DrawPacket` by
+[ADR-2026-11-20-draw-packet-and-fullscreen-vocabulary](ADR-2026-11-20-draw-packet-and-fullscreen-vocabulary.md),
+because the value is one view's whole PACKET of draw items and "draw call" is the industry's word for one submitted
+item. The other four decisions above stand unchanged; `BC-18` keeps its number and its note gains a successor line
+in `graphics-rendering.md` 2.10.
+

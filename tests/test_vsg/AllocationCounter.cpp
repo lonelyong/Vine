@@ -67,7 +67,7 @@ using vn::backend_vsg::core::AllocationGate;
 /// device case of this suite) - and `posix_memalign` refuses anything below `sizeof(void*)` with EINVAL.
 /// Forwarding that refusal as a null block turned into `std::bad_alloc`, which libLLVM reports as
 /// "out of memory: Buffer allocation failed" and aborts on: EVERY DEVICE CASE IN THIS BINARY DIED BEFORE
-/// ITS FIRST DRAWING CALL, and the device half of the suite was not running at all. `malloc` already
+/// ITS FIRST DRAW PACKET, and the device half of the suite was not running at all. `malloc` already
 /// returns memory aligned for every fundamental type, so the small alignments need no help - the error
 /// was treating "aligned" as "large".
 ///

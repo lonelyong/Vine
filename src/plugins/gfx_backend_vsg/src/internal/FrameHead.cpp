@@ -72,11 +72,11 @@ bool FrameHead::record(const Pass& pass, ::vsg::ref_ptr<::vsg::Node>& out)
     auto group    = ::vsg::Group::create();
     bool complete = true;
     for (const DrawPlan& call : pass.calls) {
-        // THE TWO DRAWING CALLS, EACH THROUGH THE HALF THAT RESOLVED IT: the recorder is the half's own, and the
+        // THE TWO DRAW PACKETS, EACH THROUGH THE HALF THAT RESOLVED IT: the recorder is the half's own, and the
         // value is the plan's. Neither call touches a table - that is the property this type exists to give.
         ::vsg::ref_ptr<::vsg::StateGroup> node;
-        if (call.screen) {
-            node = call.draws != nullptr ? call.draws->recordScreen(*pass.registry, call.screen_draw) : nullptr;
+        if (call.fullscreen) {
+            node = call.draws != nullptr ? call.draws->recordFullscreen(*pass.registry, call.fullscreen_draw) : nullptr;
         }
         else {
             node = call.draws != nullptr ? call.draws->record(*pass.registry, call.value()) : nullptr;

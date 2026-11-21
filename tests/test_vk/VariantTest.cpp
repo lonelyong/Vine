@@ -201,7 +201,7 @@ TEST(VkVariantTest, TheTexcoordWidthIsTheKind)
 
 TEST(VkVariantTest, TheInstanceSwitchIsTheCommands)
 {
-    // The placement is a fact of the DRAWING CALL, not of the geometry or the material, which is why it is the one
+    // The placement is a fact of the DRAW PACKET, not of the geometry or the material, which is why it is the one
     // input the caller states.
     const auto plain    = makeGeometry(false, 0);
     const auto material = makeMaterial(false);

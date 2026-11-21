@@ -23,8 +23,8 @@ VN_GRAPHICS_NS_BEGIN
  *   culling, the projection and the shading of one frame cannot see a camera that moved in between; the area half is
  *   DEVICE pixels (see Viewport) and is invalid when the caller cannot state one; the mask is the content selection
  *   (see Node::setLayers) and is part of what makes two views draw different lists.
- * - `camera.present == false` is a real answer, not an empty default: the drawing call names no view and issues
- *   nothing (see isDrawingCall). It is never confused with default matrices that happen to be zero.
+ * - `camera.present == false` is a real answer, not an empty default: the draw packet names no view and issues
+ *   nothing (see packetDraws). It is never confused with default matrices that happen to be zero.
  *
  * @note
  * - ONE PER VIEW, not one per frame: a frame has shadow, main, PiP and HUD passes with different cameras and areas.
@@ -34,7 +34,7 @@ VN_GRAPHICS_NS_BEGIN
  *   Viewport). No unit type is introduced here - that distinction has no consumer yet.
  */
 struct VN_GRAPHICS_API View {
-    /// The camera value this view is taken with; `present == false` means the drawing call issues nothing.
+    /// The camera value this view is taken with; `present == false` means the draw packet issues nothing.
     CameraSnapshot camera{};
     /// The device-pixel rectangle the picture lands in; invalid = the caller could not state one.
     Viewport viewport{};

@@ -171,7 +171,7 @@ bool PassChain::isStatsVisible() const noexcept
     return isOverlayVisible(kStatsRole);
 }
 
-raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayLayout layout)
+raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayPlacement layout)
 {
     // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
     // at a pass nothing draws, are both states this method makes unreachable. The content is asked ONCE whether it

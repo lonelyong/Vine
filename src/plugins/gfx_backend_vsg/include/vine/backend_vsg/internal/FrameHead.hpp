@@ -21,7 +21,7 @@
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**
- * @brief What ONE frame's content resolved to: values, one per drawing call, that the recording consumes.
+ * @brief What ONE frame's content resolved to: values, one per draw packet, that the recording consumes.
  *
  * WHY IT EXISTS (`C3`, the vk `FrameHead` shape). A frame's content has two halves that used to be one function:
  * the DEVICE half - the facts' rows, the compiled halves, the declared sets, the stream uploads, the material
@@ -41,7 +41,7 @@
  *
  * WHAT IT IS NOT. It is not the FRAME's plan (see core::CompiledFrame - what the pass means), and it is not
  * the frame's scratch (see FrameScratch - the arena and the recorder). It is the layer between them: "what the
- * device answered for the plan's drawing calls, as one frame's values". It is reused across frames (its calls
+ * device answered for the plan's draw packets, as one frame's values". It is reused across frames (its calls
  * keep their capacity), it belongs to ONE frame at a time, and it is not thread-safe: each driver owns one (see
  * FrameScratch).
  *
@@ -64,17 +64,17 @@ class FrameHead {
     /// @brief The most vertex streams one call binds (see api/GeometryFacts).
     static constexpr std::size_t kMaxChannels = 8U;
 
-    /** @brief One drawing call, resolved: everything recording it reads, and nothing recording it would ask. */
+    /** @brief One draw packet, resolved: everything recording it reads, and nothing recording it would ask. */
     struct DrawPlan {
         /// The compiled half's recorder. Not const: recording counts into it (its counters are atomics, see
         /// api/ContentDraw - two drivers' frames may record through one half at once).
         ContentDraw* draws{ nullptr };
-        bool         screen{ false }; // Which of the two drawing calls this is.
+        bool         fullscreen{ false }; // Which of the two draw packets this is.
 
         /// The CONTENT call's resolved value (its spans are filled by @ref value, never stored).
         ContentDraw::Draw draw{};
         /// The FULL-SCREEN call's resolved value.
-        ContentDraw::ScreenDraw screen_draw{};
+        ContentDraw::FullscreenDraw fullscreen_draw{};
 
         /// The block binds, one per set the program declares (kMaxBlockSets at most).
         std::array<::vsg::ref_ptr<::vsg::BindDescriptorSet>, kMaxBlockSets> blocks{};
@@ -95,9 +95,9 @@ class FrameHead {
         void clear() noexcept
         {
             draws        = nullptr;
-            screen       = false;
+            fullscreen   = false;
             draw         = {};
-            screen_draw  = {};
+            fullscreen_draw  = {};
             for (::vsg::ref_ptr<::vsg::BindDescriptorSet>& block : blocks) {
                 block = {};
             }
@@ -132,7 +132,7 @@ class FrameHead {
     struct Pass {
         core::PassId         pass{ 0 };           // Which pass of the plan this is (see PassContent).
         core::StateRegistry* registry{ nullptr }; // This pass' state memory (the plan owns it, see beginPass).
-        std::vector<DrawPlan>    calls;               // One per drawing call that resolved and has something to record.
+        std::vector<DrawPlan>    calls;               // One per draw packet that resolved and has something to record.
 
         /** @brief Releases the calls and forgets the pass; the vector keeps its capacity. */
         void clear() noexcept

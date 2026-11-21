@@ -27,16 +27,16 @@ class ContentCaches;
 class FrameScratch;
 
 /**
- * @brief The content path's RECORDER: the drawing calls of one pass become indexed Vulkan draws, using what the
+ * @brief The content path's RECORDER: the draw packets of one pass become indexed Vulkan draws, using what the
  *        device's caches built and the driver's own frame scratch.
  *
  * @details
  * - TWO OWNERS, ONE JOB EACH (see `.ai/design/graphics-sessions.md` §3.1.3): `ContentCaches` (the device's) answers
  *   WHAT a command draws with - compiled programs, uploaded streams, pipelines - and `FrameScratch` (the driver's)
  *   answers WHERE this frame's constants and descriptor sets live. This type owns neither; it is the value that turns
- *   one `DrawCall` into commands, which is why a second driver needs a second scratch and NOT a second cache.
+ *   one `DrawPacket` into commands, which is why a second driver needs a second scratch and NOT a second cache.
  * - IT HOLDS a borrowed reference to the device's caches for their IMMUTABLE projections only (`table()`, the pipeline
- *   layouts, the line-width limit): what a drawing call draws with arrives as the frame head's resolved values
+ *   layouts, the line-width limit): what a draw packet draws with arrives as the frame head's resolved values
  *   (`FrameHead::DrawPlan`), so the recording path takes no cache lock and names no cache entry.
  * - WHAT IT DOES NOT DO. It does not compile, upload or build pipelines: the frame head resolves every command (and
  *   `prepareFrame` runs the SAME resolution), so a frame cannot ask for something the preparation would not have built
@@ -50,8 +50,8 @@ class FrameScratch;
  *   engine's forward text declares both unconditionally. A pass that samples no map binds the 1x1 stand-in and zeroes
  *   the block (`params.x = 0` is the switch the one text takes its unshadowed path with), so a shadow is an
  *   ADDITIONAL fact about a pass rather than a second pipeline.
- * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawCall::camera`), one with no
- *   program is skipped and reported, and a screen draw with no source target is skipped and reported. Every skip
+ * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawPacket::camera`), one with no
+ *   program is skipped and reported, and a full-screen draw with no source target is skipped and reported. Every skip
  *   leaves the rest of the pass drawn, and the FIRST reason travels in a `ContentRefusal` so the device's report
  *   carries the code of the cause rather than a sentence about a symptom.
  *
@@ -63,7 +63,7 @@ class FrameScratch;
  */
 class VN_BACKEND_VK_API ContentDraw final {
   public:
-    /** @brief One screen drawing call's source: the target's colour images and the views a fragment stage samples. */
+    /** @brief One full-screen draw packet's source: the target's colour images and the views a fragment stage samples. */
     struct ScreenSource {
         std::span<const VkImage>     images{}; // The source's colour images (for layout transitions; may be empty).
         std::span<const VkImageView> views{};  // The same attachments' views, bound at set 0 bindings 0..N-1.
@@ -80,7 +80,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - THREE FACTS, each from its owner: the VIEW is the image the producing pass wrote (already in
      *   `SHADER_READ_ONLY_OPTIMAL`, the device transitions it before the pass begins), the MATRIX is the producer's own
      *   (light clip <- world, in the SDK's clip convention), and the LIGHT is the identity the map belongs to - what
-     *   the drawing call's announced lights are matched against, because the switch lives on the light.
+     *   the draw packet's announced lights are matched against, because the switch lives on the light.
      * - AN EMPTY ONE MEANS "NO MAP": the content set binds the 1x1 white stand-in and the block's switch stays off, so
      *   the engine's forward text takes its unshadowed path with the same pipeline.
      *
@@ -138,12 +138,12 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param shadow          The shadow map this pass samples (see ShadowSource), or an empty one for none.
      * @param refusal         Receives the first reason a command was skipped (cleared on entry; empty when every
      *                        command was recorded), or null.
-     * @return How many drawing calls were recorded.
+     * @return How many draw packets were recorded.
      */
     std::uint64_t record(VkCommandBuffer                           commands,
                          int                                       width,
                          int                                       height,
-                         const vn::graphics::DrawCall&      draw,
+                         const vn::graphics::DrawPacket&      draw,
                          const vn::graphics::PassDraw&             pass,
                          std::span<const FrameHead::DrawPlan>      plans,
                          const FrameHead&                          head,
@@ -160,7 +160,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   (the full-screen deferred program reads them there).
      * - SET 0 ALSO OFFERS THE ENGINE'S SHADOW PAIR (binding 7 the map, 8 `VineShadowBlock`), because the engine's
      *   shadowed deferred-lighting program declares both unconditionally. When the pass resolved a readable map (see
-     *   ShadowSource) the REAL map and a block packed for this call are bound - a screen pass that shades is exactly
+     *   ShadowSource) the REAL map and a block packed for this call are bound - a full-screen pass that shades is exactly
      *   where the sun's shadow has to arrive; with no map the white stand-in and the zeroed block are bound, which is
      *   the engine's own "no shadow reaches this pass".
      * - The pass' state selects the pipeline the same way a content draw's does (reverse-Z, culling, blend); a
@@ -171,7 +171,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param commands          The command buffer being recorded (inside the destination's render pass).
      * @param width             The destination's width in pixels.
      * @param height            The destination's height in pixels.
-     * @param draw              The screen draw (its fragment program and camera are read; borrowed).
+     * @param draw              The full-screen draw (its fragment program and camera are read; borrowed).
      * @param pass              The pass drawing it (state and viewport; borrowed).
      * @param plan              The resolved program and state, from the frame head.
      * @param head              The frame's head: the fallback view/sampler and the shadow sampler.
@@ -180,10 +180,10 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param refusal           Receives the reason when the draw was skipped (cleared on entry), or null.
      * @return 1 when the full-screen draw was recorded, 0 otherwise.
      */
-    std::uint64_t recordScreen(VkCommandBuffer                               commands,
+    std::uint64_t recordFullscreen(VkCommandBuffer                               commands,
                                int                                           width,
                                int                                           height,
-                               const vn::graphics::DrawCall&          draw,
+                               const vn::graphics::DrawPacket&          draw,
                                const vn::graphics::PassDraw&                 pass,
                                const FrameHead::DrawPlan&                    plan,
                                const FrameHead&                              head,

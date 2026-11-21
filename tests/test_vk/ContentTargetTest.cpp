@@ -50,7 +50,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
@@ -283,8 +283,8 @@ void main()
 {
     auto list = std::make_shared<std::vector<DrawItem>>(std::move(commands));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = list;
 
@@ -295,7 +295,7 @@ void main()
     pass.target = target;
     pass.clear  = clear;
     pass.state  = state;
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;
@@ -702,15 +702,15 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
         auto list = std::make_shared<std::vector<DrawItem>>();
         list->push_back(commandOf(geometry, program));
 
-        DrawCall draw;
-        draw.kind     = DrawCall::Kind::Scene;
+        DrawPacket draw;
+        draw.kind     = DrawPacket::Kind::Scene;
         draw.view.camera   = identityCamera();
         draw.commands = list;
 
         PassDraw pass;
         pass.target = target;
         pass.clear  = clear;
-        pass.draws.push_back(std::move(draw));
+        pass.packets.push_back(std::move(draw));
 
         FrameDescription::Pass entry;
         entry.pass = vn::test::framePassForTest();
@@ -806,10 +806,10 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, wireframe, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), skipped_before)
-        << "a wireframe pass must be recorded, not refused (see Capabilities::Feature::Wireframe)";
+        << "a wireframe pass must be recorded, not refused (see Features::Feature::Wireframe)";
     const auto wireframe_report = backend->frameReport();
     ASSERT_TRUE(wireframe_report.counters.has_value());
-    EXPECT_EQ(wireframe_report.counters->draws, 1U) << "the draw reached the queue";
+    EXPECT_EQ(wireframe_report.counters->draw_packets, 1U) << "the draw reached the queue";
     EXPECT_GT(paintedPixels(), std::size_t{ 0 }) << "a wireframe paints its edges";
 
     // 2. A POINT VIEW of the same geometry: the topology override is the switch, the point size is what `largePoints`
@@ -824,7 +824,7 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
         << "a point view must be recorded, not refused";
     const auto points_report = backend->frameReport();
     ASSERT_TRUE(points_report.counters.has_value());
-    EXPECT_EQ(points_report.counters->draws, 1U);
+    EXPECT_EQ(points_report.counters->draw_packets, 1U);
     EXPECT_GT(paintedPixels(), std::size_t{ 4 }) << "the vertices are drawn as points, and `largePoints` lets the size through";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U) << "and the session stayed clean";

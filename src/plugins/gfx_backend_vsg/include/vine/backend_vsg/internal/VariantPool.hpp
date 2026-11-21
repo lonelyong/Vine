@@ -20,7 +20,7 @@
  *   which code path happened to ask.
  * - WHAT MUST NEVER REACH IT. Anything deliverable with a set command (cull, polygon, blend, depth policy, topology)
  *   or written into a buffer (matrices, opacities, material bytes). Those live in @ref DynamicState and @ref
- *   InstanceSlot, and they cost a command or a write rather than a compile. The two historical failure families in
+ *   InstanceRecord, and they cost a command or a write rather than a compile. The two historical failure families in
  *   this backend are exactly this mistake - a host state change that recompiled a pipeline, a resize that rebuilt
  *   every full-screen slot - which is why the key's allowed inputs are pinned by the key audit and why the churn
  *   phases assert that the variant count does not move.

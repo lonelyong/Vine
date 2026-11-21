@@ -137,12 +137,12 @@ const RenderState& StateNode::renderState() const
     return state_;
 }
 
-bool StateNode::hasState() const
+bool StateNode::hasRenderState() const
 {
     return !state_.empty();
 }
 
-void StateNode::clearState()
+void StateNode::clearRenderState()
 {
     announceContentChange();
     state_ = RenderState();

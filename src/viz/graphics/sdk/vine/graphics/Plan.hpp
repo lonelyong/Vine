@@ -163,7 +163,7 @@ inline constexpr std::size_t kMaxPlanPasses = 64;
  * - EVERY ROW OF THE TABLE CAME FROM A PLAN, so every row has a name. A name-less row cannot exist - an empty name
  *   is refused at the door (`EmptyPassName`) rather than renamed or dropped - which is what keeps `plan()`'s
  *   read-back exactly re-appliable (see RenderEngine::plan).
- * - WHAT IT CANNOT SAY: a custom pass CLASS. The plan states the shapes `PassKind` names (Scene / Screen), and the
+ * - WHAT IT CANNOT SAY: a custom pass CLASS. The plan states the shapes `PassKind` names (Scene / Fullscreen), and the
  *   node the engine builds from a declaration is the built-in of its kind - so a subclass with an overridden
  *   `describe()` is not registrable at all (it was the escape hatch of the old `addPass` family). What is custom
  *   about a picture is stated as data: a program override, a viewport, a depth band, a hook (see PassDesc).

@@ -24,7 +24,7 @@
 
 using vn::graphics::CameraSnapshot;
 using vn::graphics::View;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
@@ -55,14 +55,14 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource& content){
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawCall draw;
-    draw.kind       = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind       = DrawPacket::Kind::Scene;
     draw.view.camera = camera;
     draw.content    = &content;
     draw.view.layer_mask = vn::graphics::kAllLayers;
 
     PassDraw pass;
-    pass.draws.push_back(draw);
+    pass.packets.push_back(draw);
 
     FrameDescription frame;
     frame.passes.emplace_back();
@@ -93,10 +93,10 @@ intrusive_ptr<Group> twoLeafAssembly()
 const std::vector<DrawItem>& commandsOf(const FrameDescription& frame)
 {
     static const std::vector<DrawItem> kNone;
-    if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->draws.empty()) {
+    if (frame.passes.empty() || !frame.passes.front().draw.has_value() || frame.passes.front().draw->packets.empty()) {
         return kNone;
     }
-    const auto& commands = frame.passes.front().draw->draws.front().commands;
+    const auto& commands = frame.passes.front().draw->packets.front().commands;
     return commands != nullptr ? *commands : kNone;
 }
 
@@ -206,7 +206,7 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     // thread that is gone - it does not reinterpret how the draw should be answered.
     runner.run([&] { expandFrame(frame); });
     EXPECT_EQ(commandsOf(frame).size(), 2U);
-    EXPECT_EQ(frame.passes.front().draw->draws.front().content, source)
+    EXPECT_EQ(frame.passes.front().draw->packets.front().content, source)
         << "the draw names the content's publication, not the content - which is what makes the frame portable";
     EXPECT_EQ(runner.busy(), false) << "nothing is left in flight";
     EXPECT_EQ(runner.mode(), RunnerMode::Threaded) << "the mode is a lifetime decision, not a live state";

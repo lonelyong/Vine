@@ -71,18 +71,18 @@ Colorf RenderPass::clearColor(int attachment) const
 bool RenderPass::shouldClearDepth() const noexcept
 {
     // A STATEMENT WINS. Otherwise the KIND's policy answers a pass that CLEARS: a Scene pass clears both attachments,
-    // a Screen pass composites over what is there and clears neither. A pass that clears no colour has opted out of
+    // a Full-full-screen pass composites over what is there and clears neither. A pass that clears no colour has opted out of
     // clearing, and depth is not implied by it - a depth-only clear is asked for by stating it (see
     // PassDesc::clear_depth), which is what a HUD overlay does to own a clean depth range inside its own rectangle.
     if (desc_.clear_depth.has_value()) {
         return *desc_.clear_depth;
     }
-    return desc_.kind != PassKind::Screen && isClearEnabled();
+    return desc_.kind != PassKind::Fullscreen && isClearEnabled();
 }
 
 bool RenderPass::isClearEnabled() const noexcept
 {
-    return desc_.clear_enabled.value_or(desc_.kind != PassKind::Screen);
+    return desc_.clear_enabled.value_or(desc_.kind != PassKind::Fullscreen);
 }
 
 PassRenderState RenderPass::stateOverrides() const noexcept
@@ -133,7 +133,7 @@ void RenderPass::fillPassFacts(PassDraw& out)
     // announcement: what a backend needs to resolve each command's FINAL state
     // (StateResolution.hpp's resolveRenderState).
     out.state            = stateOverrides();
-    out.draws.clear();
+    out.packets.clear();
 }
 
 bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
@@ -148,8 +148,8 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         // No view to build: the pass announces what it is and where, and issues no draw.
         return true;
     }
-    DrawCall draw;
-    draw.kind = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind = DrawPacket::Kind::Scene;
     // THE VIEW, AS A VALUE (see View). Taking it here is what lets the frame's expansion collect on another
     // thread, and what keeps this frame's culling and shading on one camera state.
     draw.view.camera = CameraSnapshot::of(*desc_.camera);
@@ -180,7 +180,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     // draw was bound to (see FrameExpand and detail::bindSceneDraws). A program override is a PASS fact, not a
     // per-command rewrite (see PassDraw::program_override): the backend resolves it per command exactly like the
     // pass' state.
-    out.draws.push_back(std::move(draw));
+    out.packets.push_back(std::move(draw));
     return true;
 }
 

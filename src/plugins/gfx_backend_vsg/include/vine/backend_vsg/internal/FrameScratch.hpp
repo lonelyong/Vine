@@ -84,7 +84,7 @@ class FrameScratch final
     /// One colour-view list per declared input, reused per pass: the `InputImages` spans point into these, so they
     /// must outlive the record call and must not be reallocated while it runs.
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
-    /// The same, for the WHOLE source target of a full-screen call (see InputImages::screen_colors).
+    /// The same, for the WHOLE source target of a full-screen packet (see InputImages::screen_colors).
     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_screen_views;
     /// One sampler list per declared input (see InputImages::color_samplers); imported inputs fill one entry.
     std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>   input_color_samplers;

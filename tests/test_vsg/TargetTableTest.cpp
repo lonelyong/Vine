@@ -7,7 +7,7 @@
  * dereferenced after the call (the facts answer the SNAPSHOT, not what the object says later), that the
  * facts say "built" only while the objects exist, that a borrowed depth is the lender's policy and never the
  * borrower's to promise, and that a shadow statement travels as the host stated it. The built half
- * (creation, the resize / rebuild answers, the sampled round trip through a screen draw) is driven through
+ * (creation, the resize / rebuild answers, the sampled round trip through a full-screen draw) is driven through
  * the SDK in `VsgBackendTest`, where a device and a window exist.
  */
 

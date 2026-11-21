@@ -119,7 +119,7 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& p
             fragment = &stage;
             break;
         case vn::graphics::ShaderStageType::Compute:
-            ++extra; // a compute stage is not a screen draw: the full-screen path is one fragment stage
+            ++extra; // a compute stage is not a full-screen draw: the full-screen path is one fragment stage
             break;
         }
     }
@@ -153,7 +153,7 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& p
     out.shaders.entry    = std::string(fragment->entryPoint.as_std_str());
     // The entry answers the FULL-SCREEN call and says so: the same host program can also be described as
     // content, and the two entries must never be served for one another (see ProgramFacts::kind).
-    out.kind             = core::DrawKind::Screen;
+    out.kind             = core::DrawKind::Fullscreen;
 
     // The composed pair's own declarations - the engine's triangle declares none, so the ABI is the host's
     // fragment stage's (see api/ProgramAbi.hpp).

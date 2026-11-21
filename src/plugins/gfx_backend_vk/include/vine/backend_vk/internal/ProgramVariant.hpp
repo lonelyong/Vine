@@ -32,7 +32,7 @@ VN_BACKEND_VK_NS_BEGIN
  *     two is a UV pair. The kind is not optional - the engine's stages refuse to build a textured variant that does
  *     not name what the slot is - so a geometry with no texcoord channel still names `VN_TEXCOORD_UV` (a variant
  *     that samples nothing never reads the attribute).
- *   - `VN_INSTANCED` - the drawing call reads an instance stream (locations 12-15), which is a fact of the COMMAND.
+ *   - `VN_INSTANCED` - the draw packet reads an instance stream (locations 12-15), which is a fact of the COMMAND.
  * - WHERE IT LIVES. In the program cache's key (a variant is one compile of the text), in the pipeline key (the
  *   rendered result differs), and in the draw: `variantOf` is the one place those bits are derived, so a warm-up and
  *   the frame that follows it cannot disagree about what to build (see ContentCaches' `planDraw`).
@@ -72,11 +72,11 @@ struct VN_BACKEND_VK_API ProgramVariant {
 [[nodiscard]] VN_BACKEND_VK_API bool operator!=(const ProgramVariant& left, const ProgramVariant& right) noexcept;
 
 /**
- * @brief Gets the variant one scene drawing call is compiled for: the ENGINE's rule (see the struct note).
+ * @brief Gets the variant one scene draw packet is compiled for: the ENGINE's rule (see the struct note).
  *
  * @param geometry  The geometry being drawn: its channel list states the colour and texcoord switches.
  * @param material  The material the drawable is shaded with, or null for the block's defaults (no texture slot).
- * @param instanced Whether the drawing call reads an instance stream (`DrawItem::instance_count != 0`).
+ * @param instanced Whether the draw packet reads an instance stream (`DrawItem::instance_count != 0`).
  * @return The variant.
  */
 [[nodiscard]] VN_BACKEND_VK_API ProgramVariant variantOf(const vn::graphics::GeometryDescription& geometry,

@@ -659,16 +659,16 @@ TEST(CompiledProgramsTest, AScreenDrawGetsAFullScreenHalf)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    CompiledDraw screen_draw;
-    screen_draw.kind    = DrawKind::Screen;
-    screen_draw.program = vn::test::programRef(*program);
-    const std::vector<CompiledDraw> draws{ screen_draw };
+    CompiledDraw fullscreen_draw;
+    fullscreen_draw.kind    = DrawKind::Fullscreen;
+    fullscreen_draw.program = vn::test::programRef(*program);
+    const std::vector<CompiledDraw> draws{ fullscreen_draw };
     const CompiledPass              pass = passWith(draws);
 
     const auto entries = halves.halvesFor(pass, tables.facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U);
-    EXPECT_EQ(entries[0].kind, DrawKind::Screen);
-    EXPECT_EQ(entries[0].pipelines->kind(), DrawKind::Screen);
+    EXPECT_EQ(entries[0].kind, DrawKind::Fullscreen);
+    EXPECT_EQ(entries[0].pipelines->kind(), DrawKind::Fullscreen);
 }
 
 TEST(CompiledProgramsTest, AKeyTheTablesCannotAnswerProducesNoHalf)

@@ -263,7 +263,7 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     window_clear.color_value[3] = 1.0F;
 
     // One frame, driven the way the frame drive does it: open the session's frame, record a window pass and
-    // (when asked) one off-screen pass, compile, hand the session THIS frame's graph, and commit. Every
+    // (when asked) one off-full-screen pass, compile, hand the session THIS frame's graph, and commit. Every
     // handover happens while the previous frame's submission is still in flight - nothing here waits the
     // device - which is exactly what the session has to survive.
     const auto drive = [&](TargetObjects* into, float value) {
@@ -364,7 +364,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     });
 
     // Frame 1: the happy path, on a session of its own - committed through the drive, and the pixels are the
-    // evidence that the off-screen pass really reached the device through the session's submission.
+    // evidence that the off-full-screen pass really reached the device through the session's submission.
     {
         WindowSession session;
         ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));

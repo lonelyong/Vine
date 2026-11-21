@@ -3,7 +3,7 @@
  *
  * Why these are device-free unit cases. The block is a function of the announced lights and the camera, so its
  * arithmetic - the world -> view rotation, the slot order, the ambient fill, the count, the unused-slot tag - is
- * pinned here without a device. The picture that proves the block reaches a shader (per drawing call, on both the
+ * pinned here without a device. The picture that proves the block reaches a shader (per draw packet, on both the
  * content and the full-screen path) needs a device and therefore lives in the vsg suite
  * (`tests/test_vsg/LightBlockTest.cpp`), which is also where a host can compare it with the reference backend.
  *

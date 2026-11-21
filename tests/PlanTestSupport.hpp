@@ -17,7 +17,7 @@
 #include <vine/graphics/Plan.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 #include <vine/graphics/Scene.hpp>
 
 /**
@@ -172,18 +172,18 @@ inline bool restatePassForTest(vn::graphics::PassChain& chain, vn::raw_ptr<vn::g
 }
 
 /**
- * @brief The TYPED handle spelling of a Screen declaration (`intrusive_ptr<ScreenPass>`).
+ * @brief The TYPED handle spelling of a Screen declaration (`intrusive_ptr<FullscreenPass>`).
  *
  * @details
  * - A plan states a `PassKind`, and the node the engine builds for it is the built-in of that kind; a handle typed to
- *   `ScreenPass` is therefore the node the engine built, not a template the test configured.
+ *   `FullscreenPass` is therefore the node the engine built, not a template the test configured.
  *
  * @param pass The registered node (a Screen declaration, or null).
- * @return The same node as a ScreenPass handle (null when @p pass is null).
+ * @return The same node as a FullscreenPass handle (null when @p pass is null).
  */
-inline vn::intrusive_ptr<vn::graphics::ScreenPass> asScreenPassForTest(const vn::intrusive_ptr<vn::graphics::RenderPass>& pass)
+inline vn::intrusive_ptr<vn::graphics::FullscreenPass> asFullscreenPassForTest(const vn::intrusive_ptr<vn::graphics::RenderPass>& pass)
 {
-    return vn::intrusive_ptr<vn::graphics::ScreenPass>(static_cast<vn::graphics::ScreenPass*>(pass.get()));
+    return vn::intrusive_ptr<vn::graphics::FullscreenPass>(static_cast<vn::graphics::FullscreenPass*>(pass.get()));
 }
 
 /**

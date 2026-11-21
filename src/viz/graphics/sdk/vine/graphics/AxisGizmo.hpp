@@ -161,7 +161,7 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, p
      *
      * @details
      * - Called by the gizmo's owner whenever the surface changes (e.g. from a SceneView layout step,
-     *   see SceneView::addSurfaceLayout). The size is the LOGICAL surface size the host reports - the
+     *   see SceneView::addSurfaceResizeHandler). The size is the LOGICAL surface size the host reports - the
      *   same number it hands to SceneView::resize - and the configured devicePixelRatio is applied
      *   HERE, which is what turns it into the device-pixel rectangle a backend viewport needs. Handing
      *   it device pixels scales the box twice.

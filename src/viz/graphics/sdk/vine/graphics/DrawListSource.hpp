@@ -14,7 +14,7 @@ VN_GRAPHICS_NS_BEGIN
  * @brief The ONE question a frame asks about a drawable set: "what would this view draw, from you".
  *
  * @details
- * - WHY AN INTERFACE. A frame's shape is a set of VIEWS (see DrawCall), and the commands behind a view come
+ * - WHY AN INTERFACE. A frame's shape is a set of VIEWS (see DrawPacket), and the commands behind a view come
  *   from something that owns the content. Two such owners exist and must answer identically: a `Scene` (the authored
  *   graph, which answers on the content thread) and a `SnapshotSource` (an immutable publication, which answers
  *   anywhere). Naming the question here is what lets the frame machinery ask it without knowing which side answers.

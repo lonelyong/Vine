@@ -50,7 +50,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Texture.hpp>
@@ -982,7 +982,7 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
  *   1. an order < 0 pass that renders the engine scene into an off-screen
  *      RGBA8 + depth RenderTarget each frame (publishing it as "SceneColor"),
  *      exercising the vsg render-to-texture path, and
- *   2. an order > 0 ScreenPass that samples "SceneColor" and composites it
+ *   2. an order > 0 FullscreenPass that samples "SceneColor" and composites it
  *      into a picture-in-picture sub-viewport of the window, so the off-screen
  *      result is actually visible (render-to-texture -> sample -> present).
  *
@@ -1004,7 +1004,7 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
     }
 
     // Recipe #1 (addOffscreenToScreen): compose the "off-screen RT -> PiP
-    // ScreenPass" wiring instead of hand-building the two passes.
+    // FullscreenPass" wiring instead of hand-building the two passes.
     const double dpr    = render_control->devicePixelRatio();
     const int    margin = static_cast<int>(10.0 * dpr);
     const int    pip_w  = static_cast<int>(320.0 * dpr);
@@ -1148,7 +1148,7 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
  * in ascending order into the same buffer. The first pass clears and draws
  * the main scene (depth-on); the second draws a few extra boxes from a
  * DIFFERENT scene as an on-top (depth-off) slot, so they composite over the
- * first bake. A ScreenPass then shows the baked texture in a picture-in-
+ * first bake. A FullscreenPass then shows the baked texture in a picture-in-
  * picture sub-viewport so the result is visible.
  *
  * @param render_control Render view whose engine receives the passes.
@@ -1202,7 +1202,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     pass_top.depth_mode    = vn::graphics::DepthMode::Disabled;
     addDemoPass(*engine, render_control, pass_top, overlay, -1); // slot = (master, -1)
 
-    // PiP screen pass sampling the baked texture into the window.
+    // PiP full-screen pass sampling the baked texture into the window.
     const double dpr   = render_control->devicePixelRatio();
     const int    pip_w = static_cast<int>(300.0 * dpr);
     const int    pip_h = static_cast<int>(169.0 * dpr);
@@ -1221,8 +1221,8 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     }
     vn::graphics::PassDesc screen;
     screen.name  = u8"multislot_pip";
-    screen.kind  = vn::graphics::PassKind::Screen;
-    // A Screen pass names its program and carries the view camera: there is no implicit copy, and a
+    screen.kind  = vn::graphics::PassKind::Fullscreen;
+    // A Full-full-screen pass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
     screen.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
     screen.program       = vn::graphics::screenCopyProgram();
@@ -1291,7 +1291,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     for (int attachment = 0; attachment < 4; ++attachment) {
         vn::graphics::PassDesc screen;
         screen.name   = u8"gbuffer_preview";
-        screen.kind   = vn::graphics::PassKind::Screen;
+        screen.kind   = vn::graphics::PassKind::Fullscreen;
         screen.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
@@ -1313,7 +1313,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
  *
  * S2a vertical slice: the G-buffer geometry pass (three colour attachments:
  * albedo / view normal / view position) runs off-screen; a fullscreen
- * deferred-lighting ScreenPass (a fragment program sampling every G-buffer
+ * deferred-lighting FullscreenPass (a fragment program sampling every G-buffer
  * attachment) re-lights it in one draw and shows the result in a preview
  * sub-viewport. The main window keeps its forward-lit view, so the two can be
  * compared side by side (A/B). The lights are the content scene's own
@@ -1348,13 +1348,13 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     const int    ph    = static_cast<int>(191.0 * dpr);
     vn::graphics::PassDesc light;
     light.name          = u8"deferred_lighting";
-    light.kind          = vn::graphics::PassKind::Screen;
+    light.kind          = vn::graphics::PassKind::Fullscreen;
     light.input_names   = { u8"GBuffer" };
     light.input_targets = { target }; // a fullscreen program reads the whole source target
     light.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
     light.program       = vn::graphics::defaultDeferredLightProgram();
     light.viewport      = vn::graphics::Viewport{ 8, 8, pw, ph };
-    // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
+    // The content scene must be bound to THIS pass too: FullscreenPass forwards a scene's lights to the
     // fullscreen program, and a program pass with no scene is handed the backend's default ambient
     // only (no directional term) - a flat image contradicting this function's own documentation.
     addDemoPass(*engine, render_control, light, render_control->view()->scene(), 130);
@@ -1541,7 +1541,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         for (int attachment = 0; attachment < 4; ++attachment) {
             vn::graphics::PassDesc preview;
             preview.name   = kPreviewNames[attachment];
-            preview.kind   = vn::graphics::PassKind::Screen;
+            preview.kind   = vn::graphics::PassKind::Fullscreen;
             preview.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
             // One copy program per attachment: the sampler binding IS the attachment (see
             // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of, and the
@@ -1575,11 +1575,11 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // accepted plan until some later layout event.
     // The lambda OWNS the declarations (a copy per layout step): mutable, because the step updates the rectangle of
     // each row before restating it. It captures the VIEW, not a way to look one up: a step is registered on the view,
-    // so it only runs while that view is alive (see SceneView::addSurfaceLayout) - while the control behind
+    // so it only runs while that view is alive (see SceneView::addSurfaceResizeHandler) - while the control behind
     // `render_control` is already gone when the widget tree tears a surface down (a step that called back into it for
     // `view()` crashed the shutdown: the control's Impl was destroyed before its QWindow). `render_control` is only
     // the plan's owner identity here, which is one value and not a call.
-    view->addSurfaceLayout([engine, view, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) mutable {
+    view->addSurfaceResizeHandler([engine, view, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) mutable {
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
@@ -1795,10 +1795,10 @@ bool DemoScene::runFrameBenchmark()
         };
         const auto [first, first_us] = timed_prepare();
         const auto [again, again_us] = timed_prepare();
-        VN_LOGI("[demo] bench warm-up: {} in {:.2f} ms - {} pass(es), {} draw(s), built halves {}, sets {}, uploads {}, "
+        VN_LOGI("[demo] bench warm-up: {} in {:.2f} ms - {} pass(es), {} draw packet(s), {} draw(s), built halves {}, sets {}, uploads {}, "
                 "pipelines {}",
-                prepareOutcomeName(first.outcome), static_cast<double>(first_us) / 1000.0, first.passes, first.draws,
-                first.halves, first.sets, first.uploads, first.pipelines);
+                prepareOutcomeName(first.outcome), static_cast<double>(first_us) / 1000.0, first.passes,
+                first.draw_packets, first.draws, first.halves, first.sets, first.uploads, first.pipelines);
         VN_LOGI("[demo] bench warm-up again: {} in {:.2f} ms - built halves {}, sets {}, uploads {}, pipelines {}",
                 prepareOutcomeName(again.outcome), static_cast<double>(again_us) / 1000.0, again.halves, again.sets,
                 again.uploads, again.pipelines);
@@ -1861,10 +1861,11 @@ void DemoScene::reportFrameBenchmark(const std::vector<double>& millis) const
     // report is not published as thread-safe, unlike PresentRecord). waitForFrame names exactly this caller.
     (void)engine->waitForFrame();
 
-    const auto report   = engine->frameReport();
-    const auto passes   = report.counters ? report.counters->passes : 0;
-    const auto draws    = report.counters ? report.counters->draws : 0;
-    const auto streams  = report.uploads ? report.uploads->stream_uploads : 0;
+    const auto report       = engine->frameReport();
+    const auto passes       = report.counters ? report.counters->passes : 0;
+    const auto draw_packets = report.counters ? report.counters->draw_packets : 0;
+    const auto draws        = report.counters ? report.counters->draws : 0;
+    const auto streams      = report.uploads ? report.uploads->stream_uploads : 0;
     const auto textures = report.uploads ? report.uploads->texture_uploads : 0;
 
     // THE FIRST FRAMES SAY WHAT THE LOAD LEFT FOR THEM: with frame threading on, call i waits for frame i-1's engine
@@ -1882,12 +1883,12 @@ void DemoScene::reportFrameBenchmark(const std::vector<double>& millis) const
     // THE DEVICE'S OWN CLOCK, when the backend keeps one (see FrameTiming): the CPU figures above say what the host
     // paid, this says what the GPU took - reading one as the other is how a CPU saving gets reported as a GPU one.
     if (report.timing.has_value()) {
-        VN_LOGI("[demo] bench last frame: passes {}, draws {}, stream uploads {}, texture uploads {}, gpu {:.2f} ms", passes,
-                draws, streams, textures, static_cast<double>(report.timing->gpu_micros) / 1000.0);
+        VN_LOGI("[demo] bench last frame: passes {}, draw packets {}, draws {}, stream uploads {}, texture uploads {}, gpu {:.2f} ms",
+                passes, draw_packets, draws, streams, textures, static_cast<double>(report.timing->gpu_micros) / 1000.0);
     }
     else {
-        VN_LOGI("[demo] bench last frame: passes {}, draws {}, stream uploads {}, texture uploads {}, gpu not measured", passes,
-                draws, streams, textures);
+        VN_LOGI("[demo] bench last frame: passes {}, draw packets {}, draws {}, stream uploads {}, texture uploads {}, gpu not measured",
+                passes, draw_packets, draws, streams, textures);
     }
 }
 

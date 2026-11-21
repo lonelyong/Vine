@@ -55,7 +55,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
@@ -152,7 +152,7 @@ void main()
 }
 
 /// @brief One scene draw that NAMES its program (no default program, so the frame is self-contained).
-[[nodiscard]] DrawCall programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
+[[nodiscard]] DrawPacket programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
 {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     DrawItem command(geometry, nullptr, vn::math::Mat4d{});
@@ -160,15 +160,15 @@ void main()
     command.program_description = program->description();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass into @p target: a clear, then @p draw when it is engaged.
-[[nodiscard]] FrameDescription passFrame(RenderTarget* target, std::optional<DrawCall> draw)
+[[nodiscard]] FrameDescription passFrame(RenderTarget* target, std::optional<DrawPacket> draw)
 {
     FrameDescription frame;
 
@@ -181,7 +181,7 @@ void main()
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     if (draw.has_value()) {
-        pass.draws.push_back(std::move(*draw));
+        pass.packets.push_back(std::move(*draw));
     }
     entry.draw = std::move(pass);
 
@@ -194,7 +194,7 @@ void main()
     return passFrame(target, std::nullopt);
 }
 
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawPacket draw)
 {
     return passFrame(target, std::move(draw));
 }

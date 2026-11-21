@@ -173,7 +173,7 @@ and every cache has a witness a test can read.**
   (`retirementNumbers` / `frameReport`) take `clock_mutex` too.
 - **Three pieces of frame scratch**: `ContentDraw` is not one object that holds everything but three: `ContentCaches` (**the device**: programs / geometries / instance
   streams / pipelines / layouts / images / the pipeline cache), `FrameScratch` (**the driver**: the constant ring + the descriptor pool + the set tables +
-  `frame_index`), and `ContentDraw` itself (**the recorder**: it borrows the first two and has only `prepare` / `prepareScreen` / `record` / `recordScreen`).
+  `frame_index`), and `ContentDraw` itself (**the recorder**: it borrows the first two and has only `prepare` / `prepareScreen` / `record` / `recordFullscreen`).
   `Device::FrameDriver` owns its `scratch` and `recorder`; `Device::Impl` keeps only `caches`; `createScratch()` is called by `initialize()` once the layouts exist, and
   on teardown the scratch goes before the caches (the sets' layouts are borrowed).
 - **Why this shape**: one frame in flight per driver (§2.3) makes "between frames" an **instant**, so release, readback and cache filling can share one machine;
@@ -408,7 +408,7 @@ and every cache has a witness a test can read.**
   and the light block to 7 / 8; `planScreen()` **forces** `DepthMode::Disabled`.
 - **Constraints**: `C7`, `N3`.
 - **Acceptance**: `ContentDrawTest`'s `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`, `ShadowTest`'s
-  `AScreenPassShadesWithTheMapItResolved`, `DeferredTest`.
+  `AFullscreenPassShadesWithTheMapItResolved`, `DeferredTest`.
 - **Caveat**: `P1`, `P2`.
 
 ### 3.1.7 F7 Textures and samplers
@@ -605,7 +605,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - How it fails: binding 7/8 existing ≠ binding the right map; a white stand-in + a zero block makes the deferred path "shaded in forward, unshaded in deferred", with no
   diagnostic.
 - How to detect it: the forward / deferred pictures differ; `ShadowTest`'s sampling case reads a depth of 255 (the stand-in) instead of the map's value.
-- How to prevent it: `recordScreen` takes a `ShadowSource` and binds the real depth + a per-call `VineShadowBlock` when there is a map, falling back to the stand-in +
+- How to prevent it: `recordFullscreen` takes a `ShadowSource` and binds the real depth + a per-call `VineShadowBlock` when there is a map, falling back to the stand-in +
   `params.x = 0` only when there is none.
 
 ### 6.3 P3 A plan row is unique by `(owner, name)`
@@ -745,8 +745,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
   8.16–8.30 ms).
 - **Host allocations, measured once and kept apart** (2026-11-18, Debug + lavapipe, `operator new` counted for one measurement): the backend's
-  `executeFrame` asks for **85 allocations / 10.6 KB per steady frame with one drawing call** and **133 / 12.4 KB with four** - stable frame to frame, so it is churn,
-  not growth; that is ≈**16 per further drawing call** and **69 fixed** (mostly small vectors: the pipeline key's channel/binding/attribute lists and the plan's
+  `executeFrame` asks for **85 allocations / 10.6 KB per steady frame with one draw packet** and **133 / 12.4 KB with four** - stable frame to frame, so it is churn,
+  not growth; that is ≈**16 per further draw packet** and **69 fixed** (mostly small vectors: the pipeline key's channel/binding/attribute lists and the plan's
   per-draw scratch). The **whole chain frame** (engine + backend, the demo's deferred path: 10 passes / 10 draws with shadows, sky and HUD) is ≈**1966 allocations /
   ≈2.6 MB per frame** (`VN_BENCH_FRAMES` 8 vs 120 on one build, 2026-11-18). The two numbers answer different questions and are not interchangeable: the smaller one is
   the backend's own recording window, the larger one is what a host's frame costs. GPU-side builds and uploads are **0** in steady state (`VkResidencyTest`), so none

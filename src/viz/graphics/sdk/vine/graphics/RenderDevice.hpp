@@ -105,7 +105,7 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   (WindowPresentTarget), frames are run by it or for it (RenderFrameExecutor), and one host may present through
  *   several windows while keeping ONE copy of what it uploaded and compiled. That is what this face answers: what the
  *   GPU can do (capabilities), what it retains for the host (targets, passes, content programs, transfers), and where
- *   its reports go (diagnostics). It is also the exchange-chain FACTORY - a target is created by the device that will
+ *   its reports go (diagnostics). It is also the SWAPCHAIN FACTORY - a target is created by the device that will
  *   present through it, so a host never has to build a swapchain to get a device (see createSurfaceTarget, and Q1/Q2
  *   of the axis that shaped this: a device is not initialized with a window, but "will anything be shown" is part of
  *   what it is).

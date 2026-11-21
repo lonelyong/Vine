@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/RetirementQueue.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
@@ -32,7 +32,7 @@
  */
 VN_BACKEND_VSG_CORE_NS_BEGIN
 
-// The two aggregates live at the module's public level (vine/graphics/FrameStats.hpp): a HUD, a tool
+// The two aggregates live at the module's public level (vine/graphics/FrameReport.hpp): a HUD, a tool
 // and a gate read them through RenderEngine::frameReport, and the backend fills the SAME structs
 // here, so neither side keeps a second spelling of a number.
 

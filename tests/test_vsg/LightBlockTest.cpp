@@ -1,5 +1,5 @@
 /**
- * @brief The LIGHT BLOCK on the DEVICE: the lights a drawing call announced reach its shader in VIEW space, on BOTH
+ * @brief The LIGHT BLOCK on the DEVICE: the lights a draw packet announced reach its shader in VIEW space, on BOTH
  * drawing paths (see `.ai/design/vsg-backend.md`, milestone M5c, and ADR-2026-10-24-light-block-typed-lights).
  *
  * The block and the packing rule are the SDK's (`ShaderAbi.hpp`'s `VineLightsBlock` / `packLightBlock`); their
@@ -9,7 +9,7 @@
  *
  * Why this is a picture and not a byte comparison. A light that never reached the shader and a scene lit only by
  * the ambient fill look the same to every counter: the draw is recorded, the block is bound, the pipeline is the
- * same one. So the device case below shades a FOUR-BAND picture in ONE pass, with one drawing call per band, and
+ * same one. So the device case below shades a FOUR-BAND picture in ONE pass, with one draw packet per band, and
  * each band's light list is chosen so that only the correct packing can produce its colour:
  *
  *   * band 0 announces a sun pointing AT the viewer (world +Z, camera at +Z): the band must be ambient + sun;
@@ -18,7 +18,7 @@
  *   * bands 2 and 3 announce a DISABLED light: both must be the ambient FILL, and the two of them together must
  *     produce no drop report at all - a disabled light is not a dropped one.
  *
- * The bands are also what pins "the block is per DRAWING CALL": one pass, four calls, four different pictures -
+ * The bands are also what pins "the block is per DRAW PACKET": one pass, four calls, four different pictures -
  * a per-pass block would paint all four bands with the last announcement's lights.
  */
 
@@ -168,7 +168,7 @@ const char* const kLightingFragment = "layout(set = 0, binding = 3, std140) unif
 
 TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 {
-    // THE PICTURE. One pass, four drawing calls, four bands of 16 pixels; each band's light list is chosen so that
+    // THE PICTURE. One pass, four draw packets, four bands of 16 pixels; each band's light list is chosen so that
     // only a correct packing, bound PER CALL, can explain its colour (see the file note).
     const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
@@ -451,7 +451,7 @@ TEST(LightBlockTest, BothLightingProgramsReadTheBlockAtTheSameBinding)
 
 TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
 {
-    // THE PICTURE. Three full-screen calls in ONE pass, each with its own viewport (a third of the target) and its
+    // THE PICTURE. Three full-screen packets in ONE pass, each with its own viewport (a third of the target) and its
     // own light list: a sun pointing at the viewer, the same sun reversed, and no announcement at all. The fragment
     // stage reads the LIGHT BLOCK - the same block the content path binds - so each band's colour is its own call's
     // announcement:
@@ -573,7 +573,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     StateRegistry registry(pool);
 
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, program_facts.program, {}, pipelines.get(), &draws }
+        ContentPass::Scope::Entry{ DrawKind::Fullscreen, program_facts.program, {}, pipelines.get(), &draws }
     };
     ContentPass::Scope scope;
     scope.entries  = halves;
@@ -584,7 +584,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  node;
-    const ContentFacts           facts; // a screen call reads no tables: its half is looked up by program identity
+    const ContentFacts           facts; // a full-screen packet reads no tables: its half is looked up by program identity
     ASSERT_TRUE(content.record(frame.passes[0], facts, destination->shape().compatibility(), {}, view_block, node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 0U)

@@ -8,7 +8,7 @@
 
 - SDK: `src/viz/graphics/sdk/vine/graphics`; vsg backend: `src/plugins/gfx_backend_vsg` (`core/` pure policy + `api/` vsg adaptation + `support/`).
 - `RenderEngine`: lifetime / `frame()` / device borrowing / size / capabilities and reports; the three facades are `PassRegistry`, `OutputRegistry`, `DiagnosticsRoute`.
-- `frame()` returns `FrameOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
+- `frame()` returns `FrameCallOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
 - **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys); it is the last step of `selectRows`, so a caller receives a sorted `Selection`.
 - **A row is three parts** (`DrawListBake.hpp`): `RowLinks` (parent / subtree end / child count in walk order), `RowOwn` (`Fold`: placement, opacity, layers, draw order, view placement; `Body`: state, material, program, own bounds, geometry, draws) and `ResolvedRow` (the fold's one value, with `resolved_serial` moved only by `storeResolved`). `refreshRow` classifies an edit from the groups: `Body` equal → `RefoldSubtree`, otherwise `RebuildTable`; a chunk-share test compares `RowLinks` + `resolved_serial`.
 - **Chunk sharing and the publication cache are the publisher's**: `ScenePublisher::publication_cache_` holds the last snapshot; `SceneBake` is only the row table (+ `nodes` / `node_epochs` / `next_serial`).
@@ -64,7 +64,7 @@
 - `Geometry` = a set of channels; `Primitive` = one draw (topology + index span + material / program + instance stream).
 - Indices and the instance stream are written only on `Primitive`; `Geometry::material` / `program` are **geometry-level defaults** (the primitive's own value wins, otherwise the nearest `StateNode`).
 - A channel = `BufferSlice<float>` + components. `setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` share a buffer; an arena uses slices.
-- Instance stream: 16 floats per instance (column-major mat4); `visible_instances` is a draw parameter and is not re-uploaded; `VN_INSTANCED` decides binding 4 and the vertex layout.
+- Instance stream: 16 floats per instance (column-major mat4); `instance_count` is a draw parameter and is not re-uploaded; `instanceCapacity()` is the slice's capacity; `VN_INSTANCED` decides binding 4 and the vertex layout.
 - Every per-primitive mutator goes through the private `Geometry::updatePrimitive` (range guard that counts an ignored edit, copy, `setPrimitive`); `setInstanceTransforms` additionally announces its bounds because the same slice may hold new bytes.
 - revision: **shape belongs to geometry** (`Geometry::setRevision` / `bumpRevision`), **bytes belong to the buffer** (`Buffer::setRevision`). The upload cache keys on the buffer revision only; the geometry revision only drives fact-row rebuilds.
 - Identity: `vn::graphics::Handle` (gen24/domain8/index32) + `ContentRef{id, revision}`, public header `sdk/vine/graphics/ContentId.hpp`. `Node::id()` / `MaterialBase::id()` are allocated at construction and released at destruction; `Row::identity`, `RenderWorld::RowId`, delta, `RenderCommand::node`, `CompiledCommand::geometry`, `GeometryFacts::geometry` and the material table all key on it. **A table builds rows by `(id, revision)`**, and a row of an old revision keeps answering inside the parking window. An address is no longer an identity (`ADR-2026-11-11-content-identity-is-a-handle`); `Buffer`/stream upload still is an address + `ADR-2026-11-09`'s “holding is identity” (content objects, plans and compiled halves have all moved to `ContentRef`).
@@ -249,7 +249,7 @@
 - **S6c-1 landed (2026-11-15, T48 step six c, first half: the frame-head snapshot)**: the device cache got **one single lock** (`ContentCaches::Lock`,
   non-reentrant; a `Lock&` parameter turns "I hold the lock" into compile-time evidence), and a frame takes it once at the **frame head**: `planCommand`/`planScreen`/`resolveTextures`
   write pipeline, vertex/index/instance buffer handles, material, texture view/sampler **by value** into `CommandPlan`/`ResolvedTextures`,
-  and texture uploads are recorded into the frame command buffer at the frame head too; `record`/`recordScreen` only read those values. Observation point: `contentCacheCounters().cache_lock_acquisitions`
+  and texture uploads are recorded into the frame command buffer at the frame head too; `record`/`recordFullscreen` only read those values. Observation point: `contentCacheCounters().cache_lock_acquisitions`
   — a fixed **4** for the whole frame (frame head 1 + books 2 + `endFrame` 1), **not growing with the draw count**; `VkFrameHeadTest` gives the same number for 1 and 6 commands,
   and the mutation (taking the lock per draw on the record path) ⇒ 6 → 10 red. Three lessons: ① **the plan must be a value** — storing cache-entry pointers in the plan is a lifetime defect the moment "a release can
   slip into the frame"; ② **texture uploads can only happen at the frame head** (recording copy/barrier inside a render pass is illegal), so `preparePass` is left to warm-up only;
@@ -295,7 +295,7 @@
 - **S3 landed (2026-11-15, T48 step three)**: the content path was split into three — `ContentCaches` (**device**: programs /
   geometries / instance streams / pipelines / layouts / `ContentImages` / the pipeline cache / `Progress` / `release*`),
   `FrameScratch` (**driver**: constant ring + descriptor pool + set table + `frame_index` + `ring_builds` / `set_builds`),
-  `ContentDraw` (**recorder**: holds borrowed references to both, keeping only `prepare` / `prepareScreen` / `record` / `recordScreen`).
+  `ContentDraw` (**recorder**: holds borrowed references to both, keeping only `prepare` / `prepareScreen` / `record` / `recordFullscreen`).
   `Session` owns `scratch` + `recorder`, and `Impl` keeps only `caches`; `createScratch()` is called after the layout is built, and on teardown
   **scratch goes before caches** (a set's layout is borrowed). Criteria: `test_vk` 103/103 (Debug + ASan), forced rebuild 0 warnings;
   mutation (`FrameScratch::create` not building the ring) ⇒ `ATriangleIsDrawnIntoTheTargetAndProbed` red, green again once restored.
@@ -623,14 +623,14 @@
 
 - **New files**: `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` + `src/internal/DrawNeeds.cpp`.
   The `DrawNeeds` value + `Miss{None,Geometry,Material,Program}` + `keyFor(compatibility)`; two `drawNeeds` overloads:
-  `(pass, CompiledCommand, facts)` = a content draw, `(pass, CompiledDraw, inputs)` = a full-screen call (**no facts needed**:
+  `(pass, CompiledCommand, facts)` = a content draw, `(pass, CompiledDraw, inputs)` = a full-screen packet (**no facts needed**:
   its identity is all in the plan + the caller's offer). `sampledColorCount` / `sampledDepthCount` moved from `ContentPass.cpp`'s
   anonymous namespace into the header (`record`'s set construction and `serveHalf` use the same spelling).
 - **Two pairs of counts, one rule**: `set_colors/set_depths` = how many the frame's input set binds (a pass fact); `key_colors/key_depths`
   = how many the pipeline key writes (a program that does not sample set 1 ⇒ 0, with `programSamplesInputSet` left in the .cpp anonymous namespace). Both pairs
   are written in one place, so they cannot diverge.
 - **Duplication deleted**: the variant/layout/program/Key construction in `ContentHalves::halvesFor`; `recordCommand`'s
-  four-way geometry/material/variant/findProgram/half match (→ `halfFor(needs)`); `recordScreenDraw`'s source
+  four-way geometry/material/variant/findProgram/half match (→ `halfFor(needs)`); `recordFullscreenDraw`'s source
   search and six hand-filled key fields; the third lookup in `describeMissingContentHalf`. `recordCommand` lost two parameters
   (`sampled_color_count/depth_count`) and reads `needs.set_*` instead.
 - **T32 (device-independent)**: `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds` — the identity is **hand-written** by the case
@@ -768,11 +768,12 @@
 
 ## 2026-11-15 — one definition for `PrepareReport.passes` (T41 closed) + a real VUID: “dependencies are part of compatibility too” between variants
 
-- **The definition is settled (one place in the SDK)**: `FrameShape` / `frameShapeOf` / `isDrawingCall` / `passHasEffect` went into
-  `FrameDescription.hpp` (inline, no new exported symbol). The rule = **a pass with an effect**: at least one drawing call, **or** a declared
+- **The definition is settled (one place in the SDK)**: `FrameCounts` / `frameCountsOf` / `packetDraws` / `drawItemsOf` / `passHasEffect` went into
+  `FrameDescription.hpp` (inline, no new exported symbol). The rule = **a pass with an effect**: at least one draw packet, **or** a declared
   clear (a “clear only” pass is a real pass); an entry with `draw == nullopt` does not count (it does not even declare a target). The two backends used to compute it differently:
   vk counted “entries with draws” (treating a call with no camera as a draw, +1), vsg counted “passes whose compiled draws are non-empty” (missing clear-only passes,
-  −1), and `FrameCounters` was a third. Both now call `frameShapeOf(frame)`, matching the recording count by construction.
+  −1), and `FrameCounters` was a third. Both now call `frameCountsOf(frame)`, matching the recording count by construction.
+  (2026-11-20: the value is `FrameCounts` and carries `passes` / `draw_packets` / `draws` - the last is the `DrawItem` count a profiler calls draw calls.)
 - **A real VUID (caught by the new cases, fixed)**: among `TargetImages`' three render-pass variants, the one with `depth_load == LOAD` widened
   `srcStage/srcAccess` (to cover “reading depth written by the previous pass”) while the CLEAR variant did not ⇒ **different dependency ⇒ the variants are incompatible**; the same
   framebuffer was compatible only with the CLEAR variant, so “two passes in one frame writing the same target with depth” reported
@@ -904,18 +905,18 @@
   `SceneView::publishContent` does not publish the chain-owned transparent scene (one `never published`, that pass draws nothing) and
   `applySurfaceGeometry` does not resize the chain either (the demo used to resize in its own layout step, two sources of size). The demo is fixed, see
   `.ai/bugs/demo-chain-never-adopted.md`.
-- **vk**: a full-screen call must **always** be `DepthMode::Disabled` (enforced by `ContentDraw::planScreen`, the reference backend's M4b rule).
+- **vk**: a full-screen packet must **always** be `DepthMode::Disabled` (enforced by `ContentDraw::planScreen`, the reference backend's M4b rule).
   A full-screen triangle sits at z = 0.0 = the reverse-Z far plane; the window pass's D24 clears to 0 and deferred's composite **borrows** the G-buffer
   depth ⇒ inheriting `TestAndWrite` discards the whole block, while **zero VUIDs and every `recorded=1` in the recording layer**. The case is
   `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`; the old screen fixture explicitly set `Disabled`, which is exactly why it did not catch it.
   See `.ai/bugs/vk-screen-draw-inherits-pass-depth.md`.
-- **vk's screen set must bind the map the pass resolved**: bindings 7/8 existing ≠ binding the right image. `recordScreen` now takes
+- **vk's screen set must bind the map the pass resolved**: bindings 7/8 existing ≠ binding the right image. `recordFullscreen` now takes
   `ShadowSource` (`Device::executeFrame` already called `resolveShadow` for every pass): with a map, bind the real depth + the per-call packed
   `VineShadowBlock`; without one, the white stand-in + `params.x = 0`. Symptom = "forward has shadows, deferred does not, zero diagnostics"; the case
-  `VkShadowTest.AScreenPassShadesWithTheMapItResolved` (samples binding 7 and writes depth, a white stand-in reads 255).
+  `VkShadowTest.AFullscreenPassShadesWithTheMapItResolved` (samples binding 7 and writes depth, a white stand-in reads 255).
   See `.ai/bugs/vk-screen-pass-shaded-without-the-map.md`.
 - **The plan identifies rows by `(owner, name)`, a name is not a label**: the demo's four G-buffer previews were all called `gbuffer_preview` ⇒ four declarations
-  landed on the same row, only the last survived ("only block 4 shows"). The other half: the layout step only changed the demo's own `ScreenPass`
+  landed on the same row, only the last survived ("only block 4 shows"). The other half: the layout step only changed the demo's own `FullscreenPass`
   (`setViewport`), while the nodes in the frame are **built from declarations** ⇒ the reorder never took effect; after changing the object it must be **declared again** (`addDemoPass`
   applied again, in-place update for the same owner and name). The frame table can be read directly: `VN_FRAME_PLAN=1` should show 4 `gbuffer_preview_*` rows.
   See `.ai/bugs/demo-preview-passes-shared-one-name.md`.
@@ -961,7 +962,7 @@
 - **Shape**: the engine's deferred frame = one scene pass writing a four-attachment RGBA16F + D24 G-buffer (`defaultGbufferGeometryProgram()`),
   followed by one SCREEN pass (`defaultDeferredLightProgram()`) sampling the four attachments by the pass's declared inputs (`Pass::inputs` +
   `DrawDescription::source`), with the light block at set 0 binding 6. **The backend needed no change**: M3's MRT / per-attachment clear
-  (`extra_colors` defaults to transparent black), RGBA16F images, M4's multi-source screen draw and the light block were already enough. This is evidence that "the seam is enough",
+  (`extra_colors` defaults to transparent black), RGBA16F images, M4's multi-source full-screen draw and the light block were already enough. This is evidence that "the seam is enough",
   not a new capability.
 - **Picture facts** (this machine): composite centre 204/204/204 (0.8 linear albedo × the sRGB encoding of the ambient term); the four attachments copied to RGBA8 read back
   204/204/204, 0/0/127 (octahedral encoding of normal (0,0,1) + roughness 0.5), 255 (alpha = occlusion), 4/0/127.
@@ -1069,7 +1070,7 @@
   unsupported odd counts (e.g. 3) are silently lowered. **vsg still answers bit mask 15** (backlog T37).
 - **Shape**: `TargetImages` creates **sample buffers** (`COLOR_ATTACHMENT` usage only) + a **single-sampled resolve image** when multisampled;
   render pass attachment order = [sample buffers…, resolve…, depth], `pResolveAttachments` points at the resolve, the framebuffer is in the same order.
-  **`colors` / `color_views` are the picture (the resolve image) from now on**: screen draws sample it, `readColorBuffer` reads it,
+  **`colors` / `color_views` are the picture (the resolve image) from now on**: full-screen draws sample it, `readColorBuffer` reads it,
   `color_sampled` transitions act on it too; the sample buffers are valid only inside the render pass.
 - **depth does not resolve**: created with the same count, but when `target.isDepthPromoted()` (depth may be sampled) it is forced to single sampling and reported once —
   otherwise the shader / readback gets samples instead of the picture.
@@ -1101,7 +1102,7 @@
 
 ## 2026-11-13 —— third-round audit W4: the plan expresses only the shape of a `PassKind`
 
-- **Rule**: a plan can only say `Scene` / `Screen`; a subclass pass is `describe()`'s escape hatch, outside the plan contract. An in-place update of a declaration with the same name and kind
+- **Rule**: a plan can only say `Scene` / `Fullscreen`; a subclass pass is `describe()`'s escape hatch, outside the plan contract. An in-place update of a declaration with the same name and kind
   keeps it (the node and `describe()` both stay alive); a kind change would rebuild it as the built-in base class, so `applyPlan` refuses it.
 - **New code**: `PlanProblemCode::SubclassPassWouldBeRebuilt` (`subclass-pass-would-be-rebuilt`), decided by
   `RenderEngine::collectRebuildProblems` after `validatePlan` — a pure plan check cannot see "which object is registered under this name".
@@ -1196,7 +1197,7 @@
 - **`FramePlan` → `FrameTable`** (file / type / accessor): `RenderEngine::framePlan()` → `frameTable()`, the row type
   `PassPlan` → `PassRow`, the dump header becomes `frame table:`; the demo's `logFramePlan` becomes `logFrameTable`. Reason: it reads the
   compiled frame table, not the plan (`Plan` is the declaration).
-- **`frame()` two states**: `FrameOutcome` changes from an enum to a struct — `Status::{Ran, Submitted, NotReady}` + `reason`
+- **`frame()` two states**: `FrameCallOutcome` changes from an enum to a struct — `Status::{Ran, Submitted, NotReady}` + `reason`
   (`EngineNotReady::{NoDevice, NotInitialized}`), predicates `ran()` / `submitted()` / `driven()`. `NotReady` is a precondition,
   not a frame ending; `prepare()` reuses the same `EngineNotReady` (`Outcome::NotReady` + `reason`).
 - **`applyPlan()` three states**: returns `PlanResult` — `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal`
@@ -1251,7 +1252,7 @@
   re-measure with the select recipe first); T31 upgraded to §1's **known potential race** (`StreamUploads.cpp`'s engine thread reads `Buffer::revision()`,
   that field is not atomic; today no host changes a buffer every frame); 2.4's duplicate T22 → T32; T8 notes the evidence rig is in place;
   the "content out of the library" entry is deleted (ADR-2026-11-13-content-seam-stays-in-the-plugin).
-- **T25 + T29**: new `FrameUploads` (SDK `FrameStats.hpp`) hangs off `FrameReport::uploads` — this frame's stream/texture
+- **T25 + T29**: new `FrameUploads` (SDK `FrameReport.hpp`) hangs off `FrameReport::uploads` — this frame's stream/texture
   upload count, bytes and release count. `StreamUploads` gains `uploadedBytes()`, `MaterialImages` gains `built()` / `uploadedBytes()`;
   `VsgBackend` takes a baseline at `executeFrame` frame open and the difference **after recording** (uploads happen in `recordContent`, not `collectFrame` —
   the first version took the difference after collect and got all 0), the failure path zeroes first.
@@ -1411,7 +1412,7 @@
 - **Shape**: plugin `gfx_backend_vk` registers factory `"vk"` (`RenderApi::Vulkan`); not the default backend; tests separate
   (new `test_vk`, compiling the plugin sources directly like `tests/test_vsg`).
 - **Milestones**: M0 plugin+device; M1 offscreen clear+readback; M2 one content draw (glslang→pipeline, channels→upload, View/Draw blocks);
-  M3 targets/state/MRT; M4 material/texture/light/screen draw; M5 swapchain; M6 residency/prepare; M7 comparison with vsg.
+  M3 targets/state/MRT; M4 material/texture/light/full-screen draw; M5 swapchain; M6 residency/prepare; M7 comparison with vsg.
   M0–M2 about 2–4k lines, M3–M6 about 10–20k lines. Details are in backlog T30.
 - **Docs**: backlog §1 new T35 (the only "doable now" item).
 
@@ -1466,7 +1467,7 @@
   (`FrameInFlight`) — the window's `present()` has no frame parameter. `driving` is **not cleared** at frame end (the test seam
   `BackendContentAccess::windowTarget` and diagnostics read "the last frame's window"), only cleared at shutdown.
 - **Frame-head snapshot**: `openFrameHead` takes the content lock once: `passes.adopt`→`FrameScratch::pass_ids`, `adoptHostTarget`,
-  `targets.observe`, `store.track` (moving the tracking out of `collectContentDraw/collectScreenDraw`),
+  `targets.observe`, `store.track` (moving the tracking out of `collectContentDraw/collectFullscreenDraw`),
   `collectTargetFacts`→`scratch.facts`, staging sweep, `growBlockStorageIfNeeded`, upload baseline.
   Collect/compile (`collectFrame`/`closeFrameBooks`) read scratch only ⇒ the plan compiler's report reaches the sink **without holding the lock**
   (that is where the overlap evidence is caught). **Content phase**: `commitFrameThrough` takes the content lock once for applyTargetPlans/material arena/
@@ -1485,8 +1486,8 @@
 
 ## 2026-11-16 —— vsg S8c-2: the recording path is lock-free, content split into resolve/record/commit phases (T48)
 
-- **New unit**: `internal/ContentPlan` (`ContentPlan.hpp/.cpp`) — the **values** resolved for one frame: one `Call` per draw call
-  (`ContentDraw*` recorder + the resolved `Draw`/`ScreenDraw` + fixed arrays for block bindings/push blocks/vertex bindings), one slot per pass
+- **New unit**: `internal/ContentPlan` (`ContentPlan.hpp/.cpp`) — the **values** resolved for one frame: one `Call` per draw packet
+  (`ContentDraw*` recorder + the resolved `Draw`/`FullscreenDraw` + fixed arrays for block bindings/push blocks/vertex bindings), one slot per pass
   (with its own `core::StateRegistry`); `Pass::pass/registry` are borrowed, `halves_` is a **pin** on `shared_ptr<const void>`
   (`ContentHalves::pin()`), so another driver's frame-head sweep does not release a recorder this frame still needs (retirement parking does not care about
   "a frame not yet submitted"). A call **stores no spans** (`Call::value()` assembles from the call's own arrays) — vector reallocation would invalidate a span pointing into itself.
@@ -1495,7 +1496,7 @@
   builds vsg nodes), **commit** (lock again: `executor.record`, sweep, session submit, `finish`). The frame head writes the view/lights/shadow/draw/
   material blocks and hands only offsets to recording — another frame head rotating a ring/sweeping/growing in between does not affect this frame.
 - **Resolve half / record half separated**: `ContentDraw::plan(key)` (takes the layer + variant pool, returns `Identity{pipeline, variant}`) and
-  `record`/`recordScreen` (bind only the resolved pipeline, **no acquire, no pool touch**); `core::StateRegistry` gains a
+  `record`/`recordFullscreen` (bind only the resolved pipeline, **no acquire, no pool touch**); `core::StateRegistry` gains a
   `resolve(std::uint64_t variant, …)` overload — the pool is only asked at frame head, recording carries values. `ContentDraw`'s counters become `std::atomic`
   (the same half may be recorded by two drivers at once). A command with zero geometry is refused in the **resolve** phase (before identity resolution, "a refused draw is not compiled" still holds).
 - **`ContentHalves::Scope::Entry` gains a trailing field `keep_alive`** (`ContentPlan::Pin`); `serve()` now takes `shared_ptr<Half>`.
@@ -1583,10 +1584,10 @@
   `docs/guides/vsg-backend.md` §5 names `FrameHead.hpp` (`check_doc_symbols` requires every unit to be named). <!-- drift-ok -->
 - **vk**: new header `internal/FrameHead.hpp` (header only, no new `.cpp`): `FrameHead` holds per-pass `Pass{std::vector<Call> draws}`,
   `Call{std::vector<DrawPlan> plans; ContentRefusal refusal}`, and **frame-level** `fallback_view` / `fallback_sampler` / `shadow_sampler`;
-  `DrawPlan` = `kind` (Content/Screen) + pipeline/resolved + content payload (material/variant/streams/…) + this call's `slots`.
+  `DrawPlan` = `kind` (Content/Fullscreen) + pipeline/resolved + content payload (material/variant/streams/…) + this call's `slots`.
   `ContentCaches::planCommand` / `planScreen` **merge into one verb, two overloads** `planDraw(RenderCommand,…)` / `planDraw(DrawDescription,…)`;
   `resolveTextures(material, commands, FrameHead&, FrameHead::DrawPlan&, refusal, lock, batch)` writes frame-level facts into head, slots into plan.
-  `ContentDraw::record(…, span<const FrameHead::DrawPlan> plans, const FrameHead& head, …)`, `recordScreen(…, const DrawPlan&, const FrameHead&, …)`.
+  `ContentDraw::record(…, span<const FrameHead::DrawPlan> plans, const FrameHead& head, …)`, `recordFullscreen(…, const DrawPlan&, const FrameHead&, …)`.
   The old `FrameDriver::DrawContent` / `PassContent` are deleted, replaced by one `FrameHead frame_head`.
 - **One visible difference (honest)**: `record`'s "1x1 stand-in missing" check moves from "this call's first plan's fallback" to "the frame's fallback".
   Today a call whose first command is refused would therefore report one extra `vk.content.stand_in_missing` (the stand-in actually exists); after the change only a real head refusal is reported.
@@ -1649,7 +1650,7 @@
   Witness `PassChainTest.AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame`. BC-08: a host driving the engine itself
   must call `SceneView::update()` / `PassChain::update()` itself.
 - **B16c (PassDesc is the only author shape)**: `RenderPass`'s public surface is read-only (`declaration()`/`name()` + the readers);
-  the 35 setters and `ScreenPass::setProgram` are deleted. The engine's write gate is `detail::PassNode`
+  the 35 setters and `FullscreenPass::setProgram` are deleted. The engine's write gate is `detail::PassNode`
   (`adopt` / `resolveTarget` / `setDrawSize`, friend). `PassChain::restate(desc)` is the chain's "one explicit diff"
   (the name deviates from the research doc's `chain->update(d)`: `update()` is already a per-frame verb, avoid one name two meanings). `PassChain::apply()` no longer
   refreshes from nodes — `pending_` is the current shape. `RenderEngine::bindPassContent` becomes adopting a declaration with changed content.
@@ -1657,7 +1658,7 @@
   An empty input name is skipped in plan validation and resolution (the old setter's "empty name ignored").
 - **Migration surface**: demo (`addDemoPass` takes `PassDesc`, PiP re-anchors through `applyPlan`, preview layout holds declaration values),
   `tests/PlanTestSupport.hpp` (`applyPassForTest(desc,order)`, `updatePassForTest`, `restatePassForTest`,
-  `asScreenPassForTest`), all of test_graphics / test_vsg / test_vk / test_gui.
+  `asFullscreenPassForTest`), all of test_graphics / test_vsg / test_vk / test_gui.
 - **Counts**: `test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** all green; nine gates all green;
   `Vine --open demo` 0 errors (session up + Pending -> Presenting).
 - **Trap**: when batch-editing tests, check every oldString of `multi_replace` character by character (several "successes" actually hit another site);
@@ -1742,8 +1743,8 @@
 - **What was wrong with the old number**: "the whole frame still makes about 97 allocations/frame" (2026-11-16, above)
   describes the **backend's recording window**, not the frame. Quoted as "the frame" it is off by a factor of ~20.
 - **Measurement 1 (backend window, exact window, stable)**: vk's `executeFrame`, 64x64 RGBA8+D24, `unlitForwardProgram`,
-  16 steady frames after 8 warm-ups: **85 allocations / 10,612 B** for ONE drawing call, **133 / 12,424 B** for FOUR -
-  the same number on every frame, so churn, not growth. That is ~16 per further drawing call and 69 fixed; bands 66/10/8/1
+  16 steady frames after 8 warm-ups: **85 allocations / 10,612 B** for ONE draw packet, **133 / 12,424 B** for FOUR -
+  the same number on every frame, so churn, not growth. That is ~16 per further draw packet and 69 fixed; bands 66/10/8/1
   (<64 B / <256 B / <1K / <4K). Recipe: temporarily add a counting `operator new` to a `test_vk` TU and count around
   `executeFrame` (the probe is NOT committed: an `operator new` replacement in `test_vk` would break its TSan build, the
   trap test_vsg already carries).
@@ -1763,7 +1764,7 @@
   a frame compiler, not a render graph", 5.6 `SceneView` as the per-window controller. §3.12 points at 5.3.
 - **Normative halves** (one fact one home - the guide translates, the design page states): `graphics-frame-pipeline.md`
   2.11 (five values, one question each; `FrameQuery` is `FrameResult::query`'s TYPE, not a sixth answer, and
-  `FrameOutcome`'s `NotReady` is a precondition) and 2.12 (no render graph; `Transient` borrows the WORD, not the
+  `FrameCallOutcome`'s `NotReady` is a precondition) and 2.12 (no render graph; `Transient` borrows the WORD, not the
   read/write edges; `G8`); `graphics-architecture.md` 2.13 (`SceneView`; the `View` VALUE is camera snapshot +
   device-pixel area + layer mask, one derivation long).
 - **Wording fix** (C-A3-05): `vk-backend.md` 2.6 called the ANSWER "the SDK's `TargetPlan`"; the answer is
@@ -1823,7 +1824,7 @@
 
 - **What changed** (five spellings, one batch, ~1,200 references): `RenderCommand` -> `DrawItem` (and
   `collectRenderCommands` -> `collectDrawItems`; its header and `.cpp` renamed with it), `DrawDescription` ->
-  `DrawCall`, `MaterialBase` / `MaterialBasePtr` -> `MaterialValues` / `MaterialValuesPtr` (files renamed),  `EngineNotReady` -> `EngineNotReadyReason` (file renamed), `createSession` / `releaseSession` ->
+  `DrawPacket`, `MaterialBase` / `MaterialBasePtr` -> `MaterialValues` / `MaterialValuesPtr` (files renamed),  `EngineNotReady` -> `EngineNotReadyReason` (file renamed), `createSession` / `releaseSession` ->
   `createFrameDriver` / `releaseFrameDriver`. Rationale and rejected options: ADR-2026-11-18-public-vocabulary-unification;
   migration notes BC-17..BC-21 in `graphics-rendering.md` 2.10.
 - **No aliases kept, on purpose**: B4's deprecated shims migrated a *shape* whose in-tree callers still existed; a migrated

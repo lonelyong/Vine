@@ -89,17 +89,17 @@ raw_ptr<Scene> FpsOverlay::content() const
     return content_.get();
 }
 
-FpsOverlay::Sampler& FpsOverlay::sampler() noexcept
+FpsOverlay::RateWindow& FpsOverlay::rateWindow() noexcept
 {
-    return sampler_;
+    return rate_window_;
 }
 
-const FpsOverlay::Sampler& FpsOverlay::sampler() const noexcept
+const FpsOverlay::RateWindow& FpsOverlay::rateWindow() const noexcept
 {
-    return sampler_;
+    return rate_window_;
 }
 
-bool FpsOverlay::Sampler::addFrame(double dt_seconds) noexcept
+bool FpsOverlay::RateWindow::addFrame(double dt_seconds) noexcept
 {
     if (!(dt_seconds > 0.0)) {
         return false; // a clock that did not move is not a frame, and feeding it would only add time
@@ -118,7 +118,7 @@ bool FpsOverlay::Sampler::addFrame(double dt_seconds) noexcept
     return true;
 }
 
-double FpsOverlay::Sampler::fps() const noexcept
+double FpsOverlay::RateWindow::fps() const noexcept
 {
     return published_;
 }
@@ -194,14 +194,14 @@ void FpsOverlay::onFrame(const FrameContext& context)
 
 void FpsOverlay::updateReadout(double dt)
 {
-    // The window IS the readout's cadence (see Sampler): a figure is published when one closes, and on a
+    // The window IS the readout's cadence (see RateWindow): a figure is published when one closes, and on a
     // value that does not change nothing happens at all - a change rewrites ONE geometry's positions and
     // announces it (see writePattern), so a steady frame rate costs no data work.
-    if (!sampler_.addFrame(dt)) {
+    if (!rate_window_.addFrame(dt)) {
         return;
     }
 
-    int value = static_cast<int>(sampler_.fps() + 0.5);
+    int value = static_cast<int>(rate_window_.fps() + 0.5);
     if (value > 999) {
         value = 999;
     }

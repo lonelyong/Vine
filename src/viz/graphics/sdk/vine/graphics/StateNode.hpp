@@ -217,14 +217,18 @@ class VN_GRAPHICS_API StateNode : public Group {
      */
     const RenderState& renderState() const;
 
-    /** @brief Returns whether any state item is set on this node.
+    /** @brief Returns whether any render-state item is set on this node.
+     *
+     * @details
+     * - The state BLOCK only: the program and material overrides are separate facts (see program() /
+     *   material()) and survive clearRenderState().
      *
      * @return true when at least one item is set.
      */
-    bool hasState() const;
+    bool hasRenderState() const;
 
-    /** @brief Clears every state item set on this node. */
-    void clearState();
+    /** @brief Clears every render-state item set on this node (the program and material stay). */
+    void clearRenderState();
 
   private:
     RenderState                  state_;

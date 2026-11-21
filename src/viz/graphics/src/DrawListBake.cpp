@@ -278,13 +278,13 @@ RowOwn readRowOwn(const Node& node)
                                        ? ShaderProgramPtr(primitive->program)
                                        : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : ShaderProgramPtr());
             draw.program_description = draw.program != nullptr ? draw.program->description() : ShaderProgramDescriptionPtr();
-            draw.drawn = !(primitive->hasInstances() && primitive->visibleInstanceCount() == 0u);
+            draw.drawn = !(primitive->hasInstances() && primitive->instanceCount() == 0u);
             if (primitive->hasInstances()) {
                 draw.instance_transforms = primitive->instance_transforms;
                 draw.first_instance =
                     static_cast<std::uint32_t>(std::min<std::size_t>(primitive->firstInstance(), std::numeric_limits<std::uint32_t>::max()));
                 draw.instance_count =
-                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->visibleInstanceCount(), std::numeric_limits<std::uint32_t>::max()));
+                    static_cast<std::uint32_t>(std::min<std::size_t>(primitive->instanceCount(), std::numeric_limits<std::uint32_t>::max()));
             }
             own.body.draws.push_back(std::move(draw));
         }

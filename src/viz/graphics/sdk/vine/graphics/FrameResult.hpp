@@ -17,7 +17,7 @@ VN_GRAPHICS_NS_BEGIN
  *   value plus the device-pixel area and the layers the picture draws). Both were taken when the frame was BUILT, so
  *   a pick, an anchor or a fit aimed with them asks about the picture the user is looking at - never about content or
  *   a camera that moved while the frame was being answered (`I7`, design N17).
- * - AN EMPTY SNAPSHOT IS A FACT, not an error: the presenting pass draws no content (a screen pass, an overlay-only
+ * - AN EMPTY SNAPSHOT IS A FACT, not an error: the presenting pass draws no content (a full-screen pass, an overlay-only
  *   picture), so a query has no rows to hit and says so rather than aiming at whatever the scene holds now.
  * - WHAT IS NOT HERE YET: poses. The prototype/instance layer is what would produce them (`graphics-frame-pipeline.md`
  *   F10 / F12); until it exists a query that needs posed geometry reads it from the live content, and this value does
@@ -43,8 +43,8 @@ struct VN_GRAPHICS_API FrameQuery {
  *   what the user sees needs them as ONE value, because half of it going stale is exactly the bug the frame pipeline
  *   design calls "aiming at the wrong picture".
  * - THE COUNTS describe the frame that ran, not a running total: `passes` are the enabled passes its compiled value
- *   carried, `draws` the drawing calls those passes issued, and `diagnostics` what this engine reported through its
- *   one route while the frame was built and answered.
+ *   carried, `draw_packets` the packets those passes issued, `draws` the draws inside those packets, and
+ *   `diagnostics` what this engine reported through its one route while the frame was built and answered.
  * - `frame` is 0 until a frame has been answered, which is what `answered()` reports: an empty value says "nothing has
  *   been answered yet" rather than presenting a zero-filled result as fact.
  */
@@ -57,7 +57,10 @@ struct VN_GRAPHICS_API FrameResult {
     FrameQuery query{};
     /// Enabled passes the frame ran.
     std::uint32_t passes{ 0 };
-    /// Drawing calls those passes issued (a pass that issued none counts 0 here, as it does in the frame table).
+    /// Draw packets those passes issued - one per pass and view (see DrawPacket); a pass that issued none counts 0
+    /// here, as it does in the frame table.
+    std::uint32_t draw_packets{ 0 };
+    /// Draws those packets submitted (what a profiler calls draw calls).
     std::uint32_t draws{ 0 };
     /// Diagnostics this engine reported while the frame was built and answered.
     std::uint64_t diagnostics{ 0 };

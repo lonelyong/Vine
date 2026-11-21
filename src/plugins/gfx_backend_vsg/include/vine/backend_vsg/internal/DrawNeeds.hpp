@@ -13,7 +13,7 @@
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**
- * @brief What one drawing call NEEDS: the identity a pipeline is compiled for, answered by exactly one builder.
+ * @brief What one draw packet NEEDS: the identity a pipeline is compiled for, answered by exactly one builder.
  *
  * WHY IT EXISTS. Two layers need the same answer and must never disagree about it: the layer that BUILDS what a
  * frame needs ahead of time (api/CompiledPrograms, and the `prepare()` entry that will drive it) and the layer that
@@ -46,7 +46,7 @@
  */
 VN_BACKEND_VSG_NS_BEGIN
 
-/** @brief One drawing call's needs: the identity it is compiled for, and the table rows that answered it. */
+/** @brief One draw packet's needs: the identity it is compiled for, and the table rows that answered it. */
 struct DrawNeeds {
     /** @brief Which identity the tables could not answer (the FIRST one, in the order the answer is built). */
     enum class Miss : std::uint8_t
@@ -57,13 +57,13 @@ struct DrawNeeds {
         Program,  // No program row for the drawable's VARIANT (the text is not described, or at another revision).
     };
 
-    /** @brief `source_index` when a full-screen call reads none of the pass' inputs. */
+    /** @brief `source_index` when a full-screen packet reads none of the pass' inputs. */
     static constexpr std::size_t kNoSource = static_cast<std::size_t>(-1);
 
-    core::DrawKind           kind{ core::DrawKind::Content };               // Which of the two drawing calls this is.
+    core::DrawKind           kind{ core::DrawKind::Content };               // Which of the two draw packets this is.
     vn::graphics::ContentRef program{};                                     // Identity AND revision the key names.
     core::VertexLayoutKey    layout{};                                      // The vertex layout the pipeline is built against
-                                                                            // (empty for a full-screen call).
+                                                                            // (empty for a full-screen packet).
     ProgramVariant           variant{};                                     // The spelled variant (the key carries its bits).
     vn::graphics::Topology   topology{ vn::graphics::Topology::Triangles }; // The class the pipeline bakes.
     std::uint32_t            color_attachments{ 0 };                        // The pass' colour count (the blend state's shape).
@@ -76,8 +76,8 @@ struct DrawNeeds {
     std::uint32_t            key_depths{ 0 };                               // Depth textures the PIPELINE KEY states.
     std::size_t              source_index{ kNoSource };                     // Full-screen: which pass input the call reads.
     const ProgramFacts*      program_entry{ nullptr };                      // The row the program was answered from; null on a miss.
-    const GeometryFacts*     geometry_entry{ nullptr };                     // The geometry row; null for a full-screen call or a miss.
-    const MaterialFacts*     material_entry{ nullptr };                     // The material row; null for a full-screen call or a miss.
+    const GeometryFacts*     geometry_entry{ nullptr };                     // The geometry row; null for a full-screen packet or a miss.
+    const MaterialFacts*     material_entry{ nullptr };                     // The material row; null for a full-screen packet or a miss.
     Miss                     missed{ Miss::None };                          // Which lookup failed first.
     FactMiss                 miss{ FactMiss::None };                        // Why it failed (only meaningful for `missed`).
 
@@ -89,7 +89,7 @@ struct DrawNeeds {
         return missed == Miss::None;
     }
 
-    /** @brief Gets whether a full-screen call reads one of the pass' declared inputs.
+    /** @brief Gets whether a full-screen packet reads one of the pass' declared inputs.
      * @return true when @ref source_index names an entry rather than @ref kNoSource.
      */
     [[nodiscard]] bool hasSource() const noexcept
@@ -152,20 +152,20 @@ struct DrawNeeds {
  */
 [[nodiscard]] DrawNeeds drawNeeds(const core::CompiledPass& pass, const core::CompiledCommand& command, const ContentFacts& facts);
 
-/** @brief Answers what ONE full-screen drawing call needs: the plan's call, read from what the caller offers.
+/** @brief Answers what ONE full-screen draw packet needs: the plan's call, read from what the caller offers.
  *
  * @details
- * - A full-screen call's identity carries no variant and no vertex layout, and its counts are the SOURCE's: the
+ * - A full-screen packet's identity carries no variant and no vertex layout, and its counts are the SOURCE's: the
  *   full-screen ABI reads binding N as the source's attachment N (see InputImages::screen_colors), so the count
  *   a caller's offer produces is the count the pipeline is compiled for. That is why the offer is an input here
  *   while the content answer takes it from the plan.
- * - No table is consulted: which program KIND a full-screen call uses is a property of the call, and the
+ * - No table is consulted: which program KIND a full-screen packet uses is a property of the call, and the
  *   compiled half is found by the caller (the scope). An offer of no inputs answers a call that reads no source,
  *   which is what a producer that only needs the half's shape (`api/CompiledPrograms`) hands in - the half's key
  *   carries no counts.
  *
  * @param pass   The compiled pass the call belongs to (its colour attachment count).
- * @param draw   The full-screen call.
+ * @param draw   The full-screen packet.
  * @param inputs The images the caller offers, one entry per `pass.inputs` entry and in the same order.
  * @return The needs (always answerable: no table is asked).
  */

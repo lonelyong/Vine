@@ -128,7 +128,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 ### 2.4 渲染对象
 
 - `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`applyPlan(plan)` / `plan()`、
-  `frame()`（返回 `FrameOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReadyReason`）、
+  `frame()`（返回 `FrameCallOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReadyReason`）、
   `createArea()`（尺寸走 `RenderArea::resize()`）、`publish/resolve`（命名输出）、
   `frameTable()` / `frameDescription()` / `frameReport()` / `frameResult()` / `diagnostics()` / `releaseContent()`。
   - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
@@ -142,7 +142,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
     预热过的帧再录制时 `builds` / `uploads` 增量为 0。
   - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关）、
     `waitForFrame(n)`（唯一显式等待，“这一帧上屏了”）、`frameResult()`（上一帧的完整值：`query.snapshot` /
-    `query.view`（`View`：相机快照 + 设备像素区域 + 层掩码）/ passes / draws / 诊断 / present）、`presentRecord()` / `presentedCamera()`（后者的相机半边与两个简写）。
+    `query.view`（`View`：相机快照 + 设备像素区域 + 层掩码）/ passes / draw_packets / draws / 诊断 / present）、`presentRecord()` / `presentedCamera()`（后者的相机半边与两个简写）。
     拾取 / 锚点 / fit 一律用 `frameResult().query`，不要用活相机或活场景。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
@@ -151,7 +151,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
     （写内容，比如 HUD 自更新）是对象自己的 `FrameUpdate::onFrame()`（链/宿主在帧之前调用，见 §3.6）。**`execute()` 不是扩展点**（2026-10-19 起它不再是
     `virtual`）：它是"宿主自己驱动一条 pass"（或测试）时的拼写，内部就是"描述 → 把只含这一条 pass 的帧值交给
     后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。子类想改变画什么，覆写 `describe()`。
-- `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
+- `FullscreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
   隐式拷贝）：
   - 把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用它画一个全屏三角形；想读哪张附件，
     就在 program 里写 `layout(binding = N)`（`screenCopyProgram(N)` 就是这个）；
@@ -380,7 +380,7 @@ geometry->setRevision(geometry->revision() + 1);        // 公告：重建数据
 > （`declaration()` / `name()` 与各项读取器），没有 setter。把字段填进 `PassDesc`，一次
 > `engine->applyPlan(vn::graphics::Plan{ { desc } })` 注册；改一个字段也是同一条路（一次显式差分，见 §3.13）。
 
-不写任何 shader：`ScreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
+不写任何 shader：`FullscreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
 子视口"——**要显式命名**它（没有隐式拷贝），并且这条 pass 需要有相机。
 
 §3.3 / §3.4 / §3.5 三个例子**也是编译过的**：`tests/test_graphics/GuideExamplePasses.cpp` 是它们的可编译副本，
@@ -416,7 +416,7 @@ scene_pass.output.whole_target = true;                          // 对象级承�
 PassDesc compose_pass;
 compose_pass.name          = u8"compose_to_window";
 compose_pass.order         = 0;
-compose_pass.kind          = PassKind::Screen;
+compose_pass.kind          = PassKind::Fullscreen;
 compose_pass.camera        = camera;                            // 窗口 pass 的相机决定窗口视角
 compose_pass.program       = screenCopyProgram();               // 画面是**命名**的：纯拷贝用 SDK 的这个程序
 compose_pass.input_names   = { vn::String(u8"SceneColor") };    // 名字形式
@@ -488,7 +488,7 @@ composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由那�
 PassDesc light_pass;
 light_pass.name          = u8"deferred_lighting";
 light_pass.order         = 0;
-light_pass.kind          = PassKind::Screen;
+light_pass.kind          = PassKind::Fullscreen;
 light_pass.camera        = camera;                  // program 路径**必须**有相机
 light_pass.target        = Target::explicitTarget(composite);
 light_pass.input_names   = { vn::String(u8"GBuffer") };
@@ -512,7 +512,7 @@ forward_pass.output.whole_target = true;
 PassDesc present_pass;
 present_pass.name          = u8"present";
 present_pass.order         = 2;
-present_pass.kind          = PassKind::Screen;
+present_pass.kind          = PassKind::Fullscreen;
 present_pass.camera        = camera;
 present_pass.program       = screenCopyProgram();
 present_pass.input_names   = { vn::String(u8"Composite") };
@@ -526,9 +526,9 @@ return applied;
 | # | pass | renderTarget | order | 清屏 | 深度 | 输出 → 输入 |
 | --- | --- | --- | --- | --- | --- | --- |
 | ① | `gbuffer`（场景，program override） | `gbuffer`（MRT 4 色 + D24） | -3 | 是 | `TestAndWrite` | `GBuffer` |
-| ② | `deferred_lighting`（ScreenPass + program） | `composite` | 0 | 是 | 默认 | 读 `GBuffer`（整捆） |
+| ② | `deferred_lighting`（FullscreenPass + program） | `composite` | 0 | 是 | 默认 | 读 `GBuffer`（整捆） |
 | ③ | `forward_transparent`（场景） | `composite`（借 gbuffer 深度） | 1 | **否** | `TestOnly` | `Composite` |
-| ④ | `present`（ScreenPass + `screenCopyProgram()`） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
+| ④ | `present`（FullscreenPass + `screenCopyProgram()`） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
 
 要点：
 
@@ -538,7 +538,7 @@ return applied;
 - **深度**：不透明 `TestAndWrite`；压在不透明结果上的半透明 `TestOnly`；HUD/覆盖层 `Disabled`。这是 pass 的
   **策略**：内容自己用 `StateNode::setDepth` 写过 depth 的命令不吃它（见 §2.2 的合并规则与
   `resolveRenderState`）。
-- **MRT**：目标侧 `attachColor()` 调四次；程序侧输出按附件序号写；`ScreenPass` 的 program 会把源的每张
+- **MRT**：目标侧 `attachColor()` 调四次；程序侧输出按附件序号写；`FullscreenPass` 的 program 会把源的每张
   彩色附件绑成纹理 0..N-1。
 
 ### 3.5 例：同样的几张图，用 builder 一次写成
@@ -573,7 +573,7 @@ engine->device()->executor().setDefaultContentProgram(forwardProgram());       /
 
 // 离屏 + 画中画（内部就是 §3.3 的两个 pass）。注意最后那个矩形是 VIEWPORT ⇒ **device 像素**
 // （surface_w 是逻辑像素，所以高 DPI 下要各自乘 dpr；见 RenderPass::setViewport）。
-// 返回值是 [[nodiscard]] 的那条 ScreenPass：它回答"加没加上"，拒绝时是 null。
+// 返回值是 [[nodiscard]] 的那条 FullscreenPass：它回答"加没加上"，拒绝时是 null。
 auto preview_pass = addOffscreenToScreen(engine, camera.get(), scene, u8"preview", 512, 288,
                                          RenderTarget::ColorFormat::RGBA8,
                                          RenderTarget::DepthFormat::D24,
@@ -628,7 +628,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
   renderTarget()` 注册进名字表。
 - **对象**（`ImageRef`）：生产者 `output.image` / `output.whole_target`，消费者
   `inputs`（`ImageInput`）/ `input_targets`。粒度可到**某一张附件**（`ImageRef` 带颜色/深度与附件号），
-  也可粗到**整捆**（整张 target）—— 带 program 的 `ScreenPass` 读的是整捆。
+  也可粗到**整捆**（整张 target）—— 带 program 的 `FullscreenPass` 读的是整捆。
 - **导入贴图**（`Texture`）：`addInput(texture)` / `addInput(texture, sampler)`。采样状态属于**这次声明**，
   所以同一张纹理在不同 pass（或同一 pass 的两次声明）可以用不同的 wrap/filter/mip 设置；不写 sampler
   时用后端的输入采样器，行为与之前一致。后端的上传仍按 `(texture, revision)` 共享，sampler 按状态值缓存。
@@ -646,9 +646,9 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | --- | --- |
 | 同一张图被两个 pass 声明为输出 | 两个不同 pass 声明同一 (target, 附件)；同名不同 target 走名字侧 |
 | 消费者声明了输入，但本帧没人产出 | 该图没有生产者/生产者排在其后/生产者禁用 |
-| `ScreenPass` 完全没有可用输入 | 没声明任何输入（图像 / target / 名字都没有，它没有东西可采样） |
-| `ScreenPass` 没有 program | 它的画面是**命名**的（没有隐式拷贝），所以没有 program 就永远不画 ⇒ 报一次 |
-| `ScreenPass` 有 program 但没有相机 | 全屏路径必须先建 view（光源也按这个 view 空间推），否则一个像素都不画 |
+| `FullscreenPass` 完全没有可用输入 | 没声明任何输入（图像 / target / 名字都没有，它没有东西可采样） |
+| `FullscreenPass` 没有 program | 它的画面是**命名**的（没有隐式拷贝），所以没有 program 就永远不画 ⇒ 报一次 |
+| `FullscreenPass` 有 program 但没有相机 | 全屏路径必须先建 view（光源也按这个 view 空间推），否则一个像素都不画 |
 | 承诺的是"这个 pass 并不画进去的 target" | 声明与 `renderTarget()` 对不上（报在真实的那条线上） |
 
 ### 3.8 自己写 shader：location 契约与绑定顺序
@@ -974,9 +974,9 @@ surface->dismiss(surface->presentedView());
   算的（按区的尺寸 × 比例），而**形状**是视图相机的（`SceneView::applySurfaceGeometry` 把区的形状 push 给相机）。
   宿主自建的 pass **没有**视图可喂：它在自己的声明里给 `viewport` 设备像素（它本来就知道尺寸）。
 - **两个协作对象，视图只当门面**：输入路由在 `SceneView::inputRouter()`（`InputRouter`：无按钮=移动、
-  有按钮=按下/松开、按键=down/up，直接交给操纵器）；布局参与在视图私有的 `LayoutParticipant`（`layout_`：
+  有按钮=按下/松开、按键=down/up，直接交给操纵器）；布局参与在视图私有的 `ResizeParticipant`（`resize_`：
   记住“不呈现时”的尺寸/比例、保存宿主注册的步骤，并按“视图自己的步骤 → 两步步骤 → 带比例步骤”的固定顺序执行）。
-  `pushEvent()` / `resize()` / `addSurfaceLayout()` 仍是门面入口，行为不变。
+  `pushEvent()` / `resize()` / `addSurfaceResizeHandler()` 仍是门面入口，行为不变。
 - **输入只有一个去处**：这块区的那条呈现有视图时就是它（`SurfaceWindow::routedView()`）；没有视图（宿主自建 pass）
   时 input 什么也不做。按下**总是**捕获（拖出控件不断线），松手之前那次拖拽一直是同一个视图 —— 见
   `RenderControlTest.TheViewReceivesInputAndADragKeepsSteeringIt`。
@@ -1028,7 +1028,7 @@ frame table: 11 pass(es)
 vn::graphics::PassDesc desc;
 desc.name          = u8"compose";              // 诊断与计划表里的名字
 desc.stage         = PassStage::Transparent;    // 位置由意图决定：passStageOrder() 变成 order
-desc.kind          = PassKind::Screen;         // 怎么执行：Scene（画一个内容场景）/ Screen（全屏三角形 + program）
+desc.kind          = PassKind::Fullscreen;         // 怎么执行：Scene（画一个内容场景）/ Fullscreen（全屏三角形 + program）
 desc.camera        = camera.get();
 desc.program       = vn::graphics::screenCopyProgram();
 desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
@@ -1058,13 +1058,13 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
   `RenderPass` 的输入解析这些**机制**；像"composite 借 G-buffer 的深度"这种**组合**由你自己的配方搭
   （在自己的 `FrameUpdate::onFrame()` 里把借用重述到当前实例，或干脆自己持有那些 target）。
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
-  （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
+  （`Fullscreen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
 - **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序）。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
   法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
 - **返回的是结点**：`applyPlan` 是唯一的注册入口；要拿已注册的执行结点按名字回读（`engine->pass(desc.name)`），
   于是"我声明了什么"与"我接下来要调什么"是同一个对象。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
-- 计划只表达 `PassKind`（`Scene` / `Screen`）：手搭的**子类** pass 不再是可注册的形状，自定义写成 `PassDesc` 的**数据**
+- 计划只表达 `PassKind`（`Scene` / `Fullscreen`）：手搭的**子类** pass 不再是可注册的形状，自定义写成 `PassDesc` 的**数据**
   （program / viewport / depth band）。
 
 
@@ -1269,7 +1269,7 @@ scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零
 - **先问设备**：`capabilities().limits.max_samples` 是上限（彩色与深度两个上限的**较小值**：一张 target 只有一个样本
   数，两种附件都得支持）。超过它的描述会被后端**拒绝并报一次**，不会悄悄降级 —— `initialize()` 之后读
   `capabilities()` 再选值。
-- **窗口仍是单采样**：交换链的样本数归平台。要让窗口抗锯齿，就把场景画进多重采样离屏目标，再用 `ScreenPass`
+- **窗口仍是单采样**：交换链的样本数归平台。要让窗口抗锯齿，就把场景画进多重采样离屏目标，再用 `FullscreenPass`
   把解析后的图呈现到窗口 —— 也就是 §3.3 的 2 pass 形状，一行不改。
 - **深度也解析**（规则与颜色一致）：被 shader 采样的、被别的 pass 借走的、被 `readDepthBuffer()` 读的，
   都是那张**单采样解析图**，多重采样那张只当绘制目标。解析方式是 `sample0`（取第一个样本的值）——所以
@@ -1505,7 +1505,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 | 路径 | 装配内容 |
 | --- | --- |
 | `ShadingPath::Forward` | 一个 `PassStage::Shading` 的窗口场景 pass 画内容（可选叠加场景是同一窗口 pass 里带深度的第二笔，`PassStage::Transparent`）。 |
-| `ShadingPath::Deferred` | `PassStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：base colour RGBA16F、八面体法线+roughness+metallic RGBA16F、emissive+occlusion RGBA16F、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `ScreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
+| `ShadingPath::Deferred` | `PassStage::Geometry` 的 pass 把内容画进**规范 G-buffer**（4 张彩色：base colour RGBA16F、八面体法线+roughness+metallic RGBA16F、emissive+occlusion RGBA16F、view position RGBA16F，加 D24 深度；发布为 `"GBuffer"`），再用一个 `Shading` 阶段的全屏光照 `FullscreenPass` 作为窗口 pass。有叠加场景时，光照结果先与离屏 composite 合成再呈现（`Transparent` → `Present`）。 |
 
 **demo 的内容是一套词汇表、两条装配线。** 两个示例（forward / deferred）画同一批**切片**，各自只加自己确实画得对的
 那些（规则写在 `DemoScene::buildScene()` 一处，见 `src/plugins/demo_plugin/src/DemoScene.hpp`）：
@@ -1605,7 +1605,8 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | 相机 + 画面区域 | `View`（一帧内的值）/ `SceneView`（窗口控制器，见 §5.6） | `View` | `RPI::View` | `FSceneView` |
 | 一条 pass 的声明 | `PassDesc`（注册后的对象是 `RenderPass`） | 没有（`Renderer` 自己决定 pass） | `RPI::Pass` | RDG 的 pass |
 | 一个可画项 | `DrawItem` | `Renderable` / `RenderableManager` | `RPI::DrawItem` | `FMeshBatch` |
-| 一次绘制调用 | `DrawCall` | 没有同名的值 | `RPI::DrawPacket` | `FMeshDrawCommand` |
+| 一次绘制调用（一次提交） | `DrawItem`（一次提交就是一个项） | `RenderPass::Command` | `RPI::DrawItem` | `FMeshDrawCommand` |
+| 一个 pass 对一个视图的绘制包 | `DrawPacket`（包住 N 个 `DrawItem`） | 没有同名值（`RenderPass` 的 command list 是相近角色） | `RPI::DrawPacket` | 没有同名值（`FParallelMeshDrawCommandPass` 持有逐视图命令） |
 | 编译后的整帧 | `FrameDescription`（喂后端）/ `FrameTable`（给人看，见 §5.3） | 没有 | pass 树 + `RPI::FrameGraph` | `FRDGBuilder` 建出来的图 |
 | 帧结束的答案 | `FrameResult` | 没有一一对应 | 没有一一对应 | 没有一一对应 |
 
@@ -1620,16 +1621,16 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | `RenderPass` | 引擎层的一个渲染**阶段**（OSG render stage / VSG view + target + clear policy 那一类；`RenderPass.hpp` 的类注就写了这句） | 不是 `VkRenderPass`；同一个 framebuffer 上的几条 pass 录进后端的**一个** render pass |
 | `RenderPassKey` / `RenderPassCompatibility` | 才是"Vulkan 形状"的那两个词：兼容性 = 管道 key 的 render-pass 那一半 | 不是引擎的 pass |
 | `DrawItem` | 场景里**一个可画的项**（一个 drawable） | 不是 command buffer，也不是"一次绘制调用" |
-| `DrawCall` | **一次绘制调用** | 不是一条 GPU 命令；真正把命令记下去的是后端的录制 |
+| `DrawPacket` | **一个 pass 对一个视图的整包请求**（里面是 N 个 `DrawItem`） | 不是一条 GPU 命令，也不是一次绘制调用（那是 `DrawItem`）；真正把命令记下去的是后端的录制 |
 | command buffer | 后端内部的录制对象 | 前端（SDK）没有这个名字 |
 | `target` | 画到哪：`RenderTarget` = 宿主的画布，`Target` = pass 的声明，`TargetDecision` = 该做什么（见 §5.4） | 不是 `GPUTexture`，也不是 `VkFramebuffer`（那两个在 `TargetObjects` 里） |
 | `residency` | GPU 对象存不存在（`Use` / `Build` / `Copy` 三态） | 不是内存压力或驱逐策略 |
 | `content` | 引擎持有的场景 / 材质 / 几何 / 程序 / 光源 | 不是 GPU 上的字节 |
 
-`DrawItem` 与 `DrawCall` 这两个名字是 2026-11-18 改的（B12）：它们以前叫 `RenderCommand` / `DrawDescription`，
-与业界"项 → 调用"的顺序正好相反——`RenderCommand` 说不出它是"一个项"，`DrawDescription` 也说不出它是"一次调用"。
-现在两项与 O3DE 的 `DrawItem` / `DrawPacket`、UE 的 `FMeshBatch` / `FMeshDrawCommand` 同一顺序，迁移说明在
-[`graphics-rendering.md`](../../.ai/design/graphics-rendering.md) §2.10。
+`DrawItem` 与 `DrawPacket` 是同一句话说两次的两个阶段：`DrawItem` 于 2026-11-18 从 `RenderCommand` 改名（说出它是“一个项”），
+`DrawPacket` 于 2026-11-20 从 `DrawCall` 改名（说出它是一包请求，而不是一次绘制调用）。行业里“一次绘制调用”就是一次提交，
+也就是一个 `DrawItem`；整包请求在 O3DE 叫 `DrawPacket`（同样的逐视图包），UE 没有同名类型（`FMeshDrawCommand` 是逐项那条命令）。
+迁移说明在 [`graphics-rendering.md`](../../.ai/design/graphics-rendering.md) §2.10。
 
 **三个"推导"动词按输入分，不按返回分**（规范见 `graphics-scene.md` §2.12）：`collect*` 只吃**节点**，沿树折叠出
 一种**作者值**（`collectRenderState` 答的还是"没人说过"的空档，不是默认值）；`resolve*` 吃**一个已有值 + 一个上下文**，
@@ -1643,12 +1644,12 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | --- | --- | --- | --- |
 | `FrameDescription` | **这一帧是什么**：每条启用 pass 的身份 / order / 解析后的输入，加上 pass 自己描述的绘制 | 每帧重建；后端用完即弃 | `RenderFrameExecutor::executeFrame`（整帧传参）；宿主可读 `frameDescription()` |
 | `FrameTable` | **这一帧由哪些 pass 组成**，成行 | 每帧重建，是值 | `frameTable()`、日志、HUD（§3.12） |
-| `FrameOutcome` | **这一次 `frame()` 做了什么** | 一次调用 | 调用点 |
+| `FrameCallOutcome` | **这一次 `frame()` 做了什么** | 一次调用 | 调用点 |
 | `FrameResult` | **上一帧回答了什么**：图、它看到的世界、花了多少 | 每答完一帧换一次 | `frameResult()` |
 | `FrameQuery` | **那张图看到的是哪个世界**：画的是哪份快照、用哪个 `View` | `FrameResult::query` 这个字段 | 拾取 / 锚点 / 对准（`FrameResult::query`） |
 
 `FrameQuery` 不是第六个答案：它是 `FrameResult::query` 的类型，因为"哪份快照 + 哪个视图"永远一起被问，
-分开放就会有一半过期。`FrameOutcome` 的 `NotReady` 也不是第三种结局——它是"这次调用什么都没驱动"，
+分开放就会有一半过期。`FrameCallOutcome` 的 `NotReady` 也不是第三种结局——它是"这次调用什么都没驱动"，
 理由在 `EngineNotReadyReason`（和 `prepare()` 共用同一个原因枚举）。
 
 ### 5.4 目标：六个角色，另加后端内部三个

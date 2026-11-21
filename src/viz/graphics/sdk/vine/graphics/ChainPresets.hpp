@@ -17,7 +17,7 @@ class Camera;
 class Light;
 class RenderEngine;
 class Scene;
-class ScreenPass;
+class FullscreenPass;
 class ShaderProgram;
 
 /** @brief Builds the default G-buffer geometry program (scene -> MRT).
@@ -99,31 +99,31 @@ class ShaderProgram;
  */
 [[nodiscard]] VN_GRAPHICS_API vn::math::Mat4d spotShadowMatrix(const Light& light, const vn::geom::spatial::Aabbd& bounds, Camera& camera);
 
-/** @brief Recipe: render content into an off-screen target and composite it back as a picture-in-picture screen pass.
+/** @brief Recipe: render content into an off-screen target and composite it back as a picture-in-picture full-screen pass.
  *
  * @details
  * - Creates an order < 0 scene pass rendering into a @p rt_width x @p rt_height RenderTarget (publishing its colour as
- *   @p output_slot), and an order > 0 ScreenPass that samples @p output_slot into the @p pip sub-viewport.
+ *   @p output_name), an order > 0 FullscreenPass that samples @p output_name into the @p pip sub-viewport.
  * - OWNERSHIP: both passes are registered on the engine IMMEDIATELY and the engine keeps them alive - they are NOT
  *   owned by any PassChain, so only RenderEngine::clearPasses() removes them (removePass(screen) alone would leave the
- *   off-screen pass drawing into a target nobody samples).
+ *   off-full-screen pass drawing into a target nobody samples).
  * - The caller re-anchors the PiP viewport once the surface size is known (see RenderPass::setViewport).
  *
  * @param engine        Engine the passes are registered on (null answers null).
  * @param camera        View camera the preview scene pass draws through (null answers null).
  * @param content       Scene the preview pass draws (may be null: the pass then draws nothing).
- * @param output_slot   Name the off-screen target is published under and the screen pass resolves.
+ * @param output_name   Name the off-screen target is published under and the full-screen pass resolves.
  * @param rt_width      Off-screen target width.
  * @param rt_height     Off-screen target height.
  * @param color_format  Off-screen colour format.
  * @param depth_format  Off-screen depth format.
  * @param pip           PiP sub-viewport on the output surface (device px).
- * @return The created ScreenPass (owned by the engine; do not delete), or null when the recipe was refused.
+ * @return The created FullscreenPass (owned by the engine; do not delete), or null when the recipe was refused.
  */
-[[nodiscard]] VN_GRAPHICS_API raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
+[[nodiscard]] VN_GRAPHICS_API raw_ptr<FullscreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
                                                                        raw_ptr<Camera>           camera,
                                                                        intrusive_ptr<Scene>      content,
-                                                                       const String&             output_slot,
+                                                                       const String&             output_name,
                                                                        int                       rt_width,
                                                                        int                       rt_height,
                                                                        RenderTarget::ColorFormat color_format,

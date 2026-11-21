@@ -339,7 +339,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
     dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     // The SOURCE scope covers what an earlier submission may have done with these attachments: written them, or
-    // SAMPLED them (a screen draw sampling the colour picture, a shader sampling the depth picture - see
+    // SAMPLED them (a full-screen draw sampling the colour picture, a shader sampling the depth picture - see
     // Device::resolveShadow). The second half is what orders this pass' first write after those reads.
     dependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;

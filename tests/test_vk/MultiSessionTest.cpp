@@ -54,7 +54,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -162,20 +162,20 @@ void main()
 }
 
 /// @brief One scene draw with one command that names NO program: the driver's default is what shades it.
-[[nodiscard]] DrawCall programlessDraw(const intrusive_ptr<Geometry>& geometry)
+[[nodiscard]] DrawPacket programlessDraw(const intrusive_ptr<Geometry>& geometry)
 {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{}));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief One scene draw whose command names @p material (and no program: the driver's default shades it).
-[[nodiscard]] DrawCall materialDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<Material>& material)
+[[nodiscard]] DrawPacket materialDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<Material>& material)
 {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     DrawItem command(geometry, nullptr, vn::math::Mat4d{});
@@ -183,8 +183,8 @@ void main()
     command.material_description = material->description();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
@@ -209,8 +209,8 @@ void main()
     return material;
 }
 
-/// @brief A frame with ONE pass whose drawing calls are issued in order (a good draw, then a refusing one).
-[[nodiscard]] FrameDescription drawingFrameWith(RenderTarget* target, std::vector<DrawCall> draws)
+/// @brief A frame with ONE pass whose draw packets are issued in order (a good draw, then a refusing one).
+[[nodiscard]] FrameDescription drawingFrameWith(RenderTarget* target, std::vector<DrawPacket> draws)
 {
     FrameDescription frame;
 
@@ -222,7 +222,7 @@ void main()
     pass.target       = target;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws        = std::move(draws);
+    pass.packets        = std::move(draws);
     entry.draw        = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -249,7 +249,7 @@ void main()
 }
 
 /// @brief One scene draw that NAMES its program (so the frame records it without a default program).
-[[nodiscard]] DrawCall programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
+[[nodiscard]] DrawPacket programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
 {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     DrawItem command(geometry, nullptr, vn::math::Mat4d{});
@@ -257,15 +257,15 @@ void main()
     command.program_description = program->description();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -277,7 +277,7 @@ void main()
     pass.target       = target;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -644,7 +644,7 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
 {
     // R6, OBSERVED: a release announced while a frame body is in flight RETURNS while that frame is still inside - and
     // the frame then finishes with what it had already resolved, because the release PARKS the objects instead of
-    // destroying them (T6). The frame is held by the diagnostic sink (a refused drawing call reaches the host there),
+    // destroying them (T6). The frame is held by the diagnostic sink (a refused draw packet reaches the host there),
     // so the release is attempted at a moment the body beyond doubt still holds its share of the device.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
@@ -683,7 +683,7 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
 
     // The frame draws ONE good call (recorded with the handles the head resolved) and then a call with no program (the
     // refusal that reaches the sink) - so the release below targets objects the frame has already resolved.
-    std::vector<DrawCall> draws;
+    std::vector<DrawPacket> draws;
     draws.push_back(programDraw(geometry, program));
     draws.push_back(programlessDraw(geometry));
 
@@ -833,7 +833,7 @@ TEST(VkMultiSessionTest, AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt
 
     // ONE GOOD CALL (the target is built and the frame is inside its body) and one program-less call, whose refusal
     // reaches the sink.
-    std::vector<DrawCall> draws;
+    std::vector<DrawPacket> draws;
     draws.push_back(programDraw(geometry, program));
     draws.push_back(programlessDraw(geometry));
     (void)backend->executeFrame(drawingFrameWith(target.get(), std::move(draws)), nullptr);
@@ -886,7 +886,7 @@ TEST(VkMultiSessionTest, AReadbackWaitsForTheFrameInFlightAndCountsTheWait)
         }
     });
 
-    std::vector<DrawCall> draws;
+    std::vector<DrawPacket> draws;
     draws.push_back(programDraw(geometry, program));
     draws.push_back(programlessDraw(geometry)); // the refusal that holds the frame
     const FrameDescription blocked = drawingFrameWith(target.get(), std::move(draws));

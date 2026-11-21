@@ -64,7 +64,7 @@ struct InputImages {
     std::span<const ::vsg::ref_ptr<::vsg::Sampler>> color_samplers;
     /// The sampler for @ref depth when the input declared one; null means the layer's depth sampler.
     ::vsg::ref_ptr<::vsg::Sampler> depth_sampler;
-    /// The WHOLE source target's colour attachments, when this input is the source of a full-screen call.
+    /// The WHOLE source target's colour attachments, when this input is the source of a full-screen packet.
     ///
     /// The full-screen ABI reads binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram),
     /// so a call whose pass declared the source as ONE image still binds the whole target - that compatibility

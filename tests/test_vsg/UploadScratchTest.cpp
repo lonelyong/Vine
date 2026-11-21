@@ -75,7 +75,7 @@ TEST(UploadScratchTest, TheUploadScratchIsNotRetainedAndTheFramesGiveItBack)
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
     const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
 
-    // The frame's own shape: one pass, one target, one drawing call naming the content it draws (a frame with no
+    // The frame's own shape: one pass, one target, one draw packet naming the content it draws (a frame with no
     // content uploads nothing, which is the quiet frame below).
     const auto drive = [&](const TriangleFixture* content) {
         TestFrame frame;

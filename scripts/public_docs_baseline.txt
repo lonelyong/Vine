@@ -317,11 +317,9 @@ src/base/math/sdk/vine/math/Matrix3x3.hpp	return|Matrix3x3::preMulti
 src/base/math/sdk/vine/math/Matrix3x3.hpp	return|Matrix3x3::transposed
 src/base/math/sdk/vine/math/Matrix4x4.hpp	brief|Matrix4x4::element
 src/base/math/sdk/vine/math/Matrix4x4.hpp	param|Matrix4x4::element/2
-src/base/math/sdk/vine/math/Matrix4x4.hpp	param|Matrix4x4::isEqual/2
 src/base/math/sdk/vine/math/Matrix4x4.hpp	param|Matrix4x4::isZero/1
 src/base/math/sdk/vine/math/Matrix4x4.hpp	return|Matrix4x4::element
 src/base/math/sdk/vine/math/Matrix4x4.hpp	return|Matrix4x4::isAffine
-src/base/math/sdk/vine/math/Matrix4x4.hpp	return|Matrix4x4::isEqual
 src/base/math/sdk/vine/math/Matrix4x4.hpp	return|Matrix4x4::isIdentity
 src/base/math/sdk/vine/math/Matrix4x4.hpp	return|Matrix4x4::isRigid
 src/base/math/sdk/vine/math/Matrix4x4.hpp	return|Matrix4x4::isZero
@@ -885,10 +883,8 @@ src/viz/graphics/sdk/vine/graphics/Camera.hpp	return|Camera::viewMatrix
 src/viz/graphics/sdk/vine/graphics/CameraManipulator.hpp	param|CameraManipulator::setMode/1
 src/viz/graphics/sdk/vine/graphics/CameraManipulator.hpp	return|CameraManipulator::camera
 src/viz/graphics/sdk/vine/graphics/CameraManipulator.hpp	return|CameraManipulator::mode
-src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	param|Sampler::addFrame/1
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|FpsOverlay::camera
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|FpsOverlay::content
-src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|Sampler::addFrame
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	brief|AttributeChannel::shared
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	brief|AttributeChannel::slice
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	param|AttributeChannel::shared/4
@@ -904,11 +900,8 @@ src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraM
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onResize/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onScroll/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::setOrbitCenter/1
-src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	return|OrbitCameraManipulator::minDistance
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	return|OrbitCameraManipulator::orbitCenter
-src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	return|OrbitCameraManipulator::orbitRadius
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	return|OrbitCameraManipulator::scene
-src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	return|OrbitCameraManipulator::zoomToCursor
 src/viz/graphics/sdk/vine/graphics/RayIntersection.hpp	brief|RayIntersection::intersectSceneAll
 src/viz/graphics/sdk/vine/graphics/RayIntersection.hpp	param|RayIntersection::intersectSceneAll/4
 src/viz/graphics/sdk/vine/graphics/RenderBackendRegistry.hpp	brief|Registrar::Registrar

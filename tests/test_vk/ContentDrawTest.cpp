@@ -3,7 +3,7 @@
  *        target, and a full-screen draw copies another target's pixels; the probe reads each of them.
  *
  * What this pins, and why each half matters:
- *   - a `DrawCall` is enough to draw from: the camera snapshot, the command list and the program text cross
+ *   - a `DrawPacket` is enough to draw from: the camera snapshot, the command list and the program text cross
  *     the seam as values, so the backend needs nothing from a live scene or a live `ShaderProgram`;
  *   - `ShaderProgramDescription` compiles through glslang into a pipeline, and `GeometryDescription` becomes the
  *     vertex/index streams the pipeline reads - the first half of the test needs no device, the second needs one;
@@ -59,7 +59,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::LightType;
@@ -260,7 +260,7 @@ void main()
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -272,7 +272,7 @@ void main()
     pass.target        = target;
     pass.clear         = ClearPolicy{};
     pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -280,7 +280,7 @@ void main()
 }
 
 /// @brief A frame with ONE pass that clears NOTHING and issues @p draw (the screen-pass shape).
-[[nodiscard]] FrameDescription screenFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription screenFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -292,7 +292,7 @@ void main()
     pass.target = target;
     // A full-screen draw writes its rectangle; the pass is an overlay over whatever the destination already holds.
     pass.state.depth = DepthMode::Disabled;
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -354,8 +354,8 @@ TEST(VkContentDrawTest, ATriangleIsDrawnIntoTheTargetAndProbed)
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -402,8 +402,8 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{}));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -512,8 +512,8 @@ TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{})); // no program, and none announced
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -570,8 +570,8 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -614,8 +614,8 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     ambient.color     = Colorf(0.0F, 1.0F, 0.0F, 1.0F);
     ambient.intensity = 1.0F;
 
-    DrawCall draw;
-    draw.kind        = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind        = DrawPacket::Kind::Scene;
     draw.view.camera      = identityCamera();
     draw.commands    = commands;
     draw.light_values = vn::graphics::LightSet::create({ ambient });
@@ -658,21 +658,21 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall scene_draw;
-    scene_draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket scene_draw;
+    scene_draw.kind     = DrawPacket::Kind::Scene;
     scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
 
     const intrusive_ptr<RenderTarget> destination = makeTarget();
 
-    DrawCall screen_draw;
-    screen_draw.kind                 = DrawCall::Kind::Screen;
-    screen_draw.view.camera               = identityCamera();
-    screen_draw.source               = source.get();
-    screen_draw.program              = copy;
-    screen_draw.program_description  = copy->description();
-    const PresentOutcome outcome     = backend->executeFrame(screenFrame(destination.get(), std::move(screen_draw)));
+    DrawPacket fullscreen_draw;
+    fullscreen_draw.kind                 = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.view.camera               = identityCamera();
+    fullscreen_draw.source               = source.get();
+    fullscreen_draw.program              = copy;
+    fullscreen_draw.program_description  = copy->description();
+    const PresentOutcome outcome     = backend->executeFrame(screenFrame(destination.get(), std::move(fullscreen_draw)));
     EXPECT_EQ(outcome, PresentOutcome::Skipped);
 
     std::vector<std::uint8_t> pixels;
@@ -690,7 +690,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
 TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
 {
     // THE PASS' DEPTH POLICY IS ABOUT ITS CONTENT, NOT ABOUT THE FULL-SCREEN CALL. A full-screen draw is the
-    // canonical triangle at z = 0.0, which under this engine's reverse-Z convention is the FAR plane; a screen call
+    // canonical triangle at z = 0.0, which under this engine's reverse-Z convention is the FAR plane; a full-screen packet
     // that inherited the pass' TestAndWrite policy against a destination that carries depth would be discarded at
     // every pixel. The app found this the hard way (2026-11-14): a window pass' render pass clears D24 to 0 and the
     // deferred chain's composite BORROWS the G-buffer's depth, so present and the G-buffer previews "recorded and
@@ -719,29 +719,29 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall scene_draw;
-    scene_draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket scene_draw;
+    scene_draw.kind     = DrawPacket::Kind::Scene;
     scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
 
     // The destination carries depth (makeTarget attaches D24) and is never drawn into before: its depth is the
-    // render pass' clear (far, 0.0), which is exactly what a TestAndWrite full-screen call fails against.
+    // render pass' clear (far, 0.0), which is exactly what a TestAndWrite full-screen packet fails against.
     const intrusive_ptr<RenderTarget> destination = makeTarget();
 
-    DrawCall screen_draw;
-    screen_draw.kind                = DrawCall::Kind::Screen;
-    screen_draw.view.camera              = identityCamera();
-    screen_draw.source              = source.get();
-    screen_draw.program             = copy;
-    screen_draw.program_description = copy->description();
+    DrawPacket fullscreen_draw;
+    fullscreen_draw.kind                = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.view.camera              = identityCamera();
+    fullscreen_draw.source              = source.get();
+    fullscreen_draw.program             = copy;
+    fullscreen_draw.program_description = copy->description();
 
     FrameDescription frame;
     FrameDescription::Pass entry;
     entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target = destination.get();
-    pass.draws.push_back(std::move(screen_draw));
+    pass.packets.push_back(std::move(fullscreen_draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     EXPECT_EQ(backend->executeFrame(frame), PresentOutcome::Skipped);
@@ -749,7 +749,7 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
     EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
-        << "the full-screen call was discarded by a depth test it does not have";
+        << "the full-screen packet was discarded by a depth test it does not have";
     EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 }))
         << "the screen copy did not sample the source's cleared corner";
 
@@ -796,8 +796,8 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     commands->push_back(std::move(first));
     commands->push_back(std::move(second));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -811,7 +811,7 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     pass.clear  = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.state  = state;
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     backend->executeFrame(frame);
@@ -895,8 +895,8 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
         auto commands = std::make_shared<std::vector<DrawItem>>();
         commands->push_back(std::move(command));
 
-        DrawCall draw;
-        draw.kind     = DrawCall::Kind::Scene;
+        DrawPacket draw;
+        draw.kind     = DrawPacket::Kind::Scene;
         draw.view.camera   = identityCamera();
         draw.commands = commands;
         backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -915,7 +915,7 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
     backend->shutdown();
 }
 
-TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
+TEST(VkContentDrawTest, AShadowedFullFullscreenPassGetsTheEngineShadowBindings)
 {
     // THE ENGINE'S SHADOW ABI IN A FULL-SCREEN SET: the deferred lighting program's shadowed variant declares set 0
     // binding 7 (the map) and 8 (VineShadowBlock) - the app draws exactly this program as a full-screen pass. A screen
@@ -927,7 +927,7 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
         GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
     }
 
-    // The G-buffer stand-in: one colour attachment and one drawn frame - a screen draw samples a target the device
+    // The G-buffer stand-in: one colour attachment and one drawn frame - a full-screen draw samples a target the device
     // has BUILT, and the bindings past its single attachment read the white fallback.
     const intrusive_ptr<RenderTarget>  source      = makeTarget();
     const intrusive_ptr<RenderTarget>  destination = makeTarget();
@@ -940,8 +940,8 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
         auto commands               = std::make_shared<std::vector<DrawItem>>();
         commands->push_back(std::move(command));
 
-        DrawCall scene_draw;
-        scene_draw.kind     = DrawCall::Kind::Scene;
+        DrawPacket scene_draw;
+        scene_draw.kind     = DrawPacket::Kind::Scene;
         scene_draw.view.camera   = identityCamera();
         scene_draw.commands = commands;
         backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
@@ -950,19 +950,19 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
     const intrusive_ptr<ShaderProgram> lit = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(lit, nullptr);
 
-    DrawCall screen_draw;
-    screen_draw.kind                = DrawCall::Kind::Screen;
-    screen_draw.view.camera              = identityCamera();
-    screen_draw.source              = source.get();
-    screen_draw.program             = lit;
-    screen_draw.program_description = lit->description();
-    EXPECT_EQ(backend->executeFrame(screenFrame(destination.get(), std::move(screen_draw))), PresentOutcome::Skipped);
+    DrawPacket fullscreen_draw;
+    fullscreen_draw.kind                = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.view.camera              = identityCamera();
+    fullscreen_draw.source              = source.get();
+    fullscreen_draw.program             = lit;
+    fullscreen_draw.program_description = lit->description();
+    EXPECT_EQ(backend->executeFrame(screenFrame(destination.get(), std::move(fullscreen_draw))), PresentOutcome::Skipped);
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
         << "the screen set must offer the engine's shadow pair (see ContentDraw::makeScreenSet)";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     const auto report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
-    EXPECT_EQ(report.counters->draws, 1U) << "the full-screen pass reached the queue";
+    EXPECT_EQ(report.counters->draw_packets, 1U) << "the full-screen pass reached the queue";
     backend->shutdown();
 }

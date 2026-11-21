@@ -27,7 +27,7 @@ FrameRecorder::FrameRecorder(FrameArena& arena, Diagnostics& diagnostics, Observ
   , observe_(observe)
 {
     // Working memory for one frame's collection. Reserved once, so a steady frame's collection does not
-    // allocate: a scene with more passes or more drawing calls than this grows on its first frames and
+    // allocate: a scene with more passes or more draw packets than this grows on its first frames and
     // keeps the capacity from then on (see the design's "steady frame allocates nothing" gate).
     passes_.reserve(16);
     open_draws_.reserve(64);
@@ -259,14 +259,14 @@ bool FrameRecorder::render(std::span<const vn::graphics::DrawItem> commands,
         return false; // no scope to draw in, or its target is gone: nothing is redirected
     }
 
-    // A CALL WITH NOTHING TO DRAW IS NOT A DRAW. The engine really announces one, and it is not exotic: the
+    // A PACKET WITH NOTHING TO DRAW IS NOT A DRAW. The engine really announces one, and it is not exotic: the
     // demo's axis-gizmo pass calls render() with an empty list while its surface size is still unknown
     // (measured 2026-09-24). Recording that as a draw put a content draw with NO commands into the plan, and
     // the content layer read it as "this pass has content, but no compiled content half was built for it" -
     // it refused the WHOLE pass, the clear the pass carries included, and reported a warning (the application
-    // log's last one). The call is still a call: what it announced is consumed below, exactly as it is for a
-    // call that draws, so a host's announcement never leaks into the next call - only the DRAW is not
-    // recorded, because there is nothing in it (see FrameCounters::draws: "draw calls recorded").
+    // log's last one). The packet is still a packet: what it announced is consumed below, exactly as it is for a
+    // packet that draws, so a host's announcement never leaks into the next packet - only the DRAW is not
+    // recorded, because there is nothing in it (see FrameCounters::draw_packets / draws).
     if (!commands.empty()) {
         CollectedDraw draw;
         draw.kind         = DrawKind::Content;
@@ -276,10 +276,11 @@ bool FrameRecorder::render(std::span<const vn::graphics::DrawItem> commands,
         draw.lights       = pending_lights_;
         draw.commands     = snapshotCommands(commands, program_override);
         open_draws_.push_back(draw);
-        ++observe_.counters().draws;
+        ++observe_.counters().draw_packets;
+        observe_.counters().draws += commands.size();
     }
 
-    // ONE announcement serves ONE drawing call: the next draw of this scope that wants them announces
+    // ONE announcement serves ONE draw packet: the next draw of this scope that wants them announces
     // again (see the file note). The pass-level attributes stay, because they belong to the pass.
     pending_has_viewport_ = false;
     pending_viewport_     = {};
@@ -303,7 +304,7 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::Sh
     }
 
     CollectedDraw draw;
-    draw.kind         = DrawKind::Screen;
+    draw.kind         = DrawKind::Fullscreen;
     draw.source       = source;
     draw.program      = programRef(program);
     draw.camera       = camera;
@@ -316,7 +317,8 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::Sh
     pending_viewport_     = {};
     pending_lights_       = {};
 
-    ++observe_.counters().draws;
+    ++observe_.counters().draw_packets;
+    ++observe_.counters().draws; // one full-screen draw
     return true;
 }
 

@@ -280,7 +280,7 @@ bool samePrimitive(const Primitive& a, const Primitive& b) noexcept
     return a.topology == b.topology && a.indices.values.get() == b.indices.values.get() && a.indices.first == b.indices.first &&
            a.indices.count == b.indices.count && a.material.get() == b.material.get() && a.program.get() == b.program.get() &&
            a.instance_transforms.values.get() == b.instance_transforms.values.get() && a.instance_transforms.first == b.instance_transforms.first &&
-           a.instance_transforms.count == b.instance_transforms.count && a.visible_instances == b.visible_instances;
+           a.instance_transforms.count == b.instance_transforms.count && a.instance_count == b.instance_count;
 }
 
 } // namespace
@@ -362,18 +362,18 @@ bool Geometry::setInstanceTransforms(std::size_t index, BufferSlice<float> trans
     return true;
 }
 
-bool Geometry::setVisibleInstanceCount(std::size_t index, std::size_t count)
+bool Geometry::setInstanceCount(std::size_t index, std::size_t count)
 {
     return updatePrimitive(index, [count](Primitive& primitive) {
-        primitive.setVisibleInstanceCount(count);
+        primitive.setInstanceCount(count);
         return true;
     });
 }
 
-bool Geometry::clearVisibleInstanceCount(std::size_t index)
+bool Geometry::clearInstanceCount(std::size_t index)
 {
     return updatePrimitive(index, [](Primitive& primitive) {
-        primitive.clearVisibleInstanceCount();
+        primitive.clearInstanceCount();
         return true;
     });
 }
@@ -553,8 +553,8 @@ bool Geometry::subtreeBounds(Aabbd& box) const
             box.expandBy(data_box); // this draw is one placement of the data
             continue;
         }
-        const std::size_t visible = primitive.visibleInstanceCount();
-        for (std::size_t instance = 0u; instance < visible; ++instance) {
+        const std::size_t instances = primitive.instanceCount();
+        for (std::size_t instance = 0u; instance < instances; ++instance) {
             const std::optional<vn::math::Mat4d> matrix = primitive.instanceMatrix(instance);
             if (matrix.has_value()) {
                 box.expandBy(data_box.transformed(*matrix));

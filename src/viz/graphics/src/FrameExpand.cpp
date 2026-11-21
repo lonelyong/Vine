@@ -10,8 +10,8 @@ void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source)
     if (source == nullptr) {
         return;
     }
-    for (DrawCall& draw : pass.draws) {
-        if (draw.kind == DrawCall::Kind::Scene && draw.content == nullptr) {
+    for (DrawPacket& draw : pass.packets) {
+        if (draw.kind == DrawPacket::Kind::Scene && draw.content == nullptr) {
             draw.content = source;
         }
     }
@@ -19,9 +19,9 @@ void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source)
 
 void expandPass(PassDraw& pass)
 {
-    for (DrawCall& draw : pass.draws) {
-        if (draw.kind != DrawCall::Kind::Scene || draw.commands != nullptr) {
-            continue; // a screen call, or a list the producer already had: nothing to collect
+    for (DrawPacket& draw : pass.packets) {
+        if (draw.kind != DrawPacket::Kind::Scene || draw.commands != nullptr) {
+            continue; // a full-screen packet, or a list the producer already had: nothing to collect
         }
         if (!draw.view.present() || draw.content == nullptr) {
             continue; // no view to build, or nobody to ask: the backend records nothing for it

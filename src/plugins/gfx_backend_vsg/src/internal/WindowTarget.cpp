@@ -133,7 +133,7 @@ std::unique_ptr<WindowTarget> WindowTarget::create(::vsg::ref_ptr<::vsg::Window>
     // The window's content view: one stable view, so the window's content has its own view id. The rectangles
     // arrive as commands, which is what keeps an extent out of the pipeline's identity.
     //
-    // NOTE (measured, M4c): this view does NOT keep the window's pipelines apart from an off-screen pass'
+    // NOTE (measured, M4c): this view does NOT keep the window's pipelines apart from an off-full-screen pass'
     // pipelines. vsg reuses an existing implementation whose pipeline STATES compare equal whatever render
     // pass it was built for, and since a stable view's states are only the pipeline's own, two views of one
     // pipeline object reuse each other's VkPipeline. What keeps the families apart is the pipeline KEY (the

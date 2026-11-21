@@ -10,7 +10,7 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Plan.hpp>
 
@@ -156,10 +156,10 @@ Mat4d spotShadowMatrix(const Light& light, const vn::geom::spatial::Aabbd& bound
     return camera.projectionMatrix() * camera.viewMatrix();
 }
 
-raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
+raw_ptr<FullscreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
                                          raw_ptr<Camera>           camera,
                                          intrusive_ptr<Scene>      content,
-                                         const String&             output_slot,
+                                         const String&             output_name,
                                          int                       rt_width,
                                          int                       rt_height,
                                          RenderTarget::ColorFormat color_format,
@@ -173,7 +173,7 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
 
     // Off-screen target + an order < 0 scene pass that renders into it and publishes the result under the slot name.
     auto target = make_intrusive<RenderTarget>();
-    target->setName(output_slot);
+    target->setName(output_name);
     target->setSize(rt_width, rt_height);
     target->attachColor(color_format);
     target->attachDepth(depth_format);
@@ -181,25 +181,25 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     // Registered as the ENGINE'S OWN row, NOT through a chain: the preset is not a recipe, and a plan's identity is
     // the NAME - so the source and the PiP get names of their own (the published slot name stays the output's).
     PassDesc preview_desc;
-    preview_desc.name          = String(output_slot) + String(u8"_source");
+    preview_desc.name          = String(output_name) + String(u8"_source");
     preview_desc.stage         = PassStage::Geometry;
     preview_desc.camera        = intrusive_ptr<Camera>(camera);
     preview_desc.content       = std::move(content);
     preview_desc.target        = Target::explicitTarget(target);
-    preview_desc.output.name   = output_slot;
+    preview_desc.output.name   = output_name;
     preview_desc.output.whole_target = true; // its only writer: it owns the hand-off
 
-    // The order > 0 ScreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's copy program,
+    // The order > 0 FullscreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's copy program,
     // and it carries the view camera because a fullscreen program is drawn through the pass' view.
     PassDesc pip_desc;
-    pip_desc.name                          = String(output_slot) + String(u8"_pip");
+    pip_desc.name                          = String(output_name) + String(u8"_pip");
     pip_desc.stage                         = PassStage::Preview;
-    pip_desc.kind                          = PassKind::Screen;
+    pip_desc.kind                          = PassKind::Fullscreen;
     pip_desc.camera                        = intrusive_ptr<Camera>(camera);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so "present the baked
     // target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a backend-side default.
     pip_desc.program                       = screenCopyProgram();
-    pip_desc.input_names                   = { output_slot };
+    pip_desc.input_names                   = { output_name };
     pip_desc.input_targets                 = { target }; // samples the whole published target
     pip_desc.viewport                      = pip;
     // ONE PLAN, BOTH ROWS: the PiP reads the slot the source publishes, and a plan is checked as a whole (an input no
@@ -208,8 +208,8 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     preset.passes.push_back(preview_desc);
     preset.passes.push_back(pip_desc);
     (void)engine->applyPlan(preset, engine);
-    // The node is the handle this function hands back, and a Screen declaration is a ScreenPass by construction.
-    return static_cast<ScreenPass*>(engine->passFor(pip_desc.name, engine));
+    // The node is the handle this function hands back, and a Screen declaration is a FullscreenPass by construction.
+    return static_cast<FullscreenPass*>(engine->passFor(pip_desc.name, engine));
 }
 
 VN_GRAPHICS_NS_END

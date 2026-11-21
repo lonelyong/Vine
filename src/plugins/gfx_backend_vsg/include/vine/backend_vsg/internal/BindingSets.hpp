@@ -56,7 +56,7 @@
  *
  * WHAT IT DOES NOT DO. It does not build the pass' INPUT set (api/ContentPass does, from the key's counts),
  * it does not report - it counts its fallbacks and refusals, and the caller owns the diagnostic stream - and
- * it does not build a full-screen call's set: that one is the pass' own throughout (declaredSets is empty for
+ * it does not build a full-screen packet's set: that one is the pass' own throughout (declaredSets is empty for
  * the screen ABI).
  *
  * The device and the storage outlive the producer (a repointed storage means a new producer: the sets it

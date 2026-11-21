@@ -471,7 +471,7 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
 std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings)
 {
     auto layer          = std::unique_ptr<ContentPipeline>(new ContentPipeline());
-    layer->d->kind      = core::DrawKind::Screen;
+    layer->d->kind      = core::DrawKind::Fullscreen;
     layer->d->abi       = abi;
     layer->d->empty_set = ::vsg::DescriptorSetLayout::create();
     if (layer->d->empty_set == nullptr) {
@@ -650,7 +650,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
 
 ::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings, std::uint32_t depth_bindings)
 {
-    const bool screen = d->kind == core::DrawKind::Screen;
+    const bool screen = d->kind == core::DrawKind::Fullscreen;
     if (color_bindings == 0U && depth_bindings == 0U && (!screen || d->sets.empty())) {
         // Nothing to sample: a content layer has only its block set. A full-screen program that declares
         // NOTHING has nothing to bind either - while one that declares the map or the block still needs the
@@ -675,14 +675,14 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         // engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer, so a pass whose source
         // depth is NOT sampleable would otherwise put the map one binding too low), and a declared block.
         //
-        // WHY THE BLOCK IS A DYNAMIC UNIFORM HERE. A full-screen call has ONE block (its lights and camera
+        // WHY THE BLOCK IS A DYNAMIC UNIFORM HERE. A full-screen packet has ONE block (its lights and camera
         // are the call's), but its OFFSET moves every frame: the frame arena writes one block per call per
         // frame, so a set that baked the offset into the descriptor would have to be rebuilt every frame -
         // and a fresh VkDescriptorSet per frame is exactly what the pending-state rule refuses
         // (VUID-vkUpdateDescriptorSets-None-03047, measured on every frame of the application: the framework's
         // pools hand the same handle back to the next frame while a command buffer of the previous one still
         // names it). What the SET names is the buffer, which does not move; the call's offset travels with the
-        // bind (`dynamicOffsets`, in binding order - see ContentPass::recordScreenDraw). The content path
+        // bind (`dynamicOffsets`, in binding order - see ContentPass::recordFullscreenDraw). The content path
         // binds its blocks the same way (api/BlockDescriptors): one need, one spelling. A depth slot never takes a
         // binding the text names for something else.
         const std::span<const std::uint32_t> declared_samplers =
@@ -729,7 +729,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
     // block sets), a full-screen layer's in set 0 (its own ABI - the engine's screen programs declare
     // `layout(binding = i)`).
     ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline;
-    if (d->kind == core::DrawKind::Screen) {
+    if (d->kind == core::DrawKind::Fullscreen) {
         pipeline = ::vsg::PipelineLayout::create(::vsg::DescriptorSetLayouts{ set }, d->push_ranges);
     }
     else {

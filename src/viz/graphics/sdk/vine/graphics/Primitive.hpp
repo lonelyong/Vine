@@ -71,22 +71,22 @@ struct VN_GRAPHICS_API Primitive {
     /// The instance stream this draw reads: 16 scalars per instance, column-major. Empty = one plain draw.
     /// A BufferSlice holds the buffer, so copying a Primitive shares the stream rather than copying it.
     BufferSlice<float> instance_transforms{};
-    /// The visible prefix of @ref instance_transforms; nullopt means every instance the slice holds.
-    /// A draw parameter, not a shape: changing it does not replace or re-upload the buffer.
-    std::optional<std::size_t> visible_instances{};
+    /// How many instances this draw reads from the slice's start (the `instanceCount` draw parameter);
+    /// nullopt means every instance the slice holds. A draw parameter, not a shape: changing it does not re-upload.
+    std::optional<std::size_t> instance_count{};
 
     /** @brief Gets whether this draw has an instance stream.
      * @return true when the slice holds at least one whole instance matrix.
      */
     [[nodiscard]] bool hasInstances() const noexcept
     {
-        return instanceCount() != 0u;
+        return instanceCapacity() != 0u;
     }
 
     /** @brief Gets how many instances the slice holds (its capacity).
      * @return Number of whole 16-scalar matrices.
      */
-    [[nodiscard]] std::size_t instanceCount() const noexcept
+    [[nodiscard]] std::size_t instanceCapacity() const noexcept
     {
         return instance_transforms.size() / kInstanceMatrixScalars;
     }
@@ -99,13 +99,18 @@ struct VN_GRAPHICS_API Primitive {
         return instance_transforms.values != nullptr ? instance_transforms.begin() / kInstanceMatrixScalars : 0u;
     }
 
-    /** @brief Gets the drawn prefix, clamped to the slice's capacity.
+    /** @brief Gets how many instances this draw reads, clamped to the slice's capacity.
+     *
+     * @details
+     * - The value maps to the `instanceCount` draw parameter (see DrawItem::instance_count); the slice's own capacity
+     *   is instanceCapacity(), which is a different question.
+     *
      * @return Instances drawn by this primitive.
      */
-    [[nodiscard]] std::size_t visibleInstanceCount() const noexcept
+    [[nodiscard]] std::size_t instanceCount() const noexcept
     {
-        const std::size_t capacity = instanceCount();
-        return visible_instances.has_value() ? std::min(*visible_instances, capacity) : capacity;
+        const std::size_t capacity = instanceCapacity();
+        return instance_count.has_value() ? std::min(*instance_count, capacity) : capacity;
     }
 
     /** @brief Sets the instance stream after checking that it covers whole matrices.
@@ -113,7 +118,7 @@ struct VN_GRAPHICS_API Primitive {
      * @details
      * - An empty slice clears the stream. A slice that does not start on an instance boundary, or whose
      *   resolved length is not a whole number of matrices, is rejected and leaves this primitive unchanged.
-     * - The slice's own start is the draw's firstInstance; visible_instances is not changed by this call.
+     * - The slice's own start is the draw's firstInstance; instance_count is not changed by this call.
      *
      * @param transforms Instance matrices (16 scalars each, column-major).
      * @return true when the stream was accepted; false when it is not a whole number of matrices.
@@ -122,7 +127,7 @@ struct VN_GRAPHICS_API Primitive {
     {
         if (transforms.values == nullptr) {
             instance_transforms = {};
-            visible_instances.reset();
+            instance_count.reset();
             return true;
         }
         if (transforms.first % kInstanceMatrixScalars != 0u || transforms.size() % kInstanceMatrixScalars != 0u) {
@@ -136,32 +141,32 @@ struct VN_GRAPHICS_API Primitive {
     void clearInstanceTransforms() noexcept
     {
         instance_transforms = {};
-        visible_instances.reset();
+        instance_count.reset();
     }
 
     /** @brief Limits how many instances this draw reads (a prefix of the slice).
      *
-     * @param count Instances to draw; clamped by visibleInstanceCount().
+     * @param count Instances to draw; clamped by instanceCount().
      */
-    void setVisibleInstanceCount(std::size_t count) noexcept
+    void setInstanceCount(std::size_t count) noexcept
     {
-        visible_instances = count;
+        instance_count = count;
     }
 
     /** @brief Reads every instance again. */
-    void clearVisibleInstanceCount() noexcept
+    void clearInstanceCount() noexcept
     {
-        visible_instances.reset();
+        instance_count.reset();
     }
 
     /** @brief Gets one instance's matrix, relative to the slice.
      *
-     * @param instance Index in [0, instanceCount()).
+     * @param instance Index in [0, instanceCapacity()).
      * @return The matrix, or nullopt when the index is outside the slice.
      */
     [[nodiscard]] std::optional<vn::math::Mat4d> instanceMatrix(std::size_t instance) const
     {
-        if (instance >= instanceCount()) {
+        if (instance >= instanceCapacity()) {
             return std::nullopt;
         }
         const std::span<const float> scalars = instance_transforms.span();

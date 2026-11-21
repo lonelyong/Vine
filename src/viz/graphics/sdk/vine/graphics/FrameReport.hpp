@@ -12,7 +12,7 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief Counters about one frame's RECORDING: the pass scopes, the draws, the skipped components.
+ * @brief Counters about one frame's RECORDING: the pass scopes, the packets, the draws, the skipped components.
  *
  * @details
  * - This is the SDK's vocabulary for "what shape was this frame", so a host, a HUD and a gate can ask the same
@@ -25,7 +25,8 @@ VN_GRAPHICS_NS_BEGIN
  */
 struct VN_GRAPHICS_API FrameCounters {
     std::uint64_t passes{ 0 };            // Pass scopes recorded.
-    std::uint64_t draws{ 0 };             // Draw calls recorded.
+    std::uint64_t draw_packets{ 0 };      // Draw packets recorded - one per pass and view (see DrawPacket).
+    std::uint64_t draws{ 0 };             // Draws those packets submitted (one per DrawItem; a full-screen packet submits one).
     std::uint64_t invalid_schedules{ 0 }; // Cyclic pass-dependency components skipped (reported by the engine).
 };
 

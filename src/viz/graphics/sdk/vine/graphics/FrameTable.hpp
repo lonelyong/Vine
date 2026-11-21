@@ -37,7 +37,7 @@ struct VN_GRAPHICS_API PassRow {
     int order                      = 0;
     /// The pass' name (empty when it has none - a name is what makes a row grepable, see RenderPass::name).
     String name;
-    /// The content it draws, or null (a content-agnostic pass: a screen pass, a HUD).
+    /// The content it draws, or null (a content-agnostic pass: a full-screen pass, a HUD).
     raw_ptr<const Scene> content       = nullptr;
     /// The camera it draws through, or null (a fullscreen / screen-space pass).
     raw_ptr<const Camera> camera       = nullptr;

@@ -699,13 +699,13 @@ class VN_GRAPHICS_API Geometry : public Node {
      * @param count Instances to draw (clamped to the stream's capacity at read time).
      * @return true when applied; false when @p index is out of range.
      */
-    bool setVisibleInstanceCount(std::size_t index, std::size_t count);
+    bool setInstanceCount(std::size_t index, std::size_t count);
 
     /** @brief Draws every instance one primitive's stream holds again.
      * @param index Primitive to edit.
      * @return true when applied; false when @p index is out of range.
      */
-    bool clearVisibleInstanceCount(std::size_t index);
+    bool clearInstanceCount(std::size_t index);
 
     /** @brief Clears one primitive's instance stream (it becomes a plain draw).
      * @param index Primitive to edit.

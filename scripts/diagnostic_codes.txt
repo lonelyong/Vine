@@ -53,13 +53,13 @@ vk.content.screen_no_program        — a full-screen draw named no fragment pro
 vk.content.screen_program_refused   — a full-screen draw's fragment or vertex stage could not be staged: it drew nothing
 vk.content.screen_pipeline_refused  — the full-screen pipeline was refused: the draw was skipped
 vk.content.screen_no_source         — a full-screen draw named no source target, so there is nothing to sample
-vk.content.wrong_path               — a screen draw reached the content path (or a scene draw the screen path): a wiring defect
+vk.content.wrong_path               — a full-screen draw reached the content path (or a scene draw the screen path): a wiring defect
 vk.content.stand_in_missing         — the 1x1 stand-in every absent texture slot binds could not be made: draws were skipped
 vk.content.uniform_ring_full        — the frame's uniform ring had no slice left: the draw was skipped and the ring grows
 vk.content.descriptor_set_missing   — the descriptor cache could not hand out a set: the draw was skipped
 vk.content.material_texture_skipped — a material's texture could not be made resident: the slot was left absent
 vk.content.nothing_to_draw          — the draw named neither an index stream nor vertices: it drew nothing
-vk.content.plan_missing           — the frame head did not resolve every command of a drawing call: the recorder refused rather than guessing
+vk.content.plan_missing           — the frame head did not resolve every command of a draw packet: the recorder refused rather than guessing
 vk.content.no_runnable_pass         — the frame had no pass this backend can run: nothing was submitted
 
 # --- vk backend: the device gate (see vk-backend.md 2.11) ---
@@ -88,9 +88,9 @@ engine.pass.input_target_not_produced — a pass reads a whole target no pass wr
 engine.pass.input_image_not_produced  — a pass reads an image (or a depth) no pass declares, so nothing fills it
 engine.pass.image_unbound             — a declared image is bound to no target, so it cannot be resolved either way
 engine.pass.changed_during_frame      — a pass verb arrived while a frame was recording: refused, change passes between frames
-engine.screen.no_program              — a ScreenPass named no program, so it can never draw
-engine.screen.no_input                — a ScreenPass declared no input at all, so it samples nothing
-engine.screen.no_camera               — a ScreenPass with a fullscreen program has no camera to build its view from
+engine.screen.no_program              — a FullscreenPass named no program, so it can never draw
+engine.screen.no_input                — a FullscreenPass declared no input at all, so it samples nothing
+engine.screen.no_camera               — a FullscreenPass with a fullscreen program has no camera to build its view from
 engine.device.not_up                  — the device an engine borrows is not initialized: the party that created it brings it up
 engine.target.unsupported_offscreen   — the backend reports no off-screen target support, so a pass staged through one lands in the window
 engine.target.publish_refused         — publishing a named target was refused (the name is taken or the target is unusable)

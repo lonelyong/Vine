@@ -78,7 +78,7 @@ class HeadlessBackend : public RenderBackend {
                 continue; // a pass that ran and issued nothing
             }
             targets.push_back(entry.draw->target);
-            draws += entry.draw->draws.size();
+            draws += entry.draw->packets.size();
         }
         // The frame's tail, exactly as the contract states it (RenderFrameExecutor::executeFrame): the executor
         // presents through the target the frame named, and a frame that named none presents nowhere.

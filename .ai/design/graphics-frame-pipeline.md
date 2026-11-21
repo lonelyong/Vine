@@ -79,7 +79,7 @@
 - What it is: `Node` is a **position**, not a kind, and contributes placement / children / state contribution / payload only; there is one folding rule:
   child = parent + self (placements multiply, state merges by documented rules, layers union, overrides in order).
 - Why: folding is a value operation ⇒ thread-safe, unit-testable, fuzzable (`G11`); new node behaviour = one more placement value, without touching the folding core (`G9`).
-- Boundary: `StateNode` / `MatrixTransform` / `ScreenPass` are not "kinds" in the **snapshot** but different values of one concept; the authoring-layer sugar
+- Boundary: `StateNode` / `MatrixTransform` / `FullscreenPass` are not "kinds" in the **snapshot** but different values of one concept; the authoring-layer sugar
   stays. Hiding is a **snapshot representation** (it produces no rows); `Node::setVisible` stays and publication compiles it into structure (`R5`).
 
 ### 2.5 Identity: the registry and four kinds of id
@@ -129,7 +129,7 @@
 - Boundary: `PassId` exists only inside a Session; the difference is taken by **name**, not by pointer (`C7`); a transient target's lifetime is declared by the plan.
   The table that builds them belongs to the ENGINE, and the device it builds them on is borrowed and may outlive it - so a shutdown hands every live transient back
   (`FrameResources::releaseAll` → `releaseRenderTarget`) instead of dropping the table and leaving the device holding storage nothing will name again.
-  A plan expresses only the shapes `PassKind` can express (`Scene` / `Screen`): a pass subclass is no longer a registrable shape, and customisation lives in the
+  A plan expresses only the shapes `PassKind` can express (`Scene` / `Fullscreen`): a pass subclass is no longer a registrable shape, and customisation lives in the
   **data** (program override, viewport, depth range); a kind change rebuilds the built-in node. There is no `PassKind::Custom` and no factory registry (`G8`).
 
 ### 2.9 Derivation is a pure function
@@ -156,13 +156,13 @@
 |---|---|---|---|
 | `FrameDescription` | What THIS frame is: every enabled pass' identity, order, resolved inputs and what the pass described | rebuilt every frame; the backend consumes it and keeps nothing | `RenderFrameExecutor::executeFrame`, `RenderEngine::frameDescription()` |
 | `FrameTable` | What this frame consists of, as rows a host may read | rebuilt every frame from what the slots hold | `RenderEngine::frameTable()`, a log line, a HUD |
-| `FrameOutcome` | What ONE `frame()` call did | one call | the call site |
+| `FrameCallOutcome` | What ONE `frame()` call did | one call | the call site |
 | `FrameResult` | What the last ANSWERED frame was: its picture, the world it saw, what it cost | replaced when the next frame is answered | `RenderEngine::frameResult()` |
 | `FrameQuery` | Which world that picture saw: the publication it drew and the view it was taken with | the `query` field of one `FrameResult` | a pick / anchor / fit aimed at what the viewer sees |
 
 - What it is: four values and one field type. `FrameQuery` is not a sixth answer - it is `FrameResult::query`'s type, split out because the two facts it carries (publication, view) are always asked for together.
 - Why: a value that answers two questions goes stale in one half, and "which publication did the picture come from" used to be a separate question with a separate lifetime (`G1` / `I7`).
-- Boundary: `FrameOutcome`'s `NotReady` is a precondition answer, not a third frame ending (`RenderEngine.hpp` says so at the enum); a host that needs the answered frame reads `FrameResult`, never `FrameOutcome`.
+- Boundary: `FrameCallOutcome`'s `NotReady` is a precondition answer, not a third frame ending (`RenderEngine.hpp` says so at the enum); a host that needs the answered frame reads `FrameResult`, never `FrameCallOutcome`.
 
 ### 2.12 The engine is a frame compiler, not a render graph
 
@@ -277,7 +277,7 @@
 
 - **Behaviour**: `prepare()` answers "which halves / descriptor sets / uploads this frame needs" and **builds them all**, without submitting a frame.
   The public entry point is `RenderEngine::prepare()` (the engine compiles a `FrameDescription` first, the same compilation `frame()` uses); the backend entry point is
-  `RenderFrameExecutor::prepareFrame(value, present_to)` — one line, two verbs, no new nouns; the answer is a value (`PrepareReport`: the outcome + how many passes /
+  `RenderFrameExecutor::prepareFrame(value, present_to)` — one line, two verbs, no new nouns; the answer is a value (`PrepareReport`: the outcome + how many passes / draw packets /
   draws it walked + how many halves / sets / uploads / pipeline identities this call built). The snapshot entering that input is the one §3.2 publishes.
 - **Constraints** (`C3`): preparation runs on the engine thread; it submits no **frame** and acquires no swap-chain image (see `P11`).
   It may record and submit **one** command buffer for its own **transfer-only** work (texture copies, the 1×1 stand-in) and wait for it before returning —
@@ -292,7 +292,7 @@
   **The seam**: `drawNeeds(compiled pass, draw)` is the only key builder — `prepare` builds with it and `ContentPass::record` looks up with it, so the two cannot drift (`G1`).
   **Where it lives**: `src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
   (`drawNeeds`' two overloads + `DrawNeeds::keyFor`); `CompiledPrograms::halvesFor`, `ContentPass::recordCommand` /
-  `recordScreenDraw` and `describeMissingContentHalf` read it and nothing else, so the recording path no longer assembles its own key.
+  `recordFullscreenDraw` and `describeMissingContentHalf` read it and nothing else, so the recording path no longer assembles its own key.
   **Where it lives**: `sdk/vine/graphics/PrepareReport.hpp`, `RenderFrameExecutor::prepareFrame`,
   `RenderEngine::prepare()`, `VsgBackend::prepareFrame`. The backend reuses the frame's own two halves — `collectFrame` (value → collection) and
   `recordContent(..., /*prepare_only*/)` (collection → halves / sets / sampled input sets / uploads) — and the two verbs have one branch point inside `ContentPass`
@@ -372,7 +372,7 @@
 | `ContentRef{Handle id, uint64 revision}` | the cross-layer key; `contentRefOf()` is the only construction | exists |
 | `Geometry::description()` / `MaterialValues::description()` | immutable values cached by revision | exists |
 | `ShaderProgram::description() → ShaderProgramDescriptionPtr` | program text + id + revision; cached by revision | landed |
-| `Light::value() → LightValue` | the light's value half; `Scene::lightSet()` assembles them into **one immutable set** (`LightSet`) and shares it into `DrawCall::light_values` when a pass describes itself (one set per frame, not one `vector` per pass) | landed |
+| `Light::value() → LightValue` | the light's value half; `Scene::lightSet()` assembles them into **one immutable set** (`LightSet`) and shares it into `DrawPacket::light_values` when a pass describes itself (one set per frame, not one `vector` per pass) | landed |
 
 ### 4.2 The derivation side
 
@@ -387,7 +387,7 @@
 |---|---|---|
 | `RenderEngine::prepare()` → `PrepareReport` | builds without submitting; answers the halves/sets/uploads needed (`NotReady` + `EngineNotReadyReason`) | landed (the backend gets the same `FrameDescription` `executeFrame()` gets) |
 | `RenderEngine::applyPlan() → PlanResult` / `plan()` | three states: `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | landed |
-| `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`; `NotReady` + `EngineNotReadyReason` | landed |
+| `RenderEngine::frame() → FrameCallOutcome` | `Ran` / `Submitted`; `NotReady` + `EngineNotReadyReason` | landed |
 | `RenderEngine::frameResult() → FrameResult` | every fact of the previous frame when it was answered: `query` (snapshot / view) + passes / draws / diagnostics / present | landed (`poses` waits on F10) |
 | `RenderEngine::pass(name)` / `passFor(name, owner)` | reads a registered pass node back by name (`owner` is the scope's contributor) | landed |
 | `Session::frame(FrameRequest) → FrameResult` | submits one frame; `FrameRequest` carries a `View` (one surface per frame) | the target (`executeFrame` + `presentWindow` today) |

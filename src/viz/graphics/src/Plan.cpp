@@ -174,7 +174,7 @@ String Plan::describe() const
             text += String(u8"\n");
         }
         text += String(u8"pass[") + digits(index) + String(u8"] name='") + pass.name + String(u8"' kind=") +
-                (pass.kind == PassKind::Screen ? String(u8"Screen") : String(u8"Scene")) + String(u8" order=") +
+                (pass.kind == PassKind::Fullscreen ? String(u8"Fullscreen") : String(u8"Scene")) + String(u8" order=") +
                 digits(static_cast<std::size_t>(pass.order.value_or(passStageOrder(pass.stage)))) + String(u8" target=") +
                 (pass.target.isExplicit() ? String(u8"explicit")
                                           : (pass.target.isTransient() ? String(u8"transient") : String(u8"window"))) +

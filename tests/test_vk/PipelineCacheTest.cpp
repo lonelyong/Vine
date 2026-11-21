@@ -212,11 +212,11 @@ void main()
     pass.target       = target;
     pass.clear        = vn::graphics::ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    vn::graphics::DrawCall draw;
-    draw.kind     = vn::graphics::DrawCall::Kind::Scene;
+    vn::graphics::DrawPacket draw;
+    draw.kind     = vn::graphics::DrawPacket::Kind::Scene;
     draw.view.camera   = vn::graphics::CameraSnapshot{};
     draw.commands = commands;
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;

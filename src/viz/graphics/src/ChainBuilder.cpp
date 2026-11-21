@@ -11,7 +11,7 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/math/Point3.hpp>
 
@@ -402,7 +402,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     gbuf_desc.layer_mask       = content_layers_;
     gbuf_desc.target           = Target::explicitTarget(gbuffer);
     // The program is a SCENE pass' override (`PassDesc::program_override`): `PassDesc::program` is the
-    // full-screen field a Screen pass draws through, so naming it here left the G-buffer pass with no program at
+    // full-screen field a Full-full-screen pass draws through, so naming it here left the G-buffer pass with no program at
     // all - every body then drew with its own (or the engine's forward) program, which writes ONE colour output:
     // the geometry landed in albedo and the normal / specular / position attachments kept their transparent-black
     // clear, so the lighting read nothing and a PiP of either of those three was black.
@@ -423,7 +423,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         PassDesc light_desc;
         light_desc.name          = u8"deferred_lighting";
         light_desc.stage         = PassStage::Shading;
-        light_desc.kind          = PassKind::Screen;
+        light_desc.kind          = PassKind::Fullscreen;
         light_desc.camera        = intrusive_ptr<Camera>(camera_);
         light_desc.content       = content_;
         light_desc.input_names   = { u8"GBuffer" };
@@ -465,7 +465,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     PassDesc light_desc;
     light_desc.name          = u8"deferred_lighting";
     light_desc.stage         = PassStage::Shading;
-    light_desc.kind          = PassKind::Screen;
+    light_desc.kind          = PassKind::Fullscreen;
     light_desc.camera        = intrusive_ptr<Camera>(camera_);
     light_desc.content       = content_;
     light_desc.target        = Target::explicitTarget(composite);
@@ -511,11 +511,11 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     PassDesc present_desc;
     present_desc.name                       = u8"present";
     present_desc.stage                      = PassStage::Present;
-    present_desc.kind                       = PassKind::Screen;
+    present_desc.kind                       = PassKind::Fullscreen;
     present_desc.camera                     = intrusive_ptr<Camera>(camera_);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
     // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a
-    // backend-side default (see ScreenPass::setProgram).
+    // backend-side default (see FullscreenPass::setProgram).
     present_desc.program                    = screenCopyProgram();
     present_desc.input_names                = { u8"Composite" };
     present_desc.input_targets              = { composite }; // it presents the whole baked target

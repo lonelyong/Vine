@@ -23,7 +23,7 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 #include <vine/graphics/StateNode.hpp>
 
 #include "TestGeometryBuilders.hpp"
@@ -34,7 +34,7 @@ using vn::graphics::PassChain;
 using vn::graphics::RenderPass;
 using vn::graphics::RenderTarget;
 using vn::graphics::SceneView;
-using vn::graphics::ScreenPass;
+using vn::graphics::FullscreenPass;
 using vn::graphics::ShadingMode;
 using vn::graphics::ShadingPath;
 using vn::backend_vsg::core::PixelProbe;
@@ -337,7 +337,7 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
         vn::graphics::PassDesc preview;
         // One row per preview (a plan's identity is the name): the four differ by attachment, and the helper names each
         // one uniquely - a shared name would leave ONE pass reading attachment 3.
-        preview.kind    = vn::graphics::PassKind::Screen;
+        preview.kind    = vn::graphics::PassKind::Fullscreen;
         preview.camera  = vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera);
         preview.program = vn::graphics::screenCopyProgram(attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All);
         preview.input_names = { u8"GBuffer" };

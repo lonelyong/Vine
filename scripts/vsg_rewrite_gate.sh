@@ -463,7 +463,7 @@ app_known_vuids() { # the VUID names this stage tolerates, one per line, with th
     # IT IS EMPTY (2026-09-24, M10j) AND THAT IS THE POINT: the last two entries were real defects, not noise.
     #
     #   * VUID-vkUpdateDescriptorSets-None-03047 (fixed, M10i): a baked shadow-block offset rebuilt a set every
-    #     frame (see api/ContentPipeline:sampledSetLayout, ContentPass::recordScreenDraw).
+    #     frame (see api/ContentPipeline:sampledSetLayout, ContentPass::recordFullscreenDraw).
     #   * VUID-vkCmdDraw-None-09600 (fixed, M10j): the "no texture" white fallback was a CLEAR a frame had to
     #     record, and the app's path no longer had a recorder - its image stayed UNDEFINED while descriptors
     #     declared SHADER_READ_ONLY, at every submit that sampled it. It is uploaded like every other image now

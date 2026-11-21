@@ -30,7 +30,7 @@
  *     (the plan compiles against the frame's target facts). An EMPTY frame is still a frame: it is compiled,
  *     recorded and presented (the session's own rule: opening a frame may acquire an image, and the only call
  *     that hands it back is the present), and the surface's `present()` presents what the frame left;
- *   * CONTENT DRAWING: the value's drawing calls track the commands' own objects (geometry, material, program -
+ *   * CONTENT DRAWING: the value's draw packets track the commands' own objects (geometry, material, program -
  *     and the default program from `setDefaultContentProgram()`) into api/ContentStore and snapshot the call
  *     into the plan; `present()` assembles the frame's content (api/ContentAssembly) and records it
  *     into the passes the plan asked for, with the view block built from the pass' own camera and the
@@ -39,7 +39,7 @@
  *     targets in api/TargetTable (the description is COPIED, the objects are built lazily, and the resize /
  *     rebuild after that is the plan's answer applied by the executor), a pass' declared inputs (the value's
  *     `inputs`) announce what it reads - and the images of those inputs are what the content recording binds -
- *     and a draw of `Kind::Screen` is the full-screen call whose source is one of them. `releaseRenderTarget()`
+ *     and a draw of `Kind::Fullscreen` is the full-screen packet whose source is one of them. `releaseRenderTarget()`
  *     drops everything held for a target the host is about to destroy;
  *   * the READBACK: `readColorBuffer()`/`readDepthBuffer()` stop the device (a counted wait), submit the
  *     target's own copy commands ONCE and fence them, so the pixels / depths the host gets are the ones the
@@ -426,7 +426,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *   taking the device's content lock per lookup would pay a mutex per draw. So the device's half of a frame is
      *   resolved HERE, under ONE acquisition of that lock: every pass' number (`PassRegistry::adopt`, into the
      *   scratch's `pass_ids`), every host target the passes draw into (adopted and built as far as its description
-     *   allows), every sampled target's facts observed, every content object the drawing calls name tracked into the
+     *   allows), every sampled target's facts observed, every content object the draw packets name tracked into the
      *   content store, the target-fact table the plan compiles against, the staging sweep, and the block storage's
      *   growth. The collection and compilation then read the SCRATCH only.
      * - WHAT IT DOES NOT DO: it opens no session frame and records nothing - a frame whose head ran and whose
@@ -445,7 +445,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @details
      * - THE TRANSLATION OF A FRAME VALUE INTO THIS LAYER'S OWN COLLECTION, and the only place it exists: the value's
      *   passes become pass scopes, their targets / viewports / clears / states / inputs are announced under those
-     *   scopes, and their drawing calls are collected. `executeFrame` runs it and then records; `prepareFrame` runs
+     *   scopes, and their draw packets are collected. `executeFrame` runs it and then records; `prepareFrame` runs
      *   the SAME one and then builds only the value side - so a prepared frame and a recorded frame cannot disagree
      *   about what the frame is (`G1`), which is what makes "prepared" carry over to the next frame.
      * - IT READS THE SCRATCH'S SNAPSHOT, NOT THE DEVICE: the pass numbers come from `scratch.pass_ids` (filled by
@@ -570,10 +570,10 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Announces the depth band the pass maps its draws into (see PassDraw::depth_range). */
     void announceDepthRange(FrameScratch& scratch, const vn::graphics::DepthRange& range);
 
-    /** @brief Announces the lights of one drawing call, as VALUES (see DrawCall::light_values). */
+    /** @brief Announces the lights of one draw packet, as VALUES (see DrawPacket::light_values). */
     void announceLights(FrameScratch& scratch, std::span<const vn::graphics::LightValue> lights);
 
-    /** @brief Collects one content drawing call into the scratch (the objects it names were tracked by the head).
+    /** @brief Collects one content draw packet into the scratch (the objects it names were tracked by the head).
      *
      * @param scratch          The driving session's collection scratch.
      * @param commands         The pass' collected commands (shared and immutable - never rewritten here).
@@ -611,7 +611,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     [[nodiscard]] api::OffscreenSession* ensureOffscreenSession();
 
-    /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs.
+    /** @brief Collects one full-screen draw packet whose source is one of the pass' declared inputs.
      *
      * @param scratch             The driving session's collection scratch.
      * @param source              The target the call reads (its images were resolved by the content phase).
@@ -619,7 +619,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @param program_description The program's text as the pass carried it.
      * @param camera              The view the call is projected with.
      */
-    void collectScreenDraw(FrameScratch&                                   scratch,
+    void collectFullscreenDraw(FrameScratch&                                   scratch,
                            vn::graphics::RenderTarget*                     source,
                            vn::raw_ptr<const vn::graphics::ShaderProgram>  program,
                            const vn::graphics::ShaderProgramDescriptionPtr& program_description,

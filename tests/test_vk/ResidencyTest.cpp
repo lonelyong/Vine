@@ -27,7 +27,7 @@
 #include <vine/String.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
@@ -52,7 +52,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::EngineNotReadyReason;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
@@ -204,7 +204,7 @@ struct Content {
 }
 
 /// @brief A scene draw of @p content under @p material (or the default material when null).
-[[nodiscard]] DrawCall sceneDraw(const Content& content, const intrusive_ptr<vn::graphics::Material>& material)
+[[nodiscard]] DrawPacket sceneDraw(const Content& content, const intrusive_ptr<vn::graphics::Material>& material)
 {
     DrawItem command(content.geometry, material, vn::math::Mat4d{});
     command.program             = content.program;
@@ -217,15 +217,15 @@ struct Content {
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawCall draw)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -237,7 +237,7 @@ struct Content {
     pass.target       = target;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
     frame.passes.push_back(std::move(entry));
@@ -290,7 +290,7 @@ TEST(VkResidencyTest, TheSecondFrameOfTheSameContentBuildsNothing)
     ASSERT_TRUE(first.retention.has_value());
     ASSERT_TRUE(first.uploads.has_value()) << "a frame ran, so this device has numbers for it";
     EXPECT_EQ(first.counters->passes, 1U);
-    EXPECT_EQ(first.counters->draws, 1U);
+    EXPECT_EQ(first.counters->draw_packets, 1U);
     EXPECT_EQ(first.uploads->stream_uploads, 2U);
     EXPECT_GT(first.uploads->stream_bytes, 0U);
     EXPECT_EQ(first.uploads->texture_uploads, 0U);
@@ -317,7 +317,7 @@ TEST(VkResidencyTest, TheSecondFrameOfTheSameContentBuildsNothing)
     EXPECT_EQ(second.uploads->stream_bytes, 0U);
     EXPECT_EQ(second.uploads->texture_uploads, 0U);
     EXPECT_EQ(device->contentPipelines(), pipelines_after_first) << "a warm cache must not recompile a pipeline";
-    EXPECT_EQ(second.counters->draws, 1U) << "the frame still drew; its cost was already paid";
+    EXPECT_EQ(second.counters->draw_packets, 1U) << "the frame still drew; its cost was already paid";
 
     ASSERT_TRUE(second.progress.has_value());
     EXPECT_EQ(second.progress->submitted, 2U);
@@ -351,7 +351,7 @@ TEST(VkResidencyTest, PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing)
     const PrepareReport prepared = backend->prepareFrame(frame);
     ASSERT_TRUE(prepared.prepared()) << "outcome " << static_cast<int>(prepared.outcome);
     EXPECT_EQ(prepared.passes, 1U) << "the shape of the frame asked for, not what could be built";
-    EXPECT_EQ(prepared.draws, 1U);
+    EXPECT_EQ(prepared.draw_packets, 1U);
     EXPECT_EQ(prepared.uploads, 2U) << "both streams are built by the warm-up";
     EXPECT_EQ(prepared.halves, 1U) << "one program revision";
     EXPECT_GT(prepared.pipelines, 0U);
@@ -682,7 +682,7 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     const FrameReport fresh = backend->frameReport();
     ASSERT_TRUE(fresh.counters.has_value());
     EXPECT_EQ(fresh.counters->passes, 0U);
-    EXPECT_EQ(fresh.counters->draws, 0U);
+    EXPECT_EQ(fresh.counters->draw_packets, 0U);
     EXPECT_FALSE(fresh.uploads.has_value());
     ASSERT_TRUE(fresh.progress.has_value());
     EXPECT_EQ(fresh.progress->submitted, 0U);

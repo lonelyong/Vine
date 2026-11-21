@@ -250,7 +250,7 @@ std::unique_ptr<Plan> screenPlan(const ShaderProgram* program)
     auto plan = std::make_unique<Plan>();
 
     CompiledDraw draw;
-    draw.kind    = DrawKind::Screen;
+    draw.kind    = DrawKind::Fullscreen;
     draw.program = vn::test::programRef(*program);
     plan->draws.push_back(draw);
 
@@ -687,13 +687,13 @@ TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
     ASSERT_EQ(store.programEntries(), 1U);
     // Asked for as the call it was described FOR: this program's entry answers the full-screen ABI (see
     // ProgramFacts::kind), and asking for the content one is a miss rather than the other build.
-    const auto entry = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen);
+    const auto entry = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Fullscreen);
     ASSERT_TRUE(entry.found());
-    EXPECT_EQ(entry.entry->kind, DrawKind::Screen);
+    EXPECT_EQ(entry.entry->kind, DrawKind::Fullscreen);
     EXPECT_NE(entry.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
         << "the full-screen ABI's vertex stage is the engine's triangle, not the host's";
     EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).found())
-        << "a program only ever described as a screen call has no content entry";
+        << "a program only ever described as a full-screen packet has no content entry";
 }
 
 TEST(ContentStoreTest, AProgramThatCannotBeDescribedStillHasItsName)
@@ -712,7 +712,7 @@ TEST(ContentStoreTest, AProgramThatCannotBeDescribedStillHasItsName)
     const ContentFacts& facts = store.tablesFor(plan->frame, timeline);
 
     // No row: a program that is not one content pipeline is refused, and the recorder reports the miss...
-    EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen).found());
+    EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Fullscreen).found());
     // ... and the sentence can still say WHICH program, because the name is recorded when the identity is described.
     EXPECT_EQ(programName(facts, program->id()), std::string_view("broken"));
 }
@@ -972,7 +972,7 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
 {
     ContentStore store;
     const auto   geometry = quad();
-    const auto   program  = contentProgram(); // both stages: describable as content AND as a screen call
+    const auto   program  = contentProgram(); // both stages: describable as content AND as a full-screen packet
 
     store.track(geometry);
     store.track(program);
@@ -985,7 +985,7 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     (void)store.tablesFor(content_plan->frame, timeline);
     ASSERT_EQ(store.programEntries(), 1U);
 
-    // ... and a later frame draws the SAME program as a full-screen call. The two are different ABIs, so the
+    // ... and a later frame draws the SAME program as a full-screen packet. The two are different ABIs, so the
     // table has to answer with two entries - and a lookup that did not name the kind would hand whichever row
     // came first to a caller expecting the other, which is a wrong picture with no refusal anywhere.
     const auto          screen_plan = screenPlan(program.get());
@@ -993,12 +993,12 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
 
     ASSERT_EQ(store.programEntries(), 2U) << "one text, two entries: the two calls are different ABIs";
     const auto content = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content);
-    const auto screen  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen);
+    const auto screen  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Fullscreen);
     ASSERT_TRUE(content.found());
     ASSERT_TRUE(screen.found());
     EXPECT_NE(content.entry, screen.entry) << "each call gets its own entry";
     EXPECT_EQ(content.entry->kind, DrawKind::Content);
-    EXPECT_EQ(screen.entry->kind, DrawKind::Screen);
+    EXPECT_EQ(screen.entry->kind, DrawKind::Fullscreen);
     // And the entries really are those two builds: the content one carries the HOST's vertex stage, the screen
     // one the engine's generated triangle (see api/ContentSources).
     EXPECT_EQ(content.entry->shaders.vertex, std::string(kGatedVertexSource));

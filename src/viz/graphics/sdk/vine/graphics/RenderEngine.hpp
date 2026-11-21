@@ -24,7 +24,7 @@
 #include "FrameContext.hpp"
 #include "FrameDescription.hpp"
 #include "FrameResult.hpp"
-#include "FrameStats.hpp"
+#include "FrameReport.hpp"
 #include "FrameTable.hpp"
 #include "OutputRegistry.hpp"
 #include "PassDesc.hpp"
@@ -77,7 +77,7 @@ class PresentTarget;
  * - The value describes the CALL; it is not the per-frame result the frame pipeline design calls `FrameResult`
  *   (`graphics-frame-pipeline.md` F12), which carries the snapshot, view, poses and diagnostics a host queries with.
  */
-struct VN_GRAPHICS_API FrameOutcome {
+struct VN_GRAPHICS_API FrameCallOutcome {
     /// What became of the call (see the struct's own note).
     enum class Status : std::uint8_t
     {
@@ -472,11 +472,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   before frame()), which is what the one `dt` a host had to hand over used to be - a number nothing in the
      *   frame read.
      *
-     * @return What the call did (see FrameOutcome): `status.ran()` when this engine has no frame thread and the frame
+     * @return What the call did (see FrameCallOutcome): `status.ran()` when this engine has no frame thread and the frame
      *         was answered before returning, `status.submitted()` when it was handed to one; `NotReady` with
      *         `reason` (`NoDevice` / `NotInitialized`) when nothing was compiled or handed over.
      */
-    FrameOutcome frame();
+    FrameCallOutcome frame();
 
     /** @brief Chooses where the engine half of each frame runs (see FrameThreading).
      *
@@ -685,7 +685,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   have to be rebuilt), and a name the plan no longer states is removed (its backend state and owned
      *   target released). No separate add/remove call is involved, which is the
      *   point: the shape is one value, and applying it is one call.
-     * - WHAT "IN PLACE" DOES NOT COVER: a pass whose KIND changed (Scene -> Screen) cannot become the other
+     * - WHAT "IN PLACE" DOES NOT COVER: a pass whose KIND changed (Scene -> Fullscreen) cannot become the other
      *   object, so that name is removed and re-added under the same owner and role. Every other field a
      *   PassDesc states is adopted as the pass' new declaration.
      * - THE PLAN'S VOCABULARY IS `PassKind` (Scene / Screen), and the node built from a declaration is the built-in

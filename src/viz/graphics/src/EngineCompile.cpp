@@ -16,7 +16,7 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/graphics/ScreenPass.hpp>
+#include <vine/graphics/FullscreenPass.hpp>
 #include <vine/graphics/Viewport.hpp>
 
 #include "EngineDiagnostics.hpp"
@@ -217,7 +217,7 @@ void SessionShape::scheduleRows()
     // that merely names a target (no camera, no program) writes nothing and orders nothing - a clear is part of a
     // draw, not a substitute for one.
     const auto writes = [](const RenderPass& pass) -> bool {
-        if (const auto* screen = obj_cast<ScreenPass>(&pass)) {
+        if (const auto* screen = obj_cast<FullscreenPass>(&pass)) {
             return screen->program() != nullptr && (!pass.inputs().empty() || !pass.inputTargets().empty() || !pass.inputNames().empty());
         }
         return pass.camera() != nullptr && (pass.content() != nullptr || pass.isClearEnabled());
@@ -338,7 +338,7 @@ void SessionShape::buildFrameValue()
         // per pass, not per draw.
         const auto pass_started = std::chrono::steady_clock::now();
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
-        // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
+        // here: they are what a FullscreenPass' effect reads, and they are part of what the pass describes.
         pass->resolveInputTextures(row.inputs);
 
         // Reuse the entry this index had last frame: the input list keeps its capacity (assign, not a fresh copy) and
@@ -406,7 +406,7 @@ void SessionShape::collectPictureShapeMismatches()
     // is handed a rectangle and a camera snapshot that are each perfectly legal.
     //
     // Who this CANNOT be about:
-    //   * a ScreenPass, whose full-screen triangle is built in clip space and reads no projection (see
+    //   * a FullscreenPass, whose full-screen triangle is built in clip space and reads no projection (see
     //     BuiltinShaders::fullscreenVertexProgram): its camera states the view the lighting is computed in, so the
     //     rectangle cannot stretch what it draws;
     //   * a pass that is disabled (it draws nothing), has no camera (it draws nothing - see RenderPass::describe),
@@ -420,7 +420,7 @@ void SessionShape::collectPictureShapeMismatches()
         if (pass == nullptr || !pass->isEnabled() || pass->content() == nullptr || pass->camera() == nullptr) {
             continue;
         }
-        if (obj_cast<ScreenPass>(pass) != nullptr) {
+        if (obj_cast<FullscreenPass>(pass) != nullptr) {
             continue;
         }
 
@@ -546,7 +546,7 @@ void SessionShape::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
         out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
     }
 
-    // A declared input nobody published this frame means the pass draws NOTHING (ScreenPass keeps the first
+    // A declared input nobody published this frame means the pass draws NOTHING (FullscreenPass keeps the first
     // non-null input and returns early when there is none), so the frame silently misses its content: the
     // wiring is the engine's job, so it says so. A pass may declare several alternative names (a chain that
     // falls back), so this only fires when NONE of them resolved - and the compile forgets the problem the
@@ -891,7 +891,7 @@ void SessionShape::collectPlanProblems()
         // A content pass whose mask selects nothing. Legal (see PassDesc::layer_mask), and nearly always a
         // mistake, so it is said once per episode instead of showing up later as an empty picture with no
         // reason attached. The sentence states the declaration, not an outcome: what a pass does with a
-        // content scene is the pass' own business (a screen pass uses one for its lights, not for a walk).
+        // content scene is the pass' own business (a full-screen pass uses one for its lights, not for a walk).
         if (pass->layerMask() == 0 && pass->content() != nullptr) {
             noteProblem(compileProblem(u8"engine.pass.layer_mask_empty",
                                        vn::graphics::DiagnosticCategory::ContentSkipped,
@@ -1096,18 +1096,18 @@ void SessionShape::collectPlanProblems()
         }
     }
 
-    // Phase 3: a ScreenPass that cannot draw what it declares. Every one of these is a property of
+    // Phase 3: a FullscreenPass that cannot draw what it declares. Every one of these is a property of
     // the DECLARATION (nothing else can see them: the backend only ever sees "a pass with nothing to
     // draw"), they are found by the compile (so the frame they belong to is the frame that says so), and
     // they are checked in the order a host has to fix them — each check `continue`s, because the next one is
     // moot until this one is answered and one mistake should read as one message.
     for (const auto& slot : slots_) {
-        auto* pass = obj_cast<ScreenPass>(slot.pass.get());
+        auto* pass = obj_cast<FullscreenPass>(slot.pass.get());
         if (pass == nullptr || !pass->isEnabled()) {
             continue;
         }
 
-        // 1. No program: the shading is a CHOICE the host makes (a ScreenPass has no implicit one —
+        // 1. No program: the shading is a CHOICE the host makes (a FullscreenPass has no implicit one —
         // there is no "plain copy" a backend fills in), so a pass without a program draws nothing.
         // This is the first thing to answer, and it is the one a host is most likely to hit: the
         // picture a pass draws is exactly what it named.
@@ -1116,7 +1116,7 @@ void SessionShape::collectPlanProblems()
                 noteProblem(detail::engineProblem(u8"engine.screen.no_program",
                                                   vn::graphics::DiagnosticCategory::ContentSkipped,
                                                   String(u8"pass '") + reportedPassName(pass) +
-                                                      String(u8"' is a ScreenPass with no program, so it can never draw: name one"
+                                                      String(u8"' is a FullscreenPass with no program, so it can never draw: name one"
                                                              u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
                                                              u8" source's colour attachment, deferredLightProgram() for deferred"
                                                              u8" lighting, or your own fragment stage)")));
@@ -1131,7 +1131,7 @@ void SessionShape::collectPlanProblems()
                 noteProblem(detail::engineProblem(u8"engine.screen.no_input",
                                                   vn::graphics::DiagnosticCategory::ContentSkipped,
                                                   String(u8"pass '") + reportedPassName(pass) +
-                                                      String(u8"' is a ScreenPass that declares no input, so it can never draw"
+                                                      String(u8"' is a FullscreenPass that declares no input, so it can never draw"
                                                              u8" (give it addInput / addInputName)")));
             }
             continue;

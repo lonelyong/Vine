@@ -214,7 +214,7 @@ struct ContentCaches::Impl {
      */
     VkPipelineCache pipeline_cache{ VK_NULL_HANDLE };
 
-    /// The engine's full-screen vertex stage (the fragment stage of a screen draw is the draw's own program).
+    /// The engine's full-screen vertex stage (the fragment stage of a full-screen draw is the draw's own program).
     vn::graphics::ShaderProgramDescriptionPtr screen_vertex{};
     /// The sampled images and samplers the material slots read.
     ContentImages images{};
@@ -255,7 +255,7 @@ struct ContentCaches::Impl {
     bool          preload_handed_{ false };
 
     /**
-     * @brief Resolves the pipeline-relevant state of one drawing call (the dynamic half recompiles nothing).
+     * @brief Resolves the pipeline-relevant state of one draw packet (the dynamic half recompiles nothing).
      *
      * @param resolved          The state `resolveRenderState` produced.
      * @param color_attachments How many colour attachments the pass writes (a multi-attachment target never blends).
@@ -1067,7 +1067,7 @@ struct ContentCaches::Impl {
     /**
      * @brief Resolves one scene command's program, streams and pipeline (building each on a miss).
      *
-     * @param command           The drawing call to resolve.
+     * @param command           The draw packet to resolve.
      * @param pass              The pass drawing it (its program override and state are read).
      * @param default_program   The program content without one of its own is drawn with, or null.
      * @param compatibility     The target's pipeline compatibility.
@@ -1192,9 +1192,9 @@ struct ContentCaches::Impl {
     }
 
     /**
-     * @brief Resolves one screen draw's fragment program and pipeline (see @ref planDraw for the shared idea).
+     * @brief Resolves one full-screen draw's fragment program and pipeline (see @ref planDraw for the shared idea).
      *
-     * @param draw              The screen draw (its fragment program is read).
+     * @param draw              The full-screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
      * @param compatibility     The destination's pipeline compatibility.
      * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
@@ -1203,7 +1203,7 @@ struct ContentCaches::Impl {
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawCall&                  draw,
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawPacket&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,
@@ -1212,7 +1212,7 @@ struct ContentCaches::Impl {
                                 ContentRefusal&                                        refusal)
     {
         plan      = FrameHead::DrawPlan{}; // see planDraw(DrawItem): an empty plan is "this draw records nothing"
-        plan.kind = FrameHead::Kind::Screen;
+        plan.kind = FrameHead::Kind::Fullscreen;
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
         if (fragment_description == nullptr && draw.program != nullptr) {
@@ -1221,7 +1221,7 @@ struct ContentCaches::Impl {
         if (fragment_description == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                            contentRefusalCode(ContentRefusalCause::ScreenNoProgram),
-                           vn::String(u8"vk: a screen draw named no fragment program"));
+                           vn::String(u8"vk: a full-screen draw named no fragment program"));
             return false;
         }
 
@@ -1241,8 +1241,8 @@ struct ContentCaches::Impl {
             return false;
         }
 
-        // THE STATE, resolved from the pass (a full-screen call has no per-command state of its own) - WITH THE DEPTH
-        // POLICY FORCED OFF. A full-screen call is the canonical triangle at z = 0.0, which under this engine's
+        // THE STATE, resolved from the pass (a full-screen packet has no per-command state of its own) - WITH THE DEPTH
+        // POLICY FORCED OFF. A full-screen packet is the canonical triangle at z = 0.0, which under this engine's
         // reverse-Z convention is the FAR plane: any depth test against what the destination carries discards every
         // fragment. The destinations that expose this are exactly the ones the reference backend's M4b rule names: a
         // window pass' render pass clears D24 to 0 (far), and the deferred chain's composite BORROWS the G-buffer's
@@ -1739,7 +1739,7 @@ bool ContentCaches::planDraw(const vn::graphics::DrawItem&                     c
     return impl->planDraw(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal, builds);
 }
 
-bool ContentCaches::planDraw(const vn::graphics::DrawCall&                  draw,
+bool ContentCaches::planDraw(const vn::graphics::DrawPacket&                  draw,
                              const vn::graphics::PassDraw&                          pass,
                              const vn::graphics::RenderPassCompatibility&  compatibility,
                              const VkRenderPass                                     render_pass,
@@ -1755,7 +1755,7 @@ bool ContentCaches::planDraw(const vn::graphics::DrawCall&                  draw
 ContentCaches::Lock ContentCaches::lock() const
 {
     // COUNTED BEFORE BLOCKING, so the number says "a caller asked for the caches", not "a caller got in": a test that
-    // asserts the count does not grow with drawing calls must not depend on how long a concurrent holder took. A
+    // asserts the count does not grow with draw packets must not depend on how long a concurrent holder took. A
     // caller that had to WAIT is counted too (see FrameLocking): the try says whether the lock was free, and the count
     // is the witness that a steady frame never waits for another frame's head.
     impl->acquisitions.fetch_add(1U, std::memory_order_relaxed);
@@ -2033,7 +2033,7 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     return dropped;
 }
 
-void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawCall> draws, const Lock& held)
+void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawPacket> draws, const Lock& held)
 {
     (void)held; // see Lock: the caller's hold is the precondition
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
@@ -2043,8 +2043,8 @@ void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<
     if (!impl->images.ensureFallback(commands, 0, &why)) {
         return; // reported when a draw finds no fallback view
     }
-    for (const vn::graphics::DrawCall& draw : draws) {
-        if (draw.kind != vn::graphics::DrawCall::Kind::Scene || draw.commands == nullptr) {
+    for (const vn::graphics::DrawPacket& draw : draws) {
+        if (draw.kind != vn::graphics::DrawPacket::Kind::Scene || draw.commands == nullptr) {
             continue;
         }
         for (const vn::graphics::DrawItem& command : *draw.commands) {

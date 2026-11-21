@@ -170,8 +170,8 @@ void forEachTriangleHit(const Geometry* geometry, const vn::geom::spatial::Rayd&
             }).tests;
             continue;
         }
-        const std::size_t visible = primitive->visibleInstanceCount();
-        for (std::size_t instance = 0; instance < visible; ++instance) {
+        const std::size_t instances = primitive->instanceCount();
+        for (std::size_t instance = 0; instance < instances; ++instance) {
             const std::optional<Mat4d> matrix = primitive->instanceMatrix(instance);
             if (!matrix.has_value()) {
                 continue; // the buffer shrank under the visible count

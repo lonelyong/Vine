@@ -46,14 +46,14 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT IS NOT. Nothing of the frame: no ring, no descriptor pool, no per-frame counters - those are
  *   `FrameScratch`'s, one per driver, because mixing two frames' slices is a correctness problem while sharing a
  *   compiled pipeline is the point (see `.ai/design/graphics-sessions.md` §3.1.3).
- * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planDraw` answers what a drawing call builds with (program, streams,
+ * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planDraw` answers what a draw packet builds with (program, streams,
  *   pipeline, resolved state, texture slots) and nothing else: the warm-up and the frame head run the SAME
  *   resolution, so a frame cannot ask for something the warm-up would not have built - and the answers CROSS the seam
  *   as values (`FrameHead`), which is what lets the recording path take no lock.
  * - ONE LOCK, ONE OWNER OF THE HOT PATH (`G10`). The tables are edited only at a frame head or by a host verb; a frame
- *   holds `Lock` while it resolves everything it will draw, and `record` / `recordScreen` then work from the values in
+ *   holds `Lock` while it resolves everything it will draw, and `record` / `recordFullscreen` then work from the values in
  *   the plan. The lock's acquisitions are counted (`lockAcquisitions`), which is how a test states "a frame's cache
- *   cost does not grow with its drawing calls".
+ *   cost does not grow with its draw packets".
  * - RELEASE IS A TWO-PART ANSWER. An announced release forgets the entry NOW (so residency numbers answer the
  *   question they are asked and the next frame uploads again) while the Vulkan objects park on the device's
  *   completion watermark (`setRetirement`) until no submitted frame can still name them. Without a queue they are
@@ -160,7 +160,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * - WHY A PROOF TYPE AND NOT A PLAIN `std::unique_lock`: every verb that reads or writes the tables takes a
      *   `Lock&`, so "I am holding the cache lock" is enforced by the compiler at the call site instead of by a
      *   comment (`G4`). The lock is acquired through @ref lock, which counts the acquisition - the witness a test uses
-     *   to show that a frame's cost does not grow with its drawing calls.
+     *   to show that a frame's cost does not grow with its draw packets.
      * - A FRAME HOLDS IT ONCE, at its head: `planDraw` / `resolveTextures` run there, and everything
      *   the recording path needs afterwards is a value (see `FrameHead`).
      * - HOST VERBS (release, progress, `endFrame`) take it internally: they are announcements, not frame work.
@@ -579,13 +579,13 @@ class VN_BACKEND_VK_API ContentCaches final {
      * - It also creates the 1x1 white fallback every absent slot is bound to, on the first preparation that needs it.
      *
      * @param commands The command buffer being recorded (outside any render pass).
-     * @param draws    The pass' drawing calls (borrowed for the call).
+     * @param draws    The pass' draw packets (borrowed for the call).
      * @param held     The cache lock (see @ref Lock).
      */
-    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawCall> draws, const Lock& held);
+    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawPacket> draws, const Lock& held);
 
     /**
-     * @brief Resolves one drawing call's texture bindings into @p plan, recording every upload that is missing on
+     * @brief Resolves one draw packet's texture bindings into @p plan, recording every upload that is missing on
      *        @p commands; the frame-level stand-in facts land on @p head.
      *
      * @details
@@ -678,13 +678,13 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @brief Resolves ONE SCREEN DRAW into @p plan: its fragment program, pipeline and resolved state.
      *
      * @details
-     * - THE SAME VERB AS THE CONTENT OVERLOAD (one entry, two input shapes): a full-screen call has no geometry,
+     * - THE SAME VERB AS THE CONTENT OVERLOAD (one entry, two input shapes): a full-screen packet has no geometry,
      *   material or streams, so its plan fills the shared half (pipeline, resolved state) and leaves the content
      *   payload empty.
      * - THE DEPTH POLICY IS FORCED OFF for this kind (see the implementation): a full-screen triangle is at the far
      *   plane under reverse-Z, and the destination's depth is not the content's business.
      *
-     * @param draw              The screen draw (its fragment program is read).
+     * @param draw              The full-screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
      * @param compatibility     The destination's pipeline compatibility.
      * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
@@ -694,7 +694,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param held              The cache lock (see @ref Lock).
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawCall&                  draw,
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawPacket&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,

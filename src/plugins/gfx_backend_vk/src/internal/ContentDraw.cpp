@@ -82,7 +82,7 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 }
 
 /**
- * @brief Packs the shadow block one drawing call shades with (see ShaderAbi.hpp `VineShadowBlock`).
+ * @brief Packs the shadow block one draw packet shades with (see ShaderAbi.hpp `VineShadowBlock`).
  *
  * @details
  * - THE MAP'S IDENTITY IS SOMEBODY ELSE'S STATEMENT: the target says whose shadow it is (`RenderTarget::shadowOf`) and
@@ -100,10 +100,10 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
  *   (a private default would be the second answer this ABI exists to prevent), and the SDK has no strength knob yet.
  *
  * @param shadow The map this pass samples (see ContentDraw::ShadowSource), or an empty one for none.
- * @param draw   The drawing call: its camera (the view space to map from) and the lights it announced.
+ * @param draw   The draw packet: its camera (the view space to map from) and the lights it announced.
  * @return The block; every field is written and the switch is off when the map cannot shade this call.
  */
-[[nodiscard]] vn::graphics::VineShadowBlock buildShadowBlock(const ContentDraw::ShadowSource& shadow, const vn::graphics::DrawCall& draw) noexcept
+[[nodiscard]] vn::graphics::VineShadowBlock buildShadowBlock(const ContentDraw::ShadowSource& shadow, const vn::graphics::DrawPacket& draw) noexcept
 {
     vn::graphics::VineShadowBlock block{};
     if (shadow.light == nullptr || !shadow.has_view_projection || shadow.view == VK_NULL_HANDLE || !draw.view.camera.present ||
@@ -166,7 +166,7 @@ void ContentDraw::writeSlice(const VkDeviceSize                    slice,
 std::uint64_t ContentDraw::record(VkCommandBuffer                              commands,
                                   int                                          width,
                                   int                                          height,
-                                  const vn::graphics::DrawCall&         draw,
+                                  const vn::graphics::DrawPacket&         draw,
                                   const vn::graphics::PassDraw&                pass,
                                   const std::span<const FrameHead::DrawPlan>   plans,
                                   const FrameHead&                             head,
@@ -180,14 +180,14 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     if (!caches.ready() || !scratch.ready() || draw.commands == nullptr) {
         return 0;
     }
-    // NO CAMERA MEANS NO DRAW (see DrawCall::camera): the pass issues nothing, and that is not a failure.
+    // NO CAMERA MEANS NO DRAW (see DrawPacket::camera): the pass issues nothing, and that is not a failure.
     if (!draw.view.camera.present) {
         return 0;
     }
-    if (draw.kind != vn::graphics::DrawCall::Kind::Scene) {
+    if (draw.kind != vn::graphics::DrawPacket::Kind::Scene) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::WrongPath),
-                   vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
+                   vn::String(u8"vk: a full-screen draw reached the content path (it has its own recordFullscreen)"));
         return 0;
     }
     // ONE PLAN PER COMMAND IS THE FRAME HEAD'S CONTRACT (see FrameHead::DrawPlan): a caller that resolved only
@@ -195,7 +195,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     if (plans.size() < draw.commands->size()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::PlanMissing),
-                   vn::String(u8"vk: the frame head did not resolve every command of this drawing call"));
+                   vn::String(u8"vk: the frame head did not resolve every command of this draw packet"));
         return 0;
     }
     // THE 1x1 WHITE STAND-IN was made at the frame head (see ContentCaches::resolveTextures), outside the render
@@ -250,7 +250,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         const vn::graphics::DrawItem& command = (*draw.commands)[command_index];
         const FrameHead::DrawPlan&         plan    = plans[command_index];
         // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planDraw): the
-        // drawing call's refusal carries that reason, and a later command still records.
+        // draw packet's refusal carries that reason, and a later command still records.
         if (plan.pipeline == VK_NULL_HANDLE) {
             continue;
         }
@@ -392,10 +392,10 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     return recorded;
 }
 
-std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                            commands,
+std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                            commands,
                                         int                                        width,
                                         int                                        height,
-                                        const vn::graphics::DrawCall&       draw,
+                                        const vn::graphics::DrawPacket&       draw,
                                         const vn::graphics::PassDraw&              pass,
                                         const FrameHead::DrawPlan&                 plan,
                                         const FrameHead&                           head,
@@ -417,7 +417,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     if (source.views.empty()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::ScreenNoSource),
-                   vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample"));
+                   vn::String(u8"vk: a full-screen draw named no source target, so there is nothing to sample"));
         return 0;
     }
     if (head.fallback_view == VK_NULL_HANDLE) {

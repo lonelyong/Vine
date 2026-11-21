@@ -12,7 +12,7 @@
 #include <vine/Color.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/DepthMode.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
@@ -279,7 +279,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     const vn::graphics::FrameReport report = fixture.engine->frameReport();
     ASSERT_TRUE(report.counters.has_value()) << "这个后端必须报帧计数，否则下面的数是猜的";
     EXPECT_EQ(report.counters->passes, 1U);
-    EXPECT_EQ(report.counters->draws, 1U) << "一个几何体一次绘制调用：图元是这次调用里的三条命令";
+    EXPECT_EQ(report.counters->draw_packets, 1U) << "一个几何体一次绘制调用：图元是这次调用里的三条命令";
 
     // 后端的账：位置、法线、索引 arena 各上传一次，其余六次取流命中已建的绑定。
     auto* const assembly = vn::backend_vsg::detail::BackendContentAccess::assembly(*fixture.backend);

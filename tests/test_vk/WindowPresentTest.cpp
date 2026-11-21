@@ -28,7 +28,7 @@
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -50,7 +50,7 @@ using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
@@ -236,8 +236,8 @@ void main()
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(command));
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -248,7 +248,7 @@ void main()
     pass.target       = nullptr; // the window
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(1.0F, 0.0F, 0.0F, 1.0F);
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;
@@ -360,7 +360,7 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
     const PrepareReport prepared = backend->prepareFrame(windowFrame(), target);
     EXPECT_TRUE(prepared.prepared()) << "outcome " << static_cast<int>(prepared.outcome);
     EXPECT_EQ(prepared.passes, 1U);
-    EXPECT_EQ(prepared.draws, 1U);
+    EXPECT_EQ(prepared.draw_packets, 1U);
 
     // A SECOND ASK for the same window is refused: one live swapchain per window.
     const vn::raw_ptr<vn::graphics::WindowPresentTarget> again = backend->createSurfaceTarget(window.handle(), &result);

@@ -202,7 +202,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *
      * @details
      * - The scene keeps a reference. Passes rendering this scene light their content with the scene's
-     *   lights (a drawing call announces them as values: DrawCall::light_values).
+     *   lights (a draw packet announces them as values: DrawPacket::light_values).
      *
      * @param light Light to add.
      */
@@ -259,7 +259,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *   announces nothing on the graph, see Light::revision) and a list edit moves the identities - so a `setColor`
      *   reaches the next `describe` exactly like it reached the live vector before, without a rebuild when it did
      *   not happen.
-     * - The value is what a drawing call announces (`DrawCall::light_values`); it is NOT a publication, and a
+     * - The value is what a draw packet announces (`DrawPacket::light_values`); it is NOT a publication, and a
      *   frame that was already described keeps the set it was lit with.
      *
      * @return The shared set (never null; empty when the scene has no lights).

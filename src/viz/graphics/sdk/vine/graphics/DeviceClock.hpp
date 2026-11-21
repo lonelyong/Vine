@@ -61,8 +61,6 @@ using FrameDriverId = std::uint32_t;
  */
 class VN_GRAPHICS_API DeviceClock {
   public:
-    /// @brief The identity's old spelling, from when a clock window was read as a platform window.
-    using WindowId [[deprecated("use FrameDriverId: one clock window is a frame driver, not a window")]] = FrameDriverId;
 
     /** @brief Registers a frame driver: from now on its evidence constrains the watermark.
      *

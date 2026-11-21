@@ -19,7 +19,7 @@
 VN_BACKEND_VK_NS_BEGIN
 
 /**
- * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per drawing call, and the frame-level texture facts every call binds.
+ * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per draw packet, and the frame-level texture facts every call binds.
  *
  * @details
  * - THE SAME NAME AND SHAPE AS THE vsg BACKEND'S `FrameHead` (`G6`; ADR-2026-11-16-redesign-seam-and-vocabulary).
@@ -43,11 +43,11 @@ VN_BACKEND_VK_NS_BEGIN
  */
 class FrameHead final {
   public:
-    /// @brief Which of the two drawing calls a plan belongs to (they share the pipeline and the state, not the payload).
+    /// @brief Which of the two draw packets a plan belongs to (they share the pipeline and the state, not the payload).
     enum class Kind : std::uint8_t
     {
-        Content, ///< A scene command (geometry, material, streams).
-        Screen,  ///< A full-screen call (fragment program, source target).
+        Content,    ///< A scene command (geometry, material, streams).
+        Fullscreen, ///< A full-screen packet (fragment program, source target).
     };
 
     /// @brief One texture slot as the head resolved it: the view and the sampler it is read with.
@@ -58,13 +58,13 @@ class FrameHead final {
     };
 
     /**
-     * @brief ONE DRAWING CALL'S RESOLVED VALUE: everything recording it reads, and nothing recording it would ask.
+     * @brief ONE DRAW PACKET'S RESOLVED VALUE: everything recording it reads, and nothing recording it would ask.
      *
      * @details
      * - `pipeline == VK_NULL_HANDLE` means "this call cannot be recorded": the head already stated why in the drawing
      *   call's `ContentRefusal`, and the recorder skips exactly this plan.
      * - THE ONE PAYLOAD THAT IS NOT SHARED is the content call's: material, variant and streams describe a
-     *   `DrawItem`, and a screen call has none of them. The pipeline and the resolved state are what a screen
+     *   `DrawItem`, and a full-screen packet has none of them. The pipeline and the resolved state are what a screen
      *   call uses beside its slots, which is why they are the common half of this value.
      * - THE SLOTS ARE RESOLVED BEFORE THE RENDER PASS BEGINS, because a texture upload records a buffer-to-image copy
      *   and an image barrier, neither of which is legal inside a render pass instance (the same rule
@@ -72,12 +72,12 @@ class FrameHead final {
      *   ahead of every pass.
      */
     struct DrawPlan {
-        Kind kind{ Kind::Content }; ///< Which of the two drawing calls this plan was resolved for.
+        Kind kind{ Kind::Content }; ///< Which of the two draw packets this plan was resolved for.
 
         VkPipeline                         pipeline{ VK_NULL_HANDLE };
         vn::graphics::ResolvedCommandState resolved{};
 
-        /// The content call's payload (empty for a screen call).
+        /// The content call's payload (empty for a full-screen packet).
         vn::graphics::MaterialDescriptionPtr material{}; ///< The material it is shaded with, or null (defaults).
         ProgramVariant                       variant{};  ///< What the program was compiled under.
         std::vector<VkBuffer>                vertex_streams{}; ///< The geometry's non-empty channels, in binding order.
@@ -86,7 +86,7 @@ class FrameHead final {
         VkBuffer                             index_buffer{ VK_NULL_HANDLE };    ///< This command's primitive, or null.
         std::uint32_t                        index_count{ 0 };
 
-        /// The texture slots this call binds (all of them absent for a screen call, which binds its source instead).
+        /// The texture slots this call binds (all of them absent for a full-screen packet, which binds its source instead).
         std::array<SlotBinding, detail::kTextureSlots> slots{};
 
         /** @brief Releases what this plan names and forgets its kind; the stream vector keeps its capacity. */
@@ -106,7 +106,7 @@ class FrameHead final {
         }
     };
 
-    /// @brief ONE DRAWING CALL of the frame: its plans (one per command; a screen call has exactly one).
+    /// @brief ONE DRAW PACKET of the frame: its plans (one per command; a full-screen packet has exactly one).
     struct Call {
         std::vector<DrawPlan> plans{};
         /// The head's first reason this call could not be resolved (reported where the draw is recorded).
@@ -127,7 +127,7 @@ class FrameHead final {
     struct Pass {
         std::vector<Call> draws{};
 
-        /** @brief Releases every drawing call; the vector keeps its capacity. */
+        /** @brief Releases every draw packet; the vector keeps its capacity. */
         void clear() noexcept
         {
             for (Call& call : draws) {
@@ -164,9 +164,9 @@ class FrameHead final {
     }
 
     /**
-     * @brief Gets the slot for the frame's next pass, sized to @p draw_count drawing calls.
+     * @brief Gets the slot for the frame's next pass, sized to @p draw_count draw packets.
      *
-     * @param draw_count How many drawing calls the pass states (a hint; the storage only ever grows).
+     * @param draw_count How many draw packets the pass states (a hint; the storage only ever grows).
      * @return The slot to resolve into; valid until the next beginPass or beginFrame.
      */
     [[nodiscard]] Pass& beginPass(const std::size_t draw_count)
@@ -227,7 +227,7 @@ class FrameHead final {
     /// The 1x1 white stand-in an absent texture slot binds (see ContentCaches::resolveTextures); null when it could
     /// not be made, which is the one condition under which a call must not record.
     VkImageView fallback_view{ VK_NULL_HANDLE };
-    /// The sampler the stand-in is read with (it also serves a screen call's source attachments).
+    /// The sampler the stand-in is read with (it also serves a full-screen packet's source attachments).
     VkSampler fallback_sampler{ VK_NULL_HANDLE };
     /// The sampler a shadow map is read with; null when the image cache has none (the recorder falls back to the
     /// pair above).

@@ -7,7 +7,7 @@
  *     has NO colour attachment - so the pass that writes it is a depth-only render pass with a depth-only pipeline;
  *   * the CONSUMING pass declares the map as an input, and this backend has to move the map's depth image out of the
  *     attachment layout (an image barrier is not legal inside a render pass, so it happens before the pass begins);
- *   * the LIGHT the map belongs to must still be a caster among the lights the drawing call announced: `VineShadowBlock`
+ *   * the LIGHT the map belongs to must still be a caster among the lights the draw packet announced: `VineShadowBlock`
  *     is packed per call from that match (its slot, its own bias, and `light clip <- world` times `world <- view`).
  *
  * WHAT THE PICTURES SAY (the acceptance `graphics-rendering.md` T5 states). With a casting light the ground behind the
@@ -39,7 +39,7 @@
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/FrameDescription.hpp>
-#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/Light.hpp>
@@ -60,7 +60,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::ImageSource;
@@ -165,12 +165,12 @@ makeQuad(float x0, float x1, float z)
     return command;
 }
 
-/// @brief One scene drawing call: @p commands through the identity camera, optionally announcing @p lights.
-[[nodiscard]] DrawCall sceneDraw(std::shared_ptr<const std::vector<DrawItem>> commands,
+/// @brief One scene draw packet: @p commands through the identity camera, optionally announcing @p lights.
+[[nodiscard]] DrawPacket sceneDraw(std::shared_ptr<const std::vector<DrawItem>> commands,
                                         vn::graphics::LightSetPtr                         lights = nullptr)
 {
-    DrawCall draw;
-    draw.kind        = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind        = DrawPacket::Kind::Scene;
     draw.view.camera      = identityCamera();
     draw.commands    = std::move(commands);
     draw.light_values = std::move(lights);
@@ -242,7 +242,7 @@ struct Scene {
     shadow_pass.target = scene.map.get();
     shadow_pass.clear  = ClearPolicy{}; // clears the depth (the only attachment)
     shadow_pass.state.depth = DepthMode::TestAndWrite;
-    shadow_pass.draws.push_back(sceneDraw(caster_list));
+    shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
 
@@ -257,7 +257,7 @@ struct Scene {
     main_pass.clear        = ClearPolicy{};
     main_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     main_pass.state.depth  = DepthMode::TestAndWrite;
-    main_pass.draws.push_back(sceneDraw(receiver_list, vn::graphics::LightSet::create(std::move(lights))));
+    main_pass.packets.push_back(sceneDraw(receiver_list, vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
     frame.passes.push_back(std::move(main_entry));
 
@@ -316,12 +316,12 @@ TEST(VkShadowTest, TheMapDarkensWhatTheCasterBlocks)
     EXPECT_GT(lit, 0) << "the unshadowed ground lost its light: the map's absence is not the answer";
     EXPECT_GT(shadowed, 0) << "the shadowed ground went black: the ambient term should survive a shadow";
 
-    // The frame's shape: two pass scopes (the depth-only pass and the shading one) and TWO drawing calls - a drawing
+    // The frame's shape: two pass scopes (the depth-only pass and the shading one) and TWO draw packets - a drawing
     // call is the description a pass issues, not the commands inside it (the map's pass issues one call that draws its
     // two casters).
     ASSERT_TRUE(backend->frameReport().counters.has_value());
     EXPECT_EQ(backend->frameReport().counters->passes, 2U);
-    EXPECT_EQ(backend->frameReport().counters->draws, 2U);
+    EXPECT_EQ(backend->frameReport().counters->draw_packets, 2U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U)
         << "the depth-only pipeline and the shadow ABI have to compile here";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -396,10 +396,10 @@ TEST(VkShadowTest, ADeclaredMapThatWasNeverDrawnShadesNothingInsteadOfReadingGar
     backend->shutdown();
 }
 
-TEST(VkShadowTest, AScreenPassShadesWithTheMapItResolved)
+TEST(VkShadowTest, AFullscreenPassShadesWithTheMapItResolved)
 {
     // THE FULL-SCREEN HALF OF THE SAME ABI (2026-11-14): the engine's shadowed deferred-lighting program is a SCREEN
-    // pass, and a screen pass is where the sun's shadow has to arrive. The set's binding 7 must therefore carry the
+    // pass, and a full-screen pass is where the sun's shadow has to arrive. The set's binding 7 must therefore carry the
     // map the pass RESOLVED - not the white stand-in the full-screen set offers when there is none. The app found
     // this the hard way: the deferred demo had no shadow on vk while the content path's shadow worked.
     //
@@ -439,7 +439,7 @@ void main()
     read_program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Fragment, String(kMapReadFragment), String(u8"main") });
 
     // The picture: casters into the map (the same first pass every case here builds), then a source target that only
-    // has to EXIST (the full-screen ABI needs a source; this program does not sample it), then the screen pass itself.
+    // has to EXIST (the full-screen ABI needs a source; this program does not sample it), then the full-screen pass itself.
     const intrusive_ptr<RenderTarget> destination = makeColorTarget();
     const intrusive_ptr<RenderTarget> source      = makeColorTarget();
 
@@ -459,7 +459,7 @@ void main()
     shadow_pass.target      = scene.map.get();
     shadow_pass.clear       = ClearPolicy{};
     shadow_pass.state.depth = DepthMode::TestAndWrite;
-    shadow_pass.draws.push_back(sceneDraw(caster_list));
+    shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
 
@@ -477,12 +477,12 @@ void main()
     source_entry.draw       = std::move(source_pass);
     frame.passes.push_back(std::move(source_entry));
 
-    DrawCall screen_draw;
-    screen_draw.kind                = DrawCall::Kind::Screen;
-    screen_draw.view.camera              = identityCamera();
-    screen_draw.source              = source.get();
-    screen_draw.program             = read_program;
-    screen_draw.program_description = read_program->description();
+    DrawPacket fullscreen_draw;
+    fullscreen_draw.kind                = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.view.camera              = identityCamera();
+    fullscreen_draw.source              = source.get();
+    fullscreen_draw.program             = read_program;
+    fullscreen_draw.program_description = read_program->description();
 
     const intrusive_ptr<vn::graphics::RenderPass> screen_pass_identity(new vn::graphics::RenderPass());
     FrameDescription::Pass screen_entry;
@@ -491,7 +491,7 @@ void main()
     screen_entry.inputs.push_back(ImageSource::producedTarget(scene.map.get()));
     PassDraw screen_pass;
     screen_pass.target = destination.get();
-    screen_pass.draws.push_back(std::move(screen_draw));
+    screen_pass.packets.push_back(std::move(fullscreen_draw));
     screen_entry.draw = std::move(screen_pass);
     frame.passes.push_back(std::move(screen_entry));
 
@@ -502,14 +502,14 @@ void main()
     // so the map holds 0.25 - and 0.25 * 255 = 64. A white stand-in would read 255 in both halves, and a map that
     // never reached binding 7 could not produce two different values.
     EXPECT_NEAR(lumAt(pixels, 8, kTargetSize / 2), 64, 2)
-        << "the screen pass did not sample the resolved map's strip depth";
+        << "the full-screen pass did not sample the resolved map's strip depth";
     EXPECT_LE(lumAt(pixels, 48, kTargetSize / 2), 4)
-        << "the screen pass did not sample the map's cleared half";
+        << "the full-screen pass did not sample the map's cleared half";
 
     ASSERT_TRUE(backend->frameReport().counters.has_value());
-    EXPECT_EQ(backend->frameReport().counters->draws, 2U) << "the map's pass and the screen pass both drew";
+    EXPECT_EQ(backend->frameReport().counters->draw_packets, 2U) << "the map's pass and the full-screen pass both drew";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
-        << "the screen pass was refused instead of shaded";
+        << "the full-screen pass was refused instead of shaded";
 
     backend->shutdown();
 }
@@ -555,7 +555,7 @@ TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
     EXPECT_LT(lumAt(multisampled_map, 16, kTargetSize / 2), lumAt(multisampled_map, 48, kTargetSize / 2))
         << "the multisampled map's frame lost its shadow";
     ASSERT_TRUE(backend->frameReport().counters.has_value());
-    EXPECT_EQ(backend->frameReport().counters->draws, 2U) << "the map's pass and the shading pass both ran";
+    EXPECT_EQ(backend->frameReport().counters->draw_packets, 2U) << "the map's pass and the shading pass both ran";
     for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
         EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
             << "the driver rejected an object of the multisampled map's frame: "

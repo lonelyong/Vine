@@ -22,10 +22,10 @@ VN_GRAPHICS_NS_BEGIN
 class RenderPass;
 
 /**
- * @brief One drawing call of an OWNED frame: the borrowed description's fields, each one held.
+ * @brief One draw packet of an OWNED frame: the borrowed description's fields, each one held.
  *
  * @details
- * - The owned twin of @ref DrawCall. Every handle is an owning one, so the value outlives the scene, the
+ * - The owned twin of @ref DrawPacket. Every handle is an owning one, so the value outlives the scene, the
  *   camera and the program it was assembled from - which is what lets a caller build a frame on one thread, keep it,
  *   and hand it to an executor later (or serialise it, or record it). The commands are a `shared_ptr` in both forms:
  *   one collection is usually drawn by several passes, and ownership of it is already shared.
@@ -34,19 +34,19 @@ class RenderPass;
  * - Like ClearPolicy, this is a header-only value: every member is defined here, so there is no symbol to export and
  *   the type deliberately carries no VN_GRAPHICS_API (the DLL never instantiates it).
  */
-struct OwnedDraw {
-    /// Which drawing call this is (see DrawCall::Kind).
-    DrawCall::Kind kind{ DrawCall::Kind::Scene };
+struct OwnedDrawPacket {
+    /// Which draw packet this is (see DrawPacket::Kind).
+    DrawPacket::Kind kind{ DrawPacket::Kind::Scene };
     /// The view this draw is projected and lit with, as the VALUE the frame carries (`camera.present == false` = no
     /// draw). It is owned by being a value: no camera object has to outlive the frame for it to be replayable.
     View view{};
     /// Scene kind: the commands this draw issues (held; the collection owns its geometry and materials).
     std::shared_ptr<const std::vector<DrawItem>> commands;
-    /// Screen kind: the target whose colour attachments the program samples (held).
+    /// Fullscreen packet: the target whose colour attachments the program samples (held).
     intrusive_ptr<RenderTarget> source;
-    /// Screen kind: the fragment program to draw the source through (held).
+    /// Fullscreen packet: the fragment program to draw the source through (held).
     intrusive_ptr<const ShaderProgram> program;
-    /// The lights this draw announces, as values, or null for NONE (see DrawCall::light_values).
+    /// The lights this draw announces, as values, or null for NONE (see DrawPacket::light_values).
     LightSetPtr light_values;
 };
 
@@ -54,7 +54,7 @@ struct OwnedDraw {
  * @brief What ONE pass of an owned frame issues: the borrowed @ref PassDraw with owning handles.
  *
  * @details
- * - Same shape, different ownership: `target` is held rather than borrowed, and the draws are @ref OwnedDraw. The
+ * - Same shape, different ownership: `target` is held rather than borrowed, and the packets are @ref OwnedDrawPacket. The
  *   fields that are plain values (viewport, clear, state) are copied verbatim, because a value cannot dangle.
  */
 struct OwnedPassDraw {
@@ -68,8 +68,8 @@ struct OwnedPassDraw {
     PassRenderState state{};
     /// The program the pass draws all of its content with (held; null = per-geometry programs).
     intrusive_ptr<const ShaderProgram> program_override;
-    /// The drawing calls, in the order they happen.
-    std::vector<OwnedDraw> draws;
+    /// The draw packets, in the order they happen.
+    std::vector<OwnedDrawPacket> packets;
 };
 
 /**
@@ -179,16 +179,16 @@ class OwnedFrame {
         out.clear            = owned.clear;
         out.state            = owned.state;
         out.program_override = owned.program_override;
-        out.draws.reserve(owned.draws.size());
-        for (const OwnedDraw& draw : owned.draws) {
-            DrawCall borrowed_draw;
+        out.packets.reserve(owned.packets.size());
+        for (const OwnedDrawPacket& draw : owned.packets) {
+            DrawPacket borrowed_draw;
             borrowed_draw.kind     = draw.kind;
             borrowed_draw.view     = draw.view;
             borrowed_draw.commands = draw.commands;
             borrowed_draw.source   = draw.source.get();
             borrowed_draw.program  = draw.program;
             borrowed_draw.light_values = draw.light_values;
-            out.draws.push_back(std::move(borrowed_draw));
+            out.packets.push_back(std::move(borrowed_draw));
         }
         return out;
     }

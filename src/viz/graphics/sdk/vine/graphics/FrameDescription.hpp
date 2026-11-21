@@ -1,7 +1,9 @@
 #pragma once
 #include "graphics_global.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -69,7 +71,7 @@ class ShaderProgram;
  *   describe a clearing frame.
  */
 struct ClearPolicy {
-    /** @brief A policy that clears both dimensions: what an ordinary frame start and an off-screen pass state. */
+    /** @brief A policy that clears both dimensions: what an ordinary frame start and an off-full-screen pass state. */
     ClearPolicy() = default;
 
     /** @brief A policy that clears the colour attachments to @p in_color and the depth when @p with_depth.
@@ -114,7 +116,7 @@ struct ClearPolicy {
 };
 
 /**
- * @brief ONE DRAWING CALL of a pass: the VIEW it draws, whose content answers it, and what a backend records.
+ * @brief ONE DRAW PACKET of a pass: the VIEW it draws, whose content answers it, and what a backend records.
  *
  * @details
  * - The value a pass produces instead of CALLING the backend (see PassDraw): the pass states a view, and the frame's
@@ -122,29 +124,34 @@ struct ClearPolicy {
  *   makes a frame a REQUEST first and an answer second - the collection is O(drawables) and the request is
  *   O(passes), so the step that costs has a name, a value boundary and a thread of its own (see
  *   `.ai/design/graphics-threading.md`).
+ * - ONE PACKET IS A REQUEST, NOT A SUBMISSION: a value carries one view's whole list (@ref commands), so a pass
+ *   that draws N drawables through one view issues ONE packet and N `DrawItem`s - and one packet is what a backend
+ *   records as N submissions. `FrameCounts::draw_packets` counts these (one per pass and view), `FrameCounts::draws`
+ *   counts the items - the number a profiler calls a draw call - so neither word can be read as the other
+ *   (see `.ai/memory/glossary.md`).
  * - Everything in a REQUEST is a value or an identity: the camera is a snapshot (see CameraSnapshot), the view is a
  *   rectangle plus a layer mask, and `content` is the thing to ask (see DrawListSource). Nothing in it is a live
  *   scene read, which is what lets the request be built on one thread and answered on another.
  * - A description a HOST builds by hand may carry @ref commands directly (the backend's own tests and an owned
- *   frame do): the expansion leaves such a draw alone, so "a list I already have" and "a view to collect" are two
+ *   frame do): the expansion leaves such a packet alone, so "a list I already have" and "a view to collect" are two
  *   spellings of the same fact, and the second one is free.
  *
  * @note
  * - Why the ORDER is not here: the old wire made the backend infer meaning from call order (state setters as
  *   the open scope's attribute; viewport / lights consumed by the NEXT draw). A description has no order -
  *   which state belongs to a pass and which to one draw is the SHAPE of these structs (PassDraw's
- *   fields belong to the pass, DrawCall's to this draw), so the rules cannot be broken by calling
+ *   fields belong to the pass, DrawPacket's to this packet), so the rules cannot be broken by calling
  *   something at the wrong moment.
  */
-struct VN_GRAPHICS_API DrawCall {
-    /// Which drawing call this is (the two the contract has; they take different arguments).
+struct VN_GRAPHICS_API DrawPacket {
+    /// Which kind of draw packet this is (the two the contract has; they take different arguments).
     enum class Kind : std::uint8_t
     {
-        Scene,  // Draw collected geometry through a camera (a content drawing call).
-        Screen, // Draw a full-screen program over a source target (a screen drawing call).
+        Scene,      // Draw collected geometry through a camera (a content draw packet).
+        Fullscreen, // Draw a full-screen program over a source target (a full-screen draw packet).
     };
 
-    /// Which of the two calls this describes.
+    /// Which of the two kinds this describes.
     Kind kind = Kind::Scene;
     /// The view this draw is projected, lit and collected with, as a VALUE taken when the pass described itself.
     ///
@@ -154,27 +161,27 @@ struct VN_GRAPHICS_API DrawCall {
     /// rectangle the collection needs (see View), never the backend's viewport - that is @ref PassDraw::viewport, a
     /// different question asked a stage later.
     View view{};
-    /// Scene kind: WHOSE commands this draw issues (see DrawListSource).
+    /// Scene packet: WHOSE commands this packet issues (see DrawListSource).
     ///
     /// The frame's expansion asks it for the list behind @ref view, so a host that hands a view does not also have to
     /// collect. Null (or a description that already carries @ref commands) means nothing is collected.
     raw_ptr<const DrawListSource> content = nullptr;
-    /// Scene kind: the commands this draw issues, collected for THIS frame's picture shape.
+    /// Scene packet: the commands this packet issues, collected for THIS frame's picture shape.
     ///
     /// FILLED BY THE EXPANSION from @ref content (or carried by a hand-built description). Shared rather than copied:
     /// every pass of a frame usually draws the same command list, and the collection is memoised per view (see
     /// DrawListSource), so one description per pass holds a handle to the same list.
     std::shared_ptr<const std::vector<DrawItem>> commands;
-    /// Screen kind: the target whose colour attachments the full-screen program samples.
+    /// Fullscreen packet: the target whose colour attachments the full-screen program samples.
     raw_ptr<RenderTarget> source = nullptr;
-    /// Screen kind: the fragment program to draw the source through (required; null means no draw).
+    /// Fullscreen packet: the fragment program to draw the source through (required; null means no draw).
     intrusive_ptr<const ShaderProgram> program;
-    /// Screen kind: @ref program's text as a value, taken with the pointer (see ShaderProgramDescription).
+    /// Fullscreen packet: @ref program's text as a value, taken with the pointer (see ShaderProgramDescription).
     ///
     /// The recorder reads THIS, not the object: the same rule every other cross-thread value follows. A hand-built
     /// description that names only the object falls back to its cached conversion (the content-side door).
     ShaderProgramDescriptionPtr program_description;
-    /// The lights this draw announces, as VALUES taken when the pass described itself (see LightValue).
+    /// The lights this packet announces, as VALUES taken when the pass described itself (see LightValue).
     ///
     /// THE ONE CHANNEL: a frame carries numbers, never `Light` objects, so a light edited on the content thread
     /// cannot change what a frame that is already described draws. THE SET IS SHARED, NOT COPIED PER PASS: the scene
@@ -186,7 +193,7 @@ struct VN_GRAPHICS_API DrawCall {
 };
 
 /**
- * @brief What ONE PASS draws this frame: its target, the state it draws with, and its drawing calls.
+ * @brief What ONE PASS draws this frame: its target, the state it draws with, and its draw packets.
  *
  * @details
  * - A DIFFERENT CONCEPT FROM PassDesc, and named so it cannot be confused with it: a PassDesc is the DECLARATION
@@ -224,14 +231,14 @@ struct VN_GRAPHICS_API PassDraw {
     /// The recorder applies THIS, not the object: an override edited while a frame is in flight keeps the text the
     /// frame described itself with.
     ShaderProgramDescriptionPtr program_override_description;
-    /// The drawing calls, in the order they happen. Empty is a real answer: a pass that announces its target and
-    /// state but has nothing to draw with (no camera, no program) issues no draw, and does NOT become a draw of
+    /// The draw packets, in the order they happen. Empty is a real answer: a pass that announces its target and
+    /// state but has nothing to draw with (no camera, no program) issues no packet, and does NOT become a draw of
     /// something else.
     ///
-    /// There is deliberately no aspect here: the picture's shape belongs to the CAMERA a draw names (see Camera),
+    /// There is deliberately no aspect here: the picture's shape belongs to the CAMERA a packet names (see Camera),
     /// which is what the projection, the culling and the picking ray all read - so a description carries no shape
     /// of its own that could disagree with the one the picture is drawn with.
-    std::vector<DrawCall> draws;
+    std::vector<DrawPacket> packets;
 };
 
 /**
@@ -255,7 +262,7 @@ struct VN_GRAPHICS_API PassDraw {
  * A PASS THAT ISSUES NOTHING IS STILL AN ENTRY. "This pass ran and had nothing to issue" is a fact of the frame
  * (its scope opens and closes, the backend keys per-pass retained state by it), and it is a DIFFERENT fact from
  * "this pass did not run at all" (disabled, or removed): the first is an entry with no @ref Pass::description,
- * the second is no entry. Confusing the two is what made an empty drawing call look like a drawing of nothing.
+ * the second is no entry. Confusing the two is what made an empty draw packet look like a drawing of nothing.
  *
  * WHAT IT COSTS TO BUILD: nothing is collected here that the frame was not going to compute anyway - a pass
  * describes itself (RenderPass::describe) and the engine adds the three facts it owns (identity, order, resolved
@@ -274,7 +281,7 @@ struct VN_GRAPHICS_API FrameDescription {
         /// the pass' sampled inputs from.
         std::vector<ImageSource> inputs;
         /// What the pass draws this frame, or nullopt when it issues NOTHING AT ALL (a scene pass with no scene,
-        /// a screen pass with no resolved source): the scope still opens, and no attribute of it - not even its
+        /// a full-screen pass with no resolved source): the scope still opens, and no attribute of it - not even its
         /// target - is announced.
         std::optional<PassDraw> draw;
     };
@@ -303,39 +310,38 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
                                                  std::optional<PassDraw>   description);
 
 /**
- * @brief Whether @p description is a DRAWING CALL a recorder issues.
+ * @brief Whether @p description is a draw packet a recorder ISSUES (see FrameCounts::draw_packets).
  *
  * @details
- * - THE ONE DEFINITION the two backends and the reports share (see FrameCounters::draws). A drawing call is one
- *   `DrawCall` a backend can issue, NOT the GPU commands inside it: one drawable is one call whatever its
- *   primitives. The conditions are the value's own:
- *   - a call with no camera (`camera.present == false`) issues nothing - the pass said it has no view to build;
- *   - a screen call needs a program (the object or its text) - without one there is nothing to run;
- *   - a scene call needs commands - an empty list draws nothing.
+ * - THE ONE DEFINITION the two backends and the reports share. A packet is issued when its own value says so - it is
+ *   NOT about the GPU commands inside it (one drawable is one command whatever its primitives):
+ *   - a packet with no camera (`view.present == false`) issues nothing - the pass said it has no view to build;
+ *   - a full-screen packet needs a program (the object or its text) - without one there is nothing to run;
+ *   - a scene packet needs commands - an empty list draws nothing.
  * - IT IS INLINE ON PURPOSE: a predicate over a value header must not become an exported symbol every backend links
- *   against, and it is what keeps "how a call is counted" a single sentence instead of one per backend.
+ *   against, and it is what keeps "which packet counts" a single sentence instead of one per backend.
  *
- * @param description The drawing call as a frame describes it.
- * @return true when it is a call a recorder counts.
+ * @param description The draw packet as a frame describes it.
+ * @return true when @p description is a packet a recorder issues.
  */
-[[nodiscard]] inline bool isDrawingCall(const DrawCall& description) noexcept
+[[nodiscard]] inline bool packetDraws(const DrawPacket& description) noexcept
 {
     if (!description.view.present()) {
         return false;
     }
-    if (description.kind == DrawCall::Kind::Screen) {
+    if (description.kind == DrawPacket::Kind::Fullscreen) {
         return description.program != nullptr || description.program_description != nullptr;
     }
     return description.commands != nullptr && !description.commands->empty();
 }
 
 /**
- * @brief Whether @p draw has an EFFECT in its pass: at least one drawing call, or an announced clear.
+ * @brief Whether @p draw has an EFFECT in its pass: at least one draw packet, or an announced clear.
  *
  * @details
- * - A PASS WITH NO CALLS IS NOT AUTOMATICALLY EMPTY: a pass that announces a clear clears its target even when it draws
- *   nothing, so it is a real pass a recorder enters and a frame counter counts (see FrameCounters::passes). A pass with
- *   neither is skipped - it would open a scope with no effect.
+ * - A PASS WITH NO PACKETS IS NOT AUTOMATICALLY EMPTY: a pass that announces a clear clears its target even when it
+ *   draws nothing, so it is a real pass a recorder enters and a frame counter counts (see FrameCounters::passes).
+ *   A pass with neither is skipped - it would open a scope with no effect.
  * - A pass whose `draw` is absent entirely (`FrameDescription::Pass::draw == nullopt`) is NOT this function's business:
  *   it announced nothing, not even its target (see Pass).
  *
@@ -347,8 +353,8 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
     if (draw.clear.has_value()) {
         return true;
     }
-    for (const DrawCall& description : draw.draws) {
-        if (isDrawingCall(description)) {
+    for (const DrawPacket& description : draw.packets) {
+        if (packetDraws(description)) {
             return true;
         }
     }
@@ -356,44 +362,77 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
 }
 
 /**
- * @brief The SHAPE a frame asks for: the passes that have an effect, and their drawing calls.
+ * @brief The COUNTS a frame asks for: the passes that have an effect, their draw packets, and the draws inside them.
  *
  * @details
- * - ONE PLACE COMPUTES IT, so the two backends cannot report different shapes for the same frame (they used to: one
+ * - ONE PLACE COMPUTES IT, so the two backends cannot report different counts for the same frame (they used to: one
  *   counted frame entries, the other compiled passes, and `FrameCounters` counted a third thing). `PrepareReport`'s
- *   `passes` / `draws` are this value; a recorded frame's `FrameCounters` follows the same rule.
- * - IT IS THE ASKED SHAPE, not what a backend managed to build: a pass whose target cannot be built still counts here,
- *   and the report's `halves` / `pipelines` / ... are what say how much of it became objects.
+ *   `passes` / `draw_packets` / `draws` are this value; a recorded frame's `FrameCounters` follows the same rule.
+ * - THREE NUMBERS, THREE QUESTIONS: `passes` counts the passes with an effect, `draw_packets` counts the requests
+ *   those passes issue (one per pass and view, see DrawPacket), and `draws` counts the `DrawItem`s those packets
+ *   submit - the number a profiler calls a draw call. A pass that draws fifty drawables through one view issues ONE
+ *   packet whose `draws` is FIFTY.
+ * - IT IS THE ASKED WORKLOAD, not what a backend managed to build: a pass whose target cannot be built still counts
+ *   here, and the report's `halves` / `pipelines` / ... are what say how much of it became objects.
  */
-struct VN_GRAPHICS_API FrameShape {
-    std::uint32_t passes{ 0 }; ///< Passes that draw something or clear something.
-    std::uint32_t draws{ 0 };  ///< Drawing calls those passes issue.
+struct VN_GRAPHICS_API FrameCounts {
+    std::uint32_t passes{ 0 };       ///< Passes that draw something or clear something.
+    std::uint32_t draw_packets{ 0 }; ///< Draw packets those passes issue (one per pass and view).
+    std::uint32_t draws{ 0 };        ///< Draw items those packets submit (a full-screen packet submits one).
 };
 
 /**
- * @brief Computes the shape @p frame asks for (see FrameShape).
+ * @brief Gets how many draws ONE packet submits (0 when it issues nothing).
+ *
+ * @details
+ * - The one definition the two backends use to fill `FrameCounts::draws`: a scene packet submits its command list's
+ *   size, a full-screen packet submits one full-screen draw.
+ *
+ * @param description The draw packet as a frame describes it.
+ * @return The draws it submits.
+ */
+[[nodiscard]] inline std::uint32_t drawItemsOf(const DrawPacket& description) noexcept
+{
+    if (!packetDraws(description)) {
+        return 0U;
+    }
+    if (description.kind == DrawPacket::Kind::Fullscreen) {
+        return 1U;
+    }
+    const std::size_t items = description.commands->size();
+    return static_cast<std::uint32_t>(std::min<std::size_t>(items, std::numeric_limits<std::uint32_t>::max()));
+}
+
+/**
+ * @brief Computes the counts @p frame asks for (see FrameCounts).
  *
  * @param frame The frame value a backend is handed.
- * @return The passes with an effect and their drawing calls.
+ * @return The passes with an effect, their draw packets and their draws.
  */
-[[nodiscard]] inline FrameShape frameShapeOf(const FrameDescription& frame) noexcept
+[[nodiscard]] inline FrameCounts frameCountsOf(const FrameDescription& frame) noexcept
 {
-    FrameShape shape;
+    FrameCounts counts;
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (!entry.draw.has_value()) {
             continue; // it announced nothing at all - not even a target (see Pass)
         }
-        std::uint32_t calls = 0U;
-        for (const DrawCall& description : entry.draw->draws) {
-            calls += isDrawingCall(description) ? 1U : 0U;
+        std::uint32_t packets = 0U;
+        std::uint32_t draws   = 0U;
+        for (const DrawPacket& description : entry.draw->packets) {
+            if (!packetDraws(description)) {
+                continue;
+            }
+            ++packets;
+            draws += drawItemsOf(description);
         }
-        if (calls == 0U && !entry.draw->clear.has_value()) {
+        if (packets == 0U && !entry.draw->clear.has_value()) {
             continue; // no effect: nothing drawn, nothing cleared
         }
-        ++shape.passes;
-        shape.draws += calls;
+        ++counts.passes;
+        counts.draw_packets += packets;
+        counts.draws += draws;
     }
-    return shape;
+    return counts;
 }
 
 VN_GRAPHICS_NS_END

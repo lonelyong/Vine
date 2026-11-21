@@ -40,7 +40,7 @@ LightRig LightRig::studio()
     return rig;
 }
 
-LightRig LightRig::headlight(const vn::math::Vec3d& direction)
+LightRig LightRig::directionalFromView(const vn::math::Vec3d& direction)
 {
     LightRig rig;
     // A zero direction would be a light that lights nothing: fall back to the default view direction instead of

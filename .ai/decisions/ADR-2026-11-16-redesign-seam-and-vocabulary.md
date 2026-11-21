@@ -10,7 +10,7 @@
   `graphics-sessions.md` (§2.1 / §2.3 vocabulary and phases), `graphics-threading.md` (§2.16 driver identity),
   `vk-backend.md` (§2.16 / §2.17 / §9 status), `vsg-backend.md` (§2.9.1 the seam declaration),
   `docs/guides/` (pages split by backend → pages split by capability), the contract text of `RenderFrameExecutor.hpp` / `RenderDevice.hpp`,
-  `FrameStats.hpp` (`FrameReport::locking`, additive).
+  `FrameStats.hpp` (`FrameReport::locking`, additive). <!-- drift-ok -->
 - Related: `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` (round two's **concept and API shape** sequel: `View` /
   `RenderArea` / `Target`+`Output` / the pass authoring shape / the normative revisions; the two proposals are approved or deferred together),
   `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` (this document closes out its **vocabulary and seam**, without reopening its decisions),

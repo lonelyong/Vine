@@ -111,7 +111,7 @@ ContentDraw::Identity ContentDraw::plan(const core::PipelineKey& key)
     return Identity{ compiled.pipeline, compiled.id };
 }
 
-::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::recordScreen(core::StateRegistry& registry, const ScreenDraw& draw)
+::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::recordFullscreen(core::StateRegistry& registry, const FullscreenDraw& draw)
 {
     // The same three "only when" answers a content draw gets, over the same identity arithmetic: a full-screen
     // draw is a different SHAPE, not a different bookkeeping. Its sampled set IS the whole state it binds, so

@@ -52,7 +52,7 @@ using vn::graphics::ClearPolicy;
 using vn::graphics::DepthMode;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
-using vn::graphics::DrawCall;
+using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
@@ -145,8 +145,8 @@ void main()
     camera.view       = vn::math::Mat4d{};
     camera.projection = vn::math::Mat4d{};
 
-    DrawCall draw;
-    draw.kind     = DrawCall::Kind::Scene;
+    DrawPacket draw;
+    draw.kind     = DrawPacket::Kind::Scene;
     draw.view.camera   = camera;
     draw.commands = commands;
 
@@ -158,7 +158,7 @@ void main()
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(1.0F, 0.0F, 0.0F, 1.0F);
     pass.state.depth  = DepthMode::TestAndWrite;
-    pass.draws.push_back(std::move(draw));
+    pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;
@@ -213,7 +213,7 @@ TEST(VkProbeTest, AProbeDeviceBringsUpItsOwnWindowAndPresents)
     const PrepareReport prepared = backend->prepareFrame(windowFrame(), target);
     EXPECT_TRUE(prepared.prepared()) << "outcome " << static_cast<int>(prepared.outcome);
     EXPECT_EQ(prepared.passes, 1U);
-    EXPECT_EQ(prepared.draws, 1U);
+    EXPECT_EQ(prepared.draw_packets, 1U);
 
     // THE SWAPCHAIN FOLLOWS THE SURFACE: a resize is another presenting frame, not a new target.
     target->resize(640, 360);

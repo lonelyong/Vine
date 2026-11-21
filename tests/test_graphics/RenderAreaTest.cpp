@@ -409,7 +409,7 @@ TEST(RenderAreaTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
         << "the rebuilt chain states its own (default) ask, and the statement is what the node now is - the area "
            "invents nothing either way";
 
-    // Deferred: the picture is a fullscreen pass over the whole area, whose program is a ScreenPass and therefore asks
+    // Deferred: the picture is a fullscreen pass over the whole area, whose program is a FullscreenPass and therefore asks
     // for no clear at all - being the area's picture does not make it want one.
     auto      deferred_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     ChainDesc deferred;

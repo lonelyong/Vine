@@ -19,15 +19,20 @@ VN_GRAPHICS_NS_BEGIN
  * - THE COUNTS ARE DELTAS OF THE CALL, not running totals: a second `prepare()` of an unchanged frame answers zeros,
  *   which is exactly the property the call exists for - after it, a recorded frame builds nothing (`R23`). The
  *   backend's own reports (`FrameReport`) keep the totals; this value says what THIS call did.
- * - TWO KINDS OF NUMBER, TWO QUESTIONS. `passes` / `draws` are the SHAPE OF THE FRAME that was asked for - the plan's
- *   own passes that have an EFFECT (a drawing call, or an announced clear), and their drawing calls - so they are
- *   comparable with what a recorded frame reports and do not move because a backend could not serve one of them.
+ * - TWO KINDS OF NUMBER, TWO QUESTIONS. `passes` / `draw_packets` / `draws` are the WORKLOAD OF THE FRAME that was
+ *   asked for - the plan's own passes that have an EFFECT (a draw packet, or an announced clear), the packets they
+ *   issue, and the draws those packets submit - so they are comparable with what a recorded frame reports and do not
+ *   move because a backend could not serve one of them.
  *   `halves` / `sets` / `uploads` / `pipelines` are what had to be BUILT to serve it, and are the evidence of what the
- *   backend actually did. A frame with fifty drawables under one identity asks fifty draws and builds one pipeline, so
- *   neither number is derivable from the other.
- * - THE SHAPE IS COMPUTED ONCE, BY THE SDK (`vn::graphics::frameShapeOf`, see FrameShape): a backend fills these two
- *   fields from that value instead of walking the frame itself. Two backends that count their own way report different
- *   shapes for the same frame, and a clear-only pass or a call with no camera is enough to make them disagree.
+ *   backend actually did.
+ * - `draws` IS THE NUMBER A PROFILER CALLS A DRAW CALL, AND `draw_packets` IS NOT: one packet describes one view's
+ *   whole list, so a pass that draws fifty drawables through ONE view issues ONE packet and FIFTY draws and builds
+ *   one pipeline, while fifty drawables in fifty views ask fifty packets. The draws inside a packet are `DrawItem`s
+ *   (see `DrawPacket`'s own note), and none of these three numbers is derivable from the others.
+ * - THE COUNTS ARE COMPUTED ONCE, BY THE SDK (`vn::graphics::frameCountsOf`, see FrameCounts): a backend fills these
+ *   three fields from that value instead of walking the frame itself. Two backends that count their own way report
+ *   different numbers for the same frame, and a clear-only pass or a packet with no camera is enough to make them
+ *   disagree.
  * - THE COUNTS DESCRIBE WHAT WAS BUILT, not what a frame did: a pipeline layer, a descriptor set, a stream bind, a
  *   texture image. That is what lets `prepare()` report them without the frame having been recorded or submitted;
  *   a texture image is the one kind whose bytes only land once a transfer batch has run, and it is counted here
@@ -51,8 +56,9 @@ struct VN_GRAPHICS_API PrepareReport {
 
     Outcome       outcome{ Outcome::NotReady }; // What became of the request (see Outcome).
     EngineNotReadyReason reason{ EngineNotReadyReason::NoDevice }; // Why, when @ref outcome is #Outcome::NotReady.
-    std::uint32_t passes{ 0 };                  // Passes with an EFFECT: a drawing call or an announced clear (see FrameShape).
-    std::uint32_t draws{ 0 };                   // Drawing calls those passes issue (what was asked, not what was built).
+    std::uint32_t passes{ 0 };       // Passes with an EFFECT: a draw packet or an announced clear (see FrameCounts).
+    std::uint32_t draw_packets{ 0 }; // Draw packets those passes issue - one per view (see DrawPacket).
+    std::uint32_t draws{ 0 };        // Draw items those packets submit (what a profiler calls draw calls).
     std::uint64_t halves{ 0 };                  // Compiled halves THIS call built (0 = already there).
     std::uint64_t sets{ 0 };                    // Declared sets THIS call built.
     std::uint64_t uploads{ 0 };                 // Uploads THIS call built - streams and textures (the kinds FrameUploads reports).

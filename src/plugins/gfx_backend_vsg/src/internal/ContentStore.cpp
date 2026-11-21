@@ -719,7 +719,7 @@ struct ContentStore::Data {
         if (entry == programs.end() || entry->second.described_revision != row.program.revision) {
             return;
         }
-        if (row.kind == core::DrawKind::Screen) {
+        if (row.kind == core::DrawKind::Fullscreen) {
             entry->second.screen_built = false;
         }
         else {
@@ -953,7 +953,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
 
     for (const core::CompiledPass& pass : frame.passes) {
         for (const core::CompiledDraw& draw : pass.draws) {
-            if (draw.kind == core::DrawKind::Screen) {
+            if (draw.kind == core::DrawKind::Fullscreen) {
                 // The full-screen ABI is the engine's and carries no variant: a screen program is one text
                 // (see api/ContentSources).
                 ensureProgram(draw.program.as<vn::graphics::ProgramTag>(), ProgramVariant{}, true, epoch);
@@ -1152,7 +1152,7 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
     };
     if (built()) {
         const FactResult<ProgramFacts> row =
-            findProgram(d->view(), ref, screen ? ProgramVariant{} : variant, screen ? core::DrawKind::Screen : core::DrawKind::Content);
+            findProgram(d->view(), ref, screen ? ProgramVariant{} : variant, screen ? core::DrawKind::Fullscreen : core::DrawKind::Content);
         if (row.found()) {
             d->program.stamp(row.entry, epoch);
             return; // this text of this revision is already in the tables

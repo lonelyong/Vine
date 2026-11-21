@@ -53,7 +53,7 @@ struct VN_GRAPHICS_API ShadowSettings {
  *   a pass taking this value when it describes itself is what lets a frame record without reading a `Light` on the
  *   thread that records it (`Light::value()` is the one conversion, made where the light lives).
  * - `identity` is the light's ADDRESS, used only to match a shadow map's statement of whose it is
- *   (`RenderTarget::shadowOf`) against the lights a drawing call announced. It is never dereferenced after the call
+ *   (`RenderTarget::shadowOf`) against the lights a draw packet announced. It is never dereferenced after the call
  *   returns - two lights with the same numbers would otherwise be indistinguishable to that match.
  * - The fields are exactly what the shading block is built from (see LightAbi.hpp's `VineLightsBlock`); adding a
  *   shading input means adding it here and in `Light::value()` together, so the value a frame carries and the value a

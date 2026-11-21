@@ -24,10 +24,10 @@ enum class ContentRefusalCause : std::uint8_t
 {
     NoProgram,              // The drawable names no program and the frame has no default one either.
     ProgramRefused,         // A content program could not be turned into a pipeline for this pass.
-    ScreenNoProgram,        // A screen draw names no program.
+    ScreenNoProgram,        // A full-screen draw names no program.
     ScreenProgramRefused,   // A screen program could not be compiled.
     ScreenPipelineRefused,  // A screen pipeline could not be created for this pass.
-    ScreenNoSource,         // A screen draw names a source target the device does not hold.
+    ScreenNoSource,         // A full-screen draw names a source target the device does not hold.
     GeometryRefused,        // A geometry's streams could not be prepared for this pass.
     NoGeometry,             // The drawable names no geometry.
     PrimitiveAbsent,        // The geometry has no such primitive.

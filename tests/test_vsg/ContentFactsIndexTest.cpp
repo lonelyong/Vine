@@ -176,7 +176,7 @@ void buildRows(const Identities& ids, Rows& out)
     const ProgramVariant coloured{ false, true, false };
     for (int index = 0; index < 3; ++index) {
         for (std::uint64_t revision = 1U; revision <= 2U; ++revision) {
-            for (const DrawKind kind : { DrawKind::Content, DrawKind::Screen }) {
+            for (const DrawKind kind : { DrawKind::Content, DrawKind::Fullscreen }) {
                 out.addProgram(ids.programs[index], revision, kind, plain);
                 out.addProgram(ids.programs[index], revision, kind, mapped);
                 out.addProgram(ids.programs[index], revision, kind, coloured);
@@ -215,7 +215,7 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
     // Every key shape the compiler can produce: the revisions that exist, one that does not, and a null
     // identity (the "content without a material" case, which is matched by the table's default entry).
     const std::uint64_t  revisions[]{ 0U, 1U, 2U, 3U, 9U };
-    const DrawKind       kinds[]{ DrawKind::Content, DrawKind::Screen };
+    const DrawKind       kinds[]{ DrawKind::Content, DrawKind::Fullscreen };
     const ProgramVariant variants[]{
         ProgramVariant{},
         ProgramVariant{ true, false, false },

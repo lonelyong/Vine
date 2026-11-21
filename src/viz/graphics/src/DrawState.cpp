@@ -135,7 +135,7 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
          { "DynamicState",
             "depth policy + compare + cull + polygon + topology + blend - delivered per draw with set commands (the "
             "topology within the class its pipeline was compiled for, see PipelineKey)" },
-         { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
+         { "InstanceRecord", "model matrix + opacity + material identity + revision - per frame data" },
          { "TargetDesc.shape",
             "attachment formats (the engine's spelling AND the device's opaque codes) + depth format + samples + "
             "the backend's render-pass key - NEVER an extent" },

@@ -11,7 +11,7 @@
  * @details
  * - THE NAMED CONVERSION, ON THE CALLER'S THREAD: a caller that holds `Light` objects converts them where it holds
  *   them - the recorder takes values only, so recording never touches a `Light` (see FrameRecorder::setLights).
- * - It lives in the test support on purpose: production callers are `RenderPass::describe` / `ScreenPass::describe`,
+ * - It lives in the test support on purpose: production callers are `RenderPass::describe` / `FullscreenPass::describe`,
  *   which snapshot a scene's lights while they still hold it.
  *
  * @param lights The lights to convert; null entries keep their slot as the default disabled light.

@@ -155,7 +155,7 @@ bool nameVulkanObject(const ::vsg::Device& device, std::uint64_t handle, VkObjec
  *
  * NEITHER DOES THE PASS' ROLE IN ITS TARGET NARROW THE RECTANGLE. A content pass that cleared its target
  * (its base layer) used to fill that target whatever it announced - a rule that made
- * RenderPass::setViewport mean one thing in a content pass and another in a ScreenPass, silently dropped a
+ * RenderPass::setViewport mean one thing in a content pass and another in a FullscreenPass, silently dropped a
  * rectangle the host had asked for, and left "draw a second view into part of the target" impossible to
  * express with a content pass at all. The role still matters, but only for what clearing means (the base
  * layer's depth-on style and the window's default light) - see PassAttributes::presenting.

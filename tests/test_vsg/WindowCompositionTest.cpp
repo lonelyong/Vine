@@ -1,6 +1,6 @@
 /**
  * @brief The window as a composition surface: a scene pass and a full-screen overlay in ONE frame, on ONE
- * clear, next to an off-screen pass whose ENGINE shape equals the window's.
+ * clear, next to an off-full-screen pass whose ENGINE shape equals the window's.
  *
  * Three claims, and each of them is a picture rather than a counter - the counters the fixture does check
  * (`pipelines()`, the bind counts) exist only to tell "the right thing was recorded" from "nothing was", which
@@ -13,7 +13,7 @@
  *   * the window is cleared ONCE, by its FIRST pass. The overlay pass announces a different clear colour on
  *     purpose: with one clear the window keeps the first pass' colour everywhere the overlay does not cover,
  *     and a per-pass clear would wipe the scene;
- *   * an off-screen pass whose shape the ENGINE cannot tell from the window's pass gets a variant of its own
+ *   * an off-full-screen pass whose shape the ENGINE cannot tell from the window's pass gets a variant of its own
  *     (`pipelines() == 2`), because the two render passes are not compatible: the window's surface is an sRGB
  *     format while the off-screen target is a linear one, and only the DEVICE formats can say so. This is the
  *     claim the M3d-3c record registered as missing, and what M4c found instead is that the obvious fix - one
@@ -401,7 +401,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_TRUE(recorder.setClearPolicy(picture_clear));
     ASSERT_TRUE(recorder.endPass());
 
-    ASSERT_TRUE(recorder.beginPass(2U)); // the off-screen pass that shares the window's variant
+    ASSERT_TRUE(recorder.beginPass(2U)); // the off-full-screen pass that shares the window's variant
     ASSERT_TRUE(recorder.setRenderTarget(shared_handle.get()));
     ASSERT_TRUE(recorder.setClearPolicy(scene_clear));
     ASSERT_TRUE(recorder.render(commands, camera.get()));
@@ -435,7 +435,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     const auto* overlay = pass_of(4U);
     ASSERT_NE(overlay, nullptr);
     ASSERT_EQ(overlay->draws.size(), 1U);
-    EXPECT_EQ(overlay->draws[0].kind, DrawKind::Screen);
+    EXPECT_EQ(overlay->draws[0].kind, DrawKind::Fullscreen);
     ASSERT_EQ(overlay->inputs.size(), 1U);
     EXPECT_EQ(overlay->inputs[0].target, static_cast<const void*>(picture_handle.get()));
 
@@ -488,7 +488,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     StateRegistry                   screen_registry(screen_pool);
     const ContentPass::Scope::Entry screen_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, screen_facts.program, {}, screen_layer.get(), &overlay_draws }
+        ContentPass::Scope::Entry{ DrawKind::Fullscreen, screen_facts.program, {}, screen_layer.get(), &overlay_draws }
     };
     ContentPass::Scope screen_scope;
     screen_scope.entries  = screen_halves;

@@ -128,7 +128,7 @@ TEST(FrameRecorderTest, TheScopeAttributesOfEachPassAreCollectedWithItsDrawingCa
     EXPECT_FALSE(description.passes[1].has_clear);
 
     EXPECT_EQ(r.observe.counters().passes, 2u);
-    EXPECT_EQ(r.observe.counters().draws, 2u);
+    EXPECT_EQ(r.observe.counters().draw_packets, 2u);
     EXPECT_TRUE(r.diagnostics.clean());
 }
 
@@ -329,7 +329,7 @@ TEST(FrameRecorderTest, OneViewportAndLightAnnouncementServesOneDrawingCall)
     EXPECT_TRUE(draws[2].lights.size() == 1u);
     EXPECT_FALSE(draws[2].has_viewport); // a viewport announcement is not replayed either
 
-    EXPECT_EQ(r.observe.counters().draws, 3u);
+    EXPECT_EQ(r.observe.counters().draw_packets, 3u);
 }
 
 TEST(FrameRecorderTest, TheViewBlockIsProjectedForTheCamerasOwnShape)
@@ -415,7 +415,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     EXPECT_EQ(draws[0].commands.size(), 1u);
     EXPECT_FALSE(draws[0].has_viewport) << "the empty call CONSUMED the announcement (one call, one viewport)";
     EXPECT_TRUE(draws[0].lights.empty()) << "and the lights with it";
-    EXPECT_EQ(r.observe.counters().draws, 1u) << "the counter counts draws that were RECORDED";
+    EXPECT_EQ(r.observe.counters().draw_packets, 1u) << "the counter counts draws that were RECORDED";
     EXPECT_TRUE(r.diagnostics.clean());
 
     // ...and a pass whose only call is empty and which clears nothing is no pass at all - the same rule a
@@ -426,7 +426,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNothingToDrawIsNotADrawAtAll)
     EXPECT_TRUE(bare.recorder.render(std::span<const DrawItem>{}, nullptr));
     EXPECT_TRUE(bare.recorder.endPass());
     EXPECT_TRUE(bare.seal().passes.empty()) << "nothing to draw and nothing to clear is not a pass";
-    EXPECT_EQ(bare.observe.counters().draws, 0u);
+    EXPECT_EQ(bare.observe.counters().draw_packets, 0u);
 }
 
 TEST(FrameRecorderTest, ThePassInputsAreCopiedAndBelongToThePass)
@@ -534,7 +534,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNoScopeRecordsNothingAtAll)
 
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
-    EXPECT_EQ(r.observe.counters().draws, 0u); // a draw with no scope is not a draw
+    EXPECT_EQ(r.observe.counters().draw_packets, 0u); // a draw with no scope is not a draw
     EXPECT_TRUE(r.diagnostics.clean());
 
     // A new frame is not a new answer either: what has no scope to belong to takes no effect, however often it
@@ -543,7 +543,7 @@ TEST(FrameRecorderTest, ADrawingCallWithNoScopeRecordsNothingAtAll)
     EXPECT_TRUE(r.recorder.swapBuffers());
     r.open(2);
     EXPECT_FALSE(r.recorder.render(commands, nullptr));
-    EXPECT_EQ(r.observe.counters().draws, 0u);
+    EXPECT_EQ(r.observe.counters().draw_packets, 0u);
     EXPECT_TRUE(r.diagnostics.clean());
 }
 
@@ -613,7 +613,7 @@ TEST(FrameRecorderTest, AReleasedAnnouncedTargetKillsTheScopeAndNothingIsRedirec
     const CollectedFrame& description = r.seal();
     ASSERT_EQ(description.passes.size(), 1u) << "the scope still enters the plan: it drew before the release";
     EXPECT_EQ(description.passes[0].draws.size(), 1u) << "and what arrived after the release is not in it";
-    EXPECT_EQ(r.observe.counters().draws, 1u) << "one draw was collected, and no more";
+    EXPECT_EQ(r.observe.counters().draw_packets, 1u) << "one draw was collected, and no more";
     EXPECT_TRUE(r.diagnostics.clean());
 }
 

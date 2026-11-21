@@ -26,19 +26,19 @@ class ShaderProgram;
  *   deferredLightProgram for deferred lighting); anything else is a program the host writes - the picture is
  *   something the host stated, never something a backend filled in.
  */
-class VN_GRAPHICS_API ScreenPass : public RenderPass {
+class VN_GRAPHICS_API FullscreenPass : public RenderPass {
     VN_OBJECT_META_DECL;
 
   public:
-    /** @brief Constructs a screen pass.
+    /** @brief Constructs a full-screen pass.
      *
-     * The kind is what makes it a screen pass: it draws through a program over its resolved inputs, and it clears
+     * The kind is what makes it a full-screen pass: it draws through a program over its resolved inputs, and it clears
      * nothing by default (it composites over what an earlier pass already wrote) - both facts follow from the kind
      * rather than from a setting this constructor would have to state.
      */
-    ScreenPass();
+    FullscreenPass();
 
-    ~ScreenPass() override;
+    ~FullscreenPass() override;
 
   public:
     /** @brief Gets the resolved source target this pass samples.
@@ -63,10 +63,10 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      */
     void resolveInputTextures(std::span<const ImageSource> inputs) override;
 
-    /** @brief Describes the screen pass: nothing until a source resolved, then one full-screen draw.
+    /** @brief Describes the full-screen pass: nothing until a source resolved, then one full-screen draw.
      *
      * @details
-     * - A screen pass is content-agnostic, so a null @p scene is NOT its "nothing to issue" - a pass whose
+     * - A full-screen pass is content-agnostic, so a null @p scene is NOT its "nothing to issue" - a pass whose
      *   input never resolved is (its own gate, stated here). Without a program or a camera it still
      *   describes what it is and where, and issues NO draw: both are reported at wiring time, so the
      *   picture is never a substitute the backend chose.
@@ -82,6 +82,6 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
     raw_ptr<RenderTarget> source_ = nullptr;
 };
 
-using ScreenPassPtr = intrusive_ptr<ScreenPass>;
+using FullscreenPassPtr = intrusive_ptr<FullscreenPass>;
 
 VN_GRAPHICS_NS_END

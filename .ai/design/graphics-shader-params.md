@@ -209,7 +209,7 @@ the `ParameterBuffer` enum, `ParameterRef{buffer, offset, type}`, `find()`.
 | `ParameterTable::find(name)` | Name → reference; unknown returns empty |
 | `Material::set(name, value)` | Validates the type then writes; an unknown name returns an error |
 | `ParameterSink::write / flush` | Backend-implemented; the framework does not interpret values |
-| `packLightBlock(lights, camera, out)` | Fills the lights one draw call declared into `VineLightsBlock` by the one rule (view space); returns the number of lights the block represents (not counting the ambient fallback) |
+| `packLightBlock(lights, camera, out)` | Fills the lights one draw packet declared into `VineLightsBlock` by the one rule (view space); returns the number of lights the block represents (not counting the ambient fallback) |
 | `packedSlotOf(lights, identity)` | The slot a light takes under the same rule; the shadow block's `params.w` names it with this, avoiding a second slot derivation |
 | `packMaterialBlock(values, present_slots, out)` | Fills resolved material values into `VineMaterialBlock` field by field; no clamping or rewriting, the slot mask is given by the caller (otherwise a slot that failed to upload would make the shader sample the stand-in) |
 | `packDrawBlock(model, opacity, point_size, out)` | Fills the model matrix (column-major), the effective opacity and the point size into `VineDrawBlock`; the reserved words `params.z/w` are always written 0 |

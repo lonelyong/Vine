@@ -27,7 +27,7 @@
  *     or a blend choice.
  *   - DYNAMIC STATE (DynamicState): delivered per draw with a set command. Cheap by construction, and
  *     this is why a host's state change costs a command instead of a pipeline.
- *   - DATA (InstanceSlot): per-frame values written into a buffer, plus the material reference.
+ *   - DATA (InstanceRecord): per-frame values written into a buffer, plus the material reference.
  * - Both historical failure families in this backend are the same mistake in two directions: a host
  *   state change that recompiled a pipeline (something dynamic had leaked into the identity key), and
  *   a resize that rebuilt every full-screen program slot (an extent had leaked into one). Splitting
@@ -90,7 +90,7 @@ struct VN_GRAPHICS_API VertexLayoutKeyHash {
 };
 
 /**
- * @brief What one drawing call draws with: the engine has exactly two, and they compile against
+ * @brief What one draw packet draws with: the engine has exactly two, and they compile against
  * different descriptor ABIs.
  *
  * @details
@@ -106,8 +106,8 @@ struct VN_GRAPHICS_API VertexLayoutKeyHash {
  */
 enum class DrawKind : std::uint8_t
 {
-    Content, // A content drawing call: the pass' content, one instance per collected command.
-    Screen,  // A screen drawing call: a full-screen triangle sampling a target's attachments.
+    Content,    // A content drawing call: the pass' content, one instance per collected command.
+    Fullscreen, // A full-screen draw packet: a full-screen triangle sampling a target's attachments.
 };
 
 /**
@@ -235,7 +235,7 @@ struct VN_GRAPHICS_API LoadOpVariantKey {
  * @brief Identity of a compiled content pipeline. Everything in here is "changing it needs a compile".
  */
 struct VN_GRAPHICS_API PipelineKey {
-    DrawKind                kind{ DrawKind::Content }; // Which of the engine's two drawing calls this is.
+    DrawKind                kind{ DrawKind::Content }; // Which of the engine's two draw packets this is.
     /// The program AND the revision its text was at (see `ContentId.hpp`): the pair is the identity a
     /// pipeline is compiled against, and the same pair the content tables answer programs by.
     vn::graphics::ContentRef program{};
@@ -327,7 +327,7 @@ struct VN_GRAPHICS_API DynamicState {
  *   what stops "the data a draw uses" from also being "the memory that holds it", which is the
  *   coupling that used to make the material manager outlive every bridge.
  */
-struct InstanceSlot {
+struct InstanceRecord {
     vn::math::Mat4d model_matrix;           // World-space model matrix.
     float           opacity{ 1.0F };        // Effective opacity (the drawable's half of the alpha rule).
     const void*     material{ nullptr };    // Material identity.

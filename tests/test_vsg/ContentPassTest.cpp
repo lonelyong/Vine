@@ -593,7 +593,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     //   * each command goes to the half built for ITS (program, revision, layout) - the counters say which
     //     drawer recorded what, and the picture says which half drew which mesh (two programs, two colours);
     //   * the halves SHARE the pass' registry, so returning to a half after the other one drew re-issues the
-    //     pipeline bind the other half replaced (three binds for three drawing calls, not two);
+    //     pipeline bind the other half replaced (three binds for three draw packets, not two);
     //   * a command whose layout no half was built for is REFUSED, and the message names the layout - while a
     //     command whose program no half was built for is refused with a different message, because the fix is
     //     a different one (compile that program, not that layout).
@@ -683,7 +683,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     facts.geometries = geometries;
     facts.materials  = materials;
 
-    // One frame: one pass, one drawing call, and the left mesh drawn TWICE around the right one - the
+    // One frame: one pass, one draw packet, and the left mesh drawn TWICE around the right one - the
     // alternation is what shows whether the halves share the pass' state memory.
     FrameArena              arena{ 64 * 1024 };
     Diagnostics             diagnostics;
@@ -779,7 +779,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     }
     EXPECT_EQ(left_draws.draws(), 2U);
     EXPECT_EQ(right_draws.draws(), 1U);
-    EXPECT_EQ(left_draws.pipeline_binds(), 2U) << "the third drawing call returns to the left half: the bind the right half replaced has to be re-issued";
+    EXPECT_EQ(left_draws.pipeline_binds(), 2U) << "the third draw packet returns to the left half: the bind the right half replaced has to be re-issued";
     EXPECT_EQ(right_draws.pipeline_binds(), 1U);
     EXPECT_EQ(uploads.uploads(), 5U) << "left: a position channel and an index; right: two channels and an index";
     EXPECT_EQ(uploads.aliases(), 2U) << "the second left mesh aliases both of the streams it already had";
@@ -2396,7 +2396,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     clear.depth          = true;
     clear.depth_value    = 0.0F;
 
-    // ONE pass, two drawing calls side by side: the LEFT half is the textured material, the RIGHT half the
+    // ONE pass, two draw packets side by side: the LEFT half is the textured material, the RIGHT half the
     // untextured one.
     DrawItem textured_command;
     textured_command.geometry = geometry;
@@ -3681,14 +3681,14 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
                                   &writer_draws }
     };
     const ContentPass::Scope::Entry shadowed_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Fullscreen,
                                   shadowed_facts.program,
                                   {},
                                   shadowed_layer.get(),
                                   &shadowed_draws }
     };
     const ContentPass::Scope::Entry unshadowed_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Fullscreen,
                                   unshadowed_facts.program,
                                   {},
                                   unshadowed_layer.get(),
@@ -4012,7 +4012,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
                                   &writer_draws }
     };
     const ContentPass::Scope::Entry lighting_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Fullscreen,
                                   lighting_facts.program,
                                   {},
                                   lighting_layer.get(),
@@ -4319,7 +4319,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
                                   &gbuffer_draws }
     };
     const ContentPass::Scope::Entry lighting_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Fullscreen,
                                   lighting_facts.program,
                                   {},
                                   lighting_layer.get(),
@@ -4544,7 +4544,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws.size(), 1U);
-    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 3U) << "three drawing calls, all broken the same way";
+    ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 3U) << "three draw packets, all broken the same way";
 
     storage->beginFrame();
     StateRegistry                          registry(pool);
@@ -4578,7 +4578,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
                                    << " message(s); the first is: " << (messages.empty() ? std::string("(none)") : messages[0].as_std_str());
     EXPECT_NE(messages[0].as_std_str().find("the command's program"), std::string::npos)
         << "the first refusal names what was refused: " << messages[0].as_std_str();
-    EXPECT_NE(messages[1].as_std_str().find("3 drawing call"), std::string::npos) << "and the count says how many: " << messages[1].as_std_str();
+    EXPECT_NE(messages[1].as_std_str().find("3 draw packet"), std::string::npos) << "and the count says how many: " << messages[1].as_std_str();
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 2U)
         << "the counter follows the messages: the two are one fact (see Diagnostics)";
 }
@@ -4765,7 +4765,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     // frame - and only the two HALF reports got a guard in that slice. These are the other two, each one fact
     // about something bigger than a frame:
     //
-    //   * "a drawing call was not recorded: its rectangle is empty" - one fact about the SESSION (a host whose
+    //   * "a draw packet was not recorded: its rectangle is empty" - one fact about the SESSION (a host whose
     //     render area is not laid out yet repeats it in every frame AND every pass);
     //   * the light-drop sentence - one fact about the PASS (the lights the host announced do not fit the
     //     block), whose episode ends when a call's lights fit again.
@@ -5184,7 +5184,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
                                   &writer_draws }
     };
     const ContentPass::Scope::Entry lighting_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen, lighting_facts.program, {}, lighting_layer.get(), &lighting_draws }
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Fullscreen, lighting_facts.program, {}, lighting_layer.get(), &lighting_draws }
     };
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     storage->beginFrame();

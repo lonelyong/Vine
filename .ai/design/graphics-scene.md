@@ -160,7 +160,7 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 | `MatrixTransform::setMatrix()` / `matrix()` | Local matrix |
 | `PositionAttitudeTransform::setPosition()` / `setAttitude()` / `setScale()` / `setPivot()` | TRS |
 | `AutoTransform::setAutoRotateMode()` / `setAutoScaleToScreen()` / `setAxis()` / `setNormal()` | billboard |
-| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `setPolygonOffset()` / `setPointSize()` / `setLineWidth()` / `clearState()` / `renderState()` | Subtree state |
+| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `setPolygonOffset()` / `setPointSize()` / `setLineWidth()` / `clearRenderState()` / `renderState()` | Subtree state |
 | `StateNode::setMaterial()` / `setProgram()` | Subtree material / program |
 | `PassDesc::depth_range` / `RenderPass::depthRange()` | The whole pass's depth band (`DepthRange`; unset = the whole range) |
 | `resolveRenderState(authored, pass, topology)` | The only resolution point (`StateResolution.hpp`) |

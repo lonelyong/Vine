@@ -31,7 +31,7 @@ SceneView::~SceneView()
     // creator's teardown - the widget tree deletes the surface after the control's own members are gone. The steps are
     // therefore dropped first, before any later teardown step could run one (the crash this records: a step called
     // RenderControl::view() through a control whose Impl had already been destroyed).
-    clearSurfaceLayouts();
+    clearSurfaceResizeHandlers();
     // Leave the surface next, while the adopted pipeline is still there to hold the engine alive. The surface also
     // stops naming this view, so the other order - the surface destroyed first - leaves this pointer null and nothing
     // to do.
@@ -55,7 +55,7 @@ void SceneView::setSurface(raw_ptr<RenderArea> surface) noexcept
         // The size the surface owned becomes this view's own statement (see RenderArea::dismiss): a view that
         // stops presenting must keep being sizeable by its host from here on, and the surface is not there to be
         // asked any more.
-        layout_.resize(surface_->width_, surface_->height_, surface_->pixel_ratio_);
+        resize_.resize(surface_->width_, surface_->height_, surface_->pixel_ratio_);
     }
     surface_ = surface;
 }
@@ -132,17 +132,17 @@ void SceneView::checkChainContent()
 
 int SceneView::areaWidth() const noexcept
 {
-    return surface_ != nullptr ? surface_->width_ : layout_.width();
+    return surface_ != nullptr ? surface_->width_ : resize_.width();
 }
 
 int SceneView::areaHeight() const noexcept
 {
-    return surface_ != nullptr ? surface_->height_ : layout_.height();
+    return surface_ != nullptr ? surface_->height_ : resize_.height();
 }
 
 double SceneView::surfacePixelRatio() const noexcept
 {
-    return surface_ != nullptr ? surface_->pixel_ratio_ : layout_.pixelRatio();
+    return surface_ != nullptr ? surface_->pixel_ratio_ : resize_.pixelRatio();
 }
 
 void SceneView::applySurfaceGeometry()
@@ -165,9 +165,9 @@ void SceneView::applySurfaceGeometry()
 
     // The view's own step runs first and in one place: the camera's shape, the manipulator's aspect, then the
     // adopted pipeline's targets and HUD boxes. Everything else is a step registered against the layout (see
-    // LayoutParticipant), which runs after this one and in registration order. The SIZE is the effective one
+    // ResizeParticipant), which runs after this one and in registration order. The SIZE is the effective one
     // (surface's while this view presents one), not the participant's recorded copy.
-    layout_.applySize(surface_w, surface_h, surfacePixelRatio(), [this](int width, int height, double ratio) {
+    resize_.applySize(surface_w, surface_h, surfacePixelRatio(), [this](int width, int height, double ratio) {
         // 1) The camera's shape: the surface IS the picture this view's projection is built for (one camera, one
         //    shape - see Camera), so the shape is pushed where the size is known. The manipulator is told the same
         //    size for its own aspect, and it drags the camera rather than holding a shape of its own.
@@ -364,25 +364,25 @@ void SceneView::resize(int width, int height, double pixel_ratio)
 
 void SceneView::setOwnSurfaceSize(int width, int height, double pixel_ratio)
 {
-    layout_.resize(width, height, pixel_ratio);
+    resize_.resize(width, height, pixel_ratio);
     // One place turns {surface size, viewport, ratio} into this view's rectangle: the camera aspect, the window
-    // pass viewport, the size the default pipeline and the layout steps are told (see applySurfaceGeometry).
+    // pass viewport, the size the default pipeline and the resize steps are told (see applySurfaceGeometry).
     applySurfaceGeometry();
 }
 
-void SceneView::addSurfaceLayout(std::function<void(int width, int height)> layout)
+void SceneView::addSurfaceResizeHandler(std::function<void(int width, int height)> handler)
 {
-    layout_.addStep(std::move(layout));
+    resize_.addStep(std::move(handler));
 }
 
-void SceneView::addSurfaceLayout(std::function<void(int width, int height, double pixel_ratio)> layout)
+void SceneView::addSurfaceResizeHandler(std::function<void(int width, int height, double pixel_ratio)> handler)
 {
-    layout_.addStep(std::move(layout));
+    resize_.addStep(std::move(handler));
 }
 
-void SceneView::clearSurfaceLayouts()
+void SceneView::clearSurfaceResizeHandlers()
 {
-    layout_.clearSteps();
+    resize_.clearSteps();
 }
 
 VN_GRAPHICS_NS_END

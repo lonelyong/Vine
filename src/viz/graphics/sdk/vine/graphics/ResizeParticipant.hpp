@@ -7,10 +7,10 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief A view's participation in a surface's layout: the size it draws at, and the steps that follow it.
+ * @brief A view's participation in a surface's resize: the size it draws at, and the steps that follow it.
  *
  * @details
- * - WHAT IT OWNS is the layout half of a view and nothing else: the last size the host announced (logical pixels plus
+ * - WHAT IT OWNS is the resize half of a view and nothing else: the last size the host announced (logical pixels plus
  *   the device pixel ratio), and the creator-managed steps registered against it. It knows no camera, no pipeline and
  *   no surface - the consumer supplies ONE step (its own: camera aspect, manipulator resize, pipeline resize) and the
  *   participant runs it before the registered steps, in the registered order.
@@ -18,7 +18,7 @@ VN_GRAPHICS_NS_BEGIN
  *   shape), the ADOPTED PIPELINE (whose off-screen targets are sized for the surface), and whoever registered a step
  *   (a preview re-anchoring itself in a corner). The first two are the view's; the third is the host's. Keeping the
  *   announcement and the step list in one small object is what lets a host participate in layout without reaching
- *   into a view's internals - and what keeps `SceneView` a facade rather than the place every layout rule accumulates.
+ *   into a view's internals - and what keeps `SceneView` a facade rather than the place every resize rule accumulates.
  * - THE SIZE HERE IS THE VIEW'S OWN, used when it presents nothing. A view that presents a surface reads the
  *   SURFACE's size instead (see RenderArea::resize): the size of the thing the picture ends up in has one owner,
  *   and it is not the view.
@@ -27,9 +27,9 @@ VN_GRAPHICS_NS_BEGIN
  * - A step is a plain `std::function`: the participant does not own what a step touches, exactly like the callbacks it
  *   replaces. Registering the same step twice runs it twice (the list is a sequence, not a set).
  */
-class VN_GRAPHICS_API LayoutParticipant {
+class VN_GRAPHICS_API ResizeParticipant {
   public:
-    /** @brief A layout step in logical pixels (see SceneView::addSurfaceLayout). */
+    /** @brief A resize step in logical pixels (see SceneView::addSurfaceResizeHandler). */
     using Step = std::function<void(int width, int height)>;
 
     /** @brief A layout step that also wants the device pixel ratio. */
@@ -72,13 +72,13 @@ class VN_GRAPHICS_API LayoutParticipant {
         return width_ > 0 && height_ > 0;
     }
 
-    /** @brief Registers a layout step in logical pixels.
+    /** @brief Registers a resize step in logical pixels.
      *
      * @param step Step to run on every change (appended: the list keeps registration order).
      */
     void addStep(Step step);
 
-    /** @brief Registers a layout step that also wants the device pixel ratio.
+    /** @brief Registers a resize step that also wants the device pixel ratio.
      *
      * @param step Step to run on every change (appended: the list keeps registration order).
      */

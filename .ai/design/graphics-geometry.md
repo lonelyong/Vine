@@ -89,11 +89,11 @@ This file defines the current design of graphics geometry: channels, primitives,
 | # | Feature | Notes |
 |---|---|---|
 | F11 | Instance stream | `BufferSlice<float> instance_transforms`, 16 floats per instance, a column-major mat4. |
-| F12 | Visible prefix | `std::optional<size_t> visible_instances`; changes the draw parameter only, and retransmits nothing. |
-| F13 | Collection | One command per primitive; a visible count of 0 only skips that primitive. |
+| F12 | Instance count | `std::optional<size_t> instance_count`; changes the draw parameter only, and retransmits nothing. |
+| F13 | Collection | One command per primitive; an instance count of 0 only skips that primitive. |
 | F14 | Backend | Binding 4's per-instance stream + `VN_INSTANCED` (bit 8) + `Draw.instances` / `firstInstance`. |
-| F15 | Bounding box | The union of the local box transformed by each primitive's visible instance matrices. |
-| F16 | Picking | Per primitive, per visible instance; the result is `geometry + primitiveIndex + instanceIndex`. |
+| F15 | Bounding box | The union of the local box transformed by each primitive's drawn instance matrices. |
+| F16 | Picking | Per primitive, per drawn instance; the result is `geometry + primitiveIndex + instanceIndex`. |
 
 ### 3.4 Revision and bounding boxes
 
@@ -241,7 +241,7 @@ This file defines the current design of graphics geometry: channels, primitives,
 | `vertexCount()` / `localBounds()` / `boundingBox()` / `subtreeBounds()` | Data and boxes |
 | `prepareBvh()` / `bvh()` / `hasBvh()` / `adoptBvh()` / `clearBvh()` / `triangleTestCount()` | The per-draw triangle tree cache and its read-only witness (F33); `prepareBvh(draw, builder)`'s builder chooses the granularity, defaulting to `pickTreeBuilder()` (`kPickTreeLeafSize = 64`), and a built tree is always sealed |
 | `triangleCount(draw)` | One draw's triangle count; a count only, building and caching nothing, for a consumer's threshold policy |
-| `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | Instance convenience for default primitive 0 |
+| `setInstanceTransforms()` / `setInstanceCount()` / `clear*()` | Instance convenience for default primitive 0 |
 | `geometryFromShape()` / `packAttribute()` / `packIndices()` | The bridge and packing |
 | `makeAxesMarker()` / `AxesStyle` | A coordinate-frame marker's geometry: the arrows of one style as one draw, reading streams shared with every marker of that style (F34) |
 
@@ -251,8 +251,8 @@ This file defines the current design of graphics geometry: channels, primitives,
 |---|---|
 | `topology` / `indices` | Topology and index segment |
 | `material` / `program` | This draw's overrides |
-| `hasInstances()` / `instanceCount()` / `firstInstance()` / `visibleInstanceCount()` | Instances |
-| `setInstanceTransforms()` / `setVisibleInstanceCount()` | Instance editing |
+| `hasInstances()` / `instanceCapacity()` / `firstInstance()` / `instanceCount()` | Instances |
+| `setInstanceTransforms()` / `setInstanceCount()` | Instance editing |
 
 ### 4.3 `AttributeChannel`
 
