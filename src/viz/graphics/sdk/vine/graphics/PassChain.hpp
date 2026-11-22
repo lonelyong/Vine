@@ -410,8 +410,9 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *   @p layout's capture), so this class holds a non-owning @p content.
      * - @p layout runs from resize() with the surface size and the ratio and ANSWERS the rectangle the pass draws
      *   into; empty means the pass states its own rectangle and nothing has to be re-laid-out.
-     * - A @p content that implements FrameUpdate is updated once per frame by update() - that is how an overlay's
-     *   per-frame work happens (see FrameUpdate), not through a field of its declaration.
+     * - A @p content that implements FrameUpdate becomes the overlay's per-frame worker (see update()); a host that
+     *   wants another object to do that work states it with setOverlayUpdater - that is how an overlay's per-frame
+     *   work happens (see FrameUpdate), not through a field of its declaration.
      *
      * @param role    Name the overlay's pass is registered under - also the key overlayPass/overlayContent look up
      *                (not enforced unique: the first match answers).
@@ -422,16 +423,38 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     raw_ptr<RenderPass> addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayPlacement layout = {});
 
+    /** @brief Names the object that does an overlay's per-frame work, instead of taking it from the content.
+     *
+     * @details
+     * - WHO DOES THE PER-FRAME WORK IS A STATEMENT, NOT ONLY A CAST. addOverlay takes the worker from the content
+     *   when the content implements FrameUpdate; a host whose CONTROLLER refills content it does not own states that
+     *   controller here, so the controller does not have to subclass the scene and inherit the hook.
+     * - THE LAST STATEMENT WINS: this replaces whatever addOverlay discovered, and a later call replaces this one.
+     *   nullptr therefore makes the overlay static - even when its content implements FrameUpdate.
+     * - The worker is called by update() in the overlay's registration order, once per frame, with the same
+     *   FrameContext every other overlay of that call gets (see FrameUpdate).
+     *
+     * @warning The pointer is BORROWED: whoever states it keeps the worker alive for as long as the overlay is
+     *          registered - the chain does not own it, exactly as it does not own the content. A destroyed controller
+     *          leaves a dangling worker behind, and the chain cannot detect that.
+     *
+     * @param role    Role the overlay was registered under (see addOverlay).
+     * @param updater The object that does the overlay's per-frame work, or null to make the overlay static.
+     * @return true when this chain HAS that overlay (its worker is now @p updater); false when it has none.
+     */
+    bool setOverlayUpdater(const String& role, raw_ptr<FrameUpdate> updater);
+
     /** @brief Does the per-frame work of this chain's overlays, in registration order.
      *
      * @details
-     * - The overlays' CONTENT objects do their own work (see FrameUpdate): a gizmo mirrors its source camera, a
-     *   readout repaints its digits, and what they publish is what the next frame draws. The chain only says WHEN
-     *   (once, before the frame) and in what ORDER (the order the overlays were registered).
+     * - Each overlay's WORKER does the work (see FrameUpdate): its content when that implements FrameUpdate, or the
+     *   object setOverlayUpdater named. A gizmo mirrors its source camera, a readout repaints its digits, and what
+     *   they publish is what the next frame draws. The chain only says WHEN (once, before the frame) and in what
+     *   ORDER (the order the overlays were registered).
      * - `SceneView::update()` forwards to this, and `SurfaceWindow::renderFrame` calls the view's update once per
      *   frame before publishing and building the frame - so a host on the standard path writes nothing. A host
      *   driving the engine from its own loop calls this (or the view's) before RenderEngine::frame().
-     * - A content object that does not implement FrameUpdate is skipped: an overlay may be static (a logo), and
+     * - An overlay with no worker (a static content, or `nullptr` stated) is skipped: an overlay may be a logo, and
      *   "nothing to update" is not a defect to report.
      *
      * @param context This frame's context (see FrameContext); the SAME value reaches every overlay of this call.
@@ -655,11 +678,11 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief Sets the off-screen composite target (Deferred + transparent content). */
     void setCompositeTarget(intrusive_ptr<RenderTarget> target);
 
-    /** @brief One HUD overlay: the role its pass is registered under, its content, and how it lays itself out. */
+    /** @brief One HUD overlay: the role its pass is registered under, its content, its per-frame worker, and its layout. */
     struct Overlay {
         String            role;
         raw_ptr<Object>   content{ nullptr };
-        raw_ptr<FrameUpdate> update{ nullptr }; // the content as a per-frame updater, when it implements one
+        raw_ptr<FrameUpdate> worker{ nullptr }; // the per-frame worker: the content when it implements one, else what setOverlayUpdater stated
         OverlayPlacement  layout;
     };
 
@@ -704,9 +727,9 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /// The pass that presents the picture, by name (resolved by apply(): a plan identifies a pass by name).
     String              window_name_;
 
-    // The overlays, as VALUES (see addOverlay): a role, the content object and its layout. No field per overlay and
-    // no pass handle here - the pass is found by role through entries_, and the content stays alive with whoever
-    // registered it.
+    // The overlays, as VALUES (see addOverlay): a role, the content object, its per-frame worker and its layout. No
+    // field per overlay and no pass handle here - the pass is found by role through entries_, and the content and the
+    // worker stay alive with whoever registered or stated them.
     std::vector<Overlay> overlays_;
     // The chain this pipeline was built as (the EFFECTIVE one) and the mode its picture means: what
     // setShadingMode decides "can this be expressed" on, and what a rebuild would start from. Set by the

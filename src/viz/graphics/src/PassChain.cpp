@@ -175,7 +175,8 @@ raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> co
 {
     // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
     // at a pass nothing draws, are both states this method makes unreachable. The content is asked ONCE whether it
-    // updates itself per frame (FrameUpdate), so the per-frame walk is a pointer call, not a cast per frame.
+    // updates itself per frame (FrameUpdate), so the per-frame walk is a pointer call, not a cast per frame - and
+    // setOverlayUpdater can restate that worker afterwards (the last statement wins).
     (void)addPass(desc, role);
     overlays_.push_back(Overlay{ role, content, dynamic_cast<FrameUpdate*>(content), std::move(layout) });
     if (!apply()) {
@@ -184,14 +185,35 @@ raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> co
     return overlayPass(role);
 }
 
+bool PassChain::setOverlayUpdater(const String& role, raw_ptr<FrameUpdate> updater)
+{
+    const auto found = std::find_if(overlays_.begin(), overlays_.end(), [&role](const Overlay& overlay) { return overlay.role == role; });
+    if (found == overlays_.end()) {
+        // The same condition setOverlayVisible refuses on - this chain has no such overlay - so it shares that
+        // episode: a host asking about a role it never registered is told once, whatever it asked for. The sentence
+        // names the call, because "nothing to show or hide" would not be what went wrong here.
+        if (overlay_refused_.shouldReport()) {
+            const String message = String(u8"this chain has no overlay registered as '") + role +
+                                   u8"', so no per-frame worker was stated: register it with "
+                                   u8"PassChain::addOverlay (or build with the recipe option that does)";
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::UnsupportedRequest, message);
+        }
+        return false;
+    }
+    overlay_refused_.rearm();
+    found->worker = updater;
+    return true;
+}
+
 void PassChain::update(const FrameContext& context)
 {
     // REGISTRATION ORDER, once per frame (see FrameUpdate): an overlay's own work happens before the frame that draws
-    // it, and what it publishes is the value that frame describes. A static overlay (no FrameUpdate) is skipped.
-    // ONE context for the whole call: an overlay cannot see a different frame than the one next to it.
+    // it, and what it publishes is the value that frame describes. An overlay with no worker (a static content, or a
+    // nullptr stated through setOverlayUpdater) is skipped. ONE context for the whole call: an overlay cannot see a
+    // different frame than the one next to it.
     for (const Overlay& overlay : overlays_) {
-        if (overlay.update != nullptr) {
-            overlay.update->onFrame(context);
+        if (overlay.worker != nullptr) {
+            overlay.worker->onFrame(context);
         }
     }
 }

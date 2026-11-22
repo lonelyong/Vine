@@ -8051,6 +8051,66 @@ TEST(PassChainTest, AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame)
 }
 
 /**
+ * @brief An overlay's per-frame worker can be an object that is NOT its content (T42).
+ *
+ * addOverlay takes the worker from the content by cast, so a CONTROLLER that refills content it does not own had to
+ * subclass the scene and inherit the hook. setOverlayUpdater states the worker instead: the last statement wins, the
+ * content is no longer asked, and nullptr makes the overlay static again. The worker needs no Object base at all -
+ * FrameUpdate is the whole contract - which is what lets a plain controller do the work.
+ */
+TEST(PassChainTest, AnOverlaysWorkerCanBeStatedAsAnotherObject)
+{
+    class CountingWorker : public FrameUpdate {
+      public:
+        void onFrame(const FrameContext&) override
+        {
+            ++updates;
+        }
+
+        int updates = 0;
+    };
+
+    // A content that DOES update itself: proves the statement overrides the discovery rather than adding to it.
+    class CountingContent : public vn::Object, public vn::RefCounted<CountingContent>, public FrameUpdate {
+      public:
+        void onFrame(const FrameContext&) override
+        {
+            ++updates;
+        }
+
+        int updates = 0;
+    };
+
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto chain   = intrusive_ptr<PassChain>(new PassChain(engine->passes(), engine->diagnostics()));
+    auto content = vn::make_intrusive<CountingContent>();
+    CountingWorker worker;
+
+    PassDesc hud;
+    hud.name          = u8"controller_overlay";
+    hud.stage         = PassStage::Overlay;
+    hud.kind          = DrawKind::Scene;
+    hud.clear_enabled = false;
+    ASSERT_NE(chain->addOverlay(String(u8"controlled"), content.get(), hud), nullptr);
+
+    chain->update(engine->frameContext());
+    EXPECT_EQ(content->updates, 1) << "the content is the worker addOverlay discovered";
+    EXPECT_EQ(worker.updates, 0);
+
+    EXPECT_FALSE(chain->setOverlayUpdater(String(u8"absent"), &worker)) << "a role this chain has no overlay for is refused";
+
+    EXPECT_TRUE(chain->setOverlayUpdater(String(u8"controlled"), &worker));
+    chain->update(engine->frameContext());
+    EXPECT_EQ(worker.updates, 1) << "the stated worker runs";
+    EXPECT_EQ(content->updates, 1) << "and the content is no longer asked (the last statement wins)";
+
+    EXPECT_TRUE(chain->setOverlayUpdater(String(u8"controlled"), nullptr));
+    chain->update(engine->frameContext());
+    EXPECT_EQ(worker.updates, 1) << "null makes the overlay static";
+    EXPECT_EQ(content->updates, 1) << "the content's own hook does not come back either";
+}
+
+/**
  * @brief One update call hands EVERY overlay the same FrameContext (BC-25).
  *
  * The value exists so two objects doing their own per-frame work inside one frame cannot disagree about which frame

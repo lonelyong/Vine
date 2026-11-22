@@ -1248,6 +1248,11 @@ pipeline->isOverlayVisible(vn::String(u8"corner"));
 - **内容不归管线拥有**：登记方自己持有（上面的 lambda 捕获了 `intrusive_ptr`），表里存的是 `raw_ptr<Object>` ——
   `Object` 是所有 graphics 对象的公共基类，读侧用 `obj_cast<T>` 回到具体类型（`appfw::DocumentManager` 存 payload
   同理）。
+- **每帧干活的不一定是内容本身**：`addOverlay` 会看内容有没有实现 `FrameUpdate`，实现了就把它作为这层 overlay 的
+  每帧 worker；如果刷新内容的是另一个对象（CONTROLLER 改的是自己并不拥有的内容），用
+  `pipeline->setOverlayUpdater(vn::String(u8"corner"), controller)` **声明** worker，不必为了继承钩子去派生 Scene。
+  后声明的赢：再次调用替换前一个，传 `nullptr` 把这层变回静态；worker 与内容一样是**借用**，登记方负责让它
+  活到 overlay 注销。
 - **开关不重建**：可见性就是 pass 的 `enabled`，与 §3.10 的其它运行时开关一致；问一个没登记过的 role 会得到 false
   并报一次问题 —— 静默无效比拒绝更难查。
 
