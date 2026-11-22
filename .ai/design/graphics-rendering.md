@@ -114,6 +114,23 @@ realigned to the industry's meaning.
   arrives with, and the odd one out was the CALL's value); renaming `PassKind::Scene` to `Content` (a scene pass draws lines and
   impostors too, and `Content` would read as "anything the engine owns", the full-screen program included).
 
+**The 2026-11-22 completion: one kind, three levels** (`BC-33`;
+[`ADR-2026-11-20`](../decisions/ADR-2026-11-20-draw-packet-and-fullscreen-vocabulary.md), amendment). The batch above renamed the
+`Screen` enumerator in four types and kept the four types; the fifth review round named that mixture as the defect it was, so the
+TYPE count went down while the values stayed `Scene` / `Fullscreen`.
+
+| Before | Now | What the old spelling got wrong | Note |
+|---|---|---|---|
+| `PassKind` / `DrawPacket::Kind` / vk `FrameHead::Kind` / vsg `bool fullscreen`; `DrawKind{Content,Fullscreen}` | `DrawKind{Scene,Fullscreen}` in `DrawKind.hpp`, taken by `PassDesc::kind` / `DrawPacket::kind` / `PipelineKey::kind` and by both backends' frame heads | four types for one fact; the head's `bool` could not be compared with the key's enumeration, so "the plan's kind and the pipeline's kind agree" was a rule instead of a property - and the two ABIs bind different descriptor sets, so a mismatch binds a pipeline for the wrong layout | `BC-33` <!-- drift-ok --> |
+
+- What it is: a type deletion, not a rename. `PassDesc::kind`, `DrawPacket::kind` and `PipelineKey::kind` are one enumeration, so
+  a pipeline cannot be compiled for one kind and bound for the other.
+- Kept on purpose: the VALUE `Scene` (a scene pass draws lines, impostors, gizmos and overlays; `Content` would read as
+  "anything the engine owns"), and the reopen trigger - a third execution shape redesigns the SET as a whole.
+- Rejected: `PassKind` kept as an alias of `DrawKind` (the module promises no source stability, every in-tree consumer moved in
+  the same commit, and an alias leaves two names in every search); a `std::variant` of two packet types (the mismatch it would
+  prevent is answered by one predicate, `packetDraws`, and the shape would pierce `OwnedFrame` and both recorders).
+
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
 

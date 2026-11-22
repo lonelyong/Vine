@@ -74,6 +74,7 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -170,7 +171,7 @@ makeQuad(float x0, float x1, float z)
                                         vn::graphics::LightSetPtr                         lights = nullptr)
 {
     DrawPacket draw;
-    draw.kind        = DrawPacket::Kind::Scene;
+    draw.kind        = DrawKind::Scene;
     draw.view.camera      = identityCamera();
     draw.commands    = std::move(commands);
     draw.light_values = std::move(lights);
@@ -478,7 +479,7 @@ void main()
     frame.passes.push_back(std::move(source_entry));
 
     DrawPacket fullscreen_draw;
-    fullscreen_draw.kind                = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.kind                = DrawKind::Fullscreen;
     fullscreen_draw.view.camera              = identityCamera();
     fullscreen_draw.source              = source.get();
     fullscreen_draw.program             = read_program;

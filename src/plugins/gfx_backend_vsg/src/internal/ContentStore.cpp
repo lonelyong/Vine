@@ -1152,7 +1152,7 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
     };
     if (built()) {
         const FactResult<ProgramFacts> row =
-            findProgram(d->view(), ref, screen ? ProgramVariant{} : variant, screen ? core::DrawKind::Fullscreen : core::DrawKind::Content);
+            findProgram(d->view(), ref, screen ? ProgramVariant{} : variant, screen ? core::DrawKind::Fullscreen : core::DrawKind::Scene);
         if (row.found()) {
             d->program.stamp(row.entry, epoch);
             return; // this text of this revision is already in the tables

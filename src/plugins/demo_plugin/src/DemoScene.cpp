@@ -1221,7 +1221,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     }
     vn::graphics::PassDesc screen;
     screen.name  = u8"multislot_pip";
-    screen.kind  = vn::graphics::PassKind::Fullscreen;
+    screen.kind  = vn::graphics::DrawKind::Fullscreen;
     // A full-screen pass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
     screen.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
@@ -1291,7 +1291,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     for (int attachment = 0; attachment < 4; ++attachment) {
         vn::graphics::PassDesc screen;
         screen.name   = u8"gbuffer_preview";
-        screen.kind   = vn::graphics::PassKind::Fullscreen;
+        screen.kind   = vn::graphics::DrawKind::Fullscreen;
         screen.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
@@ -1348,7 +1348,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     const int    ph    = static_cast<int>(191.0 * dpr);
     vn::graphics::PassDesc light;
     light.name          = u8"deferred_lighting";
-    light.kind          = vn::graphics::PassKind::Fullscreen;
+    light.kind          = vn::graphics::DrawKind::Fullscreen;
     light.input_names   = { u8"GBuffer" };
     light.input_targets = { target }; // a fullscreen program reads the whole source target
     light.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
@@ -1541,7 +1541,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         for (int attachment = 0; attachment < 4; ++attachment) {
             vn::graphics::PassDesc preview;
             preview.name   = kPreviewNames[attachment];
-            preview.kind   = vn::graphics::PassKind::Fullscreen;
+            preview.kind   = vn::graphics::DrawKind::Fullscreen;
             preview.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
             // One copy program per attachment: the sampler binding IS the attachment (see
             // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of, and the

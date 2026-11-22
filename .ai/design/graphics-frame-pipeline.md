@@ -129,8 +129,8 @@
 - Boundary: `PassId` exists only inside a Session; the difference is taken by **name**, not by pointer (`C7`); a transient target's lifetime is declared by the plan.
   The table that builds them belongs to the ENGINE, and the device it builds them on is borrowed and may outlive it - so a shutdown hands every live transient back
   (`FrameResources::releaseAll` → `releaseRenderTarget`) instead of dropping the table and leaving the device holding storage nothing will name again.
-  A plan expresses only the shapes `PassKind` can express (`Scene` / `Fullscreen`): a pass subclass is no longer a registrable shape, and customisation lives in the
-  **data** (program override, viewport, depth range); a kind change rebuilds the built-in node. There is no `PassKind::Custom` and no factory registry (`G8`).
+  A plan expresses only the shapes `DrawKind` can express (`Scene` / `Fullscreen`): a pass subclass is no longer a registrable shape, and customisation lives in the
+  **data** (program override, viewport, depth range); a kind change rebuilds the built-in node. There is no `DrawKind::Custom` and no factory registry (`G8`).
 
 ### 2.9 Derivation is a pure function
 
@@ -177,6 +177,13 @@
 - Why: each object used to derive what it needed on its own, and the only time-dependent one (`FpsOverlay`) read `steady_clock` itself. That is N clocks for one frame, and a gizmo and a readout could window the same frame differently (`G1` / `G11`). A frame also stops being a function of "the declarations plus whatever the wall clock said to each object" - the host does not have to know anything to ask for its context, and two consecutive reads answer the same value.
 - Boundary: the value is a **read**, and the clock advances exactly once per frame, at the head of `frame()` after the readiness checks - so `elapsed_seconds` is one frame BEHIND the frame being prepared, which is what "how fast is this loop running" means and the price of keeping `frameContext()` free of side effects (an accessor that mutated would violate the accessor/command rule). The interval is WALL-CLOCK: a host that needs a fixed step or a replay keeps its own clock and reads the other fields, which are exact. Sizes stay in the units the host announced, and the device-pixel answer uses the engine's one rounding rule (`std::lround(logical * ratio)`, the same call `EngineCompile` lays a frame out with).
 - Added 2026-11-18 on an explicit go, ahead of its trigger (the backlog's criterion was "the first feature needing two of the fields"): the argument and the rejected shapes (`update(double dt)`, a host-supplied clock, a fourth narrow lease on the engine) are `../decisions/ADR-2026-11-18-the-frame-carries-its-context.md`; the migration note is `BC-25`, which covers both halves: every caller of `SceneView::update` / `PassChain::update` passes `engine->frameContext()`, and every implementer of the hook renames `update()` to `onFrame()` (the reaction verb of `graphics-architecture.md` 2.14 - the drivers keep `update`).
+
+### 2.14 The draw kind is ONE value, read at three levels
+
+- What it is: `DrawKind` (`DrawKind.hpp`) has the two members the engine knows - `Scene` and `Fullscreen` - and the same value names the fact wherever it is read: what a pass IS (`PassDesc::kind`), what one packet of that pass issues (`DrawPacket::kind`), and which descriptor ABI the pipeline recording it is compiled against (`PipelineKey::kind`).
+- Why: the fact is one, so four spellings were four chances to disagree - and one of them already did: the backend's frame head carried a `bool fullscreen` while the pipeline key carried an enumeration, so "which ABI is this pipeline for" and "which recorder runs this plan" were answered by two types that could not be compared (`G1` / `G4`). A pipeline compiled for one kind can never be bound for the other (the two ABIs bind different descriptor sets), which is why the kind is IDENTITY in the key rather than a field beside it.
+- Boundary: the kind names the DRAW, not the target. `Fullscreen` is a full-screen triangle filling the VIEW it is given - a picture-in-picture rectangle, an off-screen image, the window - and "screen" stays the word for the window (`RenderArea` / `PresentTarget`), which is why the value is not called that. The other value is `Scene`, not `Content`: a scene pass draws lines, impostors, gizmos and overlays too, and `Content` would read as "anything the engine owns", the full-screen programs included. Adding a third value is a design batch, not a word sweep: the two are compared by name at the points that branch, so `graphics-architecture.md` 2.11's extension row is the list to walk.
+- The types this replaced are the migration table's row (`graphics-rendering.md` 2.10, `BC-33`); the values did not change, only the number of types that spelled them.
 
 ## 3. Features
 
@@ -263,7 +270,7 @@
   pass' `program`, a Fullscreen pass' `program_override` or layer mask) is refused instead of being silently ignored - `content` is NOT one of them, because a
   full-screen pass reads it for the scene's lights. The return value is
   the three-state `PlanResult`: `Applied` / `Invalid` + a problem list / `Refused` + `PlanRefusal` (`Busy` = a frame is recording in the engine, `EngineGone` = the
-  `PassRegistry`'s engine is gone). A kind change rebuilds the built-in node; a plan expresses `PassKind` only, and a pass subclass is no longer an expressible shape.
+  `PassRegistry`'s engine is gone). A kind change rebuilds the built-in node; a plan expresses `DrawKind` only, and a pass subclass is no longer an expressible shape.
 - **Constraints** (`C7`): by name, not by pointer (in the scope form it is `(owner, name)`).
 - **Requirements** (`R21` / `R38`): adding or removing a pass calls no add/remove; each validation has one code; while a frame is recording the answer is
   `Refused{Busy}` **before validation** (shape-related state is not read), not a repair afterwards. `SessionBusy` is not a plan problem code — it is a runtime

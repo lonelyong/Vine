@@ -67,6 +67,7 @@ using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::SurfaceTargetResult;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -146,7 +147,7 @@ void main()
     camera.projection = vn::math::Mat4d{};
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = camera;
     draw.commands = commands;
 

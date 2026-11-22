@@ -416,7 +416,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *
      * @param kind How this pass executes.
      */
-    explicit RenderPass(PassKind kind);
+    explicit RenderPass(DrawKind kind);
 
     /**
      * @brief Fills this pass' own facts (target, viewport, clear, state) into @p out.

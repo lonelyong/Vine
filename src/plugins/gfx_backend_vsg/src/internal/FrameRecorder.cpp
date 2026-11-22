@@ -269,7 +269,7 @@ bool FrameRecorder::render(std::span<const vn::graphics::DrawItem> commands,
     // recorded, because there is nothing in it (see FrameCounters::draw_packets / draws).
     if (!commands.empty()) {
         CollectedDraw draw;
-        draw.kind         = DrawKind::Content;
+        draw.kind         = core::DrawKind::Scene;
         draw.camera       = camera;
         draw.has_viewport = pending_has_viewport_;
         draw.viewport     = pending_viewport_;
@@ -304,7 +304,7 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::Sh
     }
 
     CollectedDraw draw;
-    draw.kind         = DrawKind::Fullscreen;
+    draw.kind         = core::DrawKind::Fullscreen;
     draw.source       = source;
     draw.program      = programRef(program);
     draw.camera       = camera;

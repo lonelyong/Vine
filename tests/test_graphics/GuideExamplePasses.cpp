@@ -70,7 +70,7 @@ PlanResult twoPassOffscreenToWindow(vn::raw_ptr<RenderEngine> engine,
 
     PassDesc scene_pass;
     scene_pass.name          = u8"scene_into_rt";
-    scene_pass.kind          = PassKind::Scene;
+    scene_pass.kind          = DrawKind::Scene;
     scene_pass.order         = -1;
     scene_pass.camera        = camera;
     scene_pass.content       = scene;
@@ -85,7 +85,7 @@ PlanResult twoPassOffscreenToWindow(vn::raw_ptr<RenderEngine> engine,
     PassDesc compose_pass;
     compose_pass.name          = u8"compose_to_window";
     compose_pass.order         = 0;
-    compose_pass.kind          = PassKind::Fullscreen;
+    compose_pass.kind          = DrawKind::Fullscreen;
     compose_pass.camera        = camera;
     compose_pass.program       = screenCopyProgram();
     compose_pass.input_names   = { vn::String(u8"SceneColor") };
@@ -127,7 +127,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     PassDesc gbuffer_pass;
     gbuffer_pass.name            = u8"gbuffer";
     gbuffer_pass.order           = -3;
-    gbuffer_pass.kind            = PassKind::Scene;
+    gbuffer_pass.kind            = DrawKind::Scene;
     gbuffer_pass.camera          = camera;
     gbuffer_pass.content         = scene;
     gbuffer_pass.target          = Target::explicitTarget(gbuffer);
@@ -145,7 +145,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     PassDesc light_pass;
     light_pass.name          = u8"deferred_lighting";
     light_pass.order         = 0;
-    light_pass.kind          = PassKind::Fullscreen;
+    light_pass.kind          = DrawKind::Fullscreen;
     light_pass.camera        = camera;
     light_pass.target        = Target::explicitTarget(composite);
     light_pass.input_names   = { vn::String(u8"GBuffer") };
@@ -155,7 +155,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     PassDesc forward_pass;
     forward_pass.name          = u8"forward_transparent";
     forward_pass.order         = 1;
-    forward_pass.kind          = PassKind::Scene;
+    forward_pass.kind          = DrawKind::Scene;
     forward_pass.camera        = camera;
     forward_pass.content       = transparent_scene;
     forward_pass.target        = Target::explicitTarget(composite);
@@ -167,7 +167,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     PassDesc present_pass;
     present_pass.name          = u8"present";
     present_pass.order         = 2;
-    present_pass.kind          = PassKind::Fullscreen;
+    present_pass.kind          = DrawKind::Fullscreen;
     present_pass.camera        = camera;
     present_pass.program       = screenCopyProgram();
     present_pass.input_names   = { vn::String(u8"Composite") };

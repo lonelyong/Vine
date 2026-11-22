@@ -324,7 +324,7 @@ std::span<BlockDescriptors* const> BindingSets::setsFor(const core::CompiledPass
                 // The same tuple the recorder matches entries by (see api/ContentPass::recordCommand), the
                 // topology included: a half is compiled for one class of primitives, and the sets are built
                 // against the half the draw will actually go through.
-                if (candidate.kind == core::DrawKind::Content && candidate.program == command.program &&
+                if (candidate.kind == core::DrawKind::Scene && candidate.program == command.program &&
                     candidate.layout == geometry.entry->layout && candidate.variant == variant &&
                     candidate.topology == command.dynamic.topology)
                 {
@@ -378,7 +378,7 @@ void BindingSets::sweep(const ContentFacts& facts, core::FrameTimeline& timeline
     // call's set is the pass' own and never reaches this table - see setsFor's own guard), so the entry that keeps
     // it alive is the content one (see ProgramFacts::kind).
     const auto pinned = [&facts](const Data::Key& key) {
-        if (!findProgram(facts, key.program, key.variant, core::DrawKind::Content).found()) {
+        if (!findProgram(facts, key.program, key.variant, core::DrawKind::Scene).found()) {
             return false;
         }
         for (const BlockDescriptors::ImageSource::Slot& slot : key.source.slots) {

@@ -356,7 +356,7 @@ struct ProgramFacts {
     /// table happened to carry first to a caller expecting the other, which is a wrong picture with no refusal
     /// anywhere: the ambiguity this field closes (measured reachable - a host that also draws its post-process
     /// program as content is the ordinary way to hit it).
-    core::DrawKind kind{ core::DrawKind::Content };
+    core::DrawKind kind{ core::DrawKind::Scene };
 
     ContentPipeline::Shaders shaders{}; // The GLSL those two stages consist of.
     ProgramAbi               abi{};     // The bindings and push ranges those two texts declare.

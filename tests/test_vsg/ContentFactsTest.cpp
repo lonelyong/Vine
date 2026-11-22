@@ -146,19 +146,19 @@ TEST(ContentFactsTest, AProgramIsFoundByItsIdentityAndRevisionAndNothingElse)
     tables.programs.push_back(ProgramFacts{ vn::test::programRef(2, 1U), {} });
     const ContentFacts facts = tables.view();
 
-    const auto found = findProgram(facts, vn::test::programRef(1, 7U), ProgramVariant{}, DrawKind::Content);
+    const auto found = findProgram(facts, vn::test::programRef(1, 7U), ProgramVariant{}, DrawKind::Scene);
     ASSERT_TRUE(found.found());
     EXPECT_EQ(found.entry->program, vn::test::programRef(1, 7U));
     EXPECT_EQ(found.miss, FactMiss::None);
 
     // The same identity at a different revision is NOT the same content: the plan describes a program that has
     // moved on, and recording the newer one would draw a picture the frame never asked for.
-    EXPECT_EQ(findProgram(facts, vn::test::programRef(1, 6U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Revision);
-    EXPECT_FALSE(findProgram(facts, vn::test::programRef(1, 6U), ProgramVariant{}, DrawKind::Content).found());
-    EXPECT_EQ(findProgram(facts, vn::test::programRef(1, 8U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Revision);
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(1, 6U), ProgramVariant{}, DrawKind::Scene).miss, FactMiss::Revision);
+    EXPECT_FALSE(findProgram(facts, vn::test::programRef(1, 6U), ProgramVariant{}, DrawKind::Scene).found());
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(1, 8U), ProgramVariant{}, DrawKind::Scene).miss, FactMiss::Revision);
 
-    EXPECT_EQ(findProgram(facts, vn::graphics::ContentRef{}, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
-    EXPECT_EQ(findProgram(facts, vn::test::programRef(3, 7U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, vn::graphics::ContentRef{}, ProgramVariant{}, DrawKind::Scene).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(3, 7U), ProgramVariant{}, DrawKind::Scene).miss, FactMiss::Unknown);
 }
 
 TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
@@ -249,7 +249,7 @@ TEST(ContentFactsTest, AnEmptyTableAnswersUnknownRatherThanGuessing)
 {
     const ContentFacts empty{};
 
-    EXPECT_EQ(findProgram(empty, vn::test::programRef(1, 0U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(empty, vn::test::programRef(1, 0U), ProgramVariant{}, DrawKind::Scene).miss, FactMiss::Unknown);
     EXPECT_EQ(findGeometry(empty, geometryRef(nodeId(1U), 0U)).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(empty, materialRef(1U, 0U)).miss, FactMiss::Unknown);
 }

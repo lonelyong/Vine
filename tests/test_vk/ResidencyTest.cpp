@@ -73,6 +73,7 @@ using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
 using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -218,7 +219,7 @@ struct Content {
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;

@@ -35,8 +35,8 @@ class RenderPass;
  *   the type deliberately carries no VN_GRAPHICS_API (the DLL never instantiates it).
  */
 struct OwnedDrawPacket {
-    /// Which draw packet this is (see DrawPacket::Kind).
-    DrawPacket::Kind kind{ DrawPacket::Kind::Scene };
+    /// Which of the two drawings this packet issues (see DrawKind).
+    DrawKind kind{ DrawKind::Scene };
     /// The view this draw is projected and lit with, as the VALUE the frame carries (`camera.present == false` = no
     /// draw). It is owned by being a value: no camera object has to outlive the frame for it to be replayable.
     View view{};

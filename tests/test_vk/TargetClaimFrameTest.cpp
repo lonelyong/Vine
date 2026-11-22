@@ -51,6 +51,7 @@ using vn::graphics::DrawItem;
 using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 
 constexpr int kTargetSize = 32;
 
@@ -105,7 +106,7 @@ constexpr int kTargetSize = 32;
     commands->push_back(DrawItem(makeTriangle(), nullptr, vn::math::Mat4d{}));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;

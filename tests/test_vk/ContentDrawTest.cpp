@@ -82,6 +82,7 @@ using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
 using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -355,7 +356,7 @@ TEST(VkContentDrawTest, ATriangleIsDrawnIntoTheTargetAndProbed)
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -403,7 +404,7 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
     commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{}));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -513,7 +514,7 @@ TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)
     commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{})); // no program, and none announced
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -571,7 +572,7 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -615,7 +616,7 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     ambient.intensity = 1.0F;
 
     DrawPacket draw;
-    draw.kind        = DrawPacket::Kind::Scene;
+    draw.kind        = DrawKind::Scene;
     draw.view.camera      = identityCamera();
     draw.commands    = commands;
     draw.light_values = vn::graphics::LightSet::create({ ambient });
@@ -659,7 +660,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     commands->push_back(std::move(command));
 
     DrawPacket scene_draw;
-    scene_draw.kind     = DrawPacket::Kind::Scene;
+    scene_draw.kind     = DrawKind::Scene;
     scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
@@ -667,7 +668,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     const intrusive_ptr<RenderTarget> destination = makeTarget();
 
     DrawPacket fullscreen_draw;
-    fullscreen_draw.kind                 = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.kind                 = DrawKind::Fullscreen;
     fullscreen_draw.view.camera               = identityCamera();
     fullscreen_draw.source               = source.get();
     fullscreen_draw.program              = copy;
@@ -720,7 +721,7 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     commands->push_back(std::move(command));
 
     DrawPacket scene_draw;
-    scene_draw.kind     = DrawPacket::Kind::Scene;
+    scene_draw.kind     = DrawKind::Scene;
     scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
@@ -730,7 +731,7 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     const intrusive_ptr<RenderTarget> destination = makeTarget();
 
     DrawPacket fullscreen_draw;
-    fullscreen_draw.kind                = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.kind                = DrawKind::Fullscreen;
     fullscreen_draw.view.camera              = identityCamera();
     fullscreen_draw.source              = source.get();
     fullscreen_draw.program             = copy;
@@ -797,7 +798,7 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     commands->push_back(std::move(second));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
 
@@ -896,7 +897,7 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
         commands->push_back(std::move(command));
 
         DrawPacket draw;
-        draw.kind     = DrawPacket::Kind::Scene;
+        draw.kind     = DrawKind::Scene;
         draw.view.camera   = identityCamera();
         draw.commands = commands;
         backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -941,7 +942,7 @@ TEST(VkContentDrawTest, AShadowedFullFullscreenPassGetsTheEngineShadowBindings)
         commands->push_back(std::move(command));
 
         DrawPacket scene_draw;
-        scene_draw.kind     = DrawPacket::Kind::Scene;
+        scene_draw.kind     = DrawKind::Scene;
         scene_draw.view.camera   = identityCamera();
         scene_draw.commands = commands;
         backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
@@ -951,7 +952,7 @@ TEST(VkContentDrawTest, AShadowedFullFullscreenPassGetsTheEngineShadowBindings)
     ASSERT_NE(lit, nullptr);
 
     DrawPacket fullscreen_draw;
-    fullscreen_draw.kind                = DrawPacket::Kind::Fullscreen;
+    fullscreen_draw.kind                = DrawKind::Fullscreen;
     fullscreen_draw.view.camera              = identityCamera();
     fullscreen_draw.source              = source.get();
     fullscreen_draw.program             = lit;

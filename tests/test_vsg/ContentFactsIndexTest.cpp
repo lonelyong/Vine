@@ -182,14 +182,14 @@ void buildRows(const Identities& ids, Rows& out)
     const ProgramVariant coloured{ false, true, false };
     for (int index = 0; index < 3; ++index) {
         for (std::uint64_t revision = 1U; revision <= 2U; ++revision) {
-            for (const DrawKind kind : { DrawKind::Content, DrawKind::Fullscreen }) {
+            for (const DrawKind kind : { DrawKind::Scene, DrawKind::Fullscreen }) {
                 out.addProgram(ids.programs[index], revision, kind, plain);
                 out.addProgram(ids.programs[index], revision, kind, mapped);
                 out.addProgram(ids.programs[index], revision, kind, coloured);
             }
         }
     }
-    out.addProgram(ids.programs[0], 3U, DrawKind::Content, plain);
+    out.addProgram(ids.programs[0], 3U, DrawKind::Scene, plain);
 
     // MATERIALS: the default (null) entry, the three identities, a REPLACED pair for one identity (two rows,
     // one identity: the first is the answer - see findMaterial) and a malformed block for another.
@@ -221,7 +221,7 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
     // Every key shape the compiler can produce: the revisions that exist, one that does not, and a null
     // identity (the "content without a material" case, which is matched by the table's default entry).
     const std::uint64_t  revisions[]{ 0U, 1U, 2U, 3U, 9U };
-    const DrawKind       kinds[]{ DrawKind::Content, DrawKind::Fullscreen };
+    const DrawKind       kinds[]{ DrawKind::Scene, DrawKind::Fullscreen };
     const ProgramVariant variants[]{
         ProgramVariant{},
         ProgramVariant{ true, false, false },
@@ -266,8 +266,8 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
     EXPECT_EQ(rowIndex(scan.materials, scanned_default.entry), rowIndex(indexed.materials, searched_default.entry));
 
     const auto unknown_ref      = vn::test::programRef(99, 1U);
-    const auto scanned_unknown  = findProgram(scan, unknown_ref, ProgramVariant{}, DrawKind::Content);
-    const auto searched_unknown = findProgram(indexed, unknown_ref, ProgramVariant{}, DrawKind::Content);
+    const auto scanned_unknown  = findProgram(scan, unknown_ref, ProgramVariant{}, DrawKind::Scene);
+    const auto searched_unknown = findProgram(indexed, unknown_ref, ProgramVariant{}, DrawKind::Scene);
     EXPECT_EQ(static_cast<int>(searched_unknown.miss), static_cast<int>(scanned_unknown.miss));
     EXPECT_EQ(scanned_unknown.entry, nullptr);
 }

@@ -349,7 +349,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     StateRegistry registry(pool);
 
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content, vn::test::programRef(*program), geometry_facts[0].layout, pipelines.get(), &draws_recorder }
+        ContentPass::Scope::Entry{ DrawKind::Scene, vn::test::programRef(*program), geometry_facts[0].layout, pipelines.get(), &draws_recorder }
     };
     ContentPass::Scope scope;
     scope.entries    = halves;

@@ -13,6 +13,7 @@
 #include "Camera.hpp"
 #include "DepthMode.hpp"
 #include "DepthRange.hpp"
+#include "DrawKind.hpp"
 #include "ImageSource.hpp"
 #include "Output.hpp"
 #include "PassStage.hpp"
@@ -26,26 +27,6 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief How a declared pass turns its declarations into a picture (see PassDesc).
- *
- * @details
- * - A CLOSED SET, and deliberately small: the kind picks the ONE execution the engine knows how to run, so
- *   a caller adds a pass by naming a kind instead of deriving a class. Everything a pass DOES within its
- *   kind (which program, which content, where it lands) is a field of the declaration.
- *
- * @note
- * - The closed set describes the DECLARATIVE path, not the extension ceiling: a new execution SHAPE is a
- *   `RenderPass` subclass overriding describe() (which is what FullscreenPass itself does), while a new
- *   CONFIGURATION of an existing shape is a PassDesc. The descriptor is the primary authoring form; the
- *   subclass is the escape hatch.
- */
-enum class PassKind : std::uint8_t
-{
-    Scene,      // Draws a content scene through a camera: the ordinary pass (opaque, G-buffer, shadow, HUD).
-    Fullscreen, // Draws a full-screen triangle through a program over its resolved inputs (composite, lighting).
-};
-
-/**
  * @brief What a pass IS, as one value.
  *
  * @details
@@ -54,7 +35,7 @@ enum class PassKind : std::uint8_t
  *   the node and the descriptor cannot drift apart, because the node IS a PassDesc (see RenderPass::setDesc).
  * - `engine->applyPlan(Plan{ { desc } }, owner)` is the one way a declaration reaches the table (a pass that needs
  *   something the descriptor cannot state has no spelling: what is custom about a picture is data, not a subclass).
- * - What is NOT here: a descriptor cannot invent an execution (that is PassKind), cannot be a subtree of
+ * - What is NOT here: a descriptor cannot invent an execution (that is DrawKind), cannot be a subtree of
  *   content (Scene), and cannot decide how a backend draws (the program's own ABI). The state it states is
  *   the pass-scoped half of the ONE resolution table (see .ai/design/graphics-scene.md §4).
  *
@@ -72,8 +53,8 @@ struct VN_GRAPHICS_API PassDesc {
     PassStage stage{ PassStage::Shading };
     /// An explicit order, overriding the stage's (the escape hatch a host-built pass may need).
     std::optional<int> order;
-    /// How this pass executes (see PassKind).
-    PassKind kind{ PassKind::Scene };
+    /// How this pass executes (see DrawKind).
+    DrawKind kind{ DrawKind::Scene };
 
     /// View the pass draws through (held; null draws nothing, as any pass without a camera does).
     intrusive_ptr<Camera> camera{ nullptr };

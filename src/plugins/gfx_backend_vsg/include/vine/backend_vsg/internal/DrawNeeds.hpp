@@ -60,7 +60,7 @@ struct DrawNeeds {
     /** @brief `source_index` when a full-screen packet reads none of the pass' inputs. */
     static constexpr std::size_t kNoSource = static_cast<std::size_t>(-1);
 
-    core::DrawKind           kind{ core::DrawKind::Content };               // Which of the two draw packets this is.
+    core::DrawKind           kind{ core::DrawKind::Scene };               // Which of the two draw packets this is.
     vn::graphics::ContentRef program{};                                     // Identity AND revision the key names.
     core::VertexLayoutKey    layout{};                                      // The vertex layout the pipeline is built against
                                                                             // (empty for a full-screen packet).

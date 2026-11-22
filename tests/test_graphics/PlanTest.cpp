@@ -146,7 +146,7 @@ PassDesc namedPass(const char8_t* name, intrusive_ptr<RenderTarget> target, int 
     desc.name   = name;
     desc.stage  = PassStage::Shading;
     desc.order  = order;
-    desc.kind   = PassKind::Scene;
+    desc.kind   = DrawKind::Scene;
     desc.camera = std::move(camera);
     desc.target = vn::graphics::Target::explicitTarget(std::move(target));
     return desc;
@@ -493,7 +493,7 @@ TEST(PlanTest, AFieldTheKindDoesNotReadIsRefused)
     // so a composite pass naming its scene is the ordinary deferred recipe.
     PassDesc fullscreen_with_content;
     fullscreen_with_content.name    = u8"composite";
-    fullscreen_with_content.kind    = PassKind::Fullscreen;
+    fullscreen_with_content.kind    = DrawKind::Fullscreen;
     fullscreen_with_content.camera  = vn::make_intrusive<Camera>();
     fullscreen_with_content.content = vn::make_intrusive<Scene>();
 

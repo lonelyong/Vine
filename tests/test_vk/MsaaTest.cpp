@@ -76,6 +76,7 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -177,7 +178,7 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;

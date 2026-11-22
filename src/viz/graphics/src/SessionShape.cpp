@@ -336,7 +336,7 @@ intrusive_ptr<RenderPass> SessionShape::makePassNode(const PassDesc& desc)
     // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
     // the engine holds it, it is a hand-built pass (which is also what keeps the escape hatch the same thing).
     intrusive_ptr<RenderPass> node;
-    if (desc.kind == PassKind::Fullscreen) {
+    if (desc.kind == DrawKind::Fullscreen) {
         node = make_intrusive<FullscreenPass>();
     }
     else {

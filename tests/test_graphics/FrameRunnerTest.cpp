@@ -38,6 +38,7 @@ using vn::graphics::detail::FrameRunner;
 using vn::graphics::detail::PublicationStore;
 using vn::graphics::detail::RunnerMode;
 using vn::graphics::detail::SnapshotSource;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
 using vn::math::Vec3f;
@@ -56,7 +57,7 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource& content){
     camera.projection = vn::math::Mat4d{};
 
     DrawPacket draw;
-    draw.kind       = DrawPacket::Kind::Scene;
+    draw.kind       = DrawKind::Scene;
     draw.view.camera = camera;
     draw.content    = &content;
     draw.view.layer_mask = vn::graphics::kAllLayers;

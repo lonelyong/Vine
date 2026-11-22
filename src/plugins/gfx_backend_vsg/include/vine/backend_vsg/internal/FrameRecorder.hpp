@@ -170,7 +170,7 @@ struct CollectedCommand {
  *   announcements, which is also why the camera is recorded once per call instead of once per command.
  */
 struct CollectedDraw {
-    DrawKind                          kind{ DrawKind::Content }; // Content drawing or a full-screen program.
+    core::DrawKind                    kind{ core::DrawKind::Scene }; // Content drawing or a full-screen program.
     CameraSnapshot                    camera{};                  // The camera announced with the call.
     bool                              has_viewport{ false };     // Whether this call consumed a viewport announcement.
     vn::graphics::Viewport            viewport{};                // The consumed viewport (meaningful when has_viewport).

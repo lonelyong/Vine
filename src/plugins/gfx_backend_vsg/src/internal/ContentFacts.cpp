@@ -49,7 +49,7 @@ enum class KeyFields : std::uint8_t
 /// @brief The key @ref findProgram searches by: the identity (with its revision) and the drawing CALL.
 struct ProgramKey {
     vn::graphics::ContentRef program{};
-    core::DrawKind           kind{ core::DrawKind::Content };
+    core::DrawKind           kind{ core::DrawKind::Scene };
 };
 
 /// @brief Orders one program row against one program key, over the first @p fields of the key.

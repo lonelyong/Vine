@@ -1249,7 +1249,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     const auto claim_pass_samples = [&](const PassDraw& draw, const FrameDescription::Pass& entry) -> bool {
         bool every = true;
         for (const DrawPacket& description : draw.packets) {
-            if (description.kind == DrawPacket::Kind::Fullscreen && !claim_sampled(description.source)) {
+            if (description.kind == vn::graphics::DrawKind::Fullscreen && !claim_sampled(description.source)) {
                 every = false;
             }
         }
@@ -1465,7 +1465,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             for (std::size_t draw_index = 0; draw_index < pass_draw.packets.size(); ++draw_index) {
                 const DrawPacket& description = pass_draw.packets[draw_index];
                 FrameHead::Call&        call        = pass_head.draws[draw_index];
-                if (description.kind == DrawPacket::Kind::Fullscreen) {
+                if (description.kind == vn::graphics::DrawKind::Fullscreen) {
                     call.plans.resize(1U);
                     FrameHead::DrawPlan& plan = call.plans.front();
                     (void)owner.caches.planDraw(description,
@@ -1534,7 +1534,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
         // barrier is unambiguously allowed (before any render pass instance begins).
         for (const DrawPacket& description : draw.packets) {
-            if (description.kind != DrawPacket::Kind::Fullscreen || description.source == nullptr) {
+            if (description.kind != vn::graphics::DrawKind::Fullscreen || description.source == nullptr) {
                 continue;
             }
             const std::shared_ptr<TargetObjects> source_entry = owner.target_table.lookup(description.source);
@@ -1707,7 +1707,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 }
             }
             ContentRefusal refusal;
-            if (description.kind == DrawPacket::Kind::Fullscreen) {
+            if (description.kind == vn::graphics::DrawKind::Fullscreen) {
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
                 ContentDraw::ScreenSource source{};
@@ -2103,7 +2103,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
 
             for (const DrawPacket& description : draw.packets) {
                 ContentRefusal refusal;
-                if (description.kind == DrawPacket::Kind::Fullscreen) {
+                if (description.kind == vn::graphics::DrawKind::Fullscreen) {
                     FrameHead::DrawPlan plan;
                     (void)owner.caches.planDraw(description, draw, compatibility, render_pass, color_count, plan, refusal, cache_lock);
                 }

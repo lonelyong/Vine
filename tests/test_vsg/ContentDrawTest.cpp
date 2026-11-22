@@ -512,7 +512,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     // An identity of the OTHER kind is refused BY THE RESOLVER, before anything is recorded: the layer compiles one
     // descriptor ABI, so the content kind has no pipeline in a screen layer (see api/ContentDraw).
     ContentDraw::FullscreenDraw wrong_kind = draw;
-    wrong_kind.key.kind                = vn::graphics::DrawKind::Content;
+    wrong_kind.key.kind                = vn::graphics::DrawKind::Scene;
     EXPECT_EQ(recorder.plan(wrong_kind.key).pipeline, nullptr);
     EXPECT_EQ(recorder.refusals(), 1U);
     EXPECT_EQ(recorder.draws(), 2U) << "a refused identity is not a recorded draw";

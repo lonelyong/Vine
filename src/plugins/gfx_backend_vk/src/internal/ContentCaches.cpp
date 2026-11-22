@@ -929,7 +929,7 @@ struct ContentCaches::Impl {
         }
 
         ContentPipelineKey key;
-        key.identity.kind          = vn::graphics::DrawKind::Content;
+        key.identity.kind          = vn::graphics::DrawKind::Scene;
         key.identity.program       = vn::graphics::contentRefOf(program.description->id(), program.description->revision());
         key.identity.variant       = variant.bits();
         key.identity.compatibility = compatibility;
@@ -1211,7 +1211,6 @@ struct ContentCaches::Impl {
                                 ContentRefusal&                                        refusal)
     {
         plan      = FrameHead::DrawPlan{}; // see planDraw(DrawItem): an empty plan is "this draw records nothing"
-        plan.kind = FrameHead::Kind::Fullscreen;
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
         if (fragment_description == nullptr && draw.program != nullptr) {
@@ -2044,7 +2043,7 @@ void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<
         return; // reported when a draw finds no fallback view
     }
     for (const vn::graphics::DrawPacket& draw : draws) {
-        if (draw.kind != vn::graphics::DrawPacket::Kind::Scene || draw.commands == nullptr) {
+        if (draw.kind != vn::graphics::DrawKind::Scene || draw.commands == nullptr) {
             continue;
         }
         for (const vn::graphics::DrawItem& command : *draw.commands) {

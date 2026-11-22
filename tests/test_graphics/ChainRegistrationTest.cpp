@@ -35,7 +35,7 @@ PassDesc overlayDeclaration(const char8_t* name)
     PassDesc declaration;
     declaration.name          = name;
     declaration.stage         = PassStage::Overlay;
-    declaration.kind          = PassKind::Scene;
+    declaration.kind          = DrawKind::Scene;
     declaration.clear_enabled = false;
     return declaration;
 }
@@ -152,7 +152,7 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
     hud.name          = u8"corner_readout";
     hud.stage         = PassStage::Overlay;
     hud.order         = passStageOrder(PassStage::Overlay) + 50;
-    hud.kind          = PassKind::Scene;
+    hud.kind          = DrawKind::Scene;
     hud.camera        = intrusive_ptr<Camera>(corner->camera());
     hud.content       = intrusive_ptr<Scene>(corner->content());
     hud.viewport      = corner->boxViewport();

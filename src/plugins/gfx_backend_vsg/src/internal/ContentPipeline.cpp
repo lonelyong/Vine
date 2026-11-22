@@ -248,7 +248,7 @@ struct ContentPipeline::Data {
         return shader_stage;
     }
 
-    core::DrawKind        kind{ core::DrawKind::Content };
+    core::DrawKind        kind{ core::DrawKind::Scene };
     ::vsg::ShaderCompiler compiler;
     ProgramAbi            abi; // The facts the layer was built from.
     /// @brief One layout per set index the DECLARED BLOCKS reach (empty layouts included, see describeAbi).

@@ -67,6 +67,7 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::Texture2D;
 using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -176,7 +177,7 @@ constexpr int kTargetSize = 64;
     camera.projection = vn::math::Mat4d{};
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = camera;
     draw.commands = commands;
 

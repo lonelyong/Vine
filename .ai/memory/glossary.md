@@ -30,6 +30,7 @@
 | pass | pass (not translated) | One `PassDesc`; the only authoring shape. |
 | draw call | 绘制调用 | ONE submitted drawable - one `DrawItem`, the number a profiler and `FrameCounters::draws` / `FrameResult::draws` / `PrepareReport::draws` count. It is **not** a `DrawPacket`. |
 | draw packet, `DrawPacket` | 绘制包 | One pass' request for ONE view: the `DrawItem`s it submits plus the state and lights they are issued with. `FrameCounters::draw_packets` counts these (one per pass and view); a backend records it as N submissions. |
+| draw kind, `DrawKind` | — | The engine's two drawings - `Scene` (collected geometry through a camera) and `Fullscreen` (a full-screen triangle over the pass' resolved inputs). ONE value read at three levels: what a pass IS (`PassDesc::kind`), what one packet issues (`DrawPacket::kind`), which descriptor ABI the pipeline is compiled for (`PipelineKey::kind`). It names the draw, not the target: a full-screen draw fills the VIEW it is given, and "screen" stays the window. |
 | draw item | 可画项 | One `DrawItem`: a scene drawable as this frame sees it (a pass collects a list of them); one submitted item is one draw call. |
 | material values, `MaterialValues` | 材质值 | The read face of a material's values; `Material` is the asset and `MaterialInstance` an instance of it. |
 | content | 内容 | Scene, material, geometry, program and light as engine-owned objects. |

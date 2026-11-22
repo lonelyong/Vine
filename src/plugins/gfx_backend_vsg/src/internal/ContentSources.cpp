@@ -76,7 +76,7 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgramDescription& program
     out.shaders.entry    = std::string(vertex->entryPoint.as_std_str());
     out.shaders.defines  = variant.defines();
     out.variant          = variant;                 // the entry says which of the program's texts it is (see findProgram)
-    out.kind             = core::DrawKind::Content; // ... and which drawing CALL it answers (see ProgramFacts)
+    out.kind             = core::DrawKind::Scene; // ... and which drawing CALL it answers (see ProgramFacts)
 
     // The ABI is scanned from the same two texts, for the SAME variant the layer will compile them with:
     // the layout a pipeline is built against and the module it compiles cannot disagree about which

@@ -337,7 +337,7 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
         vn::graphics::PassDesc preview;
         // One row per preview (a plan's identity is the name): the four differ by attachment, and the helper names each
         // one uniquely - a shared name would leave ONE pass reading attachment 3.
-        preview.kind    = vn::graphics::PassKind::Fullscreen;
+        preview.kind    = vn::graphics::DrawKind::Fullscreen;
         preview.camera  = vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera);
         preview.program = vn::graphics::screenCopyProgram(attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All);
         preview.input_names = { u8"GBuffer" };

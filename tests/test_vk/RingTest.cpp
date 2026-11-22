@@ -60,6 +60,7 @@ using vn::graphics::RenderBackendRegistry;
 using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -159,7 +160,7 @@ void main()
 [[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, std::shared_ptr<const std::vector<DrawItem>> commands)
 {
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
 

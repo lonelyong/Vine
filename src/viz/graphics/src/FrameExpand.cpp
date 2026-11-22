@@ -11,7 +11,7 @@ void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source)
         return;
     }
     for (DrawPacket& draw : pass.packets) {
-        if (draw.kind == DrawPacket::Kind::Scene && draw.content == nullptr) {
+        if (draw.kind == DrawKind::Scene && draw.content == nullptr) {
             draw.content = source;
         }
     }
@@ -20,7 +20,7 @@ void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source)
 void expandPass(PassDraw& pass)
 {
     for (DrawPacket& draw : pass.packets) {
-        if (draw.kind != DrawPacket::Kind::Scene || draw.commands != nullptr) {
+        if (draw.kind != DrawKind::Scene || draw.commands != nullptr) {
             continue; // a full-screen packet, or a list the producer already had: nothing to collect
         }
         if (!draw.view.present() || draw.content == nullptr) {

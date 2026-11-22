@@ -325,7 +325,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     // 4. The content layer records pass 2, offered the images the SOURCE target has.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Scene,
                                   vn::test::programRef(*program),
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -803,7 +803,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     StateRegistry sampling_registry(pool);
 
     const ContentPass::Scope::Entry shadow_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content,
+        ContentPass::Scope::Entry{ DrawKind::Scene,
                                   vn::test::programRef(*shadow_program),
                                   shadow_geometry_facts.layout,
                                   shadow_pipelines.get(),
@@ -817,7 +817,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     ContentPass shadow_content(shadow_scope, diagnostics);
 
     const ContentPass::Scope::Entry sampling_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content,
+        ContentPass::Scope::Entry{ DrawKind::Scene,
                                   vn::test::programRef(*sampling_program),
                                   sampling_geometry_facts.layout,
                                   sampling_pipelines.get(),

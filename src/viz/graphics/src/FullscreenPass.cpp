@@ -12,7 +12,7 @@ VN_GRAPHICS_NS_BEGIN
 VN_OBJECT_META_IMPL(FullscreenPass, vn::graphics::RenderPass);
 
 FullscreenPass::FullscreenPass()
-  : RenderPass(PassKind::Fullscreen)
+  : RenderPass(DrawKind::Fullscreen)
 {
     // Nothing to state: "draws through a program over its resolved inputs, clears nothing" is what the KIND means
     // (see RenderPass::isClearEnabled / shouldClearDepth), so a full-screen pass cannot be built that halves it.
@@ -58,7 +58,7 @@ bool FullscreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         return true;
     }
     DrawPacket draw;
-    draw.kind        = DrawPacket::Kind::Fullscreen;
+    draw.kind        = DrawKind::Fullscreen;
     draw.view.camera = CameraSnapshot::of(*camera());
     draw.source      = source_;
     draw.program     = desc_.program;

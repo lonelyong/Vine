@@ -8,6 +8,7 @@
 
 #include <vine/graphics/ContentId.hpp>
 #include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DrawKind.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateResolution.hpp>
 #include <vine/graphics/graphics_global.hpp>
@@ -114,27 +115,6 @@ struct VN_GRAPHICS_API VertexLayoutKey {
 struct VN_GRAPHICS_API VertexLayoutKeyHash {
     /** @brief Hashes @p key. */
     [[nodiscard]] std::size_t operator()(const VertexLayoutKey& key) const noexcept;
-};
-
-/**
- * @brief What one draw packet draws with: the engine has exactly two, and they compile against
- * different descriptor ABIs.
- *
- * @details
- * - The kind is IDENTITY because the two are not interchangeable compilations of one program: a
- *   content draw binds the four ABI blocks at set 0 and its sampled inputs at set 1, while a
- *   full-screen draw binds the source's colour attachments at bindings 0..N-1 of set 0 (the
- *   full-screen ABI the engine's own screen programs, `BuiltinShaders::screenCopyProgram` and
- *   friends, are written against). A pipeline compiled for one of them cannot be bound for the
- *   other, so a key that did not carry the kind could hand one out for the other - the failure mode
- *   this field exists to make impossible.
- * - It is declared here, next to the key that uses it, and the plan uses the same enumeration (see
- *   FrameRecorder): one spelling for one fact.
- */
-enum class DrawKind : std::uint8_t
-{
-    Content,    // A content drawing call: the pass' content, one instance per collected command.
-    Fullscreen, // A full-screen draw packet: a full-screen triangle sampling a target's attachments.
 };
 
 /**
@@ -263,7 +243,7 @@ struct VN_GRAPHICS_API LoadOpVariantKey {
  * @brief Identity of a compiled content pipeline. Everything in here is "changing it needs a compile".
  */
 struct VN_GRAPHICS_API PipelineKey {
-    DrawKind                kind{ DrawKind::Content }; // Which of the engine's two draw packets this is.
+    DrawKind                kind{ DrawKind::Scene }; // Which of the engine's two draw packets this is.
     /// The program AND the revision its text was at (see `ContentId.hpp`): the pair is the identity a
     /// pipeline is compiled against, and the same pair the content tables answer programs by.
     vn::graphics::ContentRef program{};

@@ -64,6 +64,7 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -284,7 +285,7 @@ void main()
     auto list = std::make_shared<std::vector<DrawItem>>(std::move(commands));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = list;
 
@@ -703,7 +704,7 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
         list->push_back(commandOf(geometry, program));
 
         DrawPacket draw;
-        draw.kind     = DrawPacket::Kind::Scene;
+        draw.kind     = DrawKind::Scene;
         draw.view.camera   = identityCamera();
         draw.commands = list;
 

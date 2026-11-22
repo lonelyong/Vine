@@ -213,7 +213,7 @@ void main()
     pass.clear        = vn::graphics::ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     vn::graphics::DrawPacket draw;
-    draw.kind     = vn::graphics::DrawPacket::Kind::Scene;
+    draw.kind     = vn::graphics::DrawKind::Scene;
     draw.view.camera   = vn::graphics::CameraSnapshot{};
     draw.commands = commands;
     pass.packets.push_back(std::move(draw));

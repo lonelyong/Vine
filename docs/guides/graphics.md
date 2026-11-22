@@ -400,7 +400,7 @@ scene_rt->setSize(surface_w, surface_h);
 // ② 场景 pass：画进 scene_rt。order < 0 ⇒ 先于主 pass 执行。
 PassDesc scene_pass;
 scene_pass.name          = u8"scene_into_rt";
-scene_pass.kind          = PassKind::Scene;
+scene_pass.kind          = DrawKind::Scene;
 scene_pass.order         = -1;                                  // -1 < 0：排在主 pass 之前
 scene_pass.camera        = camera;
 scene_pass.content       = scene;
@@ -416,7 +416,7 @@ scene_pass.output.whole_target = true;                          // 对象级承�
 PassDesc compose_pass;
 compose_pass.name          = u8"compose_to_window";
 compose_pass.order         = 0;
-compose_pass.kind          = PassKind::Fullscreen;
+compose_pass.kind          = DrawKind::Fullscreen;
 compose_pass.camera        = camera;                            // 窗口 pass 的相机决定窗口视角
 compose_pass.program       = screenCopyProgram();               // 画面是**命名**的：纯拷贝用 SDK 的这个程序
 compose_pass.input_names   = { vn::String(u8"SceneColor") };    // 名字形式
@@ -467,7 +467,7 @@ auto gbuffer_program = defaultGbufferGeometryProgram();
 PassDesc gbuffer_pass;
 gbuffer_pass.name            = u8"gbuffer";
 gbuffer_pass.order           = -3;
-gbuffer_pass.kind            = PassKind::Scene;
+gbuffer_pass.kind            = DrawKind::Scene;
 gbuffer_pass.camera          = camera;
 gbuffer_pass.content         = scene;
 gbuffer_pass.target          = Target::explicitTarget(gbuffer);
@@ -488,7 +488,7 @@ composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由那�
 PassDesc light_pass;
 light_pass.name          = u8"deferred_lighting";
 light_pass.order         = 0;
-light_pass.kind          = PassKind::Fullscreen;
+light_pass.kind          = DrawKind::Fullscreen;
 light_pass.camera        = camera;                  // program 路径**必须**有相机
 light_pass.target        = Target::explicitTarget(composite);
 light_pass.input_names   = { vn::String(u8"GBuffer") };
@@ -499,7 +499,7 @@ light_pass.program       = defaultDeferredLightProgram();
 PassDesc forward_pass;
 forward_pass.name          = u8"forward_transparent";
 forward_pass.order         = 1;
-forward_pass.kind          = PassKind::Scene;
+forward_pass.kind          = DrawKind::Scene;
 forward_pass.camera        = camera;
 forward_pass.content       = transparent_scene;
 forward_pass.target        = Target::explicitTarget(composite);
@@ -512,7 +512,7 @@ forward_pass.output.whole_target = true;
 PassDesc present_pass;
 present_pass.name          = u8"present";
 present_pass.order         = 2;
-present_pass.kind          = PassKind::Fullscreen;
+present_pass.kind          = DrawKind::Fullscreen;
 present_pass.camera        = camera;
 present_pass.program       = screenCopyProgram();
 present_pass.input_names   = { vn::String(u8"Composite") };
@@ -1031,7 +1031,7 @@ frame table: 11 pass(es)
 vn::graphics::PassDesc desc;
 desc.name          = u8"compose";              // 诊断与计划表里的名字
 desc.stage         = PassStage::Transparent;    // 位置由意图决定：passStageOrder() 变成 order
-desc.kind          = PassKind::Fullscreen;         // 怎么执行：Scene（画一个内容场景）/ Fullscreen（全屏三角形 + program）
+desc.kind          = DrawKind::Fullscreen;         // 怎么执行：Scene（画一个内容场景）/ Fullscreen（全屏三角形 + program）
 desc.camera        = camera.get();
 desc.program       = vn::graphics::screenCopyProgram();
 desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
@@ -1067,7 +1067,7 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
 - **返回的是结点**：`applyPlan` 是唯一的注册入口；要拿已注册的执行结点按名字回读（`engine->pass(desc.name)`），
   于是"我声明了什么"与"我接下来要调什么"是同一个对象。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
-- 计划只表达 `PassKind`（`Scene` / `Fullscreen`）：手搭的**子类** pass 不再是可注册的形状，自定义写成 `PassDesc` 的**数据**
+- 计划只表达 `DrawKind`（`Scene` / `Fullscreen`）：手搭的**子类** pass 不再是可注册的形状，自定义写成 `PassDesc` 的**数据**
   （program / viewport / depth band）。
 
 

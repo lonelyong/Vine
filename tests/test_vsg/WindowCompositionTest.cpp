@@ -459,7 +459,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     const auto    window_view = view_block_for(3U, static_cast<std::uint32_t>(kWidth), static_cast<std::uint32_t>(kHeight));
 
     const ContentPass::Scope::Entry content_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content, vn::test::programRef(*program), geometry_facts.layout, content_layer.get(), &content_draws }
+        ContentPass::Scope::Entry{ DrawKind::Scene, vn::test::programRef(*program), geometry_facts.layout, content_layer.get(), &content_draws }
     };
 
     const auto* shared_pass = pass_of(2U);

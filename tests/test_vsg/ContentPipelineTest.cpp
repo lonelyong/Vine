@@ -484,7 +484,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // layer cannot build a pipeline for a descriptor ABI its draws do not bind.
     const std::uint64_t failures_before = layer->failures();
     PipelineKey         content_kind    = screenKey(1U);
-    content_kind.kind                   = vn::graphics::DrawKind::Content;
+    content_kind.kind                   = vn::graphics::DrawKind::Scene;
     const auto refused                  = layer->acquire(pool, content_kind);
     EXPECT_EQ(refused.pipeline, nullptr);
     EXPECT_EQ(layer->failures(), failures_before + 1U) << "a silently compiled wrong-ABI pipeline is the failure";

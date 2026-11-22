@@ -43,13 +43,6 @@ VN_BACKEND_VK_NS_BEGIN
  */
 class FrameHead final {
   public:
-    /// @brief Which of the two draw packets a plan belongs to (they share the pipeline and the state, not the payload).
-    enum class Kind : std::uint8_t
-    {
-        Content,    ///< A scene command (geometry, material, streams).
-        Fullscreen, ///< A full-screen packet (fragment program, source target).
-    };
-
     /// @brief One texture slot as the head resolved it: the view and the sampler it is read with.
     struct SlotBinding {
         VkImageView view{ VK_NULL_HANDLE }; ///< The uploaded image's view, or the 1x1 stand-in.
@@ -72,8 +65,6 @@ class FrameHead final {
      *   ahead of every pass.
      */
     struct DrawPlan {
-        Kind kind{ Kind::Content }; ///< Which of the two draw packets this plan was resolved for.
-
         VkPipeline                         pipeline{ VK_NULL_HANDLE };
         vn::graphics::ResolvedCommandState resolved{};
 
@@ -89,10 +80,9 @@ class FrameHead final {
         /// The texture slots this call binds (all of them absent for a full-screen packet, which binds its source instead).
         std::array<SlotBinding, detail::kTextureSlots> slots{};
 
-        /** @brief Releases what this plan names and forgets its kind; the stream vector keeps its capacity. */
+        /** @brief Releases what this plan names; the stream vector keeps its capacity. */
         void clear() noexcept
         {
-            kind            = Kind::Content;
             pipeline        = VK_NULL_HANDLE;
             resolved        = {};
             material        = {};

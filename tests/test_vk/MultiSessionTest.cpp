@@ -71,6 +71,7 @@ using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
 using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 
 constexpr int kTargetSize = 32;
 
@@ -168,7 +169,7 @@ void main()
     commands->push_back(DrawItem(geometry, nullptr, vn::math::Mat4d{}));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
@@ -184,7 +185,7 @@ void main()
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
@@ -258,7 +259,7 @@ void main()
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;

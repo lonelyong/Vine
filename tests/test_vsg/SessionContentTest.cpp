@@ -511,7 +511,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // frame clock - the extent is the window's, which is the picture the shading reconstructs from.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Scene,
                                   vn::test::programRef(*program),
                                   geometry_facts.layout,
                                   pipelines.get(),

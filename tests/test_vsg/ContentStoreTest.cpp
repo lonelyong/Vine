@@ -230,7 +230,7 @@ std::unique_ptr<Plan> contentPlan(std::vector<CompiledCommand> commands, const S
     plan->commands = std::move(commands);
 
     CompiledDraw draw;
-    draw.kind     = DrawKind::Content;
+    draw.kind     = DrawKind::Scene;
     draw.commands = plan->commands;
     plan->draws.push_back(draw);
 
@@ -342,7 +342,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_EQ(store.builds(), 3U);
 
     EXPECT_TRUE(findGeometry(facts, geometryRef(named->id(), named->revision())).found());
-    EXPECT_TRUE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).found());
+    EXPECT_TRUE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Scene).found());
     EXPECT_TRUE(findMaterial(facts, material.get()).found());
 
     // A second frame naming the other three builds the other three, and nothing else.
@@ -404,7 +404,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     ASSERT_FALSE(facts.program_order.empty()) << "one program was described, so its table has a row";
 
     // And the order is the one the lookups search, so the recording's own three questions answer through it.
-    const auto found_program  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content);
+    const auto found_program  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Scene);
     const auto found_geometry = findGeometry(facts, geometryRef(geometry->id(), geometry->revision()));
     const auto found_material = findMaterial(facts, material.get());
     EXPECT_TRUE(found_program.entry != nullptr);
@@ -661,8 +661,8 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     textured_variant.textured = true;
     const ProgramVariant plain_variant;
 
-    const auto textured_entry = findProgram(facts, vn::test::programRef(*program), textured_variant, DrawKind::Content);
-    const auto plain_entry    = findProgram(facts, vn::test::programRef(*program), plain_variant, DrawKind::Content);
+    const auto textured_entry = findProgram(facts, vn::test::programRef(*program), textured_variant, DrawKind::Scene);
+    const auto plain_entry    = findProgram(facts, vn::test::programRef(*program), plain_variant, DrawKind::Scene);
     ASSERT_TRUE(textured_entry.found());
     ASSERT_TRUE(plain_entry.found());
     EXPECT_EQ(textured_entry.entry->abi.bindings.size(), plain_entry.entry->abi.bindings.size() + 1U) << "the sampler is what the material's texture adds";
@@ -692,7 +692,7 @@ TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
     EXPECT_EQ(entry.entry->kind, DrawKind::Fullscreen);
     EXPECT_NE(entry.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
         << "the full-screen ABI's vertex stage is the engine's triangle, not the host's";
-    EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).found())
+    EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Scene).found())
         << "a program only ever described as a full-screen packet has no content entry";
 }
 
@@ -737,7 +737,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     EXPECT_EQ(store.materialEntries(), 0U);
     EXPECT_EQ(store.builds(), 0U);
     EXPECT_EQ(findGeometry(facts, geometryRef(geometry->id(), geometry->revision())).miss, FactMiss::Unknown);
-    EXPECT_EQ(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Scene).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(facts, material.get()).miss, FactMiss::Unknown);
 }
 
@@ -992,12 +992,12 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     const ContentFacts& facts       = store.tablesFor(screen_plan->frame, timeline);
 
     ASSERT_EQ(store.programEntries(), 2U) << "one text, two entries: the two calls are different ABIs";
-    const auto content = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content);
+    const auto content = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Scene);
     const auto screen  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Fullscreen);
     ASSERT_TRUE(content.found());
     ASSERT_TRUE(screen.found());
     EXPECT_NE(content.entry, screen.entry) << "each call gets its own entry";
-    EXPECT_EQ(content.entry->kind, DrawKind::Content);
+    EXPECT_EQ(content.entry->kind, DrawKind::Scene);
     EXPECT_EQ(screen.entry->kind, DrawKind::Fullscreen);
     // And the entries really are those two builds: the content one carries the HOST's vertex stage, the screen
     // one the engine's generated triangle (see api/ContentSources).

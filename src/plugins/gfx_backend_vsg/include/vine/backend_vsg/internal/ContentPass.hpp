@@ -184,7 +184,7 @@ class VN_BACKEND_VSG_API ContentPass {
     struct Scope {
         /** @brief One compiled half: one program's stages against one vertex layout, for ONE variant. */
         struct Entry {
-            core::DrawKind           kind{ core::DrawKind::Content }; // Which draw packet this half serves.
+            core::DrawKind           kind{ core::DrawKind::Scene }; // Which draw packet this half serves.
             vn::graphics::ContentRef program{};                       // The program identity AND revision the plan names.
             core::VertexLayoutKey    layout{};                        // The vertex layout its pipeline declares (content).
             ContentPipeline*         pipelines{ nullptr };            // The pipeline layer over that stage text.

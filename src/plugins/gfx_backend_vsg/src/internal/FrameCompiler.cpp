@@ -315,7 +315,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass& p
         draw.program  = source.program;
         draw.commands = resolveCommands(source, default_program, pass.state);
 
-        if (source.kind == DrawKind::Fullscreen) {
+        if (source.kind == core::DrawKind::Fullscreen) {
             // A full-screen draw has no commands to carry per-draw state, so the plan resolves its state here: the
             // defaults a screen program does not edit (no culling, fill, triangles, the engine's blend factors) with
             // the depth policy the call's own definition gives it (see CompiledDraw::dynamic - the canonical

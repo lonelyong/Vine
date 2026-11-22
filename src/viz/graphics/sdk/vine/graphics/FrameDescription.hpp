@@ -14,6 +14,7 @@
 
 #include "CameraSnapshot.hpp"
 #include "DepthRange.hpp"
+#include "DrawKind.hpp"
 #include "ImageSource.hpp"
 #include "Light.hpp"
 #include "LightSet.hpp"
@@ -144,15 +145,9 @@ struct ClearPolicy {
  *   something at the wrong moment.
  */
 struct VN_GRAPHICS_API DrawPacket {
-    /// Which kind of draw packet this is (the two the contract has; they take different arguments).
-    enum class Kind : std::uint8_t
-    {
-        Scene,      // Draw collected geometry through a camera (a content draw packet).
-        Fullscreen, // Draw a full-screen program over a source target (a full-screen draw packet).
-    };
-
-    /// Which of the two kinds this describes.
-    Kind kind = Kind::Scene;
+    /// Which of the two drawings this packet issues (see DrawKind: one value names the fact here, on the pass
+    /// that declared it, and in the pipeline key that records it).
+    DrawKind kind = DrawKind::Scene;
     /// The view this draw is projected, lit and collected with, as a VALUE taken when the pass described itself.
     ///
     /// Its camera half carries `present == false` when the pass issues NO draw at all (there is no view to build),
@@ -329,7 +324,7 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
     if (!description.view.present()) {
         return false;
     }
-    if (description.kind == DrawPacket::Kind::Fullscreen) {
+    if (description.kind == DrawKind::Fullscreen) {
         return description.program != nullptr || description.program_description != nullptr;
     }
     return description.commands != nullptr && !description.commands->empty();
@@ -396,7 +391,7 @@ struct VN_GRAPHICS_API FrameCounts {
     if (!packetDraws(description)) {
         return 0U;
     }
-    if (description.kind == DrawPacket::Kind::Fullscreen) {
+    if (description.kind == DrawKind::Fullscreen) {
         return 1U;
     }
     const std::size_t items = description.commands->size();

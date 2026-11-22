@@ -68,8 +68,8 @@ class FrameHead {
     struct DrawPlan {
         /// The compiled half's recorder. Not const: recording counts into it (its counters are atomics, see
         /// api/ContentDraw - two drivers' frames may record through one half at once).
-        ContentDraw* draws{ nullptr };
-        bool         fullscreen{ false }; // Which of the two draw packets this is.
+        ContentDraw*       draws{ nullptr };
+        core::DrawKind     kind{ core::DrawKind::Scene }; // Which of the two draw packets this is.
 
         /// The CONTENT call's resolved value (its spans are filled by @ref value, never stored).
         ContentDraw::Draw draw{};
@@ -94,10 +94,10 @@ class FrameHead {
          */
         void clear() noexcept
         {
-            draws        = nullptr;
-            fullscreen   = false;
-            draw         = {};
-            fullscreen_draw  = {};
+            draws = nullptr;
+            kind  = core::DrawKind::Scene;
+            draw  = {};
+            fullscreen_draw = {};
             for (::vsg::ref_ptr<::vsg::BindDescriptorSet>& block : blocks) {
                 block = {};
             }

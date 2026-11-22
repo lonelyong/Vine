@@ -15,7 +15,7 @@ VN_BACKEND_VSG_NS_BEGIN
 struct CompiledPrograms::Data {
     /** @brief What a compiled half is: everything the layer depends on (see the file note). */
     struct Key {
-        core::DrawKind           kind{ core::DrawKind::Content };
+        core::DrawKind           kind{ core::DrawKind::Scene };
         vn::graphics::ContentRef program{}; // Identity AND revision: the text this half was compiled from.
         core::VertexLayoutKey    layout{};
         ProgramVariant           variant{};

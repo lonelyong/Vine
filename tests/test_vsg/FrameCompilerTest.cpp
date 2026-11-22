@@ -181,7 +181,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     EXPECT_EQ(screen.dynamic.topology, vn::graphics::Topology::Triangles);
 
     const CompiledDraw& content = consumer.draws[1];
-    EXPECT_EQ(content.kind, DrawKind::Content);
+    EXPECT_EQ(content.kind, DrawKind::Scene);
     ASSERT_EQ(content.commands.size(), 1u) << "the content call of the same pass is unchanged";
     EXPECT_EQ(content.commands[0].dynamic.depth, consumer.state.depth) << "and a content command still takes the pass' depth policy";
 }

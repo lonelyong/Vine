@@ -154,7 +154,7 @@ struct CompiledInput {
 
 /** @brief One draw packet, resolved. */
 struct CompiledDraw {
-    DrawKind                         kind{ DrawKind::Content }; // Content drawing or a full-screen program.
+    core::DrawKind                   kind{ core::DrawKind::Scene }; // Content drawing or a full-screen program.
     CameraSnapshot                   camera{};                  // The camera announced with the call.
     vn::graphics::Viewport           viewport{};                // Resolved: the announced rectangle, or the whole target.
     std::span<const LightRef>        lights{};                  // The consumed lights; empty = the backend default.

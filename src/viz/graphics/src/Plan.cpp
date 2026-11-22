@@ -72,12 +72,12 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
         }
         // A KIND READS ITS OWN FIELDS. The values below are documented as belonging to one execution, so stating
         // one on the other kind is a declaration nothing consumes - refused here instead of being left to look like
-        // a declaration at the call site (see PassKind).
+        // a declaration at the call site (see DrawKind).
         //
         // `content` is NOT one of them for a Fullscreen pass: FullscreenPass reads it for the scene's LIGHT SET, so a
         // composite pass names the scene whose lights its program shades with. The fields below are the ones the
         // other execution truly never reads.
-        if (pass.kind == PassKind::Fullscreen) {
+        if (pass.kind == DrawKind::Fullscreen) {
             if (pass.program_override != nullptr) {
                 problems.push_back(PlanProblem{ PlanProblemCode::FieldUnusedByKind,
                                                 name,
@@ -206,7 +206,7 @@ String Plan::describe() const
             text += String(u8"\n");
         }
         text += String(u8"pass[") + digits(index) + String(u8"] name='") + pass.name + String(u8"' kind=") +
-                (pass.kind == PassKind::Fullscreen ? String(u8"Fullscreen") : String(u8"Scene")) + String(u8" order=") +
+                (pass.kind == DrawKind::Fullscreen ? String(u8"Fullscreen") : String(u8"Scene")) + String(u8" order=") +
                 digits(static_cast<std::size_t>(pass.order.value_or(passStageOrder(pass.stage)))) + String(u8" target=") +
                 (pass.target.isExplicit() ? String(u8"explicit")
                                           : (pass.target.isTransient() ? String(u8"transient") : String(u8"window"))) +

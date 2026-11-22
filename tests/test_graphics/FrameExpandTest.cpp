@@ -43,6 +43,7 @@ using vn::graphics::detail::expandFrame;
 using vn::graphics::detail::expandPass;
 using vn::graphics::detail::PublicationStore;
 using vn::graphics::detail::SnapshotSource;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
 using vn::math::Vec3f;
@@ -67,7 +68,7 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
     camera.projection = vn::math::Mat4d{};
 
     DrawPacket draw;
-    draw.kind       = DrawPacket::Kind::Scene;
+    draw.kind       = DrawKind::Scene;
     draw.view.camera = camera;
     draw.content    = content;
     draw.view.layer_mask = vn::graphics::kAllLayers;
@@ -290,11 +291,11 @@ TEST(FrameExpandTest, BindSceneDrawsBindsOnlyWhatNothingBoundYet)
 
     PassDraw pass;
     pass.packets.emplace_back(); // scene draw, nothing bound
-    pass.packets.back().kind = DrawPacket::Kind::Scene;
+    pass.packets.back().kind = DrawKind::Scene;
     pass.packets.emplace_back(); // full-screen draw
-    pass.packets.back().kind = DrawPacket::Kind::Fullscreen;
+    pass.packets.back().kind = DrawKind::Fullscreen;
     pass.packets.emplace_back(); // scene draw already naming a source
-    pass.packets.back().kind    = DrawPacket::Kind::Scene;
+    pass.packets.back().kind    = DrawKind::Scene;
     pass.packets.back().content = other_source;
 
     bindSceneDraws(pass, source);

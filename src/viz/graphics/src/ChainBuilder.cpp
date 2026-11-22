@@ -423,7 +423,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         PassDesc light_desc;
         light_desc.name          = u8"deferred_lighting";
         light_desc.stage         = PassStage::Shading;
-        light_desc.kind          = PassKind::Fullscreen;
+        light_desc.kind          = DrawKind::Fullscreen;
         light_desc.camera        = intrusive_ptr<Camera>(camera_);
         light_desc.content       = content_;
         light_desc.input_names   = { u8"GBuffer" };
@@ -465,7 +465,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     PassDesc light_desc;
     light_desc.name          = u8"deferred_lighting";
     light_desc.stage         = PassStage::Shading;
-    light_desc.kind          = PassKind::Fullscreen;
+    light_desc.kind          = DrawKind::Fullscreen;
     light_desc.camera        = intrusive_ptr<Camera>(camera_);
     light_desc.content       = content_;
     light_desc.target        = Target::explicitTarget(composite);
@@ -511,7 +511,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     PassDesc present_desc;
     present_desc.name                       = u8"present";
     present_desc.stage                      = PassStage::Present;
-    present_desc.kind                       = PassKind::Fullscreen;
+    present_desc.kind                       = DrawKind::Fullscreen;
     present_desc.camera                     = intrusive_ptr<Camera>(camera_);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
     // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a

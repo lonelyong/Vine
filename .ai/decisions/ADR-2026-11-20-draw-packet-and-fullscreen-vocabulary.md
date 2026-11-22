@@ -133,3 +133,36 @@ and had to be argued first. The measurements below were taken on the tree that b
 - The batch's own acceptance is the parity test
   `BackendParityTest.ADrawPacketCarriesItsDrawsAndBothBackendsCountThem` (one packet, two draws, asked and
   recorded, both backends) plus the doc gates listed in `.github/copilot-instructions.md`.
+
+## Amendment 2026-11-22: the kind is one value, read at three levels
+
+The 2026-11-20 batch renamed the `Screen` enumerator in four places and kept four types; the fifth review round
+(2026-11-21) named that mixture as a defect, which was this decision's own recorded trigger for the kind set. The
+values are unchanged - `Scene` and `Fullscreen` - and what follows is the type count.
+
+- **One enumeration.** `DrawKind` lives in its own header (`DrawKind.hpp`, like `DepthMode.hpp`) and is what
+  `PassDesc::kind`, `DrawPacket::kind` and `PipelineKey::kind` all take. `PassKind`, `DrawPacket::Kind`, vk's
+  `FrameHead::Kind` and vsg's `bool fullscreen` are deleted; `FrameHead::Kind` in both backends is `DrawKind`.
+- **Why the mixture was a defect, not tidiness.** The backend frame head answered "which recorder runs this plan"
+  with a `bool`, while the pipeline key answered "which descriptor ABI is this pipeline for" with an enumeration.
+  Two types for one fact cannot be compared, so "the plan's kind and the pipeline's kind agree" was a rule to
+  remember rather than a property of the value - and the two ABIs bind different descriptor sets, so a mismatch
+  is a pipeline bound for the wrong layout (`G1` / `G4`).
+- **Why `Scene` survived the merge.** This ADR's own reason stands and is the reason the value is not `Content`:
+  a scene pass draws lines, impostors, gizmos and overlays, and `Content` would read as "anything the engine owns".
+  The merge takes the TYPE, not the spelling of the value.
+- **Rejected: keeping `PassKind` as an alias of `DrawKind`.** The module promises no source or ABI stability
+  (`graphics-frame-pipeline.md` 1.3), every in-tree consumer moved in the same commit, and an alias would leave two
+  names in every search - the cost `BC-17`…`BC-21` already refused to pay for a renamed word.
+- **Rejected: a `std::variant` of two packet types.** The tag/label mismatch it would prevent is already answered
+  by one predicate (`packetDraws`), and the shape would pierce `OwnedFrame`, both backends' recorders and every
+  test that builds a frame by hand (`G8`).
+- Boundary unchanged: the reopen trigger still governs the SET of values - a consumer needing a third execution
+  shape (compute, mesh shading) redesigns the set as a whole. The two values are compared by name at the points
+  that branch (there is no `switch` to make the compiler list them), so a third value is a design batch and
+  `graphics-architecture.md` 2.11's extension row is the list to walk.
+- Evidence: `git grep -w PassKind` counted 80 reference lines in `src/` and `tests/` before the batch and 0 after
+  (the guide's six example lines moved too); `DrawPacket::Kind` and both backends' `FrameHead::Kind` are 0 as well, and
+  the tree builds clean. The four test suites were NOT re-run for this batch in the review environment - it was handed
+  over to a Windows build - so the suite evidence for the type merge is the first green run after it, not a claim
+  made here.

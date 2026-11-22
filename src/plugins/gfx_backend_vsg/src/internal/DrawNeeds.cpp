@@ -69,7 +69,7 @@ core::PipelineKey DrawNeeds::keyFor(const core::RenderPassCompatibility& compati
 DrawNeeds drawNeeds(const core::CompiledPass& pass, const core::CompiledCommand& command, const ContentFacts& facts)
 {
     DrawNeeds out;
-    out.kind              = core::DrawKind::Content;
+    out.kind              = core::DrawKind::Scene;
     out.program           = command.program;
     out.topology          = command.dynamic.topology;
     out.color_attachments = pass.color_attachments;
@@ -99,7 +99,7 @@ DrawNeeds drawNeeds(const core::CompiledPass& pass, const core::CompiledCommand&
     out.variant           = variantOf(*material.entry, *geometry.entry);
     out.variant.instanced = out.instanced;
 
-    const FactResult<ProgramFacts> program = findProgram(facts, command.program, out.variant, core::DrawKind::Content);
+    const FactResult<ProgramFacts> program = findProgram(facts, command.program, out.variant, core::DrawKind::Scene);
     if (!program.found()) {
         out.missed = DrawNeeds::Miss::Program;
         out.miss   = program.miss;

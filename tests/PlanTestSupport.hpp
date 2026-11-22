@@ -175,7 +175,7 @@ inline bool restatePassForTest(vn::graphics::PassChain& chain, vn::raw_ptr<vn::g
  * @brief The TYPED handle spelling of a Screen declaration (`intrusive_ptr<FullscreenPass>`).
  *
  * @details
- * - A plan states a `PassKind`, and the node the engine builds for it is the built-in of that kind; a handle typed to
+ * - A plan states a `DrawKind`, and the node the engine builds for it is the built-in of that kind; a handle typed to
  *   `FullscreenPass` is therefore the node the engine built, not a template the test configured.
  *
  * @param pass The registered node (a Screen declaration, or null).

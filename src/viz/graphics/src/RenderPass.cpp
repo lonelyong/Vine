@@ -30,10 +30,10 @@ constexpr Colorf kUnstatedClearColor{ 0.0F, 0.0F, 0.0F, 0.0F };
 VN_OBJECT_META_IMPL(RenderPass, vn::Object);
 
 RenderPass::RenderPass()
-  : RenderPass(PassKind::Scene)
+  : RenderPass(DrawKind::Scene)
 {}
 
-RenderPass::RenderPass(PassKind kind)
+RenderPass::RenderPass(DrawKind kind)
 {
     desc_.kind = kind;
 }
@@ -77,12 +77,12 @@ bool RenderPass::shouldClearDepth() const noexcept
     if (desc_.clear_depth.has_value()) {
         return *desc_.clear_depth;
     }
-    return desc_.kind != PassKind::Fullscreen && isClearEnabled();
+    return desc_.kind != DrawKind::Fullscreen && isClearEnabled();
 }
 
 bool RenderPass::isClearEnabled() const noexcept
 {
-    return desc_.clear_enabled.value_or(desc_.kind != PassKind::Fullscreen);
+    return desc_.clear_enabled.value_or(desc_.kind != DrawKind::Fullscreen);
 }
 
 PassRenderState RenderPass::stateOverrides() const noexcept
@@ -149,7 +149,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         return true;
     }
     DrawPacket draw;
-    draw.kind = DrawPacket::Kind::Scene;
+    draw.kind = DrawKind::Scene;
     // THE VIEW, AS A VALUE (see View). Taking it here is what lets the frame's expansion collect on another
     // thread, and what keeps this frame's culling and shading on one camera state.
     draw.view.camera = CameraSnapshot::of(*desc_.camera);

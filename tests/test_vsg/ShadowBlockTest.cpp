@@ -175,7 +175,7 @@ CompiledDraw drawWith(const CameraSnapshot& camera, std::span<const LightRef> li
 {
     storage.assign(lights.begin(), lights.end());
     CompiledDraw draw;
-    draw.kind   = DrawKind::Content;
+    draw.kind   = DrawKind::Scene;
     draw.camera = camera;
     draw.lights = storage;
     return draw;
@@ -741,14 +741,14 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     StateRegistry consumer_registry(pool);
 
     const ContentPass::Scope::Entry producer_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content,
+        ContentPass::Scope::Entry{ DrawKind::Scene,
                                   vn::test::programRef(*producer_program),
                                   quad_facts.layout,
                                   producer_pipelines.get(),
                                   &producer_draws }
     };
     const ContentPass::Scope::Entry consumer_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content,
+        ContentPass::Scope::Entry{ DrawKind::Scene,
                                   vn::test::programRef(*consumer_program),
                                   band_facts[0].layout,
                                   consumer_pipelines.get(),

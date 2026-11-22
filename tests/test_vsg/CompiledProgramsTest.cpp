@@ -261,7 +261,7 @@ TEST(CompiledProgramsTest, OneHalfPerTupleThePassNames)
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()),
                                                  commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -271,13 +271,13 @@ TEST(CompiledProgramsTest, OneHalfPerTupleThePassNames)
     EXPECT_EQ(halves.builds(), 1U);
     EXPECT_EQ(halves.refused(), 0U);
 
-    EXPECT_EQ(entries[0].kind, DrawKind::Content);
+    EXPECT_EQ(entries[0].kind, DrawKind::Scene);
     EXPECT_EQ(entries[0].program, vn::test::programRef(*program));
     EXPECT_EQ(entries[0].layout, geometry_facts.layout);
     EXPECT_EQ(entries[0].variant, ProgramVariant{});
     EXPECT_NE(entries[0].pipelines, nullptr) << "the half carries the compiled layer";
     EXPECT_NE(entries[0].draws, nullptr) << "and the recorder over it";
-    EXPECT_EQ(entries[0].pipelines->kind(), DrawKind::Content);
+    EXPECT_EQ(entries[0].pipelines->kind(), DrawKind::Scene);
 }
 
 TEST(CompiledProgramsTest, ASteadyPassBuildsNothing)
@@ -307,7 +307,7 @@ TEST(CompiledProgramsTest, ASteadyPassBuildsNothing)
 
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -356,7 +356,7 @@ TEST(CompiledProgramsTest, TheHalvesEpisodeStateIsTheHalvesOwn)
 
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass first_pass  = passWith(draws);
     const CompiledPass second_pass = passWith(draws);
@@ -434,7 +434,7 @@ TEST(CompiledProgramsTest, TwoTextsOfOneProgramAreTwoHalves)
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), textured.get()),
                                                  commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -479,7 +479,7 @@ TEST(CompiledProgramsTest, ThePassAttachmentCountIsPartOfTheHalf)
 
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
 
     // A layer's blend state declares its attachment count, so a one-attachment layer is not the same compiled
@@ -530,7 +530,7 @@ TEST(CompiledProgramsTest, ALayoutIsPartOfTheHalf)
         commandOf(plain_geometry.get(), plain_geometry->revision(), program.get(), program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -565,7 +565,7 @@ TEST(CompiledProgramsTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
 
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -629,7 +629,7 @@ TEST(CompiledProgramsTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
 
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -685,7 +685,7 @@ TEST(CompiledProgramsTest, AKeyTheTablesCannotAnswerProducesNoHalf)
     const ContentFacts                 empty{};
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -722,7 +722,7 @@ TEST(CompiledProgramsTest, AHalfWhoseKeyLeftTheTablesIsParked)
 
     const std::vector<CompiledCommand> old_commands{ commandOf(geometry.get(), geometry->revision(), program.get(), old_revision, shaded.get()) };
     const std::vector<CompiledDraw>    old_draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, old_commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, old_commands }
     };
     const CompiledPass old_pass = passWith(old_draws);
     ASSERT_EQ(halves.halvesFor(old_pass, tables.facts, timeline, retirement).size(), 1U);
@@ -759,7 +759,7 @@ TEST(CompiledProgramsTest, AHalfWhoseKeyLeftTheTablesIsParked)
 
     const std::vector<CompiledCommand> new_commands{ commandOf(geometry.get(), geometry->revision(), program.get(), new_revision, shaded.get()) };
     const std::vector<CompiledDraw>    new_draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, new_commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, new_commands }
     };
     const CompiledPass new_pass = passWith(new_draws);
 
@@ -813,7 +813,7 @@ TEST(CompiledProgramsTest, ARefusedLayerIsNotRetriedEveryFrame)
 
     const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
     const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands }
     };
     const CompiledPass pass = passWith(draws);
 
@@ -864,7 +864,7 @@ TEST(CompiledProgramsTest, AnotherProgramIdentityIsAnotherHalf)
         commandOf(geometry.get(), geometry->revision(), first_program.get(), first_program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> first_draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, first_commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, first_commands }
     };
     const auto first = halves.halvesFor(passWith(first_draws), tables.facts, timeline, retirement);
     ASSERT_EQ(first.size(), 1U);
@@ -878,7 +878,7 @@ TEST(CompiledProgramsTest, AnotherProgramIdentityIsAnotherHalf)
         commandOf(geometry.get(), geometry->revision(), second_program.get(), second_program->revision(), shaded.get())
     };
     const std::vector<CompiledDraw> second_draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, second_commands }
+        CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, second_commands }
     };
     const auto second = halves.halvesFor(passWith(second_draws), tables.facts, timeline, retirement);
     ASSERT_EQ(second.size(), 1U);
@@ -940,7 +940,7 @@ TEST(CompiledProgramsTest, TheReportedNeedsAreWhatTheFrameBuilds)
                                            commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get()),
                                            commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get()) };
     commands[2].dynamic.topology = Topology::Lines;
-    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
+    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Scene, {}, {}, {}, {}, {}, {}, commands } };
     const CompiledPass              pass = passWith(draws);
 
     RenderPassCompatibility compatibility;
@@ -951,7 +951,7 @@ TEST(CompiledProgramsTest, TheReportedNeedsAreWhatTheFrameBuilds)
     // THE IDENTITY SPELLED BY HAND: this is the case's own answer, not the code's.
     const auto identity = [&](std::uint32_t variant_bits, Topology topology) {
         PipelineKey key;
-        key.kind                = DrawKind::Content;
+        key.kind                = DrawKind::Scene;
         key.program             = vn::test::programRef(*program);
         key.vertex_layout       = geometry_facts.layout;
         key.compatibility       = compatibility;

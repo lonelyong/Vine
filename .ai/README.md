@@ -111,7 +111,8 @@ keeps the old argument.
   `ScreenPass` → `FullscreenPass`, `FrameOutcome` → `FrameCallOutcome`, the `Capabilities` forwarders and
   `DeviceClock::WindowId` deleted, `FrameStats.hpp` → `FrameReport.hpp`; `draws` realigned to the item count
   with `draw_packets` beside it; five migration notes (`BC-28`…`BC-32`) in `graphics-rendering.md` 2.10 and
-  no aliases - it supersedes the `DrawCall` row of the 2026-11-18 vocabulary ADR.
+  no aliases - it supersedes the `DrawCall` row of the 2026-11-18 vocabulary ADR. The four kind spellings it
+  renamed were then unified into one `DrawKind` on 2026-11-22 (the same ADR's amendment).
 
 - `ADR-2026-11-19-cache-interface-and-backends.md` — one typed `Cache` interface with three-state
   answers; `InMemoryCache` implements it without serialising, a persistent backend serialises into a

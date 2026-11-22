@@ -69,7 +69,7 @@ std::span<const std::byte> bytesOf(const Block& block) noexcept
 std::string describeMissingContentHalf(const core::CompiledPass& pass, const ContentFacts& facts)
 {
     for (const core::CompiledDraw& draw : pass.draws) {
-        if (draw.kind != core::DrawKind::Content) {
+        if (draw.kind != core::DrawKind::Scene) {
             continue;
         }
         if (draw.commands.empty()) {
@@ -361,7 +361,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         }
     }
     for (const core::CompiledDraw& draw : pass.draws) {
-        has_content = has_content || draw.kind == core::DrawKind::Content;
+        has_content = has_content || draw.kind == core::DrawKind::Scene;
     }
 
     ::vsg::ref_ptr<::vsg::BindDescriptorSet> input_set;
@@ -968,7 +968,7 @@ bool ContentPass::resolveFullscreenDraw(const core::CompiledDraw&            dra
     // state are all resolved here - and the pipeline is what the recording binds, never a layer lookup.
     ContentDraw::FullscreenDraw& full_screen = call.fullscreen_draw;
     call.draws                           = entry.draws;
-    call.fullscreen                          = true;
+    call.kind                            = core::DrawKind::Fullscreen;
     // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the counts it carries are the source's colours and the
     // source's own depth - the map and the block are the text's own declarations, so they cannot vary with the
     // pass - and it states no `depth_sampleable`, because the full-screen ABI's depth question is answered by the
@@ -1197,7 +1197,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
     // all resolved here - the recording adds a node and reads nothing.
     ContentDraw::Draw& record = call.draw;
     call.draws                = entry->draws;
-    call.fullscreen           = false;
+    call.kind                 = core::DrawKind::Scene;
     // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the same value the warm-up path reads, so this draw cannot
     // be compiled for an identity the answer does not name. The variant is identity like the layout is, and so
     // is the topology the half's pipeline BAKES (the API accepts a dynamically set topology only within the

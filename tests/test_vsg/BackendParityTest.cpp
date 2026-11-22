@@ -102,6 +102,7 @@ using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
 using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -344,7 +345,7 @@ void main()
                                         vn::graphics::LightSetPtr                         lights = nullptr)
 {
     DrawPacket draw;
-    draw.kind         = DrawPacket::Kind::Scene;
+    draw.kind         = DrawKind::Scene;
     draw.view.camera  = identityCamera();
     draw.commands     = std::move(commands);
     draw.light_values = std::move(lights);
@@ -890,7 +891,7 @@ TEST_F(BackendParityTest, TheSameScreenCopySamplesTheSameColours)
         onePass(source, source_clear, DepthMode::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, scene, red) })) });
 
     DrawPacket screen;
-    screen.kind                = DrawPacket::Kind::Fullscreen;
+    screen.kind                = DrawKind::Fullscreen;
     screen.view.camera         = identityCamera();
     screen.source              = source;
     screen.program             = copy;
@@ -1175,7 +1176,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     light_entry.inputs.push_back(vn::graphics::ImageSource::producedTarget(gbuffer));
 
     DrawPacket screen;
-    screen.kind                = DrawPacket::Kind::Fullscreen;
+    screen.kind                = DrawKind::Fullscreen;
     screen.view.camera         = identityCamera();
     screen.source              = gbuffer;
     screen.program             = light_program;

@@ -184,7 +184,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     if (!draw.view.camera.present) {
         return 0;
     }
-    if (draw.kind != vn::graphics::DrawPacket::Kind::Scene) {
+    if (draw.kind != vn::graphics::DrawKind::Scene) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::WrongPath),
                    vn::String(u8"vk: a full-screen draw reached the content path (it has its own recordFullscreen)"));

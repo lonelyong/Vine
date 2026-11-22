@@ -3715,7 +3715,7 @@ class MockBackend : public RenderBackend {
             if (!draw.view.camera.present) {
                 continue; // a draw packet with no view is no call at all
             }
-            if (draw.kind == DrawPacket::Kind::Fullscreen) {
+            if (draw.kind == DrawKind::Fullscreen) {
                 ++program_draws;
                 last_program_source = draw.source;
                 last_program        = draw.program.get();
@@ -6095,7 +6095,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenFullscreenPassSamples)
     // draws it with — a full-screen pass has no implicit shading (see FullscreenPass).
     auto copy_program = vn::graphics::screenCopyProgram();
     PassDesc screen_desc;
-    screen_desc.kind        = PassKind::Fullscreen;
+    screen_desc.kind        = DrawKind::Fullscreen;
     screen_desc.camera      = cam;
     screen_desc.program     = copy_program;
     screen_desc.input_names = { u8"SceneColor" };
@@ -6128,7 +6128,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenFullscreenPassSamples)
     idle_desc.enabled     = false;
     (void)vn::test::applyPassForTest(*engine2, std::move(idle_desc), -2);
     PassDesc orphan_desc;
-    orphan_desc.kind        = PassKind::Fullscreen;
+    orphan_desc.kind        = DrawKind::Fullscreen;
     orphan_desc.camera      = cam;
     orphan_desc.program     = vn::graphics::screenCopyProgram();
     orphan_desc.input_names = { u8"SceneColor" };
@@ -6144,7 +6144,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenFullscreenPassSamples)
     engine3->setDevice(backend3);
     engine3->initialize();
     PassDesc program_less_desc;
-    program_less_desc.kind        = PassKind::Fullscreen;
+    program_less_desc.kind        = DrawKind::Fullscreen;
     program_less_desc.camera      = cam;
     program_less_desc.input_names = { u8"SceneColor" };
     engine3->publish(u8"SceneColor", rt);
@@ -6230,7 +6230,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     // —— 一次绘制：相机、命令、灯，以及走的是哪条调用 ——
     ASSERT_EQ(described.packets.size(), 1u);
     const vn::graphics::DrawPacket& draw = described.packets.front();
-    EXPECT_EQ(draw.kind, vn::graphics::DrawPacket::Kind::Scene);
+    EXPECT_EQ(draw.kind, vn::graphics::DrawKind::Scene);
     ASSERT_FALSE(backend->render_cameras.empty());
     EXPECT_TRUE(draw.view.camera.view.isEqual(backend->render_cameras.back().view, 1e-12)) << "the view the frame carried";
     ASSERT_NE(draw.commands, nullptr);
@@ -6264,7 +6264,7 @@ TEST(PassDrawTest, WhatAFullscreenPassDescribesIsWhatItAnnounces)
 
     auto program = vn::graphics::screenCopyProgram();
     PassDesc desc;
-    desc.kind     = PassKind::Fullscreen;
+    desc.kind     = DrawKind::Fullscreen;
     desc.camera   = cam;
     desc.program  = program;
     desc.viewport = Viewport{ 0, 0, 16, 16 };
@@ -6281,7 +6281,7 @@ TEST(PassDrawTest, WhatAFullscreenPassDescribesIsWhatItAnnounces)
 
     ASSERT_EQ(described.packets.size(), 1u);
     const vn::graphics::DrawPacket& draw = described.packets.front();
-    EXPECT_EQ(draw.kind, vn::graphics::DrawPacket::Kind::Fullscreen);
+    EXPECT_EQ(draw.kind, vn::graphics::DrawKind::Fullscreen);
     EXPECT_EQ(draw.source, source.get());
     EXPECT_EQ(draw.program.get(), program.get());
     EXPECT_TRUE(draw.view.camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the pass' own view, as a value";
@@ -6325,7 +6325,7 @@ TEST(PassDrawTest, APassWithNothingToIssueAnnouncesNothingAtAll)
 
     // ② 全屏档 + 源没解析出来：同上
     PassDesc no_source_desc;
-    no_source_desc.kind   = PassKind::Fullscreen;
+    no_source_desc.kind   = DrawKind::Fullscreen;
     no_source_desc.program = vn::graphics::screenCopyProgram();
     no_source_desc.target = Target::explicitTarget(target);
     FullscreenPass no_source;
@@ -6413,14 +6413,14 @@ TEST(RenderEngineTest, FullscreenPassProgramCarriesTheAttachmentItReads)
     EXPECT_NE(albedo_program->name(), normal_program->name());
 
     PassDesc albedo_desc;
-    albedo_desc.kind        = PassKind::Fullscreen;
+    albedo_desc.kind        = DrawKind::Fullscreen;
     albedo_desc.camera      = cam;
     albedo_desc.program     = albedo_program;
     albedo_desc.input_names = { u8"GBuffer" };
     const auto albedo       = vn::test::asFullscreenPassForTest(vn::test::applyPassForTest(*engine, std::move(albedo_desc), 100));
 
     PassDesc normal_desc;
-    normal_desc.kind        = PassKind::Fullscreen;
+    normal_desc.kind        = DrawKind::Fullscreen;
     normal_desc.camera      = cam;
     normal_desc.program     = normal_program;
     normal_desc.input_names = { u8"GBuffer" };
@@ -6472,7 +6472,7 @@ TEST(RenderEngineTest, FullscreenPassProgramSamplesMrtForDeferredLighting)
     program->addStage(fs);
 
     PassDesc light_desc;
-    light_desc.kind        = PassKind::Fullscreen;
+    light_desc.kind        = DrawKind::Fullscreen;
     light_desc.camera      = cam;
     light_desc.program     = program;
     light_desc.input_names = { u8"GBuffer" };
@@ -6573,7 +6573,7 @@ class DescribeOnlyPass : public RenderPass {
         }
         fillPassFacts(out);
         DrawPacket draw;
-        draw.kind   = DrawPacket::Kind::Scene;
+        draw.kind   = DrawKind::Scene;
         draw.view.camera = CameraSnapshot::of(*camera());
         out.packets.push_back(std::move(draw));
         (void)scene; // the pass is content-agnostic: its picture is the camera's
@@ -7440,7 +7440,7 @@ TEST(PassChainTest, AnImportedTextureIsAnInputInDeclarationOrder)
 
     PassDesc producer;
     producer.name    = u8"producer";
-    producer.kind    = PassKind::Scene;
+    producer.kind    = DrawKind::Scene;
     producer.camera  = camera;
     producer.content = intrusive_ptr<Scene>(new Scene());
     producer.target  = vn::graphics::Target::explicitTarget(source);
@@ -7457,7 +7457,7 @@ TEST(PassChainTest, AnImportedTextureIsAnInputInDeclarationOrder)
 
     PassDesc compose;
     compose.name          = u8"compose";
-    compose.kind          = PassKind::Scene;
+    compose.kind          = DrawKind::Scene;
     compose.camera        = camera;
     compose.inputs        = { ImageInput(texture, point_clamp) };
     compose.input_targets = { source };
@@ -7494,7 +7494,7 @@ TEST(PassChainTest, AFullscreenPassKeepsImportedTextureInputsForItsProgram)
 
     PassDesc producer;
     producer.name   = u8"producer";
-    producer.kind   = PassKind::Scene;
+    producer.kind   = DrawKind::Scene;
     producer.camera = camera;
     producer.target = vn::graphics::Target::explicitTarget(source);
     vn::test::registerPassForTest(*engine, producer);
@@ -7502,7 +7502,7 @@ TEST(PassChainTest, AFullscreenPassKeepsImportedTextureInputsForItsProgram)
     const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
     PassDesc                       screen;
     screen.name          = u8"screen";
-    screen.kind          = PassKind::Fullscreen;
+    screen.kind          = DrawKind::Fullscreen;
     screen.camera        = camera;
     screen.program       = screenCopyProgram(1); // binding 1 is the imported texture's slot
     screen.inputs        = { ImageInput(texture) };
@@ -7602,7 +7602,7 @@ TEST(DepthViewTest, APassStatesTheDepthEdgeAndItsTargetGetsTheMechanism)
     drawn_into->attachColor(RenderTarget::ColorFormat::RGBA8);
     drawn_into->setSize(64, 64);
     PassDesc desc;
-    desc.kind       = PassKind::Scene;
+    desc.kind       = DrawKind::Scene;
     desc.target     = vn::graphics::Target::explicitTarget(drawn_into);
     desc.depth_view = depthViewOf(lender);
     const auto pass = vn::test::applyPassForTest(*engine, desc);
@@ -7650,7 +7650,7 @@ TEST(DepthViewTest, ALayeredDepthViewIsRefusedRatherThanPointingAtTheWholeImage)
     target->setSize(64, 64);
 
     PassDesc desc;
-    desc.kind       = PassKind::Scene;
+    desc.kind       = DrawKind::Scene;
     desc.target     = vn::graphics::Target::explicitTarget(target);
     desc.depth_view = depthViewOf(lender, 2);
 
@@ -7690,7 +7690,7 @@ TEST(DepthViewTest, TwoDifferentDepthViewsForOneTargetAreRefusedOnce)
     drawn_into->setSize(64, 64);
 
     PassDesc agrees;
-    agrees.kind         = PassKind::Scene;
+    agrees.kind         = DrawKind::Scene;
     agrees.target       = vn::graphics::Target::explicitTarget(drawn_into);
     agrees.depth_view   = depthViewOf(first);
     const auto accepted = vn::test::applyPassForTest(*engine, agrees);
@@ -7820,7 +7820,7 @@ TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
     target->setSize(32, 32);
 
     PassDesc desc;
-    desc.kind        = PassKind::Scene;
+    desc.kind        = DrawKind::Scene;
     desc.target      = vn::graphics::Target::explicitTarget(target);
     desc.clear_color = vn::Color(255, 0, 0, 255).toLinear();
     desc.clear_extra_colors.push_back(vn::Color(0, 255, 0, 255).toLinear());
@@ -8036,7 +8036,7 @@ TEST(PassChainTest, AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame)
     PassDesc hud;
     hud.name          = u8"counted_overlay";
     hud.stage         = PassStage::Overlay;
-    hud.kind          = PassKind::Scene;
+    hud.kind          = DrawKind::Scene;
     hud.clear_enabled = false;
     ASSERT_NE(chain->addOverlay(String(u8"counted"), overlay.get(), hud), nullptr);
 
@@ -8079,7 +8079,7 @@ TEST(PassChainTest, OneUpdateHandsEveryOverlayTheSameFrameContext)
     PassDesc hud;
     hud.name          = u8"first_overlay";
     hud.stage         = PassStage::Overlay;
-    hud.kind          = PassKind::Scene;
+    hud.kind          = DrawKind::Scene;
     hud.clear_enabled = false;
     ASSERT_NE(chain->addOverlay(String(u8"first"), first.get(), hud), nullptr);
     hud.name = u8"second_overlay";
@@ -12720,7 +12720,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     // ② a full-screen pass sampling ①'s target.
     PassDesc second_desc;
     second_desc.name          = u8"composite";
-    second_desc.kind          = PassKind::Fullscreen;
+    second_desc.kind          = DrawKind::Fullscreen;
     second_desc.camera        = camera;
     second_desc.content       = scene;
     second_desc.program       = vn::graphics::screenCopyProgram();
@@ -12783,7 +12783,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     ASSERT_TRUE(screen_entry.draw.has_value());
     const PassDraw& screen_pass = *screen_entry.draw;
     ASSERT_EQ(screen_pass.packets.size(), 1u);
-    EXPECT_EQ(screen_pass.packets[0].kind, DrawPacket::Kind::Fullscreen);
+    EXPECT_EQ(screen_pass.packets[0].kind, DrawKind::Fullscreen);
     EXPECT_EQ(screen_pass.packets[0].source, backend->last_program_source);
     EXPECT_EQ(screen_pass.packets[0].program.get(), backend->last_program);
     EXPECT_EQ(backend->program_draws, 1);
@@ -12984,7 +12984,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAFullscreenPassIsNotMeasu
 
     PassDesc screen_desc;
     screen_desc.name        = u8"copy";
-    screen_desc.kind        = PassKind::Fullscreen;
+    screen_desc.kind        = DrawKind::Fullscreen;
     screen_desc.camera      = camera;
     screen_desc.content     = scene;
     screen_desc.program     = vn::graphics::screenCopyProgram();
@@ -13022,7 +13022,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     // is stated by a row); what the compile reports is that nothing produced it THIS frame.
     PassDesc consumer_desc;
     consumer_desc.name        = u8"light";
-    consumer_desc.kind        = PassKind::Fullscreen;
+    consumer_desc.kind        = DrawKind::Fullscreen;
     consumer_desc.camera      = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -13252,7 +13252,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     PassDesc desc;
     desc.name          = u8"declared_pass";
     desc.stage         = PassStage::Shading;
-    desc.kind          = PassKind::Scene;
+    desc.kind          = DrawKind::Scene;
     desc.camera        = camera;
     desc.content       = scene;
     desc.target        = vn::graphics::Target::explicitTarget(target);
@@ -13273,7 +13273,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     // A DISABLED declaration keeps its row and costs nothing.
     PassDesc disabled;
     disabled.name    = u8"declared_pass_disabled";
-    disabled.kind    = PassKind::Scene;
+    disabled.kind    = DrawKind::Scene;
     disabled.camera  = camera;
     disabled.content = scene;
     disabled.enabled = false;
@@ -13308,7 +13308,7 @@ TEST(RenderEngineTest, AFullscreenPassCanBeDeclaredAsAValueToo)
     // The producer: an ordinary scene pass that publishes what the full-screen pass samples.
     PassDesc producer;
     producer.name        = u8"scene";
-    producer.kind        = PassKind::Scene;
+    producer.kind        = DrawKind::Scene;
     producer.camera      = camera;
     producer.content     = scene;
     producer.target      = vn::graphics::Target::explicitTarget(source);
@@ -13319,7 +13319,7 @@ TEST(RenderEngineTest, AFullscreenPassCanBeDeclaredAsAValueToo)
     PassDesc compose;
     compose.name        = u8"compose";
     compose.stage       = PassStage::Transparent;
-    compose.kind        = PassKind::Fullscreen;
+    compose.kind        = DrawKind::Fullscreen;
     compose.camera      = camera;
     compose.program     = screenCopyProgram();
     compose.input_names = { vn::String(u8"SceneColor") };
@@ -13353,7 +13353,7 @@ TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
     // Silently declared full-screen pass: it keeps the kind's "never clears" and the kind's depth policy.
     PassDesc copy;
     copy.name            = u8"copy";
-    copy.kind            = PassKind::Fullscreen;
+    copy.kind            = DrawKind::Fullscreen;
     copy.camera          = camera;
     copy.program         = screenCopyProgram();
     const auto copy_node = vn::test::applyPassForTest(*engine, copy);
@@ -13410,7 +13410,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     const auto declare = [&](const vn::String& name, int width, int height, bool depth) {
         PassDesc desc;
         desc.name    = name;
-        desc.kind    = PassKind::Scene;
+        desc.kind    = DrawKind::Scene;
         desc.camera  = camera;
         desc.content = scene;
         // ONE Target value: the identity and shape it asks for (see Target), and the extent only when it states one.
@@ -13942,7 +13942,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
 
     PassDesc consumer_desc;
     consumer_desc.name = u8"light";
-    consumer_desc.kind = PassKind::Fullscreen;
+    consumer_desc.kind = DrawKind::Fullscreen;
     consumer_desc.camera = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14006,7 +14006,7 @@ TEST(RenderEngineTest, AProducerRegisteredLaterIsScheduledFirstAndAWholeMissingP
 
     PassDesc consumer_desc;
     consumer_desc.name    = u8"light";
-    consumer_desc.kind    = PassKind::Fullscreen;
+    consumer_desc.kind    = DrawKind::Fullscreen;
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14066,7 +14066,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
 
     PassDesc pass_desc;
     pass_desc.name         = u8"overlay";
-    pass_desc.kind         = PassKind::Fullscreen;
+    pass_desc.kind         = DrawKind::Fullscreen;
     pass_desc.camera       = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14190,7 +14190,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     sampled->bind(gbuffer, 2);
     PassDesc consumer_desc;
     consumer_desc.name    = u8"preview";
-    consumer_desc.kind    = PassKind::Fullscreen;
+    consumer_desc.kind    = DrawKind::Fullscreen;
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14227,7 +14227,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
 
     PassDesc light_desc;
     light_desc.name          = u8"deferred_lighting";
-    light_desc.kind          = PassKind::Fullscreen;
+    light_desc.kind          = DrawKind::Fullscreen;
     light_desc.camera        = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14293,7 +14293,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     depth_image->bind(color_only, 0);
     PassDesc consumer_desc;
     consumer_desc.name    = u8"reconstruct";
-    consumer_desc.kind    = PassKind::Fullscreen;
+    consumer_desc.kind    = DrawKind::Fullscreen;
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14345,7 +14345,7 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
 
     PassDesc consumer_desc;
     consumer_desc.name    = u8"present";
-    consumer_desc.kind    = PassKind::Fullscreen;
+    consumer_desc.kind    = DrawKind::Fullscreen;
     consumer_desc.camera  = camera;
     consumer_desc.program = vn::graphics::screenCopyProgram();
     consumer_desc.inputs.emplace_back(unbound);
@@ -14413,7 +14413,7 @@ TEST(RenderEngineTest, FullscreenPassWithoutAProgramIsReportedAndDrawsNothing)
     depth_image->bind(target, 0);
     PassDesc consumer_desc;
     consumer_desc.name   = u8"reconstruct";
-    consumer_desc.kind   = PassKind::Fullscreen;
+    consumer_desc.kind   = DrawKind::Fullscreen;
     consumer_desc.camera = camera;
     consumer_desc.inputs.emplace_back(depth_image);
     const auto consumer  = vn::test::asFullscreenPassForTest(vn::test::applyPassForTest(*engine, std::move(consumer_desc), 1));
@@ -14580,7 +14580,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     sampled->bind(source, 2);
     PassDesc preview_desc;
     preview_desc.name    = u8"preview";
-    preview_desc.kind    = PassKind::Fullscreen;
+    preview_desc.kind    = DrawKind::Fullscreen;
     preview_desc.camera  = camera;
     preview_desc.program = vn::graphics::screenCopyProgram(2);
     preview_desc.inputs.emplace_back(sampled);
@@ -14624,7 +14624,7 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
 
     PassDesc pip_desc;
     pip_desc.name          = u8"pip";
-    pip_desc.kind          = PassKind::Fullscreen;
+    pip_desc.kind          = DrawKind::Fullscreen;
     pip_desc.camera        = camera;
     pip_desc.program       = vn::graphics::screenCopyProgram(1);
     pip_desc.input_targets = { baked };
@@ -14669,7 +14669,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     sampled->bind(source, 0);
     PassDesc preview_desc;
     preview_desc.name    = u8"preview";
-    preview_desc.kind    = PassKind::Fullscreen;
+    preview_desc.kind    = DrawKind::Fullscreen;
     preview_desc.camera  = camera;
     preview_desc.program = vn::graphics::screenCopyProgram();
     preview_desc.inputs.emplace_back(sampled);
@@ -14737,7 +14737,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     sampled->bind(source, 0);
     PassDesc preview_desc;
     preview_desc.name        = u8"preview";
-    preview_desc.kind        = PassKind::Fullscreen;
+    preview_desc.kind        = DrawKind::Fullscreen;
     preview_desc.camera      = camera;
     preview_desc.program     = vn::graphics::screenCopyProgram();
     preview_desc.input_names = { u8"GBuffer" };
@@ -14851,7 +14851,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     // A consumer that resolves the name.
     PassDesc by_name_desc;
     by_name_desc.name        = u8"by_name";
-    by_name_desc.kind        = PassKind::Fullscreen;
+    by_name_desc.kind        = DrawKind::Fullscreen;
     by_name_desc.camera      = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
@@ -14865,7 +14865,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     declared->bind(external, 0);
     PassDesc by_object_desc;
     by_object_desc.name    = u8"by_object";
-    by_object_desc.kind    = PassKind::Fullscreen;
+    by_object_desc.kind    = DrawKind::Fullscreen;
     by_object_desc.camera  = camera;
     by_object_desc.program = vn::graphics::screenCopyProgram();
     by_object_desc.inputs.emplace_back(declared);
@@ -14929,7 +14929,7 @@ TEST(RenderEngineTest, FullscreenPassWithAProgramAndNoCameraIsReported)
 
     PassDesc light_desc;
     light_desc.name        = u8"light";
-    light_desc.kind        = PassKind::Fullscreen;
+    light_desc.kind        = DrawKind::Fullscreen;
     light_desc.input_names = { u8"SceneColor" };
     light_desc.program     = program;
     // NO camera: the program path has no view to build.
@@ -14970,7 +14970,7 @@ TEST(RenderEngineTest, FullscreenPassWithoutAnyInputIsReportedOnce)
 
     PassDesc consumer_desc;
     consumer_desc.name    = u8"overlay";
-    consumer_desc.kind    = PassKind::Fullscreen;
+    consumer_desc.kind    = DrawKind::Fullscreen;
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.

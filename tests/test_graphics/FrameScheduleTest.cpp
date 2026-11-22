@@ -88,7 +88,7 @@ PassDesc writingPass(const char8_t* name, intrusive_ptr<RenderTarget> target, in
     desc.name          = name;
     desc.stage         = PassStage::Shading;
     desc.order         = order;
-    desc.kind          = PassKind::Scene;
+    desc.kind          = DrawKind::Scene;
     desc.camera        = std::move(camera);
     desc.target        = vn::graphics::Target::explicitTarget(std::move(target));
     desc.clear_enabled = true;

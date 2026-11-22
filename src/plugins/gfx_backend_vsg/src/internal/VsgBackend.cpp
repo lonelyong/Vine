@@ -1211,7 +1211,7 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
             if (!draw.view.camera.present) {
                 continue; // a draw packet with no view issues nothing (see DrawPacket)
             }
-            if (draw.kind == vn::graphics::DrawPacket::Kind::Fullscreen) {
+            if (draw.kind == vn::graphics::DrawKind::Fullscreen) {
                 // The fragment stage is content like any other: the tables must answer its two texts and their
                 // declarations when the plan records (the store's own walk covers full-screen packets' programs).
                 const vn::graphics::ShaderProgramDescriptionPtr text =
@@ -1317,7 +1317,7 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
                 if (!draw.view.camera.present) {
                     continue; // a draw packet with no view issues nothing (see DrawPacket)
                 }
-                if (draw.kind == vn::graphics::DrawPacket::Kind::Fullscreen) {
+                if (draw.kind == vn::graphics::DrawKind::Fullscreen) {
                     collectFullscreenDraw(scratch, draw.source, draw.program.get(), draw.program_description, draw.view.camera);
                 }
                 else if (draw.commands != nullptr) {

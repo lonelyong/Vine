@@ -75,6 +75,7 @@ using vn::graphics::RenderBackendRegistry;
 using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
+using vn::graphics::DrawKind;
 using vn::intrusive_ptr;
 
 namespace
@@ -175,7 +176,7 @@ struct Scene {
     commands->push_back(std::move(command));
 
     DrawPacket draw;
-    draw.kind     = DrawPacket::Kind::Scene;
+    draw.kind     = DrawKind::Scene;
     draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
@@ -238,7 +239,7 @@ struct Scene {
     pass.state.depth = DepthMode::Disabled;
 
     DrawPacket draw;
-    draw.kind                 = DrawPacket::Kind::Fullscreen;
+    draw.kind                 = DrawKind::Fullscreen;
     draw.view.camera               = identityCamera();
     draw.source               = scene.gbuffer.get();
     draw.program              = scene.light_program;
@@ -268,7 +269,7 @@ struct Scene {
     pass.state.depth  = DepthMode::Disabled;
 
     DrawPacket draw;
-    draw.kind                = DrawPacket::Kind::Fullscreen;
+    draw.kind                = DrawKind::Fullscreen;
     draw.view.camera              = identityCamera();
     draw.source              = source;
     draw.program             = program;
