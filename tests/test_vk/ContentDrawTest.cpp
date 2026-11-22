@@ -56,7 +56,7 @@ using vn::Colorf;
 using vn::String;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawPacket;
@@ -292,7 +292,7 @@ void main()
     PassDraw pass;
     pass.target = target;
     // A full-screen draw writes its rectangle; the pass is an overlay over whatever the destination already holds.
-    pass.state.depth = DepthMode::Disabled;
+    pass.state.depth = DepthPolicy::Disabled;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
@@ -695,7 +695,7 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
     // that inherited the pass' TestAndWrite policy against a destination that carries depth would be discarded at
     // every pixel. The app found this the hard way (2026-11-14): a window pass' render pass clears D24 to 0 and the
     // deferred chain's composite BORROWS the G-buffer's depth, so present and the G-buffer previews "recorded and
-    // drew nothing" while the HUD content (DepthMode::Disabled) stayed visible.
+    // drew nothing" while the HUD content (DepthPolicy::Disabled) stayed visible.
     //
     // DEFAULT PASS STATE ON PURPOSE (see screenFrame, which states Disabled explicitly): the shape under test is the
     // one the engine's own chain passes hand over.
@@ -806,7 +806,7 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     FrameDescription::Pass entry;
     entry.pass = vn::test::framePassForTest();
     PassRenderState        state;
-    state.depth = DepthMode::Disabled;
+    state.depth = DepthPolicy::Disabled;
     PassDraw pass;
     pass.target = target.get();
     pass.clear  = ClearPolicy{};

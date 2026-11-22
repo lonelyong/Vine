@@ -129,7 +129,7 @@ class TestFrame {
      * @param depth How the pass' content handles the target's current depth.
      * @return This builder, for chaining.
      */
-    TestFrame& depth(vn::graphics::DepthMode depth)
+    TestFrame& depth(vn::graphics::DepthPolicy depth)
     {
         description().state.depth = depth;
         return *this;

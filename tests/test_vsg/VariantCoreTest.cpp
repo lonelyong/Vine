@@ -23,7 +23,7 @@
 
 #include <cstdint>
 
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/DrawState.hpp>
@@ -34,7 +34,7 @@
 
 using vn::graphics::BlendState;
 using vn::graphics::CullMode;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::PolygonMode;
 using vn::graphics::RenderTarget;
 using vn::graphics::Topology;
@@ -193,7 +193,7 @@ TEST(CoreStateRegistryTest, DynamicStateChurnNeverCompilesAgain)
         state.cull_mode     = (step % 2 == 0) ? CullMode::Back : CullMode::Front;
         state.polygon_mode  = (step % 3 == 0) ? PolygonMode::Line : PolygonMode::Fill;
         state.topology      = (step % 5 == 0) ? Topology::Points : Topology::Triangles;
-        state.depth         = (step % 2 == 0) ? DepthMode::TestOnly : DepthMode::TestAndWrite;
+        state.depth         = (step % 2 == 0) ? DepthPolicy::TestOnly : DepthPolicy::TestAndWrite;
         state.blend.enabled = (step % 2) == 0;
 
         const StateRegistry::Resolution resolution = registry.resolve(key, state);

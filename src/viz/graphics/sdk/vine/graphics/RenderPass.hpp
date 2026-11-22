@@ -11,7 +11,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "DepthMode.hpp"
+#include "DepthPolicy.hpp"
 #include "DepthRange.hpp"
 #include "DepthView.hpp"
 #include "FrameDescription.hpp"
@@ -182,12 +182,12 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /**
      * @brief Returns how this pass's content handles depth (the pass' own policy).
      *
-     * @return The depth mode (DepthMode::TestAndWrite by default), which is what content that authored no depth state
-     *         of its own gets (see resolveRenderState).
+     * @return The depth policy (DepthPolicy::TestAndWrite by default), which is what content that authored no depth
+     *         state of its own gets (see resolveRenderState).
      */
-    [[nodiscard]] DepthMode depthMode() const noexcept
+    [[nodiscard]] DepthPolicy depthPolicy() const noexcept
     {
-        return desc_.depth_mode;
+        return desc_.depth_policy;
     }
 
     /**

@@ -36,7 +36,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MaterialInstance.hpp>
@@ -542,7 +542,7 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
                               .order(0)
                               .target(nullptr)
                               .clear(vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true })
-                              .depth(vn::graphics::DepthMode::TestAndWrite)
+                              .depth(vn::graphics::DepthPolicy::TestAndWrite)
                               .content(fixture.commands, camera.get())
                               .value());
 
@@ -732,7 +732,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, frame_camera)
                                   .value());
     };
@@ -877,13 +877,13 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
                                   .pass(offscreen_pass.get(), -1)
                                   .target(offscreen.get())
                                   .clear(offscreen_clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(triangle.commands, camera.get())
                                   .pass(window_pass.get())
                                   .target(nullptr)
                                   .inputs({ offscreen.get() })
                                   .clear(window_clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .screen(offscreen.get(), copy_program.get(), camera.get())
                                   .value());
     };
@@ -1023,12 +1023,12 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
                                   .pass(pass.get())
                                   .target(target.get())
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(triangle.commands, camera.get())
                                   .value());
     };
     const auto drive_empty = [&] {
-        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).value());
+        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthPolicy::TestAndWrite).value());
     };
 
     // Warm the session up so its in-flight count is learned and the release can be parked (a session that
@@ -1117,12 +1117,12 @@ TEST(VsgBackendTest, ReleasingAMaterialInstanceDropsItsResidency)
                                   .pass(pass.get())
                                   .target(target.get())
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
     };
     const auto drive_empty = [&] {
-        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).value());
+        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthPolicy::TestAndWrite).value());
     };
 
     // Warm the session up so its in-flight count is learned (the release needs a parking window).
@@ -1182,7 +1182,7 @@ TEST(VsgBackendTest, ReleasingAStreamBufferDropsTheUploadButNotTheGeometry)
                                   .pass(pass.get())
                                   .target(target.get())
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(triangle.commands, camera.get())
                                   .value());
     };
@@ -1299,7 +1299,7 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
                                   .target(destination.get())
                                   .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get()) })
                                   .clear(destination_clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -1423,7 +1423,7 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
                               .target(destination.get())
                               .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(cube.get()) })
                               .clear(destination_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(commands, camera.get())
                               .value());
 
@@ -1506,7 +1506,7 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
                               .target(destination.get())
                               .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(cube.get()) })
                               .clear(destination_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(commands, camera.get())
                               .value());
 
@@ -1603,7 +1603,7 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
     clear.clear_depth = false;                                              // there is no depth attachment
     clear.extra_colors.push_back(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F)); // attachment 1: green
 
-    backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::Disabled).value());
+    backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthPolicy::Disabled).value());
 
     const auto readAttachment = [&backend, &target](int attachment, std::vector<std::uint8_t>& pixels) {
         vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
@@ -1670,7 +1670,7 @@ TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
     clear.color       = vn::Color(128, 128, 128, 255).toLinear(); // ≈ 0.2159: the light #808080 stands for
     clear.clear_depth = false;                                    // there is no depth attachment
 
-    backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::Disabled).value());
+    backend->executeFrame(TestFrame().pass(pass.get(), 0).target(target.get()).clear(clear).depth(vn::graphics::DepthPolicy::Disabled).value());
 
     std::vector<std::uint8_t>    pixels;
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
@@ -1809,7 +1809,7 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
                                   .target(destination.get())
                                   .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get()) })
                                   .clear(destination_clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -1939,7 +1939,7 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
                               .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get(), clamp),
                                                                               vn::graphics::ImageSource::imported(texture.get(), repeat) })
                               .clear(destination_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(commands, camera.get())
                               .value());
 
@@ -2053,13 +2053,13 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
                               .pass(producer_pass.get(), -1)
                               .target(source.get())
                               .clear(source_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(producer_commands, camera.get())
                               .pass(consumer_pass.get(), 0)
                               .target(destination.get())
                               .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::producedImage(source.get(), 1, false) })
                               .clear(destination_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(consumer_commands, camera.get())
                               .value());
 
@@ -2148,14 +2148,14 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAFullscreenProgram)
                               .pass(source_pass.get(), -1)
                               .target(source.get())
                               .clear(source_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(triangle.commands, camera.get())
                               .pass(screen_pass.get(), 0)
                               .target(destination.get())
                               .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::imported(texture.get()),
                                                                               vn::graphics::ImageSource::producedTarget(source.get()) })
                               .clear(destination_clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .screen(source.get(), program.get(), camera.get())
                               .value());
 
@@ -2263,7 +2263,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
                                   .order(0)
                                   .target(target.get())
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(triangle.commands, camera.get())
                                   .value());
     };
@@ -2468,7 +2468,7 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
                                   .order(0)
                                   .target(where)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -2608,7 +2608,7 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -2824,7 +2824,7 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -2988,7 +2988,7 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
         const auto ended = std::chrono::steady_clock::now();
@@ -3305,7 +3305,7 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
         const auto ended = std::chrono::steady_clock::now();
@@ -3515,7 +3515,7 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::TestAndWrite)
+                                  .depth(vn::graphics::DepthPolicy::TestAndWrite)
                                   .content(commands, camera.get())
                                   .value());
         const auto ended = std::chrono::steady_clock::now();
@@ -3740,7 +3740,7 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
                               .pass(pass.get(), 0)
                               .target(destination.get())
                               .clear(clear)
-                              .depth(vn::graphics::DepthMode::Disabled)
+                              .depth(vn::graphics::DepthPolicy::Disabled)
                               .content(commands, camera.get())
                               .value());
 
@@ -3960,7 +3960,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -4191,7 +4191,7 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
         // Depth off, so the second draw packet is simply the one whose colour the probe sees - the pass states it
         // once, for its whole content (see PassRenderState).
         backend->executeFrame(
-            TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthMode::Disabled).content(commands, camera.get()).value());
+            TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthPolicy::Disabled).content(commands, camera.get()).value());
     };
 
     // Put the drive on a storage that fits ONE draw block: the frame below will ask for two.
@@ -4289,7 +4289,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .content(no_commands, camera.get())
                                   .value());
     };
@@ -4397,7 +4397,7 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .content(commands, camera.get())
                                   .value());
     };
@@ -4527,7 +4527,7 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
                                   .order(0)
                                   .target(nullptr)
                                   .clear(clear)
-                                  .depth(vn::graphics::DepthMode::Disabled)
+                                  .depth(vn::graphics::DepthPolicy::Disabled)
                                   .content(commands, camera.get())
                                   .value());
         const auto ended = std::chrono::steady_clock::now();
@@ -4757,7 +4757,7 @@ TEST(VsgBackendTest, ALaterWindowPassResetsOnlyTheDepthItOwns)
     picture.order = 0;
     vn::graphics::PassDraw paint;
     paint.clear       = vn::graphics::ClearPolicy{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
-    paint.state.depth = vn::graphics::DepthMode::TestAndWrite;
+    paint.state.depth = vn::graphics::DepthPolicy::TestAndWrite;
     picture.draw      = std::move(paint);
     frame.passes.push_back(std::move(picture));
 
@@ -4768,7 +4768,7 @@ TEST(VsgBackendTest, ALaterWindowPassResetsOnlyTheDepthItOwns)
     vn::graphics::PassDraw overlay;
     overlay.viewport  = vn::graphics::Viewport{ 8, 8, 32, 32 };
     overlay.clear     = vn::graphics::ClearPolicy::depthOnly();
-    overlay.state.depth = vn::graphics::DepthMode::TestAndWrite;
+    overlay.state.depth = vn::graphics::DepthPolicy::TestAndWrite;
     hud.draw          = std::move(overlay);
     frame.passes.push_back(std::move(hud));
 
@@ -4895,7 +4895,7 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
             .order(0)
             .target(target.get())
             .clear(clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .depth(vn::graphics::DepthPolicy::TestAndWrite)
             .content(triangle.commands, camera.get())
             .value();
     };
@@ -5268,7 +5268,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
                                                      .pass(pass_object.get(), 0)
                                                      .target(destination.get())
                                                      .clear(clear)
-                                                     .depth(vn::graphics::DepthMode::Disabled)
+                                                     .depth(vn::graphics::DepthPolicy::Disabled)
                                                      .content(triangle.commands, camera.get())
                                                      .value();
 
@@ -5443,7 +5443,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
             .pass(blocked_pass.get())
             .target(destination.get())
             .clear(clear)
-            .depth(vn::graphics::DepthMode::Disabled)
+            .depth(vn::graphics::DepthPolicy::Disabled)
             .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::producedImage(source.get(), 7, false) })
             .content(triangle.commands, camera.get())
             .value();
@@ -5456,7 +5456,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
                                  .pass(other_pass.get())
                                  .target(nullptr)
                                  .clear(clear)
-                                 .depth(vn::graphics::DepthMode::Disabled)
+                                 .depth(vn::graphics::DepthPolicy::Disabled)
                                  .content(triangle.commands, camera.get())
                                  .value();
 
@@ -5573,7 +5573,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
                                 .pass(held_pass.get())
                                 .target(destination.get())
                                 .clear(clear)
-                                .depth(vn::graphics::DepthMode::Disabled)
+                                .depth(vn::graphics::DepthPolicy::Disabled)
                                 .content(triangle.commands, camera.get())
                                 .value();
 
@@ -5584,7 +5584,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
                                  .pass(other_pass.get())
                                  .target(nullptr)
                                  .clear(clear)
-                                 .depth(vn::graphics::DepthMode::Disabled)
+                                 .depth(vn::graphics::DepthPolicy::Disabled)
                                  .content(triangle.commands, camera.get())
                                  .value();
 
@@ -5692,7 +5692,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
             .pass(pass)
             .target(target)
             .clear(clear)
-            .depth(vn::graphics::DepthMode::Disabled)
+            .depth(vn::graphics::DepthPolicy::Disabled)
             .content(triangle.commands, camera.get())
             .value();
     };
@@ -5787,7 +5787,7 @@ void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
                                     .pass(pass.get())
                                     .target(destination.get())
                                     .clear(clear)
-                                    .depth(vn::graphics::DepthMode::Disabled)
+                                    .depth(vn::graphics::DepthPolicy::Disabled)
                                     .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::producedImage(source.get(), 7, false) })
                                     .content(triangle.commands, camera.get())
                                     .value(),

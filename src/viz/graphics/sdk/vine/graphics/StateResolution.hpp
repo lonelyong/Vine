@@ -3,7 +3,7 @@
 
 #include <optional>
 
-#include "DepthMode.hpp"
+#include "DepthPolicy.hpp"
 #include "PolygonMode.hpp"
 #include "Topology.hpp"
 
@@ -95,7 +95,7 @@ struct VN_GRAPHICS_API RenderStateOrigin {
  *   resolves `state` - the command list itself is never rewritten (RenderPass::setProgramOverride).
  */
 struct VN_GRAPHICS_API PassRenderState {
-    DepthMode                  depth{ DepthMode::TestAndWrite }; // Depth policy for content that authored none.
+    DepthPolicy                  depth{ DepthPolicy::TestAndWrite }; // Depth policy for content that authored none.
     std::optional<PolygonMode> polygonMode{};                    // Rasterisation override for every command.
     /// Point-size override for every command, in framebuffer pixels. Like the two below it, it is a viewing
     /// switch: the pass that turns a scene into points has to be able to size them, and what the content

@@ -25,7 +25,7 @@
 #include <vector>
 
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
@@ -39,7 +39,7 @@
 #include "LightValues.hpp"
 
 using vn::graphics::CullMode;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -103,7 +103,7 @@ TEST(FrameRecorderTest, TheScopeAttributesOfEachPassAreCollectedWithItsDrawingCa
     EXPECT_TRUE(r.recorder.beginPass(7));
     EXPECT_TRUE(r.recorder.setPassOrder(-1));
     EXPECT_TRUE(r.recorder.setRenderTarget(&target));
-    EXPECT_TRUE(r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled }));
+    EXPECT_TRUE(r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthPolicy::Disabled }));
     EXPECT_TRUE(r.recorder.render(commands, nullptr));
     EXPECT_TRUE(r.recorder.endPass());
 
@@ -118,13 +118,13 @@ TEST(FrameRecorderTest, TheScopeAttributesOfEachPassAreCollectedWithItsDrawingCa
     EXPECT_EQ(description.passes[0].pass, 7u);
     EXPECT_EQ(description.passes[0].order, -1);
     EXPECT_EQ(description.passes[0].target, &target);
-    EXPECT_EQ(description.passes[0].state.depth, DepthMode::Disabled);
+    EXPECT_EQ(description.passes[0].state.depth, DepthPolicy::Disabled);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
 
     EXPECT_EQ(description.passes[1].pass, 9u);
     EXPECT_EQ(description.passes[1].order, 0);
     EXPECT_EQ(description.passes[1].target, nullptr); // the default framebuffer, recorded as a fact
-    EXPECT_EQ(description.passes[1].state.depth, DepthMode::TestAndWrite);
+    EXPECT_EQ(description.passes[1].state.depth, DepthPolicy::TestAndWrite);
     EXPECT_FALSE(description.passes[1].has_clear);
 
     EXPECT_EQ(r.observe.counters().passes, 2u);
@@ -506,7 +506,7 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeTakeNoEffect)
     EXPECT_FALSE(r.recorder.setPassOrder(4));
     EXPECT_FALSE(r.recorder.setViewport(0, 0, 1, 1));
     EXPECT_FALSE(r.recorder.setClearPolicy(ClearValues{}));
-    EXPECT_FALSE(r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled }));
+    EXPECT_FALSE(r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthPolicy::Disabled }));
     EXPECT_FALSE(r.recorder.setPassInputs(std::span<const RenderTarget* const>{}));
     EXPECT_FALSE(r.recorder.setLights(lightValues(std::span<const Light* const>{})));
 
@@ -521,7 +521,7 @@ TEST(FrameRecorderTest, ScopeAttributesOutsideAScopeTakeNoEffect)
     ASSERT_EQ(description.passes.size(), 1u);
     EXPECT_EQ(description.passes[0].order, 0);
     EXPECT_FALSE(description.passes[0].has_clear);
-    EXPECT_EQ(description.passes[0].state.depth, DepthMode::TestAndWrite);
+    EXPECT_EQ(description.passes[0].state.depth, DepthPolicy::TestAndWrite);
     EXPECT_TRUE(description.passes[0].inputs.empty());
 }
 

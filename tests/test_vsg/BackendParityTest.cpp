@@ -46,7 +46,7 @@
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/ChainPresets.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -78,7 +78,7 @@ using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawPacket;
@@ -359,7 +359,7 @@ void main()
 /// without declaring it is incomplete - the same rule the engine follows when it fills FrameDescription::Pass.
 [[nodiscard]] FrameDescription onePass(RenderTarget* target,
                                        std::optional<ClearPolicy> clear,
-                                       DepthMode depth,
+                                       DepthPolicy depth,
                                        std::vector<DrawPacket> draws,
                                        std::vector<vn::graphics::ImageSource> inputs = {})
 {
@@ -593,7 +593,7 @@ TEST_F(BackendParityTest, TheSameClearIsTheSamePicture)
     std::optional<ClearPolicy> clear = ClearPolicy{};
     clear->color                     = Colorf(0.0F, 0.25F, 0.0F, 1.0F);
 
-    const FrameDescription frame = onePass(shared, clear, DepthMode::TestAndWrite, {});
+    const FrameDescription frame = onePass(shared, clear, DepthPolicy::TestAndWrite, {});
 
     const Ran reference = run(*vsg, frame, shared);
     const Ran candidate = run(*vk, frame, shared);
@@ -632,7 +632,7 @@ TEST_F(BackendParityTest, ADepthOnlyClearKeepsThePictureOnBothBackends)
     PassDraw paint;
     paint.target      = shared;
     paint.clear       = ClearPolicy{ Colorf(0.0F, 0.0F, 0.0F, 1.0F), true };
-    paint.state.depth = DepthMode::TestAndWrite;
+    paint.state.depth = DepthPolicy::TestAndWrite;
     paint.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
     painting.draw = std::move(paint);
     frame.passes.push_back(std::move(painting));
@@ -643,7 +643,7 @@ TEST_F(BackendParityTest, ADepthOnlyClearKeepsThePictureOnBothBackends)
     PassDraw cleaned;
     cleaned.target      = shared;
     cleaned.clear       = ClearPolicy::depthOnly(); // the colour is LOADed and the depth is CLEARed
-    cleaned.state.depth = DepthMode::TestAndWrite;
+    cleaned.state.depth = DepthPolicy::TestAndWrite;
     overlay.draw = std::move(cleaned);
     frame.passes.push_back(std::move(overlay));
 
@@ -669,7 +669,7 @@ TEST_F(BackendParityTest, TheSameTriangleIsTheSamePicture)
     std::optional<ClearPolicy> clear = ClearPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     const FrameDescription frame =
-        onePass(shared, clear, DepthMode::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, program, red) })) });
+        onePass(shared, clear, DepthPolicy::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, program, red) })) });
 
     const Ran reference = run(*vsg, frame, shared);
     const Ran candidate = run(*vk, frame, shared);
@@ -731,7 +731,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
         PassDraw pass;
         pass.target      = shared;
         pass.clear       = std::move(announced);
-        pass.state.depth = DepthMode::TestAndWrite;
+        pass.state.depth = DepthPolicy::TestAndWrite;
         pass.packets       = std::move(draws);
         entry.draw       = std::move(pass);
         frame_passes.push_back(std::move(entry));
@@ -785,7 +785,7 @@ TEST_F(BackendParityTest, ADrawPacketCarriesItsDrawsAndBothBackendsCountThem)
     const FrameDescription frame =
         onePass(shared,
                 clear,
-                DepthMode::TestAndWrite,
+                DepthPolicy::TestAndWrite,
                 { sceneDraw(commandsOf({ commandOf(geometry, program, red), commandOf(geometry, program, red) })) });
 
     const vn::graphics::PrepareReport reference = vsg->prepareFrame(frame, nullptr);
@@ -827,7 +827,7 @@ TEST_F(BackendParityTest, TheNearerFragmentSurvivesOnBothBackends)
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     const FrameDescription frame     = onePass(shared,
                                                clear,
-                                               DepthMode::TestAndWrite,
+                                               DepthPolicy::TestAndWrite,
                                                { sceneDraw(commandsOf({ commandOf(near_z, program, green), commandOf(far_z, program, red) })) });
 
     const Ran reference = run(*vsg, frame, shared);
@@ -858,7 +858,7 @@ TEST_F(BackendParityTest, TheSameHalfOpacityDrawBlendsTheSame)
     std::optional<ClearPolicy> clear = ClearPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     const FrameDescription blending =
-        onePass(shared, clear, DepthMode::Disabled, { sceneDraw(commandsOf({ commandOf(geometry, program, red), over })) });
+        onePass(shared, clear, DepthPolicy::Disabled, { sceneDraw(commandsOf({ commandOf(geometry, program, red), over })) });
 
     const Ran reference = run(*vsg, blending, shared);
     const Ran candidate = run(*vk, blending, shared);
@@ -888,7 +888,7 @@ TEST_F(BackendParityTest, TheSameFullscreenCopySamplesTheSameColours)
     std::optional<ClearPolicy> source_clear = ClearPolicy{};
     source_clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     const FrameDescription scene_frame =
-        onePass(source, source_clear, DepthMode::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, scene, red) })) });
+        onePass(source, source_clear, DepthPolicy::TestAndWrite, { sceneDraw(commandsOf({ commandOf(geometry, scene, red) })) });
 
     DrawPacket screen;
     screen.kind                = DrawKind::Fullscreen;
@@ -897,7 +897,7 @@ TEST_F(BackendParityTest, TheSameFullscreenCopySamplesTheSameColours)
     screen.program             = copy;
     screen.program_description = copy->description();
     const FrameDescription screen_frame =
-        onePass(destination, std::nullopt, DepthMode::Disabled, { screen }, { vn::graphics::ImageSource::producedTarget(source) });
+        onePass(destination, std::nullopt, DepthPolicy::Disabled, { screen }, { vn::graphics::ImageSource::producedTarget(source) });
 
     const Ran reference_scene = run(*vsg, scene_frame, source);
     const Ran candidate_scene = run(*vk, scene_frame, source);
@@ -938,7 +938,7 @@ TEST_F(BackendParityTest, TheSameTextureIsSampledTheSame)
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     const FrameDescription frame     = onePass(shared,
                                                clear,
-                                               DepthMode::TestAndWrite,
+                                               DepthPolicy::TestAndWrite,
                                                { sceneDraw(commandsOf({ commandOf(geometry, program, material) })) },
                                                { vn::graphics::ImageSource::imported(texture.get()) });
 
@@ -981,7 +981,7 @@ TEST_F(BackendParityTest, TheEngineUnlitProgramDrawsTheSamePictureOnBothBackends
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     const FrameDescription frame     = onePass(shared,
                                                clear,
-                                               DepthMode::TestAndWrite,
+                                               DepthPolicy::TestAndWrite,
                                                { sceneDraw(commandsOf({ commandOf(geometry, program, material) })) },
                                                { vn::graphics::ImageSource::imported(texture.get()) });
 
@@ -1034,7 +1034,7 @@ TEST_F(BackendParityTest, AnEntryThatNamesNoPassIsNothingToRunOnBothBackends)
     std::optional<ClearPolicy> clear = ClearPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.clear        = clear;
-    pass.state.depth  = DepthMode::TestAndWrite;
+    pass.state.depth  = DepthPolicy::TestAndWrite;
     pass.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
@@ -1085,7 +1085,7 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
     PassDraw shadow_pass;
     shadow_pass.target      = map;
     shadow_pass.clear       = ClearPolicy{};
-    shadow_pass.state.depth = DepthMode::TestAndWrite;
+    shadow_pass.state.depth = DepthPolicy::TestAndWrite;
     shadow_pass.packets.push_back(
         sceneDraw(commandsOf({ commandOf(ground, program, material), commandOf(occluder, program, material) })));
     shadow_entry.draw = std::move(shadow_pass);
@@ -1101,7 +1101,7 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
     PassDraw main_pass;
     main_pass.target      = picture;
     main_pass.clear       = clear;
-    main_pass.state.depth = DepthMode::TestAndWrite;
+    main_pass.state.depth = DepthPolicy::TestAndWrite;
     main_pass.packets.push_back(sceneDraw(commandsOf({ commandOf(ground, program, material) }), vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
     frame.passes.push_back(std::move(main_entry));
@@ -1163,7 +1163,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     // alpha is the lighting program's write mask, so that default is part of the frame's contract (see ClearPolicy).
     gbuffer_pass.clear        = ClearPolicy{};
     gbuffer_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
-    gbuffer_pass.state.depth  = DepthMode::TestAndWrite;
+    gbuffer_pass.state.depth  = DepthPolicy::TestAndWrite;
     gbuffer_pass.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, geometry_program, material) })));
     gbuffer_entry.draw = std::move(gbuffer_pass);
     frame.passes.push_back(std::move(gbuffer_entry));
@@ -1197,7 +1197,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     light_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     // The destination carries depth and a full-screen triangle sits at the far plane: the pass draws OVER what the
     // target holds, which is the same policy the SDK's own lighting pass states by carrying no depth at all.
-    light_pass.state.depth = DepthMode::Disabled;
+    light_pass.state.depth = DepthPolicy::Disabled;
     light_pass.packets.push_back(std::move(screen));
     light_entry.draw = std::move(light_pass);
     frame.passes.push_back(std::move(light_entry));

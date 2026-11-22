@@ -7,7 +7,7 @@
 #include <vector>
 
 #include <vine/graphics/ContentId.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/DrawKind.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateResolution.hpp>
@@ -292,7 +292,7 @@ struct VN_GRAPHICS_API PipelineKeyHash {
 
 /** @brief Per-draw state delivered with set commands: changing it must never recompile anything. */
 struct VN_GRAPHICS_API DynamicState {
-    vn::graphics::DepthMode depth{ vn::graphics::DepthMode::TestAndWrite };      // Depth test/write policy.
+    vn::graphics::DepthPolicy depth{ vn::graphics::DepthPolicy::TestAndWrite };      // Depth test/write policy.
     vn::graphics::CompareOp compare{ vn::graphics::CompareOp::Less };            // Distance-semantic compare op; the
                                                                                  // reverse-Z inversion happens at the
                                                                                  // Vulkan boundary.

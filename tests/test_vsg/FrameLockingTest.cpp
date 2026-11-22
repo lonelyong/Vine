@@ -11,7 +11,7 @@
 
 #include <cstdint>
 
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/backend_vsg/internal/VsgBackend.hpp>
@@ -41,7 +41,7 @@ TEST(FrameLockingTest, AFrameReportsWhatItSpentOnTheContentLock)
 
     const auto drive = [&](const vn::test::TriangleFixture* content) {
         TestFrame frame;
-        frame.pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite);
+        frame.pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthPolicy::TestAndWrite);
         if (content != nullptr) {
             frame.content(content->commands, camera.get());
         }

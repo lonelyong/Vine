@@ -27,7 +27,7 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/LightRig.hpp>
 #include <vine/graphics/Material.hpp>
-#include <vine/graphics/ModelScene.hpp>
+#include <vine/graphics/SceneBuild.hpp>
 #include <vine/graphics/OrbitCameraManipulator.hpp>
 #include <vine/graphics/RayIntersection.hpp>
 #include <vine/graphics/RenderBackend.hpp>
@@ -441,7 +441,7 @@ inline void ModelRenderView::buildScene()
 
     // 结构就是模型自己的：`sceneFromModel` 把节点树变成场景节点（identity → Group、非 identity →
     // MatrixTransform），每个 entry 一个 `Geometry`（顶点 buffer 共享，叶子不共享 —— 场景图是严格树）。
-    const vn::graphics::ModelScene converted = vn::graphics::sceneFromModel(*source);
+    const vn::graphics::SceneBuild converted = vn::graphics::sceneFromModel(*source);
     if (converted.root == nullptr) {
         return;
     }

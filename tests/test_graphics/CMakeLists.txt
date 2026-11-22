@@ -16,7 +16,7 @@ set(SRC_FILE_LIST
 	LightBlockTest.cpp
 	DrawBlockTest.cpp
 	MaterialBlockTest.cpp
-	ModelSceneTest.cpp
+	SceneBuildTest.cpp
 	MeshShapeTest.cpp
 	ResidencyTest.cpp
 	ContentRegistryTest.cpp

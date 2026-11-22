@@ -37,7 +37,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/Capabilities.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -57,7 +57,7 @@ using vn::Colorf;
 using vn::String;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawPacket;
@@ -242,7 +242,7 @@ struct Scene {
     PassDraw shadow_pass;
     shadow_pass.target = scene.map.get();
     shadow_pass.clear  = ClearPolicy{}; // clears the depth (the only attachment)
-    shadow_pass.state.depth = DepthMode::TestAndWrite;
+    shadow_pass.state.depth = DepthPolicy::TestAndWrite;
     shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
@@ -257,7 +257,7 @@ struct Scene {
     main_pass.target       = scene.target.get();
     main_pass.clear        = ClearPolicy{};
     main_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    main_pass.state.depth  = DepthMode::TestAndWrite;
+    main_pass.state.depth  = DepthPolicy::TestAndWrite;
     main_pass.packets.push_back(sceneDraw(receiver_list, vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
     frame.passes.push_back(std::move(main_entry));
@@ -459,7 +459,7 @@ void main()
     PassDraw shadow_pass;
     shadow_pass.target      = scene.map.get();
     shadow_pass.clear       = ClearPolicy{};
-    shadow_pass.state.depth = DepthMode::TestAndWrite;
+    shadow_pass.state.depth = DepthPolicy::TestAndWrite;
     shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
@@ -474,7 +474,7 @@ void main()
     PassDraw source_pass;
     source_pass.target      = source.get();
     source_pass.clear       = ClearPolicy{};
-    source_pass.state.depth = DepthMode::Disabled;
+    source_pass.state.depth = DepthPolicy::Disabled;
     source_entry.draw       = std::move(source_pass);
     frame.passes.push_back(std::move(source_entry));
 

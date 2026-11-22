@@ -24,7 +24,7 @@ VN_GRAPHICS_NS_BEGIN
  * - The engine's ONE shading model is metallic-roughness with glTF 2.0's vocabulary - base colour, emissive,
  *   metallic, roughness, occlusion - because the import boundary can express an asset in it without an
  *   approximation, and both drawing paths (forward and deferred) read the same bytes (graphics-material.md §2.1).
- * - Phong does not exist here: a Phong source asset is converted by the importer (`ModelScene.cpp`'s
+ * - Phong does not exist here: a Phong source asset is converted by the importer (`SceneBuild.cpp`'s
  *   `materialFrom`), so the engine has one set of surface parameters instead of two branches per path.
  * - The material counts its own edits (`revision()`), because every shading value travels through a setter; a
  *   consumer that answers for a material caches on that number instead of reading the values back every frame.

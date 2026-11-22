@@ -7,7 +7,7 @@
 #include <vine/appfw/Application.hpp>
 #include <vine/appfw/PluginManager.hpp>
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/Geometry.hpp>
 
 #include <vine/appfw/ConfigManager.hpp>
@@ -284,7 +284,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     EXPECT_EQ(target->nativeHandle(), host.handle()) << "the session adopted the host's window";
 
     backend->executor().executeFrame(
-        TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).content(commands, camera.get()).value(),
+        TestFrame().pass(pass.get()).target(nullptr).clear(clear).depth(vn::graphics::DepthPolicy::TestAndWrite).content(commands, camera.get()).value(),
         target);
 
     // A presentation reaches the display server asynchronously: two plan-free frames re-present the picture

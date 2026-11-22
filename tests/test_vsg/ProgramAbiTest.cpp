@@ -193,7 +193,7 @@ TEST(ProgramAbiTest, TheFlatForwardProgramIsTheSameAbiAndItsDefineComesFromTheTe
 TEST(ProgramAbiTest, EveryModeOfTheForwardProgramDeclaresTheSameAbi)
 {
     // The four modes are one text with one define (see BuiltinShaders::unlitForwardProgram /
-    // normalsForwardProgram): the content set is shared per (target, depth mode) and its bindings come from the
+    // normalsForwardProgram): the content set is shared per (target, depth policy) and its bindings come from the
     // program, so a mode whose text declared one binding fewer would render with an unbound set. Same ABI, four
     // pictures - which is what makes "switch the mode" one assignment on the pass.
     const ProgramAbi lit     = scan(*vn::graphics::forwardProgram());

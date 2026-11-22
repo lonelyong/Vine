@@ -11,7 +11,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/Color.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
@@ -26,7 +26,7 @@
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
 using vn::graphics::MatrixTransform;
@@ -253,7 +253,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     pass.clear_depth   = true;
     // 三段共面：深度 LESS 会让后画的两段在自己的深度上被拒，而这一条量的是"三条都到了光栅器"，
     // 不是遮挡关系 —— 关掉深度，两个变量只剩拓扑与颜色。
-    pass.depth_mode = DepthMode::Disabled;
+    pass.depth_policy = DepthPolicy::Disabled;
     // 无光照档：没有灯的环境里跑默认前向程序会得到一张被算黑的画面，而这一条判的是"哪一段画的"。
     pass.program_override = vn::graphics::unlitForwardProgram();
     vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
@@ -352,7 +352,7 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     pass.clear_enabled    = true;
     pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.clear_depth      = true;
-    pass.depth_mode       = DepthMode::Disabled;
+    pass.depth_policy       = DepthPolicy::Disabled;
     pass.program_override = vn::graphics::unlitForwardProgram();
     vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
@@ -420,7 +420,7 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
         pass.clear_enabled    = true;
         pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         pass.clear_depth      = true;
-        pass.depth_mode       = DepthMode::Disabled;
+        pass.depth_policy       = DepthPolicy::Disabled;
         pass.program_override = vn::graphics::unlitForwardProgram();
         const auto node       = vn::test::applyPassForTest(*fixture.engine, std::move(pass), 0);
         (void)scene->publish(); // the scene this pass draws, published by its owner (see Scene::publish)
@@ -475,7 +475,7 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     pass.clear_enabled    = true;
     pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.clear_depth      = true;
-    pass.depth_mode       = DepthMode::Disabled;
+    pass.depth_policy       = DepthPolicy::Disabled;
     pass.program_override = vn::graphics::unlitForwardProgram();
     vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 

@@ -22,9 +22,9 @@
 - **A HUD owns the depth inside its box (2026-11-20)**: a pass states its clear as TWO independent dimensions -
   `clear_enabled` (colour) and `clear_depth` (depth), carried in `ClearPolicy{color, depth, value, extra_values}` - and a
   pass that clears no colour clears depth only by stating it, so every pre-existing "no clear" declaration means the
-  same thing. The chain declares the gizmo `clear_enabled = false, clear_depth = true, depth_mode = TestAndWrite`: the
+  same thing. The chain declares the gizmo `clear_enabled = false, clear_depth = true, depth_policy = TestAndWrite`: the
   arrows occlude each other like the solids they are and the scene underneath is never touched (declaring only
-  `depth_mode` would test them against the SCENE's depth, which has nothing to do with their own). What a target can
+  `depth_policy` would test them against the SCENE's depth, which has nothing to do with their own). What a target can
   honour: an off-screen target every combination (four render-pass variants); the WINDOW's first pass both, a LATER
   window pass depth only (vsg records a scissored `vkCmdClearAttachments` at that pass' viewport, vk picks its
   load-colour/CLEAR-depth pass), and a later COLOUR clear is reported as `UnsupportedRequest` rather than dropped.
@@ -906,7 +906,7 @@
   `SceneView::publishContent` does not publish the chain-owned transparent scene (one `never published`, that pass draws nothing) and
   `applySurfaceGeometry` does not resize the chain either (the demo used to resize in its own layout step, two sources of size). The demo is fixed, see
   `.ai/bugs/demo-chain-never-adopted.md`.
-- **vk**: a full-screen packet must **always** be `DepthMode::Disabled` (enforced by `ContentDraw::planScreen`, the reference backend's M4b rule).
+- **vk**: a full-screen packet must **always** be `DepthPolicy::Disabled` (enforced by `ContentDraw::planScreen`, the reference backend's M4b rule).
   A full-screen triangle sits at z = 0.0 = the reverse-Z far plane; the window pass's D24 clears to 0 and deferred's composite **borrows** the G-buffer
   depth ⇒ inheriting `TestAndWrite` discards the whole block, while **zero VUIDs and every `recorded=1` in the recording layer**. The case is
   `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`; the old screen fixture explicitly set `Disabled`, which is exactly why it did not catch it.

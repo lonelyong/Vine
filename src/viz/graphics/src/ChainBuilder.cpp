@@ -102,11 +102,11 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         // A HUD OWNS THE DEPTH INSIDE ITS BOX: the pass keeps the colour it is drawn over and resets only the depth in
         // its rectangle, then tests and writes - so the marker's arrows occlude each other like the solids they are,
         // while the scene underneath is never occluded by them. The two halves are independent on purpose (see
-        // ClearPolicy); stating only `depth_mode` would test the arrows against the SCENE's depth, which has nothing to
+        // ClearPolicy); stating only `depth_policy` would test the arrows against the SCENE's depth, which has nothing to
         // do with their own.
         desc.clear_enabled = false;
         desc.clear_depth   = true;
-        desc.depth_mode    = DepthMode::TestAndWrite;
+        desc.depth_policy    = DepthPolicy::TestAndWrite;
         // Registered through the same public entry a host uses (see PassChain::addOverlay): the recipe states the
         // overlay's CONTENT, the label its pass carries, and how it re-anchors itself - a third overlay is another
         // call, not a change to PassChain. The layout ANSWERS the rectangle the pass draws into.
@@ -133,7 +133,7 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         desc.content       = intrusive_ptr<Scene>(fps->content());
         desc.viewport      = fps->boxViewport();
         desc.clear_enabled = false;
-        desc.depth_mode    = DepthMode::Disabled;
+        desc.depth_policy    = DepthPolicy::Disabled;
         // The readout measures and repaints itself when the chain updates its overlays (FrameUpdate).
         pipeline.addOverlay(String(PassChain::kStatsRole), fps.get(), desc, [fps](int width, int height, double ratio) {
             fps->setPixelRatio(ratio);
@@ -328,7 +328,7 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
         // the main content pass just wrote, but does NOT write depth (standard
         // alpha-blend rule) and does not clear.
         transparent_desc.clear_enabled = false;
-        transparent_desc.depth_mode    = DepthMode::TestOnly;
+        transparent_desc.depth_policy    = DepthPolicy::TestOnly;
         pipeline.addPass(transparent_desc);
         // The chain owns the extra scene from here on (see PassChain::publishContent): the content the HOST owns is
         // the host's to publish, and this one has no other owner.
@@ -493,7 +493,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     transparent_desc.layer_mask    = content_layers_;
     transparent_desc.target        = Target::explicitTarget(composite);
     transparent_desc.clear_enabled = false;
-    transparent_desc.depth_mode    = DepthMode::TestOnly;
+    transparent_desc.depth_policy    = DepthPolicy::TestOnly;
     transparent_desc.output.name   = u8"Composite";
     transparent_desc.depth_view    = depthViewOf(gbuffer);
     // The composite's LAST writer owns the hand-off (the lighting pass above also draws into the same

@@ -71,7 +71,7 @@ DynamicState resolveDynamicState(const vn::graphics::ResolvedCommandState& comma
     const vn::graphics::ResolvedRenderState& state = command.state;
     DynamicState                             resolved;
     resolved.depth =
-        state.depth.test ? (state.depth.write ? vn::graphics::DepthMode::TestAndWrite : vn::graphics::DepthMode::TestOnly) : vn::graphics::DepthMode::Disabled;
+        state.depth.test ? (state.depth.write ? vn::graphics::DepthPolicy::TestAndWrite : vn::graphics::DepthPolicy::TestOnly) : vn::graphics::DepthPolicy::Disabled;
     resolved.compare        = state.depth.compare;
     resolved.cull_mode      = state.cullMode;
     resolved.polygon_mode   = state.polygonMode;

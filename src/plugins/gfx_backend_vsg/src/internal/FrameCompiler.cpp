@@ -321,7 +321,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass& p
             // the depth policy the call's own definition gives it (see CompiledDraw::dynamic - the canonical
             // triangle lies at the reverse-Z far plane, where any depth test rejects it).
             const vn::graphics::RenderState     screen_authored{};
-            const vn::graphics::PassRenderState screen_pass{ .depth = vn::graphics::DepthMode::Disabled };
+            const vn::graphics::PassRenderState screen_pass{ .depth = vn::graphics::DepthPolicy::Disabled };
             draw.dynamic = resolveDynamicState(resolveRenderState(screen_authored, screen_pass, vn::graphics::Topology::Triangles));
         }
     }

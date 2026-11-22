@@ -78,7 +78,7 @@ PlanResult twoPassOffscreenToWindow(vn::raw_ptr<RenderEngine> engine,
     scene_pass.clear_enabled = true;
     scene_pass.clear_color   = vn::Color(26, 26, 31).toLinear();
     scene_pass.clear_depth   = true;
-    scene_pass.depth_mode    = DepthMode::TestAndWrite;
+    scene_pass.depth_policy  = DepthPolicy::TestAndWrite;
     scene_pass.output.name   = u8"SceneColor";
     scene_pass.output.whole_target = true;
 
@@ -160,7 +160,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     forward_pass.content       = transparent_scene;
     forward_pass.target        = Target::explicitTarget(composite);
     forward_pass.clear_enabled = false;
-    forward_pass.depth_mode    = DepthMode::TestOnly;
+    forward_pass.depth_policy  = DepthPolicy::TestOnly;
     forward_pass.output.name   = u8"Composite";
     forward_pass.output.whole_target = true;
 
@@ -237,7 +237,7 @@ vn::intrusive_ptr<PassChain> builderChain(vn::raw_ptr<RenderEngine> engine,
     hud.viewport = gizmo->boxViewport();
     hud.clear_enabled = false;                  // keep the picture it is drawn over
     hud.clear_depth   = true;                   // ...and own the depth inside the box
-    hud.depth_mode    = DepthMode::TestAndWrite; // so the marker's arrows occlude each other
+    hud.depth_policy  = DepthPolicy::TestAndWrite; // so the marker's arrows occlude each other
     pipeline->addOverlay(u8"gizmo", gizmo.get(), hud);
 
     return pipeline;

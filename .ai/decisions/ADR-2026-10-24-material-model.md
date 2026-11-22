@@ -6,7 +6,7 @@
 
 ## Background
 
-The engine's material was "tiled Phong plus one texture": `ambient / diffuse / specular / shininess`, with the material alpha carried but never read; an imported PBR asset was approximated as Phong in `ModelScene.cpp::materialFrom` (metallic folded into diffuse, roughness into shininess and specular intensity). With no instances, per-object highlight and tint could only clone the whole material (`ModelRenderView::selectAt`).
+The engine's material was "tiled Phong plus one texture": `ambient / diffuse / specular / shininess`, with the material alpha carried but never read; an imported PBR asset was approximated as Phong in `ModelScene.cpp::materialFrom` (metallic folded into diffuse, roughness into shininess and specular intensity). With no instances, per-object highlight and tint could only clone the whole material (`ModelRenderView::selectAt`). <!-- drift-ok -->
 
 Both triggers of backlog T16 had appeared:
 
@@ -52,7 +52,7 @@ Chose **C**, with three accompanying decisions:
 
 ## Evidence
 
-- Today's approximation: the `MaterialType::Pbr` branch of `src/viz/graphics/src/ModelScene.cpp` (metallic -> a reduced diffuse, roughness -> shininess and specular intensity).
+- Today's approximation: the `MaterialType::Pbr` branch of `src/viz/graphics/src/ModelScene.cpp` (metallic -> a reduced diffuse, roughness -> shininess and specular intensity). <!-- drift-ok -->
 - The cloning site for per-object highlight: `selectAt` in `src/plugins/model_viewer/src/ModelRenderView.hpp`.
 - One texture and a 64 B block: `src/viz/graphics/sdk/vine/graphics/Material.hpp`, `VineMaterialBlock` in `ShaderAbi.hpp`, `shaders/vine_params.glsl`.
 - The variant mechanism and its gate: `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ProgramVariant.hpp`, `scripts/vn_shader_check.sh`.

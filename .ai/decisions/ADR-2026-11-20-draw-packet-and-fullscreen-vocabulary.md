@@ -140,7 +140,7 @@ The 2026-11-20 batch renamed the `Screen` enumerator in four places and kept fou
 (2026-11-21) named that mixture as a defect, which was this decision's own recorded trigger for the kind set. The
 values are unchanged - `Scene` and `Fullscreen` - and what follows is the type count.
 
-- **One enumeration.** `DrawKind` lives in its own header (`DrawKind.hpp`, like `DepthMode.hpp`) and is what
+- **One enumeration.** `DrawKind` lives in its own header (`DrawKind.hpp`, like `DepthMode.hpp`) and is what <!-- drift-ok -->
   `PassDesc::kind`, `DrawPacket::kind` and `PipelineKey::kind` all take. `PassKind`, `DrawPacket::Kind`, vk's
   `FrameHead::Kind` and vsg's `bool fullscreen` are deleted; `FrameHead::Kind` in both backends is `DrawKind`.
 - **Why the mixture was a defect, not tidiness.** The backend frame head answered "which recorder runs this plan"

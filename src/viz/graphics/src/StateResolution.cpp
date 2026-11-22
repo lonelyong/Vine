@@ -121,8 +121,8 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
         resolved.origin.depth = StateOrigin::Content;
     }
     else {
-        resolved.state.depth.test  = pass.depth != DepthMode::Disabled;
-        resolved.state.depth.write = pass.depth == DepthMode::TestAndWrite;
+        resolved.state.depth.test  = pass.depth != DepthPolicy::Disabled;
+        resolved.state.depth.write = pass.depth == DepthPolicy::TestAndWrite;
         resolved.origin.depth      = StateOrigin::Pass;
     }
 

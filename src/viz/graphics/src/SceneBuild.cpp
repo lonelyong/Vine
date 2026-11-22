@@ -1,4 +1,4 @@
-#include <vine/graphics/ModelScene.hpp>
+#include <vine/graphics/SceneBuild.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -49,7 +49,7 @@ namespace
  */
 struct Conversion {
     const vn::models::Model&                                     model;
-    ModelScene&                                                    scene;
+    SceneBuild&                                                  scene;
     std::unordered_map<const vn::models::Material*, MaterialPtr> materials;
     std::vector<bool>                                              on_path;
 
@@ -134,9 +134,9 @@ struct Conversion {
 
 } // namespace
 
-ModelScene sceneFromModel(const vn::models::Model& model)
+SceneBuild sceneFromModel(const vn::models::Model& model)
 {
-    ModelScene scene;
+    SceneBuild scene;
     if (model.nodes().empty()) {
         return scene;
     }

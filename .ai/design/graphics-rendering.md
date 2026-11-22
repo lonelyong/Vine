@@ -1,7 +1,7 @@
 # graphics rendering: targets, MSAA, image sources, colour, shading, shadows
 
 > **Status**: current
-> **Last verified**: 2026-11-02
+> **Last verified**: 2026-11-23
 > **Scope**: targets, MSAA, image sources, colour space, shading and shadows.
 > **Sources**: `RenderTarget.hpp` / `ImageSource.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
 > `ShaderAbi.hpp` / `Light.hpp`.
@@ -135,6 +135,24 @@ TYPE count went down while the values stayed `Scene` / `Fullscreen`.
 - Rejected: `PassKind` kept as an alias of `DrawKind` (the module promises no source stability, every in-tree consumer moved in
   the same commit, and an alias leaves two names in every search); a `std::variant` of two packet types (the mismatch it would
   prevent is answered by one predicate, `packetDraws`, and the shape would pierce `OwnedFrame` and both recorders).
+
+**The 2026-11-23 batch: a policy is not a state, and a build is not a scene** (`BC-34` / `BC-35`; backlog `T53`). Both names
+described a NEIGHBOUR rather than their own value; the change is vocabulary only - every enumerator, member and behaviour is
+unchanged.
+
+| Before | Now | What the old name got wrong | Note |
+|---|---|---|---|
+| `DepthMode` / `PassDesc::depth_mode` / `RenderPass::depthMode()`; `DepthMode.hpp` | `DepthPolicy` / `PassDesc::depth_policy` / `RenderPass::depthPolicy()`; `DepthPolicy.hpp` | a POLICY, not a state: it says what a pass decides for content that authored no depth state, and the old name sat beside the real `DepthState` (a draw's own test/write/compare value) as a false friend - the header itself called it a policy | `BC-34` <!-- drift-ok --> |
+| `ModelScene` / `ModelScene.hpp` / `ModelScene.cpp` / `ModelSceneTest` | `SceneBuild` / `SceneBuild.hpp` / `SceneBuild.cpp` / `SceneBuildTest` | the RESULT of `sceneFromModel()`: a node tree plus the conversion's counts, which the caller attaches to a scene of its choosing - the old name read as "the model's scene" | `BC-35` <!-- drift-ok --> |
+
+- What it is: names only. The three `DepthPolicy` values keep their meaning, `sceneFromModel()` keeps its name, and
+  `SceneBuild` keeps its four members (`root`, `geometries`, `skipped_meshes`, `skipped_nodes`).
+- Why: the trigger was "the next batch that touches either type for another reason" (a word sweep alone has no witness,
+  `G8`); it was taken on an explicit go because a reader hits `DepthMode` beside `DepthState` and `ModelScene` meaning
+  "not a scene" and has to re-learn both - the mixture the names create is the witness.
+- Rejected: keeping `depth_mode` as a field and renaming only the type (two spellings for one concept); renaming
+  `sceneFromModel` too (it is a verb phrase and reads correctly); the meshio exporter's `ModelSceneWriter` (a different
+  concept - it writes an Assimp scene and never touches this type).
 
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):

@@ -209,7 +209,7 @@ std::u8string forwardFragmentSource()
 intrusive_ptr<ShaderProgram> forwardProgram()
 {
     // The forward content program carries the shadow ABI UNCONDITIONALLY (see the .frag: the content
-    // set is shared per (target, depth mode) and a session picks the content program once, so a
+    // set is shared per (target, depth policy) and a session picks the content program once, so a
     // shadowed variant would double that cache for every target and a host's own program would still
     // have no shadowed twin to pick). `vn_shadow.params.x` is the switch the one text takes both paths
     // with, which is what the ABI's params block is for (ShaderAbi.hpp).

@@ -5351,7 +5351,7 @@ TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
     setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -2.0), nullptr, u8"geo"));
     PassDesc pass_desc;
     pass_desc.camera       = intrusive_ptr<Camera>(new Camera());
-    pass_desc.depth_mode   = DepthMode::TestOnly;
+    pass_desc.depth_policy   = DepthPolicy::TestOnly;
     pass_desc.polygon_mode = PolygonMode::Line;
     pass_desc.content      = scene;
     const auto pass        = vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
@@ -5362,7 +5362,7 @@ TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
-    EXPECT_EQ(backend->pass_state.depth, DepthMode::TestOnly);
+    EXPECT_EQ(backend->pass_state.depth, DepthPolicy::TestOnly);
     ASSERT_TRUE(backend->pass_state.polygonMode.has_value());
     EXPECT_EQ(*backend->pass_state.polygonMode, PolygonMode::Line);
 
@@ -6187,7 +6187,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
         desc.viewport         = Viewport{ 4, 2, 32, 18 };
         desc.clear_color      = vn::Color(10, 20, 30).toLinear();
         desc.clear_depth      = false;
-        desc.depth_mode       = DepthMode::TestOnly;
+        desc.depth_policy       = DepthPolicy::TestOnly;
         desc.polygon_mode     = PolygonMode::Line;
         desc.program_override = vn::graphics::unlitForwardProgram(); // 走"改写命令"那条路
         return desc;
@@ -7992,7 +7992,7 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     EXPECT_EQ(gizmo_row->content, gizmo->content());
     EXPECT_EQ(readout_row->camera, readout->camera());
     EXPECT_EQ(readout_row->content, readout->content());
-    EXPECT_EQ(gizmo_pass->depthMode(), DepthMode::TestAndWrite) << "depth test + write: the arrows are solids that occlude each other";
+    EXPECT_EQ(gizmo_pass->depthPolicy(), DepthPolicy::TestAndWrite) << "depth test + write: the arrows are solids that occlude each other";
 
     // And the per-frame work is LIVE: the mirror happens because the CHAIN updates its overlays before the frame
     // (FrameUpdate / PassChain::update), which is what SurfaceWindow::renderFrame does once per frame.
@@ -8191,28 +8191,28 @@ TEST(RenderPassTest, DepthStyleIsExplicitAndIndependentOfClear)
     PassDesc desc;
     RenderPass pass;
     vn::graphics::detail::PassNode::adopt(pass, desc);
-    // Depth style is explicit and defaults on; it is NOT inferred from the
+    // The depth policy is explicit and defaults on; it is NOT inferred from the
     // clear flag (a depth-on pass may skip clearing).
-    EXPECT_EQ(pass.depthMode(), DepthMode::TestAndWrite);
+    EXPECT_EQ(pass.depthPolicy(), DepthPolicy::TestAndWrite);
     EXPECT_TRUE(pass.isClearEnabled());
-    desc.depth_mode = DepthMode::Disabled;
+    desc.depth_policy = DepthPolicy::Disabled;
     vn::graphics::detail::PassNode::adopt(pass, desc);
-    EXPECT_EQ(pass.depthMode(), DepthMode::Disabled);
+    EXPECT_EQ(pass.depthPolicy(), DepthPolicy::Disabled);
     // The two axes are orthogonal: disabling the clear does not flip depth.
     desc.clear_enabled = false;
     vn::graphics::detail::PassNode::adopt(pass, desc);
     EXPECT_FALSE(pass.isClearEnabled());
-    EXPECT_EQ(pass.depthMode(), DepthMode::Disabled);
-    desc.depth_mode = DepthMode::TestAndWrite;
+    EXPECT_EQ(pass.depthPolicy(), DepthPolicy::Disabled);
+    desc.depth_policy = DepthPolicy::TestAndWrite;
     vn::graphics::detail::PassNode::adopt(pass, desc);
-    EXPECT_EQ(pass.depthMode(), DepthMode::TestAndWrite);
+    EXPECT_EQ(pass.depthPolicy(), DepthPolicy::TestAndWrite);
     EXPECT_FALSE(pass.isClearEnabled());
     // All THREE values are reachable, and the middle one stays itself: a test-only pass must not be
     // flattened into "on" by reading a boolean and writing it back (the convenience pair that did
-    // exactly that is gone — setDepthMode is the only spelling of this fact).
-    desc.depth_mode = DepthMode::TestOnly;
+    // exactly that is gone — `depth_policy` is the only spelling of this fact).
+    desc.depth_policy = DepthPolicy::TestOnly;
     vn::graphics::detail::PassNode::adopt(pass, desc);
-    EXPECT_EQ(pass.depthMode(), DepthMode::TestOnly);
+    EXPECT_EQ(pass.depthPolicy(), DepthPolicy::TestOnly);
 }
 
 TEST(PassChainTest, DefaultGbufferTargetIsCanonicalLayout)
@@ -9468,7 +9468,7 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     EXPECT_EQ(resolved.origin.polygonMode, StateOrigin::Pass);
 
     // Depth is the asymmetric one: the pass states a POLICY for content that authored none...
-    const ResolvedCommandState from_pass = resolveRenderState(RenderState{}, PassRenderState{ .depth = DepthMode::TestOnly }, Topology::Triangles);
+    const ResolvedCommandState from_pass = resolveRenderState(RenderState{}, PassRenderState{ .depth = DepthPolicy::TestOnly }, Topology::Triangles);
     EXPECT_TRUE(from_pass.state.depth.test);
     EXPECT_FALSE(from_pass.state.depth.write);
     EXPECT_EQ(from_pass.origin.depth, StateOrigin::Pass);
@@ -9477,7 +9477,7 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     authored_depth.compare = CompareOp::Always;
     RenderState depth_content;
     depth_content.depth                 = authored_depth;
-    const ResolvedCommandState authored = resolveRenderState(depth_content, PassRenderState{ .depth = DepthMode::Disabled }, Topology::Triangles);
+    const ResolvedCommandState authored = resolveRenderState(depth_content, PassRenderState{ .depth = DepthPolicy::Disabled }, Topology::Triangles);
     EXPECT_TRUE(authored.state.depth.test) << "an authored depth is kept even where the pass says 'no depth'";
     EXPECT_EQ(authored.state.depth.compare, CompareOp::Always);
     EXPECT_EQ(authored.origin.depth, StateOrigin::Content);

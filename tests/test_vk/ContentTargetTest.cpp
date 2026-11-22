@@ -10,7 +10,7 @@
  *     ResizeInPlace vs Rebuild, observed from outside;
  *   - DEPTH: the default pass policy tests and writes depth (the SDK projection puts the near plane at clip z = -1,
  *     and the backend stores it as the larger device depth), so a farther fragment drawn later must be rejected;
- *     with `DepthMode::Disabled` the later fragment wins.
+ *     with `DepthPolicy::Disabled` the later fragment wins.
  *
  * The device cases skip on a machine with no Vulkan device, like every device case in this repository.
  */
@@ -47,7 +47,7 @@ using vn::Colorf;
 using vn::String;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawPacket;
@@ -457,7 +457,7 @@ TEST(VkContentTargetTest, ThePassDepthPolicyDecidesWhichFragmentSurvives)
     // THE SAME ORDER with depth disabled: nothing is tested, so the later fragment wins.
     {
         PassRenderState no_depth;
-        no_depth.depth = DepthMode::Disabled;
+        no_depth.depth = DepthPolicy::Disabled;
 
         const intrusive_ptr<RenderTarget> target = makeTarget(1);
         backend->executeFrame(drawingFrame(target.get(), clear, no_depth, ordered));

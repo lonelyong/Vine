@@ -26,7 +26,7 @@
 #include <vector>
 
 #include <vine/Buffer.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/ImageSource.hpp>
 #include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -40,7 +40,7 @@
 
 using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::Diagnostics;
 using vn::graphics::DrawItem;
@@ -174,7 +174,7 @@ TEST(FrameCompilerTest, AFullscreenDrawCarriesItsKindItsSourceAndItsOwnResolvedS
     EXPECT_EQ(screen.viewport.width, 16);
     EXPECT_EQ(screen.viewport.height, 32);
 
-    EXPECT_EQ(screen.dynamic.depth, vn::graphics::DepthMode::Disabled)
+    EXPECT_EQ(screen.dynamic.depth, vn::graphics::DepthPolicy::Disabled)
         << "a full-screen draw composites on top: the canonical triangle would be rejected at the far plane";
     EXPECT_EQ(screen.dynamic.cull_mode, vn::graphics::CullMode::None) << "the screen ABI's legacy shape";
     EXPECT_EQ(screen.dynamic.polygon_mode, vn::graphics::PolygonMode::Fill);
@@ -684,20 +684,20 @@ TEST(FrameCompilerTest, ThePassDepthAppliesOnlyWhereTheContentAuthoredNone)
     r.recorder.beginFrame(FrameToken{ 1 });
     r.recorder.beginPass(1);
     r.recorder.setRenderTarget(target.get());
-    r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthMode::Disabled }); // HUD pass
+    r.recorder.setPassState(vn::graphics::PassRenderState{ .depth = DepthPolicy::Disabled }); // HUD pass
     r.recorder.render(commands, nullptr);
     r.recorder.endPass();
     r.recorder.endFrame();
 
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes.size(), 1u);
-    EXPECT_EQ(frame.passes[0].state.depth, DepthMode::Disabled);
+    EXPECT_EQ(frame.passes[0].state.depth, DepthPolicy::Disabled);
     ASSERT_EQ(frame.passes[0].draws.size(), 1u);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 2u);
 
     // The authored state wins; the content that authored none follows the pass.
-    EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.depth, DepthMode::TestAndWrite);
-    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.depth, DepthMode::Disabled);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.depth, DepthPolicy::TestAndWrite);
+    EXPECT_EQ(frame.passes[0].draws[0].commands[1].dynamic.depth, DepthPolicy::Disabled);
 }
 
 TEST(FrameCompilerTest, TheAuthoredCompareOpTravelsIntoTheDynamicState)

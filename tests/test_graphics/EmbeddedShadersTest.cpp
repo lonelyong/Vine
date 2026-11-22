@@ -206,7 +206,7 @@ TEST(EmbeddedShadersTest, TheBuiltinForwardProgramsUseTheEmbeddedSources)
     EXPECT_EQ(forward_fs->type, ShaderStageType::Fragment);
     EXPECT_EQ(forward_vs->source, vn::String(kBuiltinForwardVert));
     // The fragment stage is that file with the shadow ABI inserted at its markers (the content set is
-    // shared per (target, depth mode), so the ABI is declared UNCONDITIONALLY and `shadow.params.x`
+    // shared per (target, depth policy), so the ABI is declared UNCONDITIONALLY and `shadow.params.x`
     // is the runtime switch — see BuiltinShaders::forwardProgram). What this checks is that every
     // SEGMENT of the shipped file survives verbatim and in order: the inserted text has its own test
     // (TheForwardProgramDeclaresTheShadowAbiWhereTheContentSetBindsIt), and copying it here would be a
@@ -440,7 +440,7 @@ TEST(EmbeddedShadersTest, TheForwardProgramDeclaresTheShadowAbiWhereTheContentSe
 {
     // The forward program carries the shadow ABI UNCONDITIONALLY (unlike the deferred lighting
     // program's two variants) and at the CONTENT path's bindings: the content set is shared per
-    // (target, depth mode) and a session picks the content program once, so a shadowed variant would
+    // (target, depth policy) and a session picks the content program once, so a shadowed variant would
     // double that cache for every target and a host's own program would still have no shadowed twin to
     // pick. One text, both paths, switched at runtime by `shadow.params.x` — which is what the ABI's
     // params block is for (ShaderAbi.hpp).

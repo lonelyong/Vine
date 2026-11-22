@@ -72,7 +72,7 @@ class Scene;
  * hud.name = u8"fps_overlay"; hud.stage = PassStage::Overlay;
  * hud.camera = intrusive_ptr<Camera>(fps->camera());
  * hud.content = intrusive_ptr<Scene>(fps->content());
- * hud.viewport = fps->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
+ * hud.viewport = fps->boxViewport(); hud.clear_enabled = false; hud.depth_policy = DepthPolicy::Disabled;
  * chain->addOverlay(u8"stats", fps.get(), hud);    // the chain updates it before each frame
  * \endcode
  */

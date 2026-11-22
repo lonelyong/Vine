@@ -25,7 +25,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
-#include <vine/graphics/ModelScene.hpp>
+#include <vine/graphics/SceneBuild.hpp>
 
 using vn::models::ColorMaterial;
 using vn::models::TriangleMesh;
@@ -64,7 +64,7 @@ const Geometry* firstGeometry(const Group& group)
 
 } // namespace
 
-TEST(ModelSceneTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
+TEST(SceneBuildTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
 {
     Model       model;
     Model::Node root;
@@ -81,7 +81,7 @@ TEST(ModelSceneTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
     entry.mesh = makeTriangle(u8"body");
     model.setMeshes({ entry });
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     ASSERT_NE(scene.root, nullptr);
     EXPECT_EQ(scene.geometries, 1U);
 
@@ -107,7 +107,7 @@ TEST(ModelSceneTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
     EXPECT_EQ(leaf->primitive(0)->indexCount(), 3U);
 }
 
-TEST(ModelSceneTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
+TEST(SceneBuildTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
 {
     // OSG / vsg scene graphs share a drawable under several transforms; this graph is a strict tree, so the LEAF is
     // copied and the DATA is not: both geometries must read the same position buffer.
@@ -129,7 +129,7 @@ TEST(ModelSceneTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
     entry.mesh = mesh;
     model.setMeshes({ entry });
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     ASSERT_NE(scene.root, nullptr);
     EXPECT_EQ(scene.geometries, 2U);
 
@@ -148,7 +148,7 @@ TEST(ModelSceneTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
     EXPECT_EQ(first_positions->values.get(), second_positions->values.get()) << "the vertex data is ONE allocation, shared by both leaves";
 }
 
-TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomesLeafOpacity)
+TEST(SceneBuildTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomesLeafOpacity)
 {
     auto color_material = vn::make_intrusive<ColorMaterial>(vn::Colorf(1.0F, 0.0F, 0.0F, 1.0F));
     color_material->setName(u8"red");
@@ -176,7 +176,7 @@ TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomes
     Model::Entry missing_entry; // no mesh: counted, not fatal
     model.setMeshes({ color_entry, phong_entry, pbr_entry, missing_entry });
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     ASSERT_NE(scene.root, nullptr);
     EXPECT_EQ(scene.geometries, 3U);
     EXPECT_EQ(scene.skipped_meshes, 1U) << "a null entry is skipped and counted, the rest still converts";
@@ -212,18 +212,18 @@ TEST(ModelSceneTest, TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomes
     EXPECT_FLOAT_EQ(pbr->opacity(), 0.4F) << "a PBR material's opacity is the LEAF's, not the shared material's";
 }
 
-TEST(ModelSceneTest, AnEmptyModelBuildsNothingAndSaysSoInItsCounts)
+TEST(SceneBuildTest, AnEmptyModelBuildsNothingAndSaysSoInItsCounts)
 {
     // "No nodes" is not an error and not a root with nothing under it: there is nothing to place, so the answer is
     // a null root and zero counts (a caller can tell "empty" from "built, drew nothing").
-    const vn::graphics::ModelScene scene = sceneFromModel(Model{});
+    const vn::graphics::SceneBuild scene = sceneFromModel(Model{});
     EXPECT_EQ(scene.root, nullptr);
     EXPECT_EQ(scene.geometries, 0U);
     EXPECT_EQ(scene.skipped_meshes, 0U);
     EXPECT_EQ(scene.skipped_nodes, 0U);
 }
 
-TEST(ModelSceneTest, ARootIndexOutsideTheNodeTableIsReportedNotGuessed)
+TEST(SceneBuildTest, ARootIndexOutsideTheNodeTableIsReportedNotGuessed)
 {
     // A malformed model is not silently repaired: the caller sees a null root and one skipped node, instead of a
     // tree built from an index nobody declared.
@@ -233,12 +233,12 @@ TEST(ModelSceneTest, ARootIndexOutsideTheNodeTableIsReportedNotGuessed)
     model.setNodes({ node });
     model.setRoot(3U);
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     EXPECT_EQ(scene.root, nullptr);
     EXPECT_EQ(scene.skipped_nodes, 1U);
 }
 
-TEST(ModelSceneTest, ACyclicNodeReferenceIsCutInsteadOfRecursingForever)
+TEST(SceneBuildTest, ACyclicNodeReferenceIsCutInsteadOfRecursingForever)
 {
     // The model is data, so its references can form a loop (a hand-built or corrupted file). The scene graph it is
     // converted into forbids cycles anyway (Group::addChild rejects a re-parent that would close one), so the walk
@@ -253,7 +253,7 @@ TEST(ModelSceneTest, ACyclicNodeReferenceIsCutInsteadOfRecursingForever)
     model.setNodes({ root, child });
     model.setRoot(0U);
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     ASSERT_NE(scene.root, nullptr);
     EXPECT_EQ(scene.skipped_nodes, 2U) << "the self reference and the back reference are both cut";
     EXPECT_EQ(scene.geometries, 0U);
@@ -263,7 +263,7 @@ TEST(ModelSceneTest, ACyclicNodeReferenceIsCutInsteadOfRecursingForever)
     ASSERT_EQ(group->children().size(), 1U) << "only the child that was not on the path is attached";
 }
 
-TEST(ModelSceneTest, OneSourceMaterialIsOneGraphicsMaterial)
+TEST(SceneBuildTest, OneSourceMaterialIsOneGraphicsMaterial)
 {
     // A material referenced by two entries must reach the backend as ONE object: two objects would each get their
     // own material slot, and the draws that share a material would stop being one batch. The cache is keyed by the
@@ -285,7 +285,7 @@ TEST(ModelSceneTest, OneSourceMaterialIsOneGraphicsMaterial)
     second.material = shared;
     model.setMeshes({ first, second });
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     ASSERT_NE(scene.root, nullptr);
     ASSERT_EQ(scene.geometries, 2U);
     const auto* group = dynamic_cast<const Group*>(scene.root.get());
@@ -301,7 +301,7 @@ TEST(ModelSceneTest, OneSourceMaterialIsOneGraphicsMaterial)
     EXPECT_EQ(left->material()->name(), vn::String(u8"shared"));
 }
 
-TEST(ModelSceneTest, AnEntryIndexOutsideTheTableIsCountedNotDereferenced)
+TEST(SceneBuildTest, AnEntryIndexOutsideTheTableIsCountedNotDereferenced)
 {
     // The node's mesh list is an index list too: a stale index must be skipped like any other bad reference, not
     // read out of the array.
@@ -312,7 +312,7 @@ TEST(ModelSceneTest, AnEntryIndexOutsideTheTableIsCountedNotDereferenced)
     model.setNodes({ node });
     model.setRoot(0U);
 
-    const vn::graphics::ModelScene scene = sceneFromModel(model);
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
     ASSERT_NE(scene.root, nullptr) << "the tree itself is still usable";
     EXPECT_EQ(scene.geometries, 0U);
     EXPECT_EQ(scene.skipped_meshes, 1U);

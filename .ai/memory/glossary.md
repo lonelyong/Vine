@@ -1,6 +1,6 @@
 # Glossary: one spelling per concept
 
-> **Status**: living ｜ **Last verified**: 2026-11-22
+> **Status**: living ｜ **Last verified**: 2026-11-23
 > **Scope**: the vocabulary a design page, an ADR or a commit body uses about the render seam, the two
 > backends and the frame model. It is the single mapping between a concept's **code spelling** and the
 > words the Chinese pages use, so prose can be searched and translated without guessing.
@@ -36,6 +36,8 @@
 | content | 内容 | Scene, material, geometry, program and light as engine-owned objects. |
 | target, `RenderTarget` | 目标 | The host's off-screen target; its address is the identity a frame names. |
 | attachment | 附件 | One colour image or the depth image of a target. |
+| depth policy, `DepthPolicy` | 深度策略 | What a pass decides for content that authored no depth state (`Disabled` / `TestOnly` / `TestAndWrite`); a draw's own value is a `DepthState`. |
+| scene build, `SceneBuild` | — | The result of `sceneFromModel`: the node tree plus the conversion's counts; the caller attaches `root` to a `Scene`. |
 | lease, `TargetTable::Lease` | 租约 | One frame driver's per-frame claims; its destructor is the only release point. |
 | claim | 认领 | Taking a target for one frame driver, before its attachments are built. |
 | park | 停放 | What `release` does to a record: hand it to the retirement queue instead of destroying it. |
@@ -93,6 +95,8 @@ finishes that migration. Two spellings of one word are a defect even when they c
 | `Screen` as a kind / `ScreenPass` | `Fullscreen` / `FullscreenPass` | 2026-11-20: "screen" is the window in this module, and the presenting pass is itself one of these; the kind fills its VIEW. |
 | `FrameOutcome` | `FrameCallOutcome` | It is what one `frame()` CALL did (`NotReady` = no frame happened), not what a frame was. |
 | `Capabilities::Feature` / `Capabilities::supports` / `Capabilities::bit`; `DeviceClock::WindowId`; `FrameStats.hpp` | `Features::Feature` / `features.supports` / `Features::bit`; `FrameDriverId`; `FrameReport.hpp` | The forwarders the glossary had scheduled for removal; a header named after a type that does not exist. <!-- drift-ok --> |
+| `DepthMode` / `depth_mode` / `RenderPass::depthMode` | `DepthPolicy` / `depth_policy` / `RenderPass::depthPolicy` | A policy is not a state: it says what a pass decides for content that authored none, and sat beside `DepthState` as a false friend (`BC-34`). |
+| `ModelScene`; `ModelScene.hpp` / `ModelScene.cpp`; `ModelSceneTest` | `SceneBuild`; `SceneBuild.hpp` / `SceneBuild.cpp`; `SceneBuildTest` | The type is what `sceneFromModel()` BUILT, not a scene; the caller decides which scene gets the root (`BC-35`). <!-- drift-ok --> |
 
 ## 3. False friends
 
@@ -111,4 +115,5 @@ finishes that migration. Two spellings of one word are a defect even when they c
 | screen | SCREEN-SPACE only: coordinates (`screenToWorldRay`, `screenX` / `screenY`), the `RotateToScreen` / `autoScaleToScreen` behaviours, post-process kinds (`PassStage::Effect`) | the window / the surface (`RenderArea`, `PresentTarget`) - and never a full-screen PROGRAM, which says `Fullscreen` (`fullscreenCopyProgram`, `drawFullscreenProgram`, `FullscreenCopyChannels`) |
 | target | a `RenderTarget` (off-screen images), a pass' `Target` declaration, or a `PresentTarget` (a presenter) | one type - the three have different lifetimes |
 | outcome / result | `FrameCallOutcome` is what one `frame()` call did; `FrameResult` is what the last ANSWERED frame was | two words for one value |
+| depth policy / depth state | a pass' decision for content that authored no depth state (`DepthPolicy`) | a draw's own test/write/compare value (`DepthState`, `RenderState::depth`) |
 | draw call / draw packet | a draw call is one submitted `DrawItem`; a `DrawPacket` is one pass' whole request for one view | two words for one value - the counts `draws` and `draw_packets` follow the same split |

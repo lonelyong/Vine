@@ -285,7 +285,7 @@ TEST(ContentDrawTest, AStateChangeRecordsOnlyTheDynamicBlock)
 
     ContentDraw::Draw changed = fixture.draw();
     changed.dynamic.cull_mode = vn::graphics::CullMode::Front;
-    changed.dynamic.depth     = vn::graphics::DepthMode::TestOnly;
+    changed.dynamic.depth     = vn::graphics::DepthPolicy::TestOnly;
 
     const auto group = fixture.recorder->record(registry, changed);
     ASSERT_NE(group, nullptr);
@@ -321,13 +321,13 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     const vn::backend_vsg::detail::DynamicStateEntryPoints none;
 
     DynamicState disabled;
-    disabled.depth      = vn::graphics::DepthMode::Disabled;
+    disabled.depth      = vn::graphics::DepthPolicy::Disabled;
     const auto no_depth = vn::backend_vsg::makeDynamicStateCommand(disabled, 1U, none);
     EXPECT_EQ(no_depth->depth_test_enable, VK_FALSE);
     EXPECT_EQ(no_depth->depth_write_enable, VK_FALSE);
 
     DynamicState translucent;
-    translucent.depth    = vn::graphics::DepthMode::TestOnly;
+    translucent.depth    = vn::graphics::DepthPolicy::TestOnly;
     const auto test_only = vn::backend_vsg::makeDynamicStateCommand(translucent, 1U, none);
     EXPECT_EQ(test_only->depth_test_enable, VK_TRUE);
     EXPECT_EQ(test_only->depth_write_enable, VK_FALSE);

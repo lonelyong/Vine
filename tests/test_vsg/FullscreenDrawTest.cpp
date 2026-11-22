@@ -256,7 +256,7 @@ class Fixture {
         full_screen.key.program               = program_ref;
         full_screen.key.compatibility.samples = 1U;
         full_screen.key.sampled_color_count   = source->colorAttachmentCount();
-        full_screen.dynamic.depth             = vn::graphics::DepthMode::Disabled; // a composite on top
+        full_screen.dynamic.depth             = vn::graphics::DepthPolicy::Disabled; // a composite on top
         full_screen.samplers                  = samplers;
         full_screen.viewport                  = viewport;
         full_screen.color_attachments         = destination->colorAttachmentCount();

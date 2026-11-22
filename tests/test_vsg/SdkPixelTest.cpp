@@ -10,7 +10,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/Geometry.hpp>
 
 #include <vine/graphics/Group.hpp>
@@ -455,7 +455,7 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
     pass.clear_depth   = true;
     // 共面 ⇒ 深度测试会让"后画的"被拒（同深度 LESS 不成立），而这条要量的正是**顺序**，所以把深度关掉：
     // pass 里只剩顺序这一个决定谁留下的因素。
-    pass.depth_mode = vn::graphics::DepthMode::Disabled;
+    pass.depth_policy = vn::graphics::DepthPolicy::Disabled;
     // 无光照档：没有灯的环境里跑默认前向程序会得到"被算黑"的画面，而这条判的是覆盖顺序，不是光照。
     pass.program_override = vn::graphics::unlitForwardProgram();
     vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);

@@ -6,7 +6,7 @@
 #include <vsg/commands/SetViewport.h>
 #include <vsg/core/ref_ptr.h>
 
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/DrawState.hpp>
 #include <vine/backend_vsg/support/VsgDynamicState.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>

@@ -25,7 +25,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/Color.hpp>
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/DrawItem.hpp>
@@ -79,7 +79,7 @@ TEST(UploadScratchTest, TheUploadScratchIsNotRetainedAndTheFramesGiveItBack)
     // content uploads nothing, which is the quiet frame below).
     const auto drive = [&](const TriangleFixture* content) {
         TestFrame frame;
-        frame.pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite);
+        frame.pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthPolicy::TestAndWrite);
         if (content != nullptr) {
             frame.content(content->commands, camera.get());
         }

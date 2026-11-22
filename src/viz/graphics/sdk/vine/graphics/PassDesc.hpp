@@ -11,7 +11,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "Camera.hpp"
-#include "DepthMode.hpp"
+#include "DepthPolicy.hpp"
 #include "DepthRange.hpp"
 #include "DrawKind.hpp"
 #include "ImageSource.hpp"
@@ -134,7 +134,7 @@ struct VN_GRAPHICS_API PassDesc {
     /// widths. Framebuffer pixels; it is dynamic state, so it also recompiles nothing.
     std::optional<float> line_width;
     /// The pass-scoped depth policy.
-    DepthMode depth_mode{ DepthMode::TestAndWrite };
+    DepthPolicy depth_policy{ DepthPolicy::TestAndWrite };
     /// Which layers of the CONTENT this pass draws (see Node::setLayers): a node whose layers do not
     /// intersect the mask is left out of the walk that fills this pass. kAllLayers (the default) draws
     /// everything - including content that declares no layers (kDefaultLayer) - so saying nothing is

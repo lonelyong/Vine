@@ -15,23 +15,23 @@ namespace
 constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
 
 /** @brief Maps a depth policy onto the API's test/write enables. */
-void mapDepth(vn::graphics::DepthMode mode, VkBool32& test, VkBool32& write) noexcept
+void mapDepth(vn::graphics::DepthPolicy policy, VkBool32& test, VkBool32& write) noexcept
 {
-    // The switch names every DepthMode, and the tail below is what the compiler's "not all paths return"
-    // warning demands rather than a policy of its own: an enumerator added without a case here lands on "depth
+    // The switch names every DepthPolicy value, and the tail below is what the compiler's "not all paths return"
+    // warning demands rather than a rule of its own: an enumerator added without a case here lands on "depth
     // on, and writing" - not on the "no depth at all" a fall-through usually means - and the warning that goes
     // with the missing case is the signal to come back. (The earlier comment claimed there was no tail, which
     // was simply not true of this code.)
-    switch (mode) {
-    case vn::graphics::DepthMode::Disabled:
+    switch (policy) {
+    case vn::graphics::DepthPolicy::Disabled:
         test  = VK_FALSE;
         write = VK_FALSE;
         return;
-    case vn::graphics::DepthMode::TestOnly:
+    case vn::graphics::DepthPolicy::TestOnly:
         test  = VK_TRUE;
         write = VK_FALSE;
         return;
-    case vn::graphics::DepthMode::TestAndWrite:
+    case vn::graphics::DepthPolicy::TestAndWrite:
         test  = VK_TRUE;
         write = VK_TRUE;
         return;

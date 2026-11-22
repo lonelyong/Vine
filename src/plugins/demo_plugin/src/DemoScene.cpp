@@ -1133,7 +1133,7 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
         pass.name          = u8"slot_overlay";
         pass.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
         pass.clear_enabled = false; // overlay: no clear + no depth -> on-top
-        pass.depth_mode    = vn::graphics::DepthMode::Disabled;
+        pass.depth_policy    = vn::graphics::DepthPolicy::Disabled;
         addDemoPass(*engine, render_control, pass, overlay, 20); // its own (master camera, order 20) slot
     });
 }
@@ -1199,7 +1199,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     pass_top.target        = vn::graphics::Target::explicitTarget(target);
     pass_top.output.name   = u8"MultiColor"; // publishes the same baked target
     pass_top.clear_enabled = false;          // no clear + no depth -> on-top slot
-    pass_top.depth_mode    = vn::graphics::DepthMode::Disabled;
+    pass_top.depth_policy    = vn::graphics::DepthPolicy::Disabled;
     addDemoPass(*engine, render_control, pass_top, overlay, -1); // slot = (master, -1)
 
     // PiP full-screen pass sampling the baked texture into the window.

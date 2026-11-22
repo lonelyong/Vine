@@ -88,7 +88,7 @@ bool RenderPass::isClearEnabled() const noexcept
 PassRenderState RenderPass::stateOverrides() const noexcept
 {
     PassRenderState state;
-    state.depth       = desc_.depth_mode;
+    state.depth       = desc_.depth_policy;
     state.polygonMode = desc_.polygon_mode;
     state.pointSize   = desc_.point_size;
     state.lineWidth   = desc_.line_width;

@@ -26,8 +26,10 @@ VN_GRAPHICS_NS_BEGIN
  * - Every count is a fact about the CONVERSION, not about the model: an entry with no mesh, or one the graphics layer
  *   cannot turn into vertex data, is skipped and counted instead of aborting the walk, so one odd part of an
  *   imported file cannot cost the rest of it.
+ * - It is ONE CONVERSION's result, not a scene: `root` is a node tree the caller attaches to whatever scene it chooses
+ *   (or none), and the counts describe the walk - which is why the type is named after the build.
  */
-struct VN_GRAPHICS_API ModelScene {
+struct VN_GRAPHICS_API SceneBuild {
     /// The model's root as a scene node, or null when the model has no nodes (nothing to draw).
     NodePtr root;
     /// How many `Geometry` leaves the tree holds (one per (node, mesh entry) pair).
@@ -54,7 +56,7 @@ struct VN_GRAPHICS_API ModelScene {
  * - NAMES TRAVEL: the node name, the mesh name and the material name are copied, which is what makes a converted
  *   tree readable in Scene::findNode() and in diagnostics.
  * - A MALFORMED MODEL IS COUNTED, NOT REPAIRED: an out-of-range index, an entry with no mesh and a reference that
- *   closes a loop are skipped and counted (ModelScene::skipped_nodes / skipped_meshes) - the walk never recurses
+ *   closes a loop are skipped and counted (SceneBuild::skipped_nodes / skipped_meshes) - the walk never recurses
  *   forever and the rest of the tree still converts. A node referenced TWICE is not malformed: it becomes two
  *   containers (the scene graph is a tree), and their leaves still share the mesh's buffers.
  *
@@ -69,7 +71,7 @@ struct VN_GRAPHICS_API ModelScene {
  * @param model Model to convert; an empty model yields a null root.
  * @return The built tree and the conversion's counts.
  */
-VN_GRAPHICS_API ModelScene sceneFromModel(const vn::models::Model& model);
+VN_GRAPHICS_API SceneBuild sceneFromModel(const vn::models::Model& model);
 
 /**
  * @brief Converts one geometry material into the material a draw uses.

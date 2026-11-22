@@ -48,7 +48,7 @@ inline constexpr int kAxisGizmoBoxSize = 128;
  * hud.viewport        = gizmo->boxViewport();
  * hud.clear_enabled   = false;                     // the picture it is drawn over stays
  * hud.clear_depth     = true;                      // ...and the depth inside the box is the marker's own
- * hud.depth_mode      = DepthMode::TestAndWrite;   // so the arrows occlude each other like solids
+ * hud.depth_policy      = DepthPolicy::TestAndWrite;   // so the arrows occlude each other like solids
  * chain->addOverlay(u8"gizmo", gizmo.get(), hud);   // the chain updates it before each frame
  * \endcode
  */

@@ -59,7 +59,7 @@
  *   framebuffer.
  * - THE CONSUMPTION RULES (from the contract, and the reason the pictures come out right):
  *   - SCOPE ATTRIBUTES belong to the pass and are dropped at endPass(): the render target, the
- *     stacking order, the clear policy and the depth mode. A pass that announced them and drew nothing
+ *     stacking order, the clear policy and the depth policy. A pass that announced them and drew nothing
  *     leaves no trace, so they cannot leak into the next pass.
  *   - ONE ANNOUNCEMENT SERVES ONE DRAW PACKET for the viewport and the lights: a pass that draws
  *     twice in one scope announces again before the second draw, and a draw with no fresh announcement
@@ -166,7 +166,7 @@ struct CollectedCommand {
  * @details
  * - The granularity is the call, not the command, because that is the granularity the contract
  *   consumes announcements at ("one announcement serves one draw packet") and the granularity the
- *   depth mode and the viewport are meaningful at. The commands of a content call share the call's
+ *   depth policy and the viewport are meaningful at. The commands of a content call share the call's
  *   announcements, which is also why the camera is recorded once per call instead of once per command.
  */
 struct CollectedDraw {

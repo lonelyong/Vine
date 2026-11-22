@@ -411,7 +411,7 @@ and every cache has a witness a test can read.**
 ### 3.1.6 F6 Fullscreen drawing
 
 - **Behaviour**: the vertex stage from `fullscreenVertexProgram()` + the caller's fragment stage; the source's colour attachments bind to set 0's 0..N-1, the shadow map
-  and the light block to 7 / 8; `planScreen()` **forces** `DepthMode::Disabled`.
+  and the light block to 7 / 8; `planScreen()` **forces** `DepthPolicy::Disabled`.
 - **Constraints**: `C7`, `N3`.
 - **Acceptance**: `ContentDrawTest`'s `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`, `ShadowTest`'s
   `AFullscreenPassShadesWithTheMapItResolved`, `DeferredTest`.
@@ -603,7 +603,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - How it fails: the fullscreen triangle sits at z = 0 (the Reverse-Z far plane); inheriting the pass' `TestAndWrite` discards the whole block with **zero VUIDs**.
 - How to detect it: the recorder says `recorded=1` per call but the picture is the clear colour; `readColorBuffer` equals the background everywhere.
-- How to prevent it: `planScreen()` forces `DepthMode::Disabled`; the case `AScreenCopyIsDrawnWhateverThePassDepthPolicySays` pins it with a fixture of "default pass
+- How to prevent it: `planScreen()` forces `DepthPolicy::Disabled`; the case `AScreenCopyIsDrawnWhateverThePassDepthPolicySays` pins it with a fixture of "default pass
   state + a target with depth" (the old fixture set Disabled explicitly, which is exactly why it did not catch this).
 
 ### 6.2 P2 The screen set must bind the shadow map the pass resolved

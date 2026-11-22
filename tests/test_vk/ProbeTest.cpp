@@ -30,7 +30,7 @@
 #include <vine/Color.hpp>
 #include <vine/String.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/PresentTarget.hpp>
@@ -49,7 +49,7 @@ using vn::Colorf;
 using vn::String;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawPacket;
@@ -158,7 +158,7 @@ void main()
     pass.target       = nullptr; // the window the frame is presented through
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(1.0F, 0.0F, 0.0F, 1.0F);
-    pass.state.depth  = DepthMode::TestAndWrite;
+    pass.state.depth  = DepthPolicy::TestAndWrite;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));

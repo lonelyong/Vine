@@ -28,7 +28,7 @@
 #include <vine/Colorf.hpp>
 #include <vine/String.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>

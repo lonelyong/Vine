@@ -36,7 +36,7 @@ layout(location = 0) out vec4 vn_out_color;
 
 // The shadow this pass declared, if any: the map it named as an INPUT and the block that places a
 // fragment in it (ShaderAbi.hpp). DECLARED ALWAYS, unlike the deferred lighting program's two
-// variants: a content set is shared per (target, depth mode) and a session picks the content program
+// variants: a content set is shared per (target, depth policy) and a session picks the content program
 // once, so a shadowed variant would double that cache for every target — and a host's own content
 // program would still have no shadowed twin to pick. One text, both paths, switched at RUNTIME by
 // `vn_shadow.params.x` (0 = no shadow reached this pass), which is what the ABI's switch is for.

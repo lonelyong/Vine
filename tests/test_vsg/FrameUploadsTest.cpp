@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/backend_vsg/internal/VsgBackend.hpp>
@@ -63,7 +63,7 @@ TEST(FrameUploadsTest, TheReportAnswersWhatThisFrameUploadedAndReleased)
         frame.pass(fixture.pass.get())
             .target(fixture.target.get())
             .clear(fixture.clear)
-            .depth(vn::graphics::DepthMode::TestAndWrite);
+            .depth(vn::graphics::DepthPolicy::TestAndWrite);
         if (content != nullptr) {
             frame.content(content->commands, fixture.camera.get());
         }

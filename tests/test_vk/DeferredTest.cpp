@@ -36,7 +36,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/ChainPresets.hpp>
-#include <vine/graphics/DepthMode.hpp>
+#include <vine/graphics/DepthPolicy.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/ImageSource.hpp>
@@ -58,7 +58,7 @@ using vn::Colorf;
 using vn::String;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ClearPolicy;
-using vn::graphics::DepthMode;
+using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawPacket;
@@ -198,7 +198,7 @@ struct Scene {
     pass.clear         = ClearPolicy{};
     pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
     pass.clear->clear_depth  = true;
-    pass.state.depth   = DepthMode::TestAndWrite;
+    pass.state.depth   = DepthPolicy::TestAndWrite;
     pass.packets.push_back(gbufferDraw(scene));
 
     entry.draw = std::move(pass);
@@ -236,7 +236,7 @@ struct Scene {
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     // The destination carries depth, and a full-screen triangle sits at the far plane: the pass states that it draws
     // OVER what the target holds, which is the same policy the SDK's own lighting pass states by having no depth.
-    pass.state.depth = DepthMode::Disabled;
+    pass.state.depth = DepthPolicy::Disabled;
 
     DrawPacket draw;
     draw.kind                 = DrawKind::Fullscreen;
@@ -266,7 +266,7 @@ struct Scene {
     pass.target       = destination;
     pass.clear        = ClearPolicy{};
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.state.depth  = DepthMode::Disabled;
+    pass.state.depth  = DepthPolicy::Disabled;
 
     DrawPacket draw;
     draw.kind                = DrawKind::Fullscreen;

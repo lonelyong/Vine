@@ -1,7 +1,7 @@
 # graphics material: one PBR model, a texture set, instances
 
 > **Status**: current (M1–M3 landed, M4 not done, see §9.1/§9.2)
-> **Last verified**: 2026-10-24
+> **Last verified**: 2026-11-23
 > **Scope**: the material data model, the texture set and sampling, instance overrides, upload dedup, forward/deferred consistency;
 > not the material DSL, runtime name reflection, bindless or IBL.
 > **Sources**: `Material.hpp` / `ShaderAbi.hpp` / `shaders/vine_params.glsl` (the material block), `vine_material.glsl`
@@ -164,7 +164,7 @@ An instance copies neither textures nor bytes beyond the block.
   `PbrMaterial` → field by field, no approximation any more.
 - **Specification**: `metallic = clamp(max(specular.rgb) × clamp(specular.a, 0, 1), 0, 1)` — metallic-roughness has no separate reflectance knob, a strong or coloured specular is exactly what "metal" means (the strongest channel = the reflection peak, alpha = intensity); the price is in D7.
 - **Caveat** (N5): this mapping assumes Phong's specular is **authored**. The default material an importer fabricates for "the file has no material" (assimp's `AI_DEFAULT_MATERIAL_NAME`, white specular) is treated as "no material" on the loading side (`meshio-brepio-design.md` F2), so it never reaches here; otherwise white specular would fold to metallic 1, and `builtin_forward.frag` multiplies the ambient term by `(1 - metallic)`, leaving the model with specular only and looking black in a scene without an environment map.
-- **Constraint** (C5): the conversion happens in one place, `ModelScene.cpp`; the engine side has no "the source was Phong" branch.
+- **Constraint** (C5): the conversion happens in one place, `SceneBuild.cpp`; the engine side has no "the source was Phong" branch.
 - **Acceptance** (T5): import a glTF PBR asset, base/metallic/roughness/emissive match the source file field by field.
 
 ### 3.7 F9–F11 variants, upload and diagnostics
@@ -207,7 +207,7 @@ An instance copies neither textures nor bytes beyond the block.
 | C2 | The texture slot's kind / format contract (§2.9) is checked by the material, an error does not fall back to a fallback image. |
 | C3 | The block is packed only by `blockOfMaterial`, an instance resolves first. |
 | C4 | Mask does not enter the transparent queue; Blend goes through forward only. |
-| C5 | The import conversion happens in one place, `ModelScene.cpp`. |
+| C5 | The import conversion happens in one place, `SceneBuild.cpp`. |
 | C6 | The variant count does not grow with the texture-slot count. |
 
 ### 5.2 Requirements (R#)
@@ -257,7 +257,7 @@ An instance copies neither textures nor bytes beyond the block.
 | T2 | Samplers shared by value, a texture uploaded once | `MaterialImagesTest.SamplerByValue*` |
 | T3 | forward and deferred agree at the same pixel | `ContentPassTest.TheMaterialShadesTheSameValueOnBothPaths` |
 | T4 | Mask discard and Blend sorting | `SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends` |
-| T5 | Import matches field by field | `ModelSceneTest.PbrMaterialIsNotApproximated` |
+| T5 | Import matches field by field | `SceneBuildTest.PbrMaterialIsNotApproximated` |
 | T6 | Variant matrix and binding counts in step | `EmbeddedShadersTest` / `ProgramAbiTest` |
 | T7 | The slot contract's decisions and reporting rhythm | `MaterialSlotCheckTest.*` / `ContentStoreTest.AWrongMaterialSlotIsReportedOncePerEpisode` |
 
@@ -291,7 +291,7 @@ forward and deferred reconstruct the same set of surfaces from their own inputs 
 - `src/viz/graphics/sdk/vine/graphics/MaterialValues.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
 - `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
 - `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
-- `ContentSources.cpp` (`blockOfMaterial`) · `MaterialSlotCheck.hpp` (F11's decision) · `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp` (`materialFrom`)
+- `ContentSources.cpp` (`blockOfMaterial`) · `MaterialSlotCheck.hpp` (F11's decision) · `ProgramVariant.hpp` · `MaterialImages.hpp` · `SceneBuild.cpp` (`materialFrom`)
 
 ### 10.2 Documents, ADRs and external sources
 

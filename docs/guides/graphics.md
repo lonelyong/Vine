@@ -101,7 +101,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `Material` —— metallic-roughness PBR 因子（`baseColor / emissive / metallic / roughness / occlusion /
   alphaMode / alphaCutoff`）+ 五个语义纹理槽（`TextureSlot`：base colour / metallic-roughness / normal /
   occlusion / emissive，每槽一个 `Sampler`；`setTexture(slot, texture, sampler)` / `texture(slot)`）。Phong 资产由
-  导入器（`ModelScene.cpp` 的 `materialFrom`）按固定表转换，引擎内只有一套材质语义；着色是 GGX / Smith /
+  导入器（`SceneBuild.cpp` 的 `materialFrom`）按固定表转换，引擎内只有一套材质语义；着色是 GGX / Smith /
   Schlick 一套（`shaders/vine_brdf.glsl`），前向与延迟读同一份表面（`vine_material.glsl` 定纹理槽的通道打包与
   缺槽代价）。颜色改动是
   **动态**的：材质自己数自己的改动（`revision()`，每个 setter 先比较再决定要不要 ++，所以反复赋同值是零成本），
@@ -408,7 +408,7 @@ scene_pass.target        = Target::explicitTarget(scene_rt);
 scene_pass.clear_enabled = true;                                // 自己是第一笔，清屏
 scene_pass.clear_color   = vn::Color(26, 26, 31).toLinear();    // vn::Color 是 0..255 的 uint8 构造
 scene_pass.clear_depth   = true;
-scene_pass.depth_mode    = DepthMode::TestAndWrite;             // 不透明内容：测 + 写
+scene_pass.depth_policy  = DepthPolicy::TestAndWrite;             // 不透明内容：测 + 写
 scene_pass.output.name   = u8"SceneColor";                      // 命名输出（每帧进名字表）
 scene_pass.output.whole_target = true;                          // 对象级承诺：它是这张 target 的唯一写者
 
@@ -504,7 +504,7 @@ forward_pass.camera        = camera;
 forward_pass.content       = transparent_scene;
 forward_pass.target        = Target::explicitTarget(composite);
 forward_pass.clear_enabled = false;
-forward_pass.depth_mode    = DepthMode::TestOnly;
+forward_pass.depth_policy  = DepthPolicy::TestOnly;
 forward_pass.output.name   = u8"Composite";
 forward_pass.output.whole_target = true;
 
@@ -591,7 +591,7 @@ hud.content = vn::intrusive_ptr<Scene>(gizmo->content());
 hud.viewport = gizmo->boxViewport();
 hud.clear_enabled = false; // 它画在上面的画面保留
 hud.clear_depth = true; // 盒子里的深度归箭头自己（只清深度、不清颜色）
-hud.depth_mode = DepthMode::TestAndWrite; // 所以三根轴像实体一样互相遮挡
+hud.depth_policy  = DepthPolicy::TestAndWrite; // 所以三根轴像实体一样互相遮挡
 // 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->onFrame(context) 镜像源相机朝向。
 pipeline->addOverlay(u8"gizmo", gizmo.get(), hud);
 
@@ -612,7 +612,7 @@ return pipeline;
 ### 3.6 例：HUD 叠加与"叠加场景"
 
 - **HUD**：`AxisGizmo` / `FpsOverlay` 是**内容对象**（自带 scene、取景相机与盒子），画它们的是一条 HUD 档的
-  pass 声明（`stage = Overlay`、不洗屏、`depth_mode = Disabled`），而"每帧自己更新"是对象实现 `FrameUpdate`
+  pass 声明（`stage = Overlay`、不洗屏、`depth_policy = Disabled`），而"每帧自己更新"是对象实现 `FrameUpdate`
   ——配方自己就这么声明（`ChainDesc::gizmo` / `fps`）。句柄分两个：`PassChain::gizmo()` /
   `fpsOverlay()` 拿对象（摆位、尺寸、内容），`PassChain::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
   读的就是它的 `enabled`）；`resize()` 会顺带通知它们窗口尺寸并重述盒子。
@@ -1120,7 +1120,7 @@ outline->setDrawOrder(1);   // 高 = 后画 = 压在上面（子树继承；clea
 - **它是 pass 内那张列表的外键**：画序先分档，档内还是老画面。所以一个**不透明**的描边可以越过**透明**批次画在最后 ——
   这正是"同一 pass 内覆盖式绘制"能做到、而"为它多加一条 pass"又要重开清屏 / 深度的地方。
 - **与 pass 的顺序无关**：谁先谁后是配方的事（`PassDesc::order` / `PassStage`），这个值不会把内容搬到别的 pass 里。
-- **要不要关深度看目的**：想"永远压在上面"就给那条 pass `DepthMode::Disabled`（或给几何一点偏移）；想"被挡住就不该看见"
+- **要不要关深度看目的**：想"永远压在上面"就给那条 pass `DepthPolicy::Disabled`（或给几何一点偏移）；想"被挡住就不该看见"
   就让它照常测深度。**共面**的两件东西若开着深度，后画的那件会被深度拒绝（同深度 `LESS` 不成立）—— 那时量到的是深度，不是画序。
 - 自己驱动收集 / 后处理命令表时，`DrawItem::draw_order` 就是这个命令的档。
 - 默认 0 ⇒ 不声明就与老画面逐位相同；判据是 `test_graphics` 的 `DrawOrderTest` 四条（外键 / 越过透明批次 / 继承 / 叶子声明）
@@ -1150,7 +1150,7 @@ if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
   否则量到的是"点中了别的东西"。
 - **换材质不用通知谁**：后端每帧逐条命令重新读材质（比较出差异才重建那份状态），运行期换一次材质不需要 bump revision、
   也不需要额外的"通知渲染器"调用；要让这一笔上屏仍然得走帧驱动（按需出帧的控件是 `RenderControl::renderFrame()`）。
-- **想让它压住共面的内容**：给高亮那件 `Node::setDrawOrder` 一个更高的档，或给那条 pass `DepthMode::Disabled`（见 §3.15）。
+- **想让它压住共面的内容**：给高亮那件 `Node::setDrawOrder` 一个更高的档，或给那条 pass `DepthPolicy::Disabled`（见 §3.15）。
 - **输入进到视图只有一条通道：操纵器**（`SceneView::setManipulator`）。想在画面上做交互就换一个操纵器，把点击变成上面的射线
   与拾取：`model_viewer` 的 `ModelPickManipulator` 就是"导航原样转发给轨道操纵器 + 按下与松开落在同一点附近才算点击"。
 
@@ -1158,13 +1158,13 @@ if (hit.hit) { /* hit.geometry / hit.distance / hit.normal */ }
 ### 3.17 资产 → 场景：`sceneFromModel`
 
 加载器（`meshio`）产出的是一棵树，不是一块摊平的网格：`geometry::Model` 有节点、每节点的局部矩阵、每节点引用哪些
-（网格, 材质）。把它变成能画的东西只要一跳 —— `vn::graphics::sceneFromModel`（`vine/graphics/ModelScene.hpp`）：
+（网格, 材质）。把它变成能画的东西只要一跳 —— `vn::graphics::sceneFromModel`（`vine/graphics/SceneBuild.hpp`）：
 
 ```cpp
-#include <vine/graphics/ModelScene.hpp>
+#include <vine/graphics/SceneBuild.hpp>
 
 auto model = loader.load(path);                                       // 保留节点树与材质
-const vn::graphics::ModelScene converted = vn::graphics::sceneFromModel(*model);
+const vn::graphics::SceneBuild converted = vn::graphics::sceneFromModel(*model);
 if (converted.root != nullptr) {
     scene->setRoot(converted.root);                                   // 内容场景是调用方的
 }
@@ -1178,7 +1178,7 @@ if (converted.root != nullptr) {
   靠这一点才成立）。Color/Phong 直译；PBR 是**显式近似**（详见头文件注释），要真 PBR 需要渲染侧的 PBR 通路。
 - **法线不会被发明出来**：来源带了就用，没带就是没有 —— STL 这类只有面法线的格式要在转换前自己补（查看器的打开器
   就是这么做的，见 `MeshFileOpener.hpp` 的 `ensureSmoothNormals`）。
-- **坏模型是计数，不是修复**：`ModelScene` 回报 `geometries` / `skipped_meshes` / `skipped_nodes`；越界索引、
+- **坏模型是计数，不是修复**：`SceneBuild` 回报 `geometries` / `skipped_meshes` / `skipped_nodes`；越界索引、
   没有网格的 entry、成环的引用都被跳过并计数，剩下部分照样转换。
 - **它不做的三件事**：不建 `Scene`（根节点归调用方）、不做单位换算（加载选项已经折进根变换）、不配灯（灯属于场景）。
 
@@ -1484,7 +1484,7 @@ HDR 且这个场景不发光，直接拷 rgb 会得到一块**读起来像"没�
 后三格全黑）。
 
 叠加场景（延迟路径 `DemoScene::buildScene()` 的覆盖层）现在只放**会混合**的内容：半透明盒子和星点 sprite。它的那趟**不写深度**
-（`DepthMode::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
+（`DepthPolicy::TestOnly`，半透明内容的规则），因此 pass 内的 drawable **无法自遮挡** —— 一只不透明的封闭盒子放进去会
 透出自己的背面（看起来像挖了个洞、能看穿进去）。需要不透明封闭体就放进不透明场景（写深度）。
 
 **天空盒**（`skyboxProgram()` + 第二组 cube map）。默认 demo 的背景是一个**天空盒**：一个**相机站在里面**的大盒子
@@ -1634,6 +1634,8 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | `target` | 画到哪：`RenderTarget` = 宿主的画布，`Target` = pass 的声明，`TargetDecision` = 该做什么（见 §5.4） | 不是 `GPUTexture`，也不是 `VkFramebuffer`（那两个在 `TargetObjects` 里） |
 | `residency` | GPU 对象存不存在（`Use` / `Build` / `Copy` 三态） | 不是内存压力或驱逐策略 |
 | `content` | 引擎持有的场景 / 材质 / 几何 / 程序 / 光源 | 不是 GPU 上的字节 |
+| `DepthPolicy` | pass 对“内容自己没说深度”时的**决定**（`Disabled` / `TestOnly` / `TestAndWrite`） | 不是 `DepthState`（那一笔画自己的 test / write / compare 值）；2026-11-23 从 `DepthMode` 改名（`BC-34`） |
+| `SceneBuild` | `sceneFromModel()` 的**结果**：节点树 + 转换计数（`root` / `geometries` / `skipped_*`） | 不是 `Scene`（根节点挂到哪个场景由调用方决定）；2026-11-23 从 `ModelScene` 改名（`BC-35`） |
 
 `DrawItem` 与 `DrawPacket` 是同一句话说两次的两个阶段：`DrawItem` 于 2026-11-18 从 `RenderCommand` 改名（说出它是“一个项”），
 `DrawPacket` 于 2026-11-20 从 `DrawCall` 改名（说出它是一包请求，而不是一次绘制调用）。行业里“一次绘制调用”就是一次提交，
