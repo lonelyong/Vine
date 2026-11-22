@@ -8,18 +8,13 @@
  * accident: re-announcing the SAME window keeps the session (a show or a resize is not a reason to rebuild),
  * a DIFFERENT one moves it, and the test also pins that the host's windows outlive the session.
  *
- * X11 only, and it SKIPS rather than fails when there is no display or no usable device: what it checks is
+ * X11 or Win32, and it SKIPS rather than fails when there is no display or no usable device: what it checks is
  * this backend's behaviour, not the machine's configuration.
  */
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <cstdlib>
-
-#if !defined(_WIN32)
-#    include <xcb/xcb.h>
-#endif
 
 #include "TestHostWindow.hpp"
 
@@ -31,8 +26,6 @@ using vn::backend_vsg::api::probePhysicalDevices;
 using vn::backend_vsg::api::WindowSession;
 using vn::backend_vsg::api::WindowSessionOptions;
 
-#if !defined(_WIN32)
-
 namespace
 {} // namespace
 
@@ -43,17 +36,13 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    xcb_connection_t*     connection = xcb_connect(nullptr, nullptr);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create host windows on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_iterator_t screens = xcb_setup_roots_iterator(xcb_get_setup(connection));
-    ASSERT_NE(screens.rem, 0) << "an X display without a screen";
-    xcb_screen_t* screen = screens.data;
 
-    TestHostWindow first(connection, screen, 320, 240);
-    TestHostWindow second(connection, screen, 320, 240);
+    TestHostWindow first(display, 320, 240);
+    TestHostWindow second(display, 320, 240);
 
     vn::graphics::Diagnostics diagnostics;
     // A session that NEVER pumps the host's events (the host owns the message loop) and reports nothing.
@@ -107,8 +96,6 @@ TEST(SessionMoveTest, ASecondHostWindowMovesTheSessionAndTheSameOneKeepsIt)
     EXPECT_TRUE(second.alive()) << "the session must never destroy the host's second window";
 
     // The windows are destroyed by THIS test (their destructors run at the end of this scope), which is the
-    // point: the session must treat the host's window as something that outlives it. The X connection is left
-    // to the process rather than closed here, because those destructors still need it.
+    // point: the session must treat the host's window as something that outlives it. The display outlives them
+    // too, by declaration order (see TestDisplay): the connection closes after the last window built on it.
 }
-
-#endif // !_WIN32

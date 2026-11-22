@@ -5,7 +5,7 @@
  * session renders what a caller attaches to it, in its frame, on its window - and that the pixels really
  * leave the swapchain. It is the path a real backend uses (the host gives a window, the session owns the
  * device, callers draw into the content root), so the evidence is taken from the window itself: after a few
- * committed frames, one pixel in the middle of the window is read back through X11.
+ * committed frames, one pixel in the middle of the window is read back through the display's own compositor.
  *
  * The two facts the case gates on are different in kind, and both are needed:
  *
@@ -14,7 +14,7 @@
  *   * the frame's health: frames were committed, none of them idled the device, and the content root is the
  *     session's own node (the structure, not just the pixels).
  *
- * X11 only, and it SKIPS rather than fails without a display, a device or an X connection: what it checks is
+ * X11 or Win32, and it SKIPS rather than fails without a display, a device or a window: what it checks is
  * this backend's behaviour, not the machine's configuration.
  */
 
@@ -25,10 +25,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-#if !defined(_WIN32)
-#    include <xcb/xcb.h>
-#endif
 
 #include "TestHostWindow.hpp"
 
@@ -135,8 +131,6 @@ using vn::backend_vsg::api::probePhysicalDevices;
 using vn::backend_vsg::api::WindowSession;
 using vn::backend_vsg::api::WindowSessionOptions;
 
-#if !defined(_WIN32)
-
 namespace
 {
 
@@ -209,16 +203,12 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow window(connection, screen, kWidth, kHeight);
+    TestHostWindow window(display, kWidth, kHeight);
 
     vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
@@ -361,16 +351,12 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow window(connection, screen, kWidth, kHeight);
+    TestHostWindow window(display, kWidth, kHeight);
 
     vn::graphics::Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
@@ -603,5 +589,3 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     session.shutdown();
 }
-
-#endif // !defined(_WIN32)

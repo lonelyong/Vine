@@ -45,12 +45,6 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/Image.hpp>
 
-// TestHostWindow is an XCB window, so the cases that use it reach for the connection themselves; the guard
-// matches the one around those cases.
-#if !defined(_WIN32)
-#    include <xcb/xcb.h>
-#endif
-
 #include "SdkPixelFixture.hpp"
 #include "TestFrame.hpp"
 #include "TestHostWindow.hpp"
@@ -510,8 +504,6 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     backend->shutdown();
 }
 
-#if !defined(_WIN32)
-
 TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
 {
     if (!deviceCaseAvailable()) {
@@ -600,16 +592,12 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setDiagnosticSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
@@ -634,7 +622,7 @@ TEST(VsgBackendTest, AHostSurfaceIsAdoptedAndMovingToTheNextOneKeepsTheSession)
     // Re-announcing a DIFFERENT handle follows the host onto its recreated window: the session keeps the
     // device and every compiled pipeline (core::planSessionMove), so the presented count goes ON instead of
     // starting over - which is exactly what a rebuilt session would do.
-    TestHostWindow second(connection, screen, 128, 96);
+    TestHostWindow second(display, 128, 96);
     backend->setWindowHandle(second.handle());
     ASSERT_TRUE(backend->initialize());
     EXPECT_EQ(backend->nativeHandle(), second.handle());
@@ -654,18 +642,14 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -816,18 +800,14 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -1235,16 +1215,12 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1349,16 +1325,12 @@ TEST(VsgBackendTest, ACubeMapInputReachesAContentProgramAsACubeSampler)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1454,16 +1426,12 @@ TEST(VsgBackendTest, AnIncompleteCubeInputBindsTheWhiteCubeAndSaysWhy)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1537,16 +1505,12 @@ TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1577,16 +1541,12 @@ TEST(VsgBackendTest, EachAttachmentClearsToItsOwnColour)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1646,16 +1606,12 @@ TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 64, 64);
+    TestHostWindow host(display, 64, 64);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1698,16 +1654,12 @@ TEST(VsgBackendTest, TheFrameReportSaysHowManyFramesWereHandedToPresent)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                        host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<DirectDriveBackend> backend(new DirectDriveBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1743,16 +1695,12 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1862,16 +1810,12 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -1975,16 +1919,12 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -2092,16 +2032,12 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAFullscreenProgram)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -2221,16 +2157,12 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -2387,18 +2319,14 @@ TEST(VsgBackendTest, TheLastFrameOfAMovingSequenceKeepsItsOwnViewBlockValue)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int kTargetSide = 1024;
 
-    TestHostWindow host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -2532,18 +2460,14 @@ TEST(VsgBackendTest, TheWindowFollowsItsHostsSurfaceThroughALiveResize)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -2675,18 +2599,14 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -2748,18 +2668,14 @@ TEST(VsgBackendTest, AMaterialEditLandsOnTheNextFrameAndASteadyFrameRebuildsNoth
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -2900,21 +2816,17 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int kWidth           = 128;
     constexpr int kHeight          = 96;
     constexpr int kGridSide        = 32;
     constexpr int kFramesPerRegime = 12;
 
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::size_t                   seen = 0;
@@ -3041,7 +2953,12 @@ TEST(VsgBackendTest, MeasureWhatEachKindOfEditCostsPerFrame)
         EXPECT_EQ(change.created, 0) << "a material VALUE is data: the pipeline key cannot see it";
         EXPECT_EQ(change.uploads, 0) << "and it lands as a block write, not as an upload";
         drive();
-        const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, arrived, std::chrono::milliseconds{ 500 });
+        // The display path may still hold the PREVIOUS frame's picture when the read happens (see
+        // TestHostWindow::pixel), so the wait is for the colour this edit produced, not for "some picture".
+        const auto last_edit = [](const std::array<std::uint8_t, 3>& pixel) {
+            return isColourByte(pixel[1], 0.4) && isColourByte(pixel[0], 0.54) && isColourByte(pixel[2], 0.54);
+        };
+        const auto pixel = host.waitForPixel(kWidth / 2, kHeight / 2, last_edit, std::chrono::milliseconds{ 500 });
         EXPECT_TRUE(isColourByte(pixel[1], 0.4)) << "the mesh is still what the centre probe sees";
         EXPECT_TRUE(isColourByte(pixel[0], 0.54) && isColourByte(pixel[2], 0.54))
             << "and the LAST edited colour is in the picture (read-error " << static_cast<int>(host.readError()) << ")";
@@ -3198,21 +3115,17 @@ TEST(VsgBackendTest, MeasureWhatAMultiChannelMeshCostsWhenOneChannelChanges)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int kWidth           = 128;
     constexpr int kHeight          = 96;
     constexpr int kSide            = 512;
     constexpr int kFramesPerRegime = 8;
 
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
@@ -3427,20 +3340,16 @@ TEST(VsgBackendTest, MeasureWhatCommandsCostWhenTheirDrawingLandsNothing)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int kWidth           = 128;
     constexpr int kHeight          = 96;
     constexpr int kFramesPerRegime = 12;
 
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
@@ -3648,18 +3557,14 @@ TEST(VsgBackendTest, ThreeHundredLiveMaterialsDrawTheirOwnColours)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 64;
     constexpr int  kHeight = 64;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
@@ -3791,18 +3696,14 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
@@ -3922,18 +3823,14 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
@@ -4118,18 +4015,14 @@ TEST(VsgBackendTest, AFrameThatRanOutOfBudgetGrowsTheStorageBeforeTheNextFrame)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<std::string>      messages;
@@ -4251,18 +4144,14 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<std::string>      messages;
@@ -4331,18 +4220,14 @@ TEST(VsgBackendTest, AnOpaqueContentDrawDoesNotBlendAndATranslucentOneDoes)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
@@ -4459,19 +4344,15 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
     constexpr int  kDraws  = 2000; // the design log's trigger scale
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     std::vector<std::string>      messages;
@@ -4589,8 +4470,6 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
     backend->shutdown();
     EXPECT_TRUE(host.alive());
 }
-
-#endif // !defined(_WIN32)
 
 TEST(VsgBackendTest, AWindowAlreadyServedIsRefusedWithItsReason)
 {
@@ -4842,28 +4721,20 @@ TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWind
     EXPECT_EQ(reported.size(), backend->diagnosticCount());
 }
 
-// The warm-up case drives a HOST WINDOW, so it reaches for an XCB connection exactly like the cases above and needs
-// the same guard: on Windows there is no such window and no such connection (see the guard at the top of this file).
-#if !defined(_WIN32)
-
 TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
 {
     if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     // A WINDOWED DEVICE, because that is the case P11 warns about: a windowed session's beginFrame() ACQUIRES the next
     // swapchain image, so a "warm-up" that opened one would starve the next real frame - and what this case can see
@@ -5009,8 +4880,6 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
 
     backend->shutdown();
 }
-
-#endif // !defined(_WIN32)
 
 TEST(VsgBackendTest, ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason)
 {
@@ -5183,8 +5052,6 @@ TEST(VsgBackendTest, AReadbackRefusalCarriesTheCodeOfItsCause)
     backend->shutdown();
 }
 
-#if !defined(_WIN32)
-
 /*
  * @brief Two drivers on one device each shade program-less content with THEIR OWN default program (T8, S8b).
  *
@@ -5198,16 +5065,12 @@ TEST(VsgBackendTest, TwoDriversKeepTheirOwnDefaultProgram)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -5302,8 +5165,6 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     backend->shutdown();
 }
 
-#endif // !defined(_WIN32)
-
 namespace
 {
 
@@ -5374,8 +5235,6 @@ bool waitFor(const std::atomic<bool>& flag, std::chrono::seconds budget)
 
 } // namespace
 
-#if !defined(_WIN32)
-
 /**
  * @brief A frame held INSIDE ITS COMPILATION does not stop another driver's frame (T48 S8c's overlap witness).
  *
@@ -5394,16 +5253,12 @@ TEST(VsgBackendTest, ACompilingFrameDoesNotWaitForAnotherDriversFrame)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -5528,16 +5383,12 @@ TEST(VsgBackendTest, ARecordingFrameDoesNotStopAnotherDriversContent)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    int               screen_index = 0;
-    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection);
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow                host(connection, screen, 128, 96);
+    TestHostWindow host(display, 128, 96);
     vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
@@ -5639,8 +5490,6 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
     backend->releaseFrameDriver(*second);
     backend->shutdown();
 }
-
-#endif // !defined(_WIN32)
 
 /**
  * @brief Two drivers, two threads, two pictures: each frame is shaded by ITS driver's default program.

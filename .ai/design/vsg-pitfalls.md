@@ -1,7 +1,7 @@
-# the vsg backend's trap catalogue (P1–P82)
+# the vsg backend's trap catalogue (P1–P89)
 
 > **Status**: current
-> **Last verified**: 2026-10-24
+> **Last verified**: 2026-11-23
 > **Scope**: the traps the vsg backend has hit, in nine risk areas; each entry gives its symptom and its criterion.
 > **Sources**: `src/plugins/gfx_backend_vsg/**`, `docs/guides/graphics-backends.md` (the user page), `.ai/bugs/`.
 > **Backlog**: `../backlog/graphics.md`
@@ -64,7 +64,7 @@ to this one, and neither is copied into the other.
 | F4 | blocks and descriptors (ABI) | changing a uniform block, a descriptor layout, push constants | P23–P35 |
 | F5 | streams, geometry and aliasing | changing stream identity, an index key, alias registration | P36–P42 |
 | F6 | targets, lifetime and device idleness | changing target creation / destruction, borrowed depth, readback | P43–P53 |
-| F7 | WSI and windows | changing present, resize, the window size, the test window | P54–P60 |
+| F7 | WSI and windows | changing present, resize, the window size, the test window | P54–P60, P87–P89 |
 | F8 | evidence, gates and the build | adding a case, changing a gate, adding a `.cpp` | P61–P75 |
 | F9 | the engine side (the scene bridge and shading conventions) | changing declarations / bindings, materials, colour space, the G-buffer | P76–P86 |
 
@@ -217,6 +217,9 @@ to this one, and neither is copied into the other.
 | P58 | the session must survive a dropped frame on its own | an acquired but unpresented image leaves the WSI one short; the session gives the image back |
 | P59 | the startup size is not fixed | the window grows with the log dock; a gate drags the window to a fixed size before judging |
 | P60 | starting the application needs `exec` and a kill by name | `pkill -x Vine`; a leftover window covers the test window |
+| P87 | a Win32 pixel read is a COMPOSITOR read, and the compositor lags the present | a read right after a present answers the previous picture (the window's own black background for the first content); the fixture waits for a DWM composition pass (`DwmFlush`) and a case that asserts a specific colour waits for THAT colour (`waitForPixel`), not for "some picture arrived" |
+| P88 | a Win32 test window's thread must pump its messages | a window created late in a long run never receives new content (the compositor stops serving a thread that never pumps); the fixture pumps the thread's queue inside every read |
+| P89 | the Win32 read hands back the surface's BYTE ORDER, and a GDI-painted window's order is not a Vulkan one's | a three-channel assertion fails by a swap (blue where red was expected); assert a single channel, or accept both orders - `isColour` / `isRed` do |
 
 ### 6.8 Evidence, gates and the build
 

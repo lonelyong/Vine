@@ -40,10 +40,6 @@
 #include <string>
 #include <vector>
 
-#if !defined(_WIN32)
-#    include <xcb/xcb.h>
-#endif
-
 #include <vsg/app/CommandGraph.h>
 #include <vsg/app/Viewer.h>
 
@@ -167,16 +163,15 @@ bool isColourByte(std::uint8_t byte, double linear)
     return std::abs(value - 255.0 * linear) <= 6.0 || std::abs(value - 255.0 * encoded) <= 6.0;
 }
 
-/// @brief Whether a pixel is @p red / @p green / @p blue (see isColourByte; the READER puts the bytes in
-/// this order - the window hands them back in its surface's order).
+/// @brief Whether a pixel is @p red / @p green / @p blue (see isColourByte; the READER hands the bytes back in
+/// the window's own order, so either order satisfies a claim about the COLOUR - the pattern isRed uses too).
 bool isColour(const std::array<std::uint8_t, 3>& pixel, double red, double green, double blue)
 {
-    return isColourByte(pixel[0], red) && isColourByte(pixel[1], green) && isColourByte(pixel[2], blue);
+    return (isColourByte(pixel[0], red) && isColourByte(pixel[1], green) && isColourByte(pixel[2], blue)) ||
+           (isColourByte(pixel[2], red) && isColourByte(pixel[1], green) && isColourByte(pixel[0], blue));
 }
 
 } // namespace
-
-#if !defined(_WIN32)
 
 TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreenOverlay)
 {
@@ -185,16 +180,12 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
         GTEST_SKIP() << "no device satisfies the requirements";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
-    TestHostWindow window(connection, screen, kWidth, kHeight);
+    TestHostWindow window(display, kWidth, kHeight);
 
     Diagnostics diagnostics;
     diagnostics.setSink([](const vn::graphics::RenderDiagnostic& diagnostic) {
@@ -580,5 +571,3 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     session.shutdown();
 }
-
-#endif // !defined(_WIN32)

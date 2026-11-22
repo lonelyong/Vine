@@ -145,6 +145,10 @@ target_link_libraries(${TEST_NAME} glslang::glslang glslang::SPIRV glslang::glsl
 
 # VsgHostWindow creates the host surface itself; vsg builds the same code but links xcb PRIVATE, so its
 # include directories do not reach this target.
+if(WIN32)
+    # TestHostWindow's compositor read waits for a DWM composition pass (see HostWindowReadTest / TestHostWindow.hpp).
+    target_link_libraries(${TEST_NAME} dwmapi)
+endif()
 if(UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
     if(NOT TARGET PkgConfig::xcb)

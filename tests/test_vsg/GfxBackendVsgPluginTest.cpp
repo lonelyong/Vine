@@ -23,12 +23,6 @@
 
 #include <vine/Buffer.hpp>
 
-// TestHostWindow is an XCB window, so the case that uses it reaches for the connection itself; the guard
-// matches the one around that case.
-#if !defined(_WIN32)
-#    include <xcb/xcb.h>
-#endif
-
 #include "TestFrame.hpp"
 #include "TestHostWindow.hpp"
 
@@ -132,7 +126,7 @@ TEST_F(VsgBackendPluginTest, TheConstructorBuildsTheApplicationFromItsConfig)
     EXPECT_TRUE(s_app->configFile().empty());
 }
 
-/// @brief Whether a device case can run at all (one usable physical device; the X11 host window is the xcb check below).
+/// @brief Whether a device case can run at all (one usable physical device; the host window is measured by the case itself).
 bool deviceCaseAvailable()
 {
     const auto probed = vn::backend_vsg::api::probePhysicalDevices();
@@ -194,8 +188,6 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
     EXPECT_EQ(facade->windowCount(), 0U) << "no window was asked for on this instance";
 }
 
-#if !defined(_WIN32)
-
 /**
  * @brief The backend the plugin REGISTERS comes up on the host's surface and draws through the SDK.
  *
@@ -211,18 +203,14 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
         GTEST_SKIP() << "no window system or no device satisfies the requirements";
     }
 
-    int                   screen_index = 0;
-    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
-    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
-    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-        GTEST_SKIP() << "no X display to create a host window on";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
-    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
-    ASSERT_NE(screen, nullptr);
 
     constexpr int  kWidth  = 128;
     constexpr int  kHeight = 96;
-    TestHostWindow host(connection, screen, kWidth, kHeight);
+    TestHostWindow host(display, kWidth, kHeight);
 
     auto& registry = vn::graphics::RenderBackendRegistry::instance();
     auto  backend  = registry.create(u8"vsg");
@@ -302,8 +290,6 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     backend->shutdown();
     EXPECT_TRUE(host.alive()) << "the host's window is not the backend's to destroy";
 }
-
-#endif // !defined(_WIN32)
 
 /**
  * @brief Verifies the shutdown sequence that makes a disable take effect on the

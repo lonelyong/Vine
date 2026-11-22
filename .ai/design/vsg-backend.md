@@ -1,7 +1,7 @@
 # the vsg backend: architecture, contract, traps
 
 > **Status**: current
-> **Last verified**: 2026-11-16
+> **Last verified**: 2026-11-23
 > **Scope**: how the vsg backend materialises a compiled frame value into Vulkan commands; the platform facts and the traps already hit.
 > **Sources**: `RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/` (the 7 shared mechanisms) /
 > `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/**`.
@@ -309,7 +309,7 @@ The traps are grouped by risk area into nine groups; P1–P82 with their symptom
 | Area | Traps | Area | Traps |
 |---|---|---|---|
 | protocol and frames | P1–P6 | targets, lifetime and device idleness | P43–P53 |
-| keys and pipelines | P7–P12 | WSI and windows | P54–P60 |
+| keys and pipelines | P7–P12 | WSI and windows | P54–P60, P87–P89 |
 | orientation, clipping and depth | P13–P22 | evidence, gates and the build | P61–P75 |
 | blocks and descriptors (ABI) | P23–P35 | the engine side (the scene bridge and shading conventions) | P76–P82 |
 | streams, geometry and aliasing | P36–P42 | | |
@@ -330,7 +330,7 @@ The traps are grouped by risk area into nine groups; P1–P82 with their symptom
 
 | # | Criterion |
 |---|---|
-| T1 | `test_vsg`: the device-independent plus the real-device battery; `skipped == 0` is what counts as having run. |
+| T1 | `test_vsg`: the device-independent plus the real-device battery; `skipped == 0` is what counts as having run. The HOST-WINDOW cases are one battery on both platforms: `TestHostWindow` + `TestDisplay` (`tests/test_vsg/TestHostWindow.hpp`) create the window a session adopts and read its pixels back (X11 `XGetImage`; Win32 `PrintWindow`/`PW_RENDERFULLCONTENT` after a DWM composition pass, with the traps P87–P89), and `HostWindowReadTest` pins the instrument itself - a served read, a refused read, and the bounded wait - before any device is involved. |
 | T2 | `scripts/vsg_rewrite_gate.sh`: 0 VUID / 0 SYNC-HAZARD, the phase lines closed, and the application's pixel percentage. |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`. |
 | T4 | upload staging keeps a reusable block (F16.2): `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` — the frame does not idle; every surviving block is a multiple of `minimumStagingBufferSize` (the reusable blocks are kept) and a one-off block above the minimum is given back; redrawing the same content uploads nothing; a new stream uploads again and falls back to the minimum. `FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` — `FrameReport::uploads` is this frame's delta (the first frame uploads > 0, the steady state is all 0, a buffer revision change re-uploads once, and content leaving reports a release). `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` and `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` are unchanged. |
