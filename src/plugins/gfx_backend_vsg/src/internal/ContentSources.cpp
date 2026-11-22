@@ -96,12 +96,12 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgramDescription& program
     return FactMiss::None;
 }
 
-FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
+FactMiss buildFullscreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
 {
-    return buildScreenProgramFacts(*program.description(), out);
+    return buildFullscreenProgramFacts(*program.description(), out);
 }
 
-FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out)
+FactMiss buildFullscreenProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out)
 {
     out         = ProgramFacts{};
     out.program = vn::graphics::contentRefOf(program.id(), program.revision());

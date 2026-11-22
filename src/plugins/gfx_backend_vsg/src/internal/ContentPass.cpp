@@ -680,7 +680,7 @@ bool ContentPass::resolveFullscreenDraw(const core::CompiledDraw&            dra
 
     // THE FULL-SCREEN ABI'S SOURCE IS THE WHOLE TARGET. The plan narrows a ProducedImage input to the one image
     // it names (the content path binds exactly that), but a full-screen packet's binding N reads the source's
-    // attachment N (see BuiltinShaders::screenCopyProgram). The caller therefore offers the whole target in
+    // attachment N (see BuiltinShaders::fullscreenCopyProgram). The caller therefore offers the whole target in
     // `screen_colors` for a call's source; `colors` is the fallback for a ProducedTarget input, where the two
     // are the same list.
     const std::span<const ::vsg::ref_ptr<::vsg::ImageView>> source_colors =

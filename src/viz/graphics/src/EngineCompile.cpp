@@ -1133,7 +1133,7 @@ void SessionShape::collectFullscreenPassProblems()
                                                   vn::graphics::DiagnosticCategory::ContentSkipped,
                                                   String(u8"pass '") + reportedPassName(pass) +
                                                       String(u8"' is a FullscreenPass with no program, so it can never draw: name one"
-                                                             u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
+                                                             u8" (BuiltinShaders::fullscreenCopyProgram() for a plain copy of the"
                                                              u8" source's colour attachment, deferredLightProgram() for deferred"
                                                              u8" lighting, or your own fragment stage)")));
             }

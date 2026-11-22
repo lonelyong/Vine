@@ -22,7 +22,7 @@ class ShaderProgram;
  *   program (setProgram) into this pass's output target - or the backbuffer when no target is set -
  *   optionally into a sub-viewport rectangle (setViewport).
  * - A PROGRAM IS REQUIRED and there is no implicit one: a pass with no program draws NOTHING (reported once
- *   at wiring time). The common cases have SDK programs (BuiltinShaders::screenCopyProgram for a copy,
+ *   at wiring time). The common cases have SDK programs (BuiltinShaders::fullscreenCopyProgram for a copy,
  *   deferredLightProgram for deferred lighting); anything else is a program the host writes - the picture is
  *   something the host stated, never something a backend filled in.
  */

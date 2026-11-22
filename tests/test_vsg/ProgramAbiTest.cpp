@@ -10,7 +10,7 @@
  *     the lights at 2 and - through the SDK's shadow insertion - the map at 3 and its block at 4, with the
  *     per-drawable block in set 1 and a 128-byte vertex push (the arrangement the existing backend serves,
  *     which is exactly the one a rewrite has to be able to reproduce);
- *   * the full-screen programs bind an attachment by BINDING NUMBER (screenCopyProgram(N)), and the
+ *   * the full-screen programs bind an attachment by BINDING NUMBER (fullscreenCopyProgram(N)), and the
  *     shadowed deferred lighting program's pair follows the four G-buffer sources at 5 and 6;
  *   * a declaration inside a branch the variant does not take is not a fact, and a variant whose own text
  *     says `#error` is refused rather than half-read;
@@ -43,7 +43,7 @@ using vn::backend_vsg::AbiBlockRole;
 using vn::backend_vsg::AbiDescriptorKind;
 using vn::backend_vsg::AbiStage;
 using vn::backend_vsg::buildProgramFacts;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::ProgramAbi;
 using vn::backend_vsg::ProgramFacts;
@@ -66,10 +66,10 @@ ProgramAbi scan(const ShaderProgram& program, std::vector<std::string_view> defi
 }
 
 /// @brief Scans a FULL-SCREEN program's entry (the engine's triangle + the program's fragment stage).
-ProgramAbi scanScreen(const ShaderProgram& program, std::vector<std::string_view> defines = {})
+ProgramAbi scanFullscreen(const ShaderProgram& program, std::vector<std::string_view> defines = {})
 {
     ProgramFacts facts;
-    EXPECT_EQ(buildScreenProgramFacts(program, facts), FactMiss::None) << "the program must be describable";
+    EXPECT_EQ(buildFullscreenProgramFacts(program, facts), FactMiss::None) << "the program must be describable";
     ProgramAbi abi;
     EXPECT_EQ(scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, defines, abi), FactMiss::None);
     return abi;
@@ -244,7 +244,7 @@ void main() {}
 
 TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndTheShadowedPair)
 {
-    const ProgramAbi plain = scanScreen(*vn::graphics::deferredLightProgram());
+    const ProgramAbi plain = scanFullscreen(*vn::graphics::deferredLightProgram());
     // Four G-buffer samplers and the light block both paths carry (at the binding the SDK's programs share).
     ASSERT_EQ(plain.bindings.size(), 5U);
     expectSampler(plain, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "vn_albedo_tex");
@@ -259,23 +259,23 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
 
     const auto shadowed_program = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(shadowed_program, nullptr) << "the shadow markers must still be in the shipped source";
-    const ProgramAbi shadowed = scanScreen(*shadowed_program);
+    const ProgramAbi shadowed = scanFullscreen(*shadowed_program);
     ASSERT_EQ(shadowed.bindings.size(), 7U);
     expectBlock(shadowed, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::backend_vsg::core::VineLightsBlock));
     expectSampler(shadowed, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "vn_shadow_map");
     expectBlock(shadowed, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::backend_vsg::core::VineShadowBlock));
 }
 
-TEST(ProgramAbiTest, TheScreenProgramsBindTheAttachmentTheirFactoryNamed)
+TEST(ProgramAbiTest, TheFullscreenProgramsBindTheAttachmentTheirFactoryNamed)
 {
-    const ProgramAbi first = scanScreen(*vn::graphics::screenCopyProgram(0));
+    const ProgramAbi first = scanFullscreen(*vn::graphics::fullscreenCopyProgram(0));
     ASSERT_EQ(first.bindings.size(), 1U);
-    expectSampler(first, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "vn_screen_tex");
+    expectSampler(first, 0U, 0U, AbiDescriptorKind::Sampler2D, kFragment, "vn_copy_tex");
     EXPECT_TRUE(first.pushes.empty());
 
-    const ProgramAbi third = scanScreen(*vn::graphics::screenCopyProgram(2));
+    const ProgramAbi third = scanFullscreen(*vn::graphics::fullscreenCopyProgram(2));
     ASSERT_EQ(third.bindings.size(), 1U);
-    expectSampler(third, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "vn_screen_tex");
+    expectSampler(third, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "vn_copy_tex");
 
     // The engine's full-screen vertex stage declares nothing at all: it generates its triangle. It has no
     // fragment stage of its own (the fragment stage is the host's), so its text is scanned as a vertex-only

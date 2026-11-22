@@ -104,7 +104,7 @@ constexpr const char* kGatedFragmentSource = "#pragma import_defines (VN_TEXTURE
                                              "#endif\n"
                                              "void main() { outColor = material.base_color; }\n";
 
-constexpr const char* kScreenFragmentSource = "#version 450\n"
+constexpr const char* kFullscreenFragmentSource = "#version 450\n"
                                               "layout(location = 0) in vec2 vn_uv;\n"
                                               "layout(location = 0) out vec4 outColor;\n"
                                               "void main() { outColor = vec4(vn_uv, 0.0, 1.0); }\n";
@@ -122,7 +122,7 @@ vn::intrusive_ptr<ShaderProgram> contentProgram()
 vn::intrusive_ptr<ShaderProgram> screenProgram()
 {
     const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
-    program->addStage(stage(ShaderStageType::Fragment, kScreenFragmentSource));
+    program->addStage(stage(ShaderStageType::Fragment, kFullscreenFragmentSource));
     return program;
 }
 
@@ -643,12 +643,12 @@ TEST(CompiledProgramsTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
     EXPECT_EQ(retirement.pending(), 1U) << "and it parks it, exactly as a drawing frame would";
 }
 
-TEST(CompiledProgramsTest, AScreenDrawGetsAFullScreenHalf)
+TEST(CompiledProgramsTest, AFullscreenDrawGetsAFullscreenHalf)
 {
     const auto program = screenProgram();
 
     ProgramFacts screen_facts;
-    ASSERT_EQ(vn::backend_vsg::buildScreenProgramFacts(*program, screen_facts), FactMiss::None);
+    ASSERT_EQ(vn::backend_vsg::buildFullscreenProgramFacts(*program, screen_facts), FactMiss::None);
 
     Tables tables;
     tables.programs.push_back(screen_facts);

@@ -175,11 +175,11 @@ int graphicsQueueFamily(const ::vsg::Device& device)
 
 /// @brief Whether @p pass draws a full-screen packet whose SOURCE is @p target.
 ///
-/// The full-screen ABI binds binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram), so
+/// The full-screen ABI binds binding N as the source's attachment N (see BuiltinShaders::fullscreenCopyProgram), so
 /// the source's offer is the whole target even when the pass declared it as one ProducedImage. This answers
 /// "does this input have to carry that compatibility view", and it is asked here because the plan resolves the
 /// images while the calls name the source.
-bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
+bool isFullscreenSource(const core::CompiledPass& pass, const void* target) noexcept
 {
     if (target == nullptr) {
         return false;
@@ -348,7 +348,7 @@ struct PassOffers {
         // whose source is this input reads the WHOLE target - even when the pass declared the source as one
         // ProducedImage (FullscreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
         // are built on it). The content path above keeps the narrowed offer.
-        if (isScreenSource(pass, input.target)) {
+        if (isFullscreenSource(pass, input.target)) {
             std::vector<::vsg::ref_ptr<::vsg::ImageView>>& screen_views = input_screen_views[index];
             screen_views.clear();
             for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
@@ -2447,7 +2447,7 @@ void VsgBackend::collectFullscreenDraw(FrameScratch&                            
                                        : (program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{});
     // The source is an IDENTITY here, exactly like a content draw's program: which images it offers was announced with
     // the pass' inputs (the value's resolved `inputs`), and the content layer resolves it among them.
-    (void)scratch.recorder.drawScreenProgram(source, text.get(), camera);
+    (void)scratch.recorder.drawFullscreenProgram(source, text.get(), camera);
 }
 
 void VsgBackend::releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass)

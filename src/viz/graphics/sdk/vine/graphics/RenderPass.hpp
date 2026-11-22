@@ -159,7 +159,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *   target's fact, and a backend that cannot honour the request reports it (see DiagnosticCategory).
      * - The DEPTH half of the pass' clear; the colour half is isClearEnabled, and the two are independent, so a HUD
      *   overlay can clear its own depth region and keep the picture underneath.
-     * - Unstated, the KIND's policy answers for a pass that CLEARS: a Scene pass clears both attachments, a Screen
+     * - Unstated, the KIND's policy answers for a pass that CLEARS: a Scene pass clears both attachments, a Fullscreen
      *   pass neither. A pass that clears no colour does not imply depth - only an explicit `clear_depth = true` asks
      *   for a depth-only clear (see PassDesc::clear_depth).
      *
@@ -174,7 +174,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * - The COLOUR half of the pass' clear; the depth half is shouldClearDepth, `clearPolicy()` states both, and a
      *   pass that asks for neither announces no clear at all.
      *
-     * @return True when the pass clears its colour attachments (the default for a Scene pass, never for a Screen
+     * @return True when the pass clears its colour attachments (the default for a Scene pass, never for a Fullscreen
      *         pass: a composite draws over what is already there).
      */
     [[nodiscard]] bool isClearEnabled() const noexcept;

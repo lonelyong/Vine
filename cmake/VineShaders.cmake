@@ -12,11 +12,11 @@
 #     TEXT; a backend owns how it is compiled and bound (its ABI).
 #
 # A backend has no shader directory of its own. It used to (src/plugins/gfx_backend_vsg/shaders/,
-# a full-screen triangle and a screen-copy fragment stage, generated into
+# a full-screen triangle and a fullscreen-copy fragment stage, generated into
 # vine/backend_vsg/EmbeddedShaders.hpp): two stages behind engine-visible pictures — a FullscreenPass with no
 # program drew the copy, and every full-screen program was written against that triangle — while
 # the text lived in one backend. Now both are SDK programs (BuiltinShaders::fullscreenVertexProgram
-# / screenCopyProgram) and a backend may only decide HOW to compile and bind them, or provide its
+# / fullscreenCopyProgram) and a backend may only decide HOW to compile and bind them, or provide its
 # own stages behind the documented interface.
 #
 # Naming (the rule every file below follows):
@@ -28,7 +28,7 @@
 #     has it (a name is either a built-in or a host's, never ambiguous).
 #   * `<role>` is the renderer's word for what the stage does, not a product, vendor or C++ word -
 #     a shader file name lives in the renderer's vocabulary (`forward`, `gbuffer`,
-#     `deferred_lighting`, `skybox`, `screen_copy`, `fullscreen`), which is also what a reader of
+#     `deferred_lighting`, `skybox`, `fullscreen_copy`, `fullscreen`), which is also what a reader of
 #     any other engine expects to find.
 #   * `<stage>` is the stage suffix (`.vert` / `.frag` / ... - see VineShaderHelper.cmake).
 #   * No role word is repeated from the stage or from the target: `builtin_gbuffer.frag` writes the
@@ -62,7 +62,7 @@ vn_declare_embedded_shaders(
     NAMESPACE vn::graphics::shaders
     SOURCES
         "${VN_SDK_SHADER_DIR}/builtin_fullscreen.vert"
-        "${VN_SDK_SHADER_DIR}/builtin_screen_copy.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_fullscreen_copy.frag"
         "${VN_SDK_SHADER_DIR}/builtin_gbuffer.vert"
         "${VN_SDK_SHADER_DIR}/builtin_gbuffer.frag"
         "${VN_SDK_SHADER_DIR}/builtin_deferred_lighting.frag"

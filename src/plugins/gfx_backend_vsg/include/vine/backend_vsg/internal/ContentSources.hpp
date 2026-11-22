@@ -98,7 +98,7 @@ VN_BACKEND_VSG_NS_BEGIN
  * The entry's identity is the program and its revision, so the plan's `program` names it exactly as a content
  * program does.
  *
- * @param program SDK screen program to describe (borrowed; the entry copies the fragment source).
+ * @param program SDK fullscreen program to describe (borrowed; the entry copies the fragment source).
  * @param out     Receives the entry (both GLSL texts are the pair a full-screen pipeline compiles, and the
  *                declared bindings are scanned from that same pair - the engine's triangle declares none).
  * @return None when the entry was built; Unknown when the program has no stages at all; Malformed when it has
@@ -106,10 +106,10 @@ VN_BACKEND_VSG_NS_BEGIN
  *         fragment entry point that is not the canonical vertex stage's (the pipeline carries one entry point
  *         for both stages), or a fragment text whose declared bindings cannot be read.
  */
-[[nodiscard]] FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out);
+[[nodiscard]] FactMiss buildFullscreenProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out);
 
 /** @brief The convenience spelling over a live @p program (see the value overload). */
-[[nodiscard]] FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
+[[nodiscard]] FactMiss buildFullscreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
 
 /** @brief Builds the material table entry for @p material from the VALUES @p values, or for the DEFAULT material.
  *

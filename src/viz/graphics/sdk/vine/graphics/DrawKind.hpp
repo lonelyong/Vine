@@ -17,7 +17,7 @@ VN_GRAPHICS_NS_BEGIN
  * - WHY THE KIND IS IDENTITY. The two are not interchangeable compilations of one program: a scene draw binds
  *   the four ABI blocks at set 0 and its sampled inputs at set 1, while a full-screen draw binds the source's
  *   colour attachments at bindings 0..N-1 of set 0 (the full-screen ABI the engine's own screen-space
- *   programs, `BuiltinShaders::screenCopyProgram` and friends, are written against). A pipeline compiled for
+ *   programs, `BuiltinShaders::fullscreenCopyProgram` and friends, are written against). A pipeline compiled for
  *   one of them cannot be bound for the other.
  * - THE VALUE NAMES THE DRAW, NOT THE TARGET. `Fullscreen` means a full-screen triangle: the draw covers the
  *   VIEW it is given, wherever that view lands - a picture-in-picture rectangle, an off-screen image, or a

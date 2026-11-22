@@ -6093,7 +6093,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenFullscreenPassSamples)
 
     // Consumer: a FullscreenPass declaring it wants the published "SceneColor", and NAMING the program it
     // draws it with — a full-screen pass has no implicit shading (see FullscreenPass).
-    auto copy_program = vn::graphics::screenCopyProgram();
+    auto copy_program = vn::graphics::fullscreenCopyProgram();
     PassDesc screen_desc;
     screen_desc.kind        = DrawKind::Fullscreen;
     screen_desc.camera      = cam;
@@ -6130,7 +6130,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenFullscreenPassSamples)
     PassDesc orphan_desc;
     orphan_desc.kind        = DrawKind::Fullscreen;
     orphan_desc.camera      = cam;
-    orphan_desc.program     = vn::graphics::screenCopyProgram();
+    orphan_desc.program     = vn::graphics::fullscreenCopyProgram();
     orphan_desc.input_names = { u8"SceneColor" };
     const auto orphan       = vn::test::asFullscreenPassForTest(vn::test::applyPassForTest(*engine2, std::move(orphan_desc), 100));
     engine2->frame();
@@ -6262,7 +6262,7 @@ TEST(PassDrawTest, WhatAFullscreenPassDescribesIsWhatItAnnounces)
     source->setSize(64, 36);
     source->attachColor(RenderTarget::ColorFormat::RGBA8);
 
-    auto program = vn::graphics::screenCopyProgram();
+    auto program = vn::graphics::fullscreenCopyProgram();
     PassDesc desc;
     desc.kind     = DrawKind::Fullscreen;
     desc.camera   = cam;
@@ -6292,7 +6292,7 @@ TEST(PassDrawTest, WhatAFullscreenPassDescribesIsWhatItAnnounces)
     EXPECT_EQ(backend->last_program_source, draw.source);
     EXPECT_EQ(backend->last_program, draw.program.get());
     EXPECT_TRUE(backend->last_program_camera.view.isEqual(draw.view.camera.view, 1e-12)) << "the same view the description stated";
-    EXPECT_EQ(backend->render_calls, 0) << "全屏档走 drawScreenProgram()，不走 render()";
+    EXPECT_EQ(backend->render_calls, 0) << "全屏档走 drawFullscreenProgram()，不走 render()";
     // 清屏在构造里就关了：描述里没有 clear，线上也没收到 setClearPolicy（0 值不是"清了黑色"）
     EXPECT_FALSE(described.clear.has_value());
     EXPECT_EQ(backend->clear_calls, 0);
@@ -6326,7 +6326,7 @@ TEST(PassDrawTest, APassWithNothingToIssueAnnouncesNothingAtAll)
     // ② 全屏档 + 源没解析出来：同上
     PassDesc no_source_desc;
     no_source_desc.kind   = DrawKind::Fullscreen;
-    no_source_desc.program = vn::graphics::screenCopyProgram();
+    no_source_desc.program = vn::graphics::fullscreenCopyProgram();
     no_source_desc.target = Target::explicitTarget(target);
     FullscreenPass no_source;
     vn::graphics::detail::PassNode::adopt(no_source, std::move(no_source_desc));
@@ -6408,8 +6408,8 @@ TEST(RenderEngineTest, FullscreenPassProgramCarriesTheAttachmentItReads)
     // Two consumers reading different colour attachments of the same target: the ATTACHMENT is the
     // program's sampler binding (the fullscreen program ABI — binding i reads attachment i), so the two
     // passes differ by the program they name, not by a backend-side index.
-    auto albedo_program = vn::graphics::screenCopyProgram(0);
-    auto normal_program = vn::graphics::screenCopyProgram(1);
+    auto albedo_program = vn::graphics::fullscreenCopyProgram(0);
+    auto normal_program = vn::graphics::fullscreenCopyProgram(1);
     EXPECT_NE(albedo_program->name(), normal_program->name());
 
     PassDesc albedo_desc;
@@ -6756,7 +6756,7 @@ TEST(PassChainTest, OffscreenToScreenBuildsExpectedChain)
     // The recipe NAMES the copy program on the pass it just built (the SDK's own recipes do not get
     // an implicit copy either — they pin the SDK program instead).
     EXPECT_NE(screen->program(), nullptr);
-    EXPECT_EQ(screen->program()->name(), vn::graphics::screenCopyProgram()->name());
+    EXPECT_EQ(screen->program()->name(), vn::graphics::fullscreenCopyProgram()->name());
 
     const int draws_before = backend->program_draws;
     engine->frame();
@@ -7504,7 +7504,7 @@ TEST(PassChainTest, AFullscreenPassKeepsImportedTextureInputsForItsProgram)
     screen.name          = u8"screen";
     screen.kind          = DrawKind::Fullscreen;
     screen.camera        = camera;
-    screen.program       = screenCopyProgram(1); // binding 1 is the imported texture's slot
+    screen.program       = fullscreenCopyProgram(1); // binding 1 is the imported texture's slot
     screen.inputs        = { ImageInput(texture) };
     screen.input_targets = { source };
     vn::test::registerPassForTest(*engine, screen);
@@ -12783,7 +12783,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     second_desc.kind          = DrawKind::Fullscreen;
     second_desc.camera        = camera;
     second_desc.content       = scene;
-    second_desc.program       = vn::graphics::screenCopyProgram();
+    second_desc.program       = vn::graphics::fullscreenCopyProgram();
     second_desc.input_targets = { target };
     // ③ a pass that is enabled and has content but no camera: it issues no DRAW, and still has an entry.
     PassDesc third_desc;
@@ -13047,7 +13047,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAFullscreenPassIsNotMeasu
     screen_desc.kind        = DrawKind::Fullscreen;
     screen_desc.camera      = camera;
     screen_desc.content     = scene;
-    screen_desc.program     = vn::graphics::screenCopyProgram();
+    screen_desc.program     = vn::graphics::fullscreenCopyProgram();
     screen_desc.input_names = { u8"GBuffer" };
     (void)vn::test::applyPassForTest(*engine, std::move(screen_desc), 3);
 
@@ -13086,7 +13086,7 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     consumer_desc.camera      = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer_desc.program     = vn::graphics::screenCopyProgram();
+    consumer_desc.program     = vn::graphics::fullscreenCopyProgram();
     consumer_desc.input_names = { u8"GBuffer" };
     PassDesc producer_desc;
     producer_desc.name        = u8"gbuffer";
@@ -13381,7 +13381,7 @@ TEST(RenderEngineTest, AFullscreenPassCanBeDeclaredAsAValueToo)
     compose.stage       = PassStage::Transparent;
     compose.kind        = DrawKind::Fullscreen;
     compose.camera      = camera;
-    compose.program     = screenCopyProgram();
+    compose.program     = fullscreenCopyProgram();
     compose.input_names = { vn::String(u8"SceneColor") };
     vn::test::registerPassForTest(*engine, compose);
 
@@ -13415,7 +13415,7 @@ TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
     copy.name            = u8"copy";
     copy.kind            = DrawKind::Fullscreen;
     copy.camera          = camera;
-    copy.program         = screenCopyProgram();
+    copy.program         = fullscreenCopyProgram();
     const auto copy_node = vn::test::applyPassForTest(*engine, copy);
     ASSERT_NE(copy_node, nullptr);
     EXPECT_FALSE(copy_node->isClearEnabled()) << "a silent declaration must not turn a full-screen pass' clear on";
@@ -14006,7 +14006,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     consumer_desc.camera = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer_desc.program = vn::graphics::screenCopyProgram();
+    consumer_desc.program = vn::graphics::fullscreenCopyProgram();
     consumer_desc.inputs.emplace_back(image);
     (void)vn::test::applyPassForTest(*engine, std::move(consumer_desc), 0);
 
@@ -14070,7 +14070,7 @@ TEST(RenderEngineTest, AProducerRegisteredLaterIsScheduledFirstAndAWholeMissingP
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer_desc.program = vn::graphics::screenCopyProgram();
+    consumer_desc.program = vn::graphics::fullscreenCopyProgram();
     consumer_desc.inputs.emplace_back(image);
     (void)vn::test::applyPassForTest(*engine, std::move(consumer_desc), 0);
 
@@ -14130,7 +14130,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
     pass_desc.camera       = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    pass_desc.program      = vn::graphics::screenCopyProgram();
+    pass_desc.program      = vn::graphics::fullscreenCopyProgram();
     pass_desc.target       = Target::explicitTarget(target); // it draws into the very target it reads
     pass_desc.output.image = image;
     pass_desc.inputs.emplace_back(image);
@@ -14254,7 +14254,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer_desc.program = vn::graphics::screenCopyProgram();
+    consumer_desc.program = vn::graphics::fullscreenCopyProgram();
     consumer_desc.inputs.emplace_back(sampled);
     (void)vn::test::applyPassForTest(*engine, std::move(consumer_desc), 10);
 
@@ -14291,7 +14291,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     light_desc.camera        = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    light_desc.program       = vn::graphics::screenCopyProgram();
+    light_desc.program       = vn::graphics::fullscreenCopyProgram();
     light_desc.input_targets = { orphan };
     (void)vn::test::applyPassForTest(*engine, std::move(light_desc), 0);
 
@@ -14357,7 +14357,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer_desc.program = vn::graphics::screenCopyProgram();
+    consumer_desc.program = vn::graphics::fullscreenCopyProgram();
     consumer_desc.inputs.emplace_back(depth_image);
     (void)vn::test::applyPassForTest(*engine, std::move(consumer_desc), 1);
 
@@ -14407,7 +14407,7 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     consumer_desc.name    = u8"present";
     consumer_desc.kind    = DrawKind::Fullscreen;
     consumer_desc.camera  = camera;
-    consumer_desc.program = vn::graphics::screenCopyProgram();
+    consumer_desc.program = vn::graphics::fullscreenCopyProgram();
     consumer_desc.inputs.emplace_back(unbound);
     (void)vn::test::applyPassForTest(*engine, std::move(consumer_desc), 1);
 
@@ -14495,7 +14495,7 @@ TEST(RenderEngineTest, FullscreenPassWithoutAProgramIsReportedAndDrawsNothing)
 
     // Naming a program ends the episode, and the pass draws — depth-only declaration and all, which is
     // what the deleted "a full-screen pass cannot sample that" rule used to refuse.
-    auto program = vn::graphics::screenCopyProgram();
+    auto program = vn::graphics::fullscreenCopyProgram();
     vn::test::updatePassForTest(*engine, consumer, [&program](PassDesc& stated) { stated.program = program; });
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -14606,7 +14606,7 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
  * @brief A declared input image drives WHICH attachment the pass samples (no host-set index).
  *
  * The wire says "attachment 2 of the G-buffer" — which TARGET the pass reads — while the program says
- * which ATTACHMENT of it (its sampler binding, see BuiltinShaders::screenCopyProgram): the declaration
+ * which ATTACHMENT of it (its sampler binding, see BuiltinShaders::fullscreenCopyProgram): the declaration
  * carries the target + image, the program carries the binding, and neither restates the other.
  */
 TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
@@ -14642,7 +14642,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     preview_desc.name    = u8"preview";
     preview_desc.kind    = DrawKind::Fullscreen;
     preview_desc.camera  = camera;
-    preview_desc.program = vn::graphics::screenCopyProgram(2);
+    preview_desc.program = vn::graphics::fullscreenCopyProgram(2);
     preview_desc.inputs.emplace_back(sampled);
     const auto preview   = vn::test::asFullscreenPassForTest(vn::test::applyPassForTest(*engine, std::move(preview_desc), 10));
 
@@ -14657,7 +14657,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
  *
  * A coarse declaration says "the whole of this target" (the unit the program path consumes); with the
  * copy path gone there is no pass-side attachment index any more, and none is needed: the program's
- * sampler binding says which attachment it reads (screenCopyProgram(1) reads attachment 1), and the
+ * sampler binding says which attachment it reads (fullscreenCopyProgram(1) reads attachment 1), and the
  * source has to provide it.
  */
 TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
@@ -14686,7 +14686,7 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
     pip_desc.name          = u8"pip";
     pip_desc.kind          = DrawKind::Fullscreen;
     pip_desc.camera        = camera;
-    pip_desc.program       = vn::graphics::screenCopyProgram(1);
+    pip_desc.program       = vn::graphics::fullscreenCopyProgram(1);
     pip_desc.input_targets = { baked };
     const auto pip         = vn::test::asFullscreenPassForTest(vn::test::applyPassForTest(*engine, std::move(pip_desc), 100));
 
@@ -14731,7 +14731,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     preview_desc.name    = u8"preview";
     preview_desc.kind    = DrawKind::Fullscreen;
     preview_desc.camera  = camera;
-    preview_desc.program = vn::graphics::screenCopyProgram();
+    preview_desc.program = vn::graphics::fullscreenCopyProgram();
     preview_desc.inputs.emplace_back(sampled);
     (void)vn::test::applyPassForTest(*engine, std::move(preview_desc), 10);
 
@@ -14799,7 +14799,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     preview_desc.name        = u8"preview";
     preview_desc.kind        = DrawKind::Fullscreen;
     preview_desc.camera      = camera;
-    preview_desc.program     = vn::graphics::screenCopyProgram();
+    preview_desc.program     = vn::graphics::fullscreenCopyProgram();
     preview_desc.input_names = { u8"GBuffer" };
     preview_desc.inputs.emplace_back(sampled);
     const auto preview       = vn::test::asFullscreenPassForTest(vn::test::applyPassForTest(*engine, std::move(preview_desc), 10));
@@ -14915,7 +14915,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     by_name_desc.camera      = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    by_name_desc.program     = vn::graphics::screenCopyProgram();
+    by_name_desc.program     = vn::graphics::fullscreenCopyProgram();
     by_name_desc.input_names = { u8"External" };
     (void)vn::test::applyPassForTest(*engine, std::move(by_name_desc), 0);
 
@@ -14927,7 +14927,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     by_object_desc.name    = u8"by_object";
     by_object_desc.kind    = DrawKind::Fullscreen;
     by_object_desc.camera  = camera;
-    by_object_desc.program = vn::graphics::screenCopyProgram();
+    by_object_desc.program = vn::graphics::fullscreenCopyProgram();
     by_object_desc.inputs.emplace_back(declared);
     (void)vn::test::applyPassForTest(*engine, std::move(by_object_desc), 1);
 
@@ -15034,7 +15034,7 @@ TEST(RenderEngineTest, FullscreenPassWithoutAnyInputIsReportedOnce)
     consumer_desc.camera  = camera;
     // A drawable FullscreenPass names its program (see FullscreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
-    consumer_desc.program = vn::graphics::screenCopyProgram();
+    consumer_desc.program = vn::graphics::fullscreenCopyProgram();
     const auto consumer   = vn::test::applyPassForTest(*engine, std::move(consumer_desc), 0);
 
     engine->frame();

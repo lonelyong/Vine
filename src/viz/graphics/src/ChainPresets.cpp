@@ -197,8 +197,8 @@ raw_ptr<FullscreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     pip_desc.kind                          = DrawKind::Fullscreen;
     pip_desc.camera                        = intrusive_ptr<Camera>(camera);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so "present the baked
-    // target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a backend-side default.
-    pip_desc.program                       = screenCopyProgram();
+    // target" is an SDK program (BuiltinShaders::fullscreenCopyProgram) rather than a backend-side default.
+    pip_desc.program                       = fullscreenCopyProgram();
     pip_desc.input_names                   = { output_name };
     pip_desc.input_targets                 = { target }; // samples the whole published target
     pip_desc.viewport                      = pip;

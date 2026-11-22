@@ -51,7 +51,7 @@ using vn::graphics::DynamicState;
 using vn::graphics::PipelineKey;
 using vn::backend_vsg::core::StateRegistry;
 using vn::backend_vsg::core::VariantPool;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::ProgramFacts;
@@ -176,10 +176,10 @@ std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& sha
     if (vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
         return nullptr;
     }
-    return ContentPipeline::createScreen(abi, shaders);
+    return ContentPipeline::createFullscreen(abi, shaders);
 }
 
-/// @brief An identity of the full-screen kind (kind = Screen: the other descriptor ABI).
+/// @brief An identity of the full-screen kind (kind = Fullscreen: the other descriptor ABI).
 PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
     PipelineKey key;
@@ -427,7 +427,7 @@ TEST(ContentPipelineTest, TheLayoutIsExactlyWhatTheTextDeclares)
     EXPECT_NE(layer->stages()[1]->module, nullptr);
 }
 
-TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
+TEST(ContentPipelineTest, AFullscreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
 {
     // The engine's TWO descriptor ABIs, and the whole difference between them: a content layer puts the blocks
     // at set 0 and the sampled inputs at set 1; a full-screen layer puts the samplers at set 0 and nothing
@@ -499,8 +499,8 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     const vn::intrusive_ptr<vn::graphics::ShaderProgram> program = vn::graphics::shadowedDeferredLightProgram();
     ASSERT_NE(program, nullptr);
     ProgramFacts facts;
-    ASSERT_EQ(buildScreenProgramFacts(*program, facts), FactMiss::None);
-    auto layer = ContentPipeline::createScreen(facts.abi, facts.shaders);
+    ASSERT_EQ(buildFullscreenProgramFacts(*program, facts), FactMiss::None);
+    auto layer = ContentPipeline::createFullscreen(facts.abi, facts.shaders);
     ASSERT_NE(layer, nullptr) << "the engine's shadowed lighting program must be servable";
 
     EXPECT_TRUE(layer->declaredSets().empty()) << "a full-screen set is the PASS' to build";
@@ -575,7 +575,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
         if (vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
             return std::unique_ptr<ContentPipeline>{};
         }
-        return ContentPipeline::createScreen(abi, shaders);
+        return ContentPipeline::createFullscreen(abi, shaders);
     };
     EXPECT_EQ(refusing("layout(set = 1, binding = 0) uniform sampler2D picture;"), nullptr) << "the full-screen ABI is set 0 and nothing else";
     EXPECT_NE(refusing("layout(binding = 5, std140) uniform VineLightsBlock "
@@ -588,7 +588,7 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     EXPECT_NE(refusing("layout(binding = 6) uniform sampler2D vn_shadow_map;"), nullptr) << "while the shadow's pair is exactly what a screen text may declare";
 }
 
-TEST(ContentPipelineTest, AScreenPipelineBakesTheLegacyFullscreenShape)
+TEST(ContentPipelineTest, AFullscreenPipelineBakesTheLegacyFullscreenShape)
 {
     // The create-info's states ARE the dynamic declaration's starting point, and for a full-screen draw they
     // are the previous implementation's overlay shape: no culling (the triangle's winding is the engine's own,

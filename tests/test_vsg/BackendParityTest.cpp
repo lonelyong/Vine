@@ -872,7 +872,7 @@ TEST_F(BackendParityTest, TheSameHalfOpacityDrawBlendsTheSame)
     EXPECT_LE(std::abs(centre[3] - 191), 2);
 }
 
-TEST_F(BackendParityTest, TheSameScreenCopySamplesTheSameColours)
+TEST_F(BackendParityTest, TheSameFullscreenCopySamplesTheSameColours)
 {
     // THE FULL-SCREEN PATH: a scene frame fills the source, a screen frame samples it into the destination. Two
     // frames, each compared as a record and as pixels - the copy must reproduce the drawn centre AND the cleared
@@ -881,7 +881,7 @@ TEST_F(BackendParityTest, TheSameScreenCopySamplesTheSameColours)
     RenderTarget* const destination = target();
 
     const intrusive_ptr<ShaderProgram> scene  = makeProgramWith(kFragmentStage, u8"parity_screen_source");
-    const intrusive_ptr<ShaderProgram> copy   = vn::graphics::screenCopyProgram(0);
+    const intrusive_ptr<ShaderProgram> copy   = vn::graphics::fullscreenCopyProgram(0);
     const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
     const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 

@@ -297,7 +297,7 @@ class ContentStore {
      * that named a superseded revision looks up a row that is gone - which is the designed miss, not something
      * the store may paper over (see the class note).
      */
-    void ensureProgram(vn::graphics::ProgramId program, const ProgramVariant& variant, bool screen, std::uint64_t epoch);
+    void ensureProgram(vn::graphics::ProgramId program, const ProgramVariant& variant, bool fullscreen, std::uint64_t epoch);
 
     struct Data;
     std::unique_ptr<Data> d;

@@ -514,9 +514,9 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     present_desc.kind                       = DrawKind::Fullscreen;
     present_desc.camera                     = intrusive_ptr<Camera>(camera_);
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so
-    // "present the baked target" is an SDK program (BuiltinShaders::screenCopyProgram) rather than a
+    // "present the baked target" is an SDK program (BuiltinShaders::fullscreenCopyProgram) rather than a
     // backend-side default (see FullscreenPass::setProgram).
-    present_desc.program                    = screenCopyProgram();
+    present_desc.program                    = fullscreenCopyProgram();
     present_desc.input_names                = { u8"Composite" };
     present_desc.input_targets              = { composite }; // it presents the whole baked target
     pipeline.addPass(present_desc);

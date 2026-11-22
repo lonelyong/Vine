@@ -383,14 +383,14 @@ class VN_BACKEND_VSG_API FrameRecorder {
         return render(commands, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{}, program_override);
     }
 
-    /** @brief Collects a full-screen program draw packet (the screen kind of a frame's draw).
+    /** @brief Collects a full-screen program draw packet (the fullscreen kind of a frame's draw).
      *
      * @param source  Target whose colour attachments are sampled.
      * @param program Fragment program to draw with.
      * @param camera  The view the call is projected with (the frame's value).
      * @return true when the call was collected; false when it was refused.
      */
-    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera);
+    bool drawFullscreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera);
 
     /** @brief The value spelling: @p program is the fragment program's TEXT (see DrawPacket::program_description).
      *
@@ -399,7 +399,7 @@ class VN_BACKEND_VSG_API FrameRecorder {
      * @param camera  The view the call is projected with (the frame's value).
      * @return true when the call was collected; false when it was refused.
      */
-    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgramDescription* program, const vn::graphics::CameraSnapshot& camera);
+    bool drawFullscreenProgram(const void* source, const vn::graphics::ShaderProgramDescription* program, const vn::graphics::CameraSnapshot& camera);
 
     /** @brief The same, for a caller that still holds the authored camera (the content-side convenience).
      *
@@ -408,9 +408,9 @@ class VN_BACKEND_VSG_API FrameRecorder {
      * @param camera  The camera to snapshot, or null for a call with no view.
      * @return true when the call was collected; false when it was refused.
      */
-    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera)
+    bool drawFullscreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::Camera* camera)
     {
-        return drawScreenProgram(source, program, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{});
+        return drawFullscreenProgram(source, program, camera != nullptr ? vn::graphics::CameraSnapshot::of(*camera) : vn::graphics::CameraSnapshot{});
     }
 
     /** @brief Selects the program content without one of its own is drawn with.

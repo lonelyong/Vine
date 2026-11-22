@@ -301,7 +301,7 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
 // default scene showed exactly that - the last three G-buffer previews were BLACK rectangles, because the
 // geometry pass drew every body through a one-output program (base colour landed, normal / emission / position
 // kept their transparent-black clear). So the copies below are the demo's own declarations - the SDK's
-// screenCopyProgram(n) over an ImageRef bound to (target, n) - and the assertion is on what they land.
+// fullscreenCopyProgram(n) over an ImageRef bound to (target, n) - and the assertion is on what they land.
 TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
 {
     VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
@@ -339,7 +339,7 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
         // one uniquely - a shared name would leave ONE pass reading attachment 3.
         preview.kind    = vn::graphics::DrawKind::Fullscreen;
         preview.camera  = vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera);
-        preview.program = vn::graphics::screenCopyProgram(attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All);
+        preview.program = vn::graphics::fullscreenCopyProgram(attachment, attachment == 2 ? vn::graphics::FullscreenCopyChannels::Alpha : vn::graphics::FullscreenCopyChannels::All);
         preview.input_names = { u8"GBuffer" };
         vn::intrusive_ptr<vn::graphics::ImageRef> image(new vn::graphics::ImageRef(u8"GBuffer.preview"));
         image->bind(vn::intrusive_ptr<RenderTarget>(gbuffer), attachment);

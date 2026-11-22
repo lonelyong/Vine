@@ -37,7 +37,7 @@ using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::backend_vsg::buildMaterialFacts;
 using vn::backend_vsg::buildProgramFacts;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::ContentFacts;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::findMaterial;
@@ -122,7 +122,7 @@ TEST(ContentSourcesTest, AProgramThatIsNotExactlyTwoGraphicsStagesCannotBeOneCon
     EXPECT_EQ(buildProgramFacts(no_stages, facts), FactMiss::Unknown);
 }
 
-TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgnored)
+TEST(ContentSourcesTest, AFullscreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgnored)
 {
     // The full-screen ABI: the host names the FRAGMENT stage, and the triangle is the engine's canonical one.
     // A screen program is therefore describable with a fragment stage alone - the case that buildProgramFacts
@@ -132,7 +132,7 @@ TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgno
     const std::uint64_t revision = screen.revision();
 
     ProgramFacts facts;
-    ASSERT_EQ(buildScreenProgramFacts(screen, facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(screen, facts), FactMiss::None);
     EXPECT_EQ(facts.program, vn::test::programRef(screen)) << "the identity is the host's program, as the plan names it";
     EXPECT_EQ(facts.program.revision, revision);
     EXPECT_EQ(facts.shaders.fragment, kFragmentSource);
@@ -149,41 +149,41 @@ TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgno
     with_vertex.addStage(stage(ShaderStageType::Vertex, kVertexSource));
     with_vertex.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
     ProgramFacts with_vertex_facts;
-    ASSERT_EQ(buildScreenProgramFacts(with_vertex, with_vertex_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(with_vertex, with_vertex_facts), FactMiss::None);
     EXPECT_EQ(with_vertex_facts.shaders.vertex, facts.shaders.vertex) << "the engine's vertex stage, not the host's";
 }
 
-TEST(ContentSourcesTest, AScreenProgramWithoutOneFragmentStageIsNotAScreenProgram)
+TEST(ContentSourcesTest, AFullscreenProgramWithoutOneFragmentStageIsNotAFullscreenProgram)
 {
     ProgramFacts facts;
 
     ShaderProgram no_stages;
-    EXPECT_EQ(buildScreenProgramFacts(no_stages, facts), FactMiss::Unknown);
+    EXPECT_EQ(buildFullscreenProgramFacts(no_stages, facts), FactMiss::Unknown);
 
     ShaderProgram vertex_only;
     vertex_only.addStage(stage(ShaderStageType::Vertex, kVertexSource));
-    EXPECT_EQ(buildScreenProgramFacts(vertex_only, facts), FactMiss::Malformed)
+    EXPECT_EQ(buildFullscreenProgramFacts(vertex_only, facts), FactMiss::Malformed)
         << "a vertex stage alone is not a screen program: there is nothing to shade with";
 
     ShaderProgram two_fragments;
     two_fragments.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
     two_fragments.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
-    EXPECT_EQ(buildScreenProgramFacts(two_fragments, facts), FactMiss::Malformed);
+    EXPECT_EQ(buildFullscreenProgramFacts(two_fragments, facts), FactMiss::Malformed);
 
     ShaderProgram with_compute;
     with_compute.addStage(stage(ShaderStageType::Fragment, kFragmentSource));
     with_compute.addStage(stage(ShaderStageType::Compute, kVertexSource));
-    EXPECT_EQ(buildScreenProgramFacts(with_compute, facts), FactMiss::Malformed);
+    EXPECT_EQ(buildFullscreenProgramFacts(with_compute, facts), FactMiss::Malformed);
 
     ShaderProgram empty_source;
     empty_source.addStage(stage(ShaderStageType::Fragment, ""));
-    EXPECT_EQ(buildScreenProgramFacts(empty_source, facts), FactMiss::Malformed);
+    EXPECT_EQ(buildFullscreenProgramFacts(empty_source, facts), FactMiss::Malformed);
 
     // One entry point serves both stages, and the engine's full-screen vertex stage uses "main": a fragment
     // stage with another entry point cannot be compiled against it.
     ShaderProgram other_entry;
     other_entry.addStage(stage(ShaderStageType::Fragment, kFragmentSource, "shade"));
-    EXPECT_EQ(buildScreenProgramFacts(other_entry, facts), FactMiss::Malformed);
+    EXPECT_EQ(buildFullscreenProgramFacts(other_entry, facts), FactMiss::Malformed);
 }
 
 TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)

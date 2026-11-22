@@ -55,8 +55,8 @@
  * TWO KINDS, TWO DESCRIPTOR ABIS (see core::DrawKind). A CONTENT layer is the one above: the ABI's blocks at
  * set 0, the sampled inputs at set 1, vertex streams declared. A FULL-SCREEN layer is the other drawing
  * call the engine has: the source's colour attachments at bindings 0..N-1 of set 0 and NOTHING else - the
- * full-screen ABI the engine's own screen programs are written against (see
- * `vn::graphics::BuiltinShaders`: `screenCopyProgram` declares its sampler as `layout(binding = i)`, with
+ * full-screen ABI the engine's own fullscreen programs are written against (see
+ * `vn::graphics::BuiltinShaders`: `fullscreenCopyProgram` declares its sampler as `layout(binding = i)`, with
  * no set qualifier, so set 0 is where a full-screen sampler has to live), the full-screen vertex stage
  * supplied by the backend (the engine's canonical triangle, built from `gl_VertexIndex`, with no vertex
  * buffer and no vertex-side constants), and the LIGHT block at the binding both paths give it (see
@@ -119,7 +119,7 @@ class ContentPipeline {
         std::uint32_t color_attachments{ 1 }; // Colour attachments the blend state declares.
         std::uint32_t push_bytes{ 0 };        // The FULL-SCREEN path's push budget, when its text declares one: a
                                               // content program's push ranges are its own declarations (see
-                                              // `create`), and the SDK's own screen programs declare none - they
+                                              // `create`), and the SDK's own fullscreen programs declare none - they
                                               // read their lights from the light block (see LightBlock).
         /// The primitive assembly the pipeline's STATIC topology states. It is part of the identity rather
         /// than runtime state because of the API's rule: a topology set dynamically may only be of the same
@@ -207,11 +207,11 @@ class ContentPipeline {
     /** @brief Creates a FULL-SCREEN layer: the other descriptor ABI, whose set is what the text declares.
      *
      * The stages are the engine's canonical full-screen vertex stage plus the host's fragment stage (see
-     * `api/ContentSources`: `buildScreenProgramFacts` composes exactly that pair), so the layer compiles one
+     * `api/ContentSources`: `buildFullscreenProgramFacts` composes exactly that pair), so the layer compiles one
      * program pair whose vertex stage generates the triangle from `gl_VertexIndex`. The bindings are the
      * program's own declarations (api/ProgramAbi) like a content layer's - with the full-screen ABI's three
      * rules, which `create` REFUSES a text for breaking:
-     *   * everything lives in SET 0: the engine's screen programs write `layout(binding = i)` with no set
+     *   * everything lives in SET 0: the engine's fullscreen programs write `layout(binding = i)` with no set
      *     qualifier, and its shadow ABI inserts its map and its block into that same set - there is no
      *     second set for this ABI to bind;
      *   * the only BLOCK it may declare is the shadow's (`VineShadowBlock`): a full-screen program's lights
@@ -228,20 +228,20 @@ class ContentPipeline {
      * pass builds the set from it (see ContentPass), which is why `declaredSets()` is empty for this kind.
      *
      * @param abi      The bindings and push ranges the program's text declares.
-     * @param shaders  GLSL text of both stages (full-screen vertex + screen fragment).
+     * @param shaders  GLSL text of both stages (full-screen vertex + fullscreen fragment).
      * @param settings Colour attachment count and push budget.
      * @return The layer, or null when the GLSL did not compile or a declaration breaks one of the rules
      *         above (a layer that can never build a pipeline has nothing to offer).
      */
-    static std::unique_ptr<ContentPipeline> createScreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings);
+    static std::unique_ptr<ContentPipeline> createFullscreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings);
 
     /** @brief Creates a full-screen layer with the default settings (see @ref Settings).
      *
      * @param abi     The bindings and push ranges the program's text declares.
-     * @param shaders GLSL text of both stages (full-screen vertex + screen fragment).
+     * @param shaders GLSL text of both stages (full-screen vertex + fullscreen fragment).
      * @return The layer, or null when the GLSL did not compile or a declaration cannot be served.
      */
-    static std::unique_ptr<ContentPipeline> createScreen(const ProgramAbi& abi, const Shaders& shaders);
+    static std::unique_ptr<ContentPipeline> createFullscreen(const ProgramAbi& abi, const Shaders& shaders);
 
     ~ContentPipeline();
 
@@ -301,7 +301,7 @@ class ContentPipeline {
      *
      * A content layer always has one (the block set alone): a pass that reads no input still binds its blocks.
      * A full-screen layer's is the set its TEXT declares - the shadow map's binding and its block's - or the
-     * push alone when the text declares nothing (a screen program that shades from its push block is a legal
+     * push alone when the text declares nothing (a fullscreen program that shades from its push block is a legal
      * call).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::PipelineLayout> layout() const noexcept;
@@ -348,7 +348,7 @@ class ContentPipeline {
      * attachment order, then its depth - so a shader can name a binding once and keep reading the same thing
      * as long as the pass declares its inputs in the same order.
      *
-     * A FULL-SCREEN layer's is the engine's screen ABI plus whatever the text declares: the source's colour
+     * A FULL-SCREEN layer's is the engine's fullscreen ABI plus whatever the text declares: the source's colour
      * attachments at bindings 0..color_bindings-1 (binding i IS attachment i), the source's depth at the next
      * binding, and then the text's own declarations - a `vn_shadow_map` at the binding the text names (not at
      * "the next free slot": the engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer,

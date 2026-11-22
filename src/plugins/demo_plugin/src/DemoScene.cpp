@@ -1225,7 +1225,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     // A full-screen pass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
     screen.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
-    screen.program       = vn::graphics::screenCopyProgram();
+    screen.program       = vn::graphics::fullscreenCopyProgram();
     screen.input_names   = { u8"MultiColor" };
     // The two bake passes above accumulate into one target, so neither of them owns the hand-off
     // (a promise is a claim about WHOSE content a consumer gets): the consumer reads the whole baked
@@ -1294,9 +1294,9 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
         screen.kind   = vn::graphics::DrawKind::Fullscreen;
         screen.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
         // One copy program PER attachment: which attachment a fullscreen program reads is its
-        // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
+        // sampler binding (fullscreenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
-        screen.program     = vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment));
+        screen.program     = vn::graphics::fullscreenCopyProgram(attachment, previewChannelsOf(attachment));
         screen.input_names = { u8"GBuffer" };
         auto image = vn::make_intrusive<vn::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);
@@ -1544,9 +1544,9 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             preview.kind   = vn::graphics::DrawKind::Fullscreen;
             preview.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
             // One copy program per attachment: the sampler binding IS the attachment (see
-            // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of, and the
+            // BuiltinShaders::fullscreenCopyProgram), which is what the declared image below is that of, and the
             // CHANNELS it shows are the strip's (see previewChannelsOf).
-            preview.program     = vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment));
+            preview.program     = vn::graphics::fullscreenCopyProgram(attachment, previewChannelsOf(attachment));
             preview.input_names = { u8"GBuffer" };
             if (gbuffer != nullptr) {
                 auto image = vn::make_intrusive<vn::graphics::ImageRef>(u8"GBuffer.preview");

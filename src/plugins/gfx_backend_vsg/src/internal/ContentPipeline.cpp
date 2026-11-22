@@ -459,12 +459,12 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi& abi, 
     return create(abi, bindings, attributes, shaders, settings);
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders)
+std::unique_ptr<ContentPipeline> ContentPipeline::createFullscreen(const ProgramAbi& abi, const Shaders& shaders)
 {
-    return createScreen(abi, shaders, Settings{});
+    return createFullscreen(abi, shaders, Settings{});
 }
 
-std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings)
+std::unique_ptr<ContentPipeline> ContentPipeline::createFullscreen(const ProgramAbi& abi, const Shaders& shaders, const Settings& settings)
 {
     auto layer          = std::unique_ptr<ContentPipeline>(new ContentPipeline());
     layer->d->kind      = core::DrawKind::Fullscreen;
@@ -649,8 +649,8 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
 
 ::vsg::ref_ptr<::vsg::DescriptorSetLayout> ContentPipeline::sampledSetLayout(std::uint32_t color_bindings, std::uint32_t depth_bindings)
 {
-    const bool screen = d->kind == core::DrawKind::Fullscreen;
-    if (color_bindings == 0U && depth_bindings == 0U && (!screen || d->sets.empty())) {
+    const bool fullscreen = d->kind == core::DrawKind::Fullscreen;
+    if (color_bindings == 0U && depth_bindings == 0U && (!fullscreen || d->sets.empty())) {
         // Nothing to sample: a content layer has only its block set. A full-screen program that declares
         // NOTHING has nothing to bind either - while one that declares the map or the block still needs the
         // set its text describes (see the builder below).
@@ -667,8 +667,8 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         return {};
     }
     constexpr VkShaderStageFlags kSamplerStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    if (screen) {
-        // The engine's screen ABI plus whatever the TEXT declares: binding i is the source's attachment i
+    if (fullscreen) {
+        // The engine's fullscreen ABI plus whatever the TEXT declares: binding i is the source's attachment i
         // ("the BINDING is the attachment" - see BuiltinShaders), the source's depth follows the colours, and
         // then the text's own numbers - the shadow map at ITS binding, not at "the next free slot" (the
         // engine's shadowed lighting program hard-codes 5 for a four-colour G-buffer, so a pass whose source
@@ -725,7 +725,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
     }
 
     // Where the set sits is the kind's: a content layer's sampled inputs live in set 1 (after the declared
-    // block sets), a full-screen layer's in set 0 (its own ABI - the engine's screen programs declare
+    // block sets), a full-screen layer's in set 0 (its own ABI - the engine's fullscreen programs declare
     // `layout(binding = i)`).
     ::vsg::ref_ptr<::vsg::PipelineLayout> pipeline;
     if (d->kind == core::DrawKind::Fullscreen) {

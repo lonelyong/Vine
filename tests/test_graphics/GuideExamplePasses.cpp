@@ -87,7 +87,7 @@ PlanResult twoPassOffscreenToWindow(vn::raw_ptr<RenderEngine> engine,
     compose_pass.order         = 0;
     compose_pass.kind          = DrawKind::Fullscreen;
     compose_pass.camera        = camera;
-    compose_pass.program       = screenCopyProgram();
+    compose_pass.program       = fullscreenCopyProgram();
     compose_pass.input_names   = { vn::String(u8"SceneColor") };
     compose_pass.input_targets = { scene_rt };
 
@@ -169,7 +169,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     present_pass.order         = 2;
     present_pass.kind          = DrawKind::Fullscreen;
     present_pass.camera        = camera;
-    present_pass.program       = screenCopyProgram();
+    present_pass.program       = fullscreenCopyProgram();
     present_pass.input_names   = { vn::String(u8"Composite") };
     present_pass.input_targets = { composite };
 

@@ -98,6 +98,7 @@ realigned to the industry's meaning.
 | `PassKind::Screen` / `DrawPacket::Kind::Screen` / `DrawKind::Screen` / `FrameHead::Kind::Screen`; `ScreenPass` | `Fullscreen`; `FullscreenPass` | "screen" is the window in this module, and the presenting pass is itself one of these - the kind fills its VIEW, wherever that lands | `BC-30` |
 | `FrameOutcome` | `FrameCallOutcome` | two English near-synonyms for two subjects; this one is what one `frame()` CALL did (a `NotReady` means no frame happened) | `BC-31` |
 | `Capabilities::Feature` / `supports` / `bit`; `DeviceClock::WindowId`; `FrameStats.hpp` | `Features::Feature` / `features.supports` / `Features::bit`; `FrameDriverId`; `FrameReport.hpp` | two forwarders the glossary had registered for removal, and a header named after a type that does not exist | `BC-32` <!-- drift-ok --> |
+| `screenCopyProgram` / `ScreenCopyChannels` / `drawScreenProgram` / `buildScreenProgramFacts` / `ContentPipeline::createScreen`; `builtin_screen_copy.frag` | `fullscreenCopyProgram` / `FullscreenCopyChannels` / `drawFullscreenProgram` / `buildFullscreenProgramFacts` / `ContentPipeline::createFullscreen`; `builtin_fullscreen_copy.frag` | the PROGRAM path kept the word the DRAW path had retired in `BC-30`; the file rename regenerates the embedded constant (`kBuiltinFullscreenCopyFrag`) | `BC-33` |
 
 - What it is: names plus ONE meaning. `DrawPacket` is the per-view request (`graphics-frame-pipeline.md` 2.2 / 2.8) and
   `DrawItem` is still what it submits; `draws` now counts `DrawItem`s and `draw_packets` counts requests, so the bench log, the
@@ -105,10 +106,14 @@ realigned to the industry's meaning.
   same kind.
 - Why: the previous batch had to write the distinction into the header ("ONE DRAWING CALL IS A REQUEST, NOT A SUBMISSION") and to
   keep two count fields apart by hand; the rename removes the sentence the name made necessary (`G7`).
-- Kept on purpose: `drawScreenProgram` / `screenCopyProgram` / `kScreenFragmentSource` and the vsg plugin's screen-program layer
-  name a **screen-space program** (a fragment stage run over a full-screen triangle), an industry term that does not mean the
-  window; `Camera::screenToWorldRay` and the screen-space scaling helpers name coordinates. The backlog records the shader-side
-  rename with its trigger (it changes a build input and the generated constant).
+- Landed later, as `T49` (2026-11-22): the PROGRAM path says `Fullscreen` too - `fullscreenCopyProgram`,
+  `FullscreenCopyChannels`, `drawFullscreenProgram`, `buildFullscreenProgramFacts`, `ContentPipeline::createFullscreen`, the
+  shader file `builtin_fullscreen_copy.frag` and its generated `kBuiltinFullscreenCopyFrag` (`BC-33`). `screen` now names only
+  the WINDOW or screen-space COORDINATES (`Camera::screenToWorldRay`, `fitToScreen`, `RotateToScreen` / `autoScaleToScreen`,
+  post-process effects), which is what the glossary's `screen` row states. What still says "screen" for a full-screen program
+  is backend-private: the vsg plugin's set/entry bookkeeping (`InputImages::screen_colors`, `screen_draws`) and the vk
+  plugin's pipeline/set plumbing plus its `vk.content.screen_*` diagnostic codes - a diagnostic code is identity, so that
+  half is a batch of its own (`T57` in the backlog).
 - Rejected: keeping the `Capabilities` / `WindowId` forwarders (the glossary had already scheduled them for removal, and the
   module promises no source or ABI stability); renaming `FrameResult` instead of `FrameCallOutcome` ("result" is the word a host
   arrives with, and the odd one out was the CALL's value); renaming `PassKind::Scene` to `Content` (a scene pass draws lines and

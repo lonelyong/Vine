@@ -114,7 +114,7 @@ struct ContentStore::Data {
         bool                                           described{ false };
         std::uint64_t                                  described_revision{ 0 };
         std::vector<std::uint32_t>                     variants;              // Variants built at that revision (their bits()).
-        bool                                           screen_built{ false }; // The full-screen entry, at that revision.
+        bool                                           fullscreen_built{ false }; // The full-screen entry, at that revision.
         bool                                           released{ false };
 
         /** @brief Whether nobody outside the store holds this program any more (see releaseAbandoned). */
@@ -712,7 +712,7 @@ struct ContentStore::Data {
         entry->second.built     = false;
     }
 
-    /** @brief Forgets the variant (or the screen entry) a reclaimed program row was built as. */
+    /** @brief Forgets the variant (or the fullscreen entry) a reclaimed program row was built as. */
     void noteProgramRowGone(const ProgramFacts& row) noexcept
     {
         const auto entry = programs.find(row.program.as<vn::graphics::ProgramTag>());
@@ -720,12 +720,12 @@ struct ContentStore::Data {
             return;
         }
         if (row.kind == core::DrawKind::Fullscreen) {
-            entry->second.screen_built = false;
+            entry->second.fullscreen_built = false;
         }
         else {
             std::erase(entry->second.variants, row.variant.bits());
         }
-        if (!entry->second.screen_built && entry->second.variants.empty()) {
+        if (!entry->second.fullscreen_built && entry->second.variants.empty()) {
             entry->second.described = false; // nothing of that revision is left: a later ensure describes it again
         }
     }
@@ -1111,7 +1111,7 @@ void ContentStore::ensureMaterial(vn::graphics::ContentRef material, std::uint64
     ++d->builds;
 }
 
-void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramVariant& variant, bool screen, std::uint64_t epoch)
+void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramVariant& variant, bool fullscreen, std::uint64_t epoch)
 {
     if (program.isNull()) {
         return;
@@ -1141,25 +1141,25 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
         live.described          = true;
         live.described_revision = revision;
         live.variants.clear();
-        live.screen_built = false;
+        live.fullscreen_built = false;
         // The NAME travels with the description, not with the row: a program whose text is refused still has a
         // name, and the sentence that says so has no row to read it from (see ProgramNameFacts).
         d->recordProgramName(program, source->name());
     }
 
-    const auto built = [&live, &variant, screen]() {
-        return screen ? live.screen_built : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
+    const auto built = [&live, &variant, fullscreen]() {
+        return fullscreen ? live.fullscreen_built : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
     };
     if (built()) {
         const FactResult<ProgramFacts> row =
-            findProgram(d->view(), ref, screen ? ProgramVariant{} : variant, screen ? core::DrawKind::Fullscreen : core::DrawKind::Scene);
+            findProgram(d->view(), ref, fullscreen ? ProgramVariant{} : variant, fullscreen ? core::DrawKind::Fullscreen : core::DrawKind::Scene);
         if (row.found()) {
             d->program.stamp(row.entry, epoch);
             return; // this text of this revision is already in the tables
         }
         // The row aged out under us: forget the bit and build it again (see ensureGeometry).
-        if (screen) {
-            live.screen_built = false;
+        if (fullscreen) {
+            live.fullscreen_built = false;
         }
         else {
             std::erase(live.variants, variant.bits());
@@ -1167,13 +1167,13 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
     }
 
     ProgramFacts   fresh;
-    const FactMiss miss = screen ? buildScreenProgramFacts(*source, fresh) : buildProgramFacts(*source, variant, fresh);
+    const FactMiss miss = fullscreen ? buildFullscreenProgramFacts(*source, fresh) : buildProgramFacts(*source, variant, fresh);
     if (miss != FactMiss::None) {
         return; // a program that is not one content pipeline: no entry, and the recorder says so
     }
 
-    if (screen) {
-        live.screen_built = true;
+    if (fullscreen) {
+        live.fullscreen_built = true;
     }
     else {
         live.variants.push_back(variant.bits());

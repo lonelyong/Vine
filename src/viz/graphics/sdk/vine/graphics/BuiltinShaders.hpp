@@ -154,7 +154,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
  *
  * @details
  * - This is the interface a fullscreen fragment stage compiles against, whether it is one of the SDK's
- *   (deferredLightProgram / screenCopyProgram) or the host's own:
+ *   (deferredLightProgram / fullscreenCopyProgram) or the host's own:
  *   - the fragment stage declares `layout(location = 0) in vec2 vn_uv;`, spanning [0, 1] over the
  *     destination rectangle with (0, 0) at the TOP-LEFT of the source image AS THE READ-BACK API
  *     RETURNS IT — a copy samples it directly, with no Y flip;
@@ -171,7 +171,7 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
 VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
 
 /**
- * @brief Which channels a screen copy puts on screen.
+ * @brief Which channels a fullscreen copy writes.
  *
  * @details
  * - `All` is the plain copy: the source texel as it is, which is what a colour attachment wants.
@@ -181,14 +181,14 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenVertexProgram();
  *   empty tile that reads as "the pass wrote nothing". Its alpha, on the other hand, is the occlusion
  *   (1 = unoccluded) and therefore also the row's write evidence (the clear leaves 0).
  */
-enum class ScreenCopyChannels
+enum class FullscreenCopyChannels
 {
     All,   // The whole texel, rgba - the plain copy.
     Alpha, // Its alpha, as grey - for a row whose content rides in that channel.
 };
 
 /**
- * @brief The built-in plain screen copy: one colour attachment of the source, sampled 1:1.
+ * @brief The built-in plain fullscreen copy: one colour attachment of the source, sampled 1:1.
  *
  * @details
  * - The text behind what a bare FullscreenPass used to get implicitly — now a program the host NAMES, so a
@@ -199,10 +199,10 @@ enum class ScreenCopyChannels
  *   common copy of a target's first colour attachment.
  *
  * @param attachment Colour attachment of the source to sample (binding index in the generated text).
- * @param channels   Which channels of it go on screen (see ScreenCopyChannels).
+ * @param channels   Which channels of it are written (see FullscreenCopyChannels).
  * @return The fragment program (fresh per call; see fullscreenVertexProgram for the vertex stage).
  */
-VN_GRAPHICS_API intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment = 0, ScreenCopyChannels channels = ScreenCopyChannels::All);
+VN_GRAPHICS_API intrusive_ptr<ShaderProgram> fullscreenCopyProgram(int attachment = 0, FullscreenCopyChannels channels = FullscreenCopyChannels::All);
 
 /**
  * @brief The built-in fullscreen deferred-lighting program.

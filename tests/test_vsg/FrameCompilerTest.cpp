@@ -120,7 +120,7 @@ std::vector<DrawItem> oneCommand()
 
 } // namespace
 
-TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState)
+TEST(FrameCompilerTest, AFullscreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState)
 {
     // A full-screen draw packet has no commands, so nothing per-command can carry its state: the plan resolves
     // it here, and the one half that is NOT simply the pass' is the depth policy - the engine's canonical
@@ -141,7 +141,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     ASSERT_TRUE(r.recorder.setRenderTarget(destination.get()));
     ASSERT_TRUE(r.recorder.setPassInputs(std::vector<RenderTarget*>{ source.get() }));
     ASSERT_TRUE(r.recorder.setViewport(4, 8, 16, 32)); // the picture-in-picture rectangle
-    ASSERT_TRUE(r.recorder.drawScreenProgram(source.get(), screen_program.get(), nullptr)) << "the full-screen packet must be collected";
+    ASSERT_TRUE(r.recorder.drawFullscreenProgram(source.get(), screen_program.get(), nullptr)) << "the full-screen packet must be collected";
     ASSERT_TRUE(r.recorder.render(commands, nullptr)) << "a content draw of the same pass: both kinds coexist";
     ASSERT_TRUE(r.recorder.endPass());
 

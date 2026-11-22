@@ -273,40 +273,40 @@ intrusive_ptr<ShaderProgram> fullscreenVertexProgram()
     return program;
 }
 
-intrusive_ptr<ShaderProgram> screenCopyProgram(int attachment, ScreenCopyChannels channels)
+intrusive_ptr<ShaderProgram> fullscreenCopyProgram(int attachment, FullscreenCopyChannels channels)
 {
     // The attachment is the sampler's BINDING in the fragment text (see the header): rewrite the one
     // line that states it. The marker below is asserted against the shipped source by
     // EmbeddedShadersTest, so an edit to the .frag cannot silently turn every copy into a copy of
     // attachment 0 — the failure mode this substitution would otherwise hide.
-    constexpr char8_t marker[] = u8"layout(binding = 0) uniform sampler2D vn_screen_tex;";
-    std::u8string     source(shaders::kBuiltinScreenCopyFrag);
+    constexpr char8_t marker[] = u8"layout(binding = 0) uniform sampler2D vn_copy_tex;";
+    std::u8string     source(shaders::kBuiltinFullscreenCopyFrag);
     // The integer goes in as ASCII digits; the digits are the same in char8_t.
     const std::string   digits = std::to_string(attachment);
     const std::u8string attachment_text(digits.begin(), digits.end());
     if (attachment != 0) {
         const std::size_t at = source.find(marker);
         if (at != std::u8string::npos) {
-            const std::u8string line = std::u8string(u8"layout(binding = ") + attachment_text + u8") uniform sampler2D vn_screen_tex;";
+            const std::u8string line = std::u8string(u8"layout(binding = ") + attachment_text + u8") uniform sampler2D vn_copy_tex;";
             source.replace(at, sizeof(marker) - 1u, line);
         }
     }
-    // WHICH CHANNELS go on screen is a second rewrite of the same text, and its marker is asserted the
+    // WHICH CHANNELS are written is a second rewrite of the same text, and its marker is asserted the
     // same way: a row whose content rides in its alpha (a G-buffer's emission + occlusion - emission is
     // HDR and usually zero, the alpha is the occlusion AND the row's write evidence) is otherwise an
     // empty tile that reads as "the pass wrote nothing" (graphics-material.md 2.8).
-    constexpr char8_t output_marker[] = u8"vn_out_color = texture(vn_screen_tex, vn_uv);";
-    if (channels == ScreenCopyChannels::Alpha) {
+    constexpr char8_t output_marker[] = u8"vn_out_color = texture(vn_copy_tex, vn_uv);";
+    if (channels == FullscreenCopyChannels::Alpha) {
         const std::size_t at = source.find(output_marker);
         if (at != std::u8string::npos) {
-            source.replace(at, sizeof(output_marker) - 1u, std::u8string(u8"vn_out_color = vec4(vec3(texture(vn_screen_tex, vn_uv).a), 1.0);"));
+            source.replace(at, sizeof(output_marker) - 1u, std::u8string(u8"vn_out_color = vec4(vec3(texture(vn_copy_tex, vn_uv).a), 1.0);"));
         }
     }
 
-    const String suffix  = channels == ScreenCopyChannels::Alpha ? String(u8"_alpha") : String(u8"");
+    const String suffix  = channels == FullscreenCopyChannels::Alpha ? String(u8"_alpha") : String(u8"");
     auto         program = make_intrusive<ShaderProgram>();
-    program->setName(attachment == 0 ? String(u8"builtin_screen_copy") + suffix
-                                     : String(u8"builtin_screen_copy") + suffix + String(u8"_") + String(attachment_text));
+    program->setName(attachment == 0 ? String(u8"builtin_fullscreen_copy") + suffix
+                                     : String(u8"builtin_fullscreen_copy") + suffix + String(u8"_") + String(attachment_text));
     ShaderStage fragment;
     fragment.type   = ShaderStageType::Fragment;
     fragment.source = String(source);

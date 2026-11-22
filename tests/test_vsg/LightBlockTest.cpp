@@ -103,7 +103,7 @@ using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::buildGeometryFacts;
 using vn::backend_vsg::buildMaterialFacts;
 using vn::backend_vsg::buildProgramFacts;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentFacts;
 using vn::backend_vsg::ContentPass;
@@ -440,7 +440,7 @@ TEST(LightBlockTest, BothLightingProgramsReadTheBlockAtTheSameBinding)
     EXPECT_EQ(forward_lights->block_size, sizeof(VineLightsBlock));
 
     ProgramFacts screen_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*vn::graphics::deferredLightProgram(), screen_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*vn::graphics::deferredLightProgram(), screen_facts), FactMiss::None);
     const AbiBinding* screen_lights = lights_of(screen_facts.abi);
     ASSERT_NE(screen_lights, nullptr) << "the deferred lighting program reads the same block";
     EXPECT_EQ(screen_lights->set, forward_lights->set);
@@ -478,7 +478,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     std::unique_ptr<TargetObjects> destination = TargetObjects::create(created.device, destination_layout);
     ASSERT_NE(destination, nullptr);
 
-    // The program: the engine's canonical full-screen vertex stage (buildScreenProgramFacts composes it) with a
+    // The program: the engine's canonical full-screen vertex stage (buildFullscreenProgramFacts composes it) with a
     // fragment stage that shades from the light block - at the binding both paths give it (see vine_params.glsl).
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -505,9 +505,9 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
         program->addStage(fragment);
     }
     ProgramFacts program_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*program, program_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*program, program_facts), FactMiss::None);
 
-    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::createScreen(program_facts.abi, program_facts.shaders);
+    std::unique_ptr<ContentPipeline> pipelines = ContentPipeline::createFullscreen(program_facts.abi, program_facts.shaders);
     ASSERT_NE(pipelines, nullptr);
 
     // The camera every call announces: at +Z looking at the origin. A light's DIRECTION is where it travels, so the
@@ -546,13 +546,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     const std::uint32_t band_width = kSize / 3U; // 21 / 21 / 22: the last band takes the remainder
     recorder.setViewport(0, 0, static_cast<int>(band_width), static_cast<int>(kSize));
     recorder.setLights(lightValues(std::span<const Light* const>(band0_lights, 2U)));
-    recorder.drawScreenProgram(handle.get(), program.get(), &camera);
+    recorder.drawFullscreenProgram(handle.get(), program.get(), &camera);
     recorder.setViewport(static_cast<int>(band_width), 0, static_cast<int>(band_width), static_cast<int>(kSize));
     recorder.setLights(lightValues(std::span<const Light* const>(band1_lights, 2U)));
-    recorder.drawScreenProgram(handle.get(), program.get(), &camera);
+    recorder.drawFullscreenProgram(handle.get(), program.get(), &camera);
     recorder.setViewport(static_cast<int>(band_width * 2U), 0, static_cast<int>(kSize - band_width * 2U), static_cast<int>(kSize));
     recorder.setLights(lightValues(std::span<const Light* const>{})); // the backend default: the fill
-    recorder.drawScreenProgram(handle.get(), program.get(), &camera);
+    recorder.drawFullscreenProgram(handle.get(), program.get(), &camera);
     recorder.endPass();
     recorder.endFrame();
 

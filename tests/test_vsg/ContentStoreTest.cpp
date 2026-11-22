@@ -98,7 +98,7 @@ constexpr const char* kGatedFragmentSource = "#version 450\n"
                                              "#endif\n"
                                              "void main() { color = material.base_color; }\n";
 
-constexpr const char* kScreenFragmentSource = "#version 450\n"
+constexpr const char* kFullscreenFragmentSource = "#version 450\n"
                                               "layout(location = 0) in vec2 vn_uv;\n"
                                               "layout(location = 0) out vec4 color;\n"
                                               "void main() { color = vec4(vn_uv, 0.0, 1.0); }\n";
@@ -116,7 +116,7 @@ vn::intrusive_ptr<ShaderProgram> contentProgram()
 vn::intrusive_ptr<ShaderProgram> screenProgram()
 {
     const auto program = vn::intrusive_ptr<ShaderProgram>(new ShaderProgram());
-    program->addStage(stage(ShaderStageType::Fragment, kScreenFragmentSource));
+    program->addStage(stage(ShaderStageType::Fragment, kFullscreenFragmentSource));
     return program;
 }
 
@@ -673,7 +673,7 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     EXPECT_EQ(plain_entry.entry->variant, plain_variant);
 }
 
-TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
+TEST(ContentStoreTest, AFullscreenProgramGetsTheEnginesOwnVertexStage)
 {
     ContentStore store;
     const auto   program = screenProgram();

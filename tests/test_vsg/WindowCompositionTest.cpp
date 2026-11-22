@@ -119,7 +119,7 @@ using vn::backend_vsg::buildGeometryFacts;
 using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::backend_vsg::buildProgramFacts;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::buildViewBlock;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentFacts;
@@ -290,11 +290,11 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     BlockDescriptors* content_blocks[] = { descriptors.get() };
 
     // The screen layer: the engine's own copy program over the picture.
-    const vn::intrusive_ptr<ShaderProgram> screen_program(vn::graphics::screenCopyProgram(0));
+    const vn::intrusive_ptr<ShaderProgram> screen_program(vn::graphics::fullscreenCopyProgram(0));
     ASSERT_NE(screen_program, nullptr);
     ProgramFacts screen_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
-    auto screen_layer = ContentPipeline::createScreen(screen_facts.abi, screen_facts.shaders);
+    ASSERT_EQ(buildFullscreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
+    auto screen_layer = ContentPipeline::createFullscreen(screen_facts.abi, screen_facts.shaders);
     ASSERT_NE(screen_layer, nullptr);
 
     VariantPool   content_pool;
@@ -418,7 +418,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_TRUE(recorder.setClearPolicy(overlay_clear)); // announced, and NOT applied: the window clears once
     ASSERT_TRUE(recorder.setPassInputs(picture_inputs));
     ASSERT_TRUE(recorder.setViewport(kPictureInPicture.x, kPictureInPicture.y, kPictureInPicture.width, kPictureInPicture.height));
-    ASSERT_TRUE(recorder.drawScreenProgram(picture_handle.get(), screen_program.get(), camera.get()));
+    ASSERT_TRUE(recorder.drawFullscreenProgram(picture_handle.get(), screen_program.get(), camera.get()));
     ASSERT_TRUE(recorder.endPass());
     ASSERT_TRUE(recorder.endFrame());
 

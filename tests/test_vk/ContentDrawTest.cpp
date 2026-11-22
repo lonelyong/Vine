@@ -632,7 +632,7 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     backend->shutdown();
 }
 
-TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
+TEST(VkContentDrawTest, AFullscreenCopySamplesTheSourceTarget)
 {
     // THE FULL-SCREEN PATH: the fragment stage is a screen program's, the vertex stage is the engine's full-screen
     // triangle, and the source's colour attachments arrive at set 0 bindings 0..N-1. The copy must reproduce the
@@ -648,7 +648,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     const intrusive_ptr<ShaderProgram>         scene       = makeProgram();
     const intrusive_ptr<Geometry>              geometry    = makeTriangle();
     const intrusive_ptr<Material>              red         = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
-    const intrusive_ptr<vn::graphics::ShaderProgram> copy = vn::graphics::screenCopyProgram(0);
+    const intrusive_ptr<vn::graphics::ShaderProgram> copy = vn::graphics::fullscreenCopyProgram(0);
 
     DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = scene;
@@ -688,7 +688,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     backend->shutdown();
 }
 
-TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
+TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
 {
     // THE PASS' DEPTH POLICY IS ABOUT ITS CONTENT, NOT ABOUT THE FULL-SCREEN CALL. A full-screen draw is the
     // canonical triangle at z = 0.0, which under this engine's reverse-Z convention is the FAR plane; a full-screen packet
@@ -709,7 +709,7 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
     const intrusive_ptr<ShaderProgram>               scene    = makeProgram();
     const intrusive_ptr<Geometry>                    geometry = makeTriangle();
     const intrusive_ptr<Material>                    red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
-    const intrusive_ptr<vn::graphics::ShaderProgram> copy     = vn::graphics::screenCopyProgram(0);
+    const intrusive_ptr<vn::graphics::ShaderProgram> copy     = vn::graphics::fullscreenCopyProgram(0);
 
     DrawItem command(geometry, nullptr, vn::math::Mat4d{});
     command.program              = scene;

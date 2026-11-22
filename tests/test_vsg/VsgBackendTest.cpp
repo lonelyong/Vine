@@ -860,7 +860,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
 
     // The full-screen program is the SDK's OWN copy program - the engine's vocabulary, not a text written for
     // this test: it declares its sampler as `layout(binding = 0)` and reads attachment 0 of its source.
-    const vn::intrusive_ptr<ShaderProgram> copy_program = vn::graphics::screenCopyProgram(0);
+    const vn::intrusive_ptr<ShaderProgram> copy_program = vn::graphics::fullscreenCopyProgram(0);
     ASSERT_NE(copy_program, nullptr) << "the SDK ships the copy program the screen path draws with";
 
     const vn::intrusive_ptr<RenderPass> offscreen_pass(new RenderPass());
@@ -2086,7 +2086,7 @@ TEST(VsgBackendTest, AProducedInputBindsOnlyTheAttachmentItNames)
  * binding (1). The program samples binding 1, so magenta means the imported image reached the shader; red
  * means the source colour won the slot, and the destination's blue clear means the call never drew.
  */
-TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
+TEST(VsgBackendTest, AnImportedTextureInputReachesAFullscreenProgram)
 {
     if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";

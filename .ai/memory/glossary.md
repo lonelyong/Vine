@@ -108,7 +108,7 @@ finishes that migration. Two spellings of one word are a defect even when they c
 | shape | a target's attachment formats (`RenderPassCompatibility`, or `TransientShape` for a declaration), or a frame's counts (`FrameCounts`) | a mesh / geometry shape |
 | layout | a GPU image layout (`ImageLayout`), a vertex input layout, an overlay's placement (`OverlayPlacement`), or a surface-resize step (`ResizeParticipant`) | one job - read the type's own note |
 | slot | a light block index, a content arena index, an engine pass row, a published output name (`output_name`), or an instance record (`InstanceRecord`) | one key space |
-| screen | a full-screen pass (`FullscreenPass`, the `Fullscreen` kind), or a screen-SPACE program (`drawScreenProgram`, `screenCopyProgram`) | the window or the surface - that is the `RenderArea` / `PresentTarget` |
+| screen | SCREEN-SPACE only: coordinates (`screenToWorldRay`, `screenX` / `screenY`), the `RotateToScreen` / `autoScaleToScreen` behaviours, post-process kinds (`PassStage::Effect`) | the window / the surface (`RenderArea`, `PresentTarget`) - and never a full-screen PROGRAM, which says `Fullscreen` (`fullscreenCopyProgram`, `drawFullscreenProgram`, `FullscreenCopyChannels`) |
 | target | a `RenderTarget` (off-screen images), a pass' `Target` declaration, or a `PresentTarget` (a presenter) | one type - the three have different lifetimes |
 | outcome / result | `FrameCallOutcome` is what one `frame()` call did; `FrameResult` is what the last ANSWERED frame was | two words for one value |
 | draw call / draw packet | a draw call is one submitted `DrawItem`; a `DrawPacket` is one pass' whole request for one view | two words for one value - the counts `draws` and `draw_packets` follow the same split |

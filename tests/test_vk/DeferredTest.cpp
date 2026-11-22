@@ -9,8 +9,8 @@
  *     thing that tells "the deferred chain ran" apart from "two targets were cleared".
  *   - EVERY ATTACHMENT WAS WRITTEN: the lighting program reads attachment 3's alpha as its write mask, so a G-buffer
  *     that only filled attachment 0 shades as background. The four copies below are the demo's own declarations -
- *     `screenCopyProgram(n)` over the same source target - and the assertions are on what they land. Attachment 2 is
- *     copied through its ALPHA channel (`ScreenCopyChannels::Alpha`), because that attachment's rgb is emission (zero
+ *     `fullscreenCopyProgram(n)` over the same source target - and the assertions are on what they land. Attachment 2 is
+ *     copied through its ALPHA channel (`FullscreenCopyChannels::Alpha`), because that attachment's rgb is emission (zero
  *     for this material) while its alpha is the occlusion factor the G-buffer writer stores - the write evidence.
  *
  * THE SCENE IS STATED IN CLIP SPACE on purpose (identity camera, identity model): every number below is then the
@@ -376,9 +376,9 @@ TEST(VkDeferredTest, EveryGbufferAttachmentWasWritten)
         const intrusive_ptr<RenderTarget> destination = makeColorTarget();
         // Attachment 2 is copied through its ALPHA: its rgb is emission (zero for this material), its alpha is the
         // occlusion factor the G-buffer writer stores, so the alpha is that row's write evidence.
-        const intrusive_ptr<ShaderProgram> copy = vn::graphics::screenCopyProgram(
+        const intrusive_ptr<ShaderProgram> copy = vn::graphics::fullscreenCopyProgram(
             attachment,
-            attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All);
+            attachment == 2 ? vn::graphics::FullscreenCopyChannels::Alpha : vn::graphics::FullscreenCopyChannels::All);
         ASSERT_NE(copy, nullptr) << "the SDK ships the screen copy program";
 
         (void)backend->executeFrame(copyFrame(scene.gbuffer.get(), destination.get(), copy), nullptr);

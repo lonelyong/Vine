@@ -3355,7 +3355,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         << static_cast<int>(unshadowed.b) << ")";
 }
 
-TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTextDeclares)
+TEST(ContentPassTest, TheEnginesFullscreenLightingShadesTheGbufferThroughTheMapItsTextDeclares)
 {
     // THE ENGINE'S OWN SCREEN LIGHTING, end to end. `BuiltinShaders::shadowedDeferredLightProgram` is the text
     // the engine's deferred renderer draws its lighting pass with, and it declares its shadow ABI by hand:
@@ -3509,8 +3509,8 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     ASSERT_NE(unshadowed_program, nullptr);
     ProgramFacts shadowed_facts;
     ProgramFacts unshadowed_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*shadowed_program, shadowed_facts), FactMiss::None);
-    ASSERT_EQ(buildScreenProgramFacts(*unshadowed_program, unshadowed_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*shadowed_program, shadowed_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*unshadowed_program, unshadowed_facts), FactMiss::None);
 
     // The layers: the writer with FOUR colour attachments, the two screen programs from their declarations.
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
@@ -3523,8 +3523,8 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
                                                                             writer_facts.shaders,
                                                                             writer_settings);
     ASSERT_NE(writer_layer, nullptr);
-    std::unique_ptr<ContentPipeline> shadowed_layer   = ContentPipeline::createScreen(shadowed_facts.abi, shadowed_facts.shaders);
-    std::unique_ptr<ContentPipeline> unshadowed_layer = ContentPipeline::createScreen(unshadowed_facts.abi, unshadowed_facts.shaders);
+    std::unique_ptr<ContentPipeline> shadowed_layer   = ContentPipeline::createFullscreen(shadowed_facts.abi, shadowed_facts.shaders);
+    std::unique_ptr<ContentPipeline> unshadowed_layer = ContentPipeline::createFullscreen(unshadowed_facts.abi, unshadowed_facts.shaders);
     ASSERT_NE(shadowed_layer, nullptr) << "the engine's shadowed lighting program must be servable";
     ASSERT_NE(unshadowed_layer, nullptr);
 
@@ -3635,28 +3635,28 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_and_lit_map_inputs, 2U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
-    recorder.drawScreenProgram(gbuffer_handle.get(), shadowed_program.get(), camera.get());
+    recorder.drawFullscreenProgram(gbuffer_handle.get(), shadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(5U);
     recorder.setRenderTarget(shadowed_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_and_shadowed_map_inputs, 2U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
-    recorder.drawScreenProgram(gbuffer_handle.get(), shadowed_program.get(), camera.get());
+    recorder.drawFullscreenProgram(gbuffer_handle.get(), shadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(6U);
     recorder.setRenderTarget(flat_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
-    recorder.drawScreenProgram(gbuffer_handle.get(), unshadowed_program.get(), camera.get());
+    recorder.drawFullscreenProgram(gbuffer_handle.get(), unshadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(7U);
     recorder.setRenderTarget(plain_handle.get());
     recorder.setClearPolicy(shade_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_and_lit_map_inputs, 2U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 2U)));
-    recorder.drawScreenProgram(gbuffer_handle.get(), unshadowed_program.get(), camera.get());
+    recorder.drawFullscreenProgram(gbuffer_handle.get(), unshadowed_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -3894,7 +3894,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     const vn::intrusive_ptr<ShaderProgram> lighting_program = vn::graphics::deferredLightProgram();
     ASSERT_NE(lighting_program, nullptr);
     ProgramFacts lighting_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*lighting_program, lighting_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*lighting_program, lighting_facts), FactMiss::None);
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
@@ -3906,7 +3906,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
                                                                             writer_facts.shaders,
                                                                             writer_settings);
     ASSERT_NE(writer_layer, nullptr);
-    std::unique_ptr<ContentPipeline> lighting_layer = ContentPipeline::createScreen(lighting_facts.abi, lighting_facts.shaders);
+    std::unique_ptr<ContentPipeline> lighting_layer = ContentPipeline::createFullscreen(lighting_facts.abi, lighting_facts.shaders);
     ASSERT_NE(lighting_layer, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -3991,7 +3991,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     recorder.setClearPolicy(lit_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(shading_lights, 1U)));
-    recorder.drawScreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
+    recorder.drawFullscreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -4171,7 +4171,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     ProgramFacts lighting_facts;
     ASSERT_EQ(buildProgramFacts(*forward_program, forward_facts), FactMiss::None);
     ASSERT_EQ(buildProgramFacts(*gbuffer_program, gbuffer_facts), FactMiss::None);
-    ASSERT_EQ(buildScreenProgramFacts(*lighting_program, lighting_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*lighting_program, lighting_facts), FactMiss::None);
 
     // A quad facing the camera, with the normals the engine's programs read.
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
@@ -4225,7 +4225,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     gbuffer_settings.color_attachments             = 4U;
     std::unique_ptr<ContentPipeline> gbuffer_layer = ContentPipeline::create(gbuffer_facts.abi, bindings, attributes, gbuffer_facts.shaders, gbuffer_settings);
     ASSERT_NE(gbuffer_layer, nullptr) << "the engine's G-buffer writer must be servable";
-    std::unique_ptr<ContentPipeline> lighting_layer = ContentPipeline::createScreen(lighting_facts.abi, lighting_facts.shaders);
+    std::unique_ptr<ContentPipeline> lighting_layer = ContentPipeline::createFullscreen(lighting_facts.abi, lighting_facts.shaders);
     ASSERT_NE(lighting_layer, nullptr);
 
     FrameArena    arena{ 128 * 1024 };
@@ -4291,7 +4291,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     recorder.setClearPolicy(black_clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(gbuffer_input, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(lights, 1U)));
-    recorder.drawScreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
+    recorder.drawFullscreenProgram(gbuffer_handle.get(), lighting_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
 
@@ -5033,7 +5033,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     const vn::intrusive_ptr<ShaderProgram> lighting = vn::graphics::deferredLightProgram();
     ASSERT_NE(lighting, nullptr);
     ProgramFacts lighting_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*lighting, lighting_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*lighting, lighting_facts), FactMiss::None);
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
     const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
@@ -5045,7 +5045,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
                                                                             writer_facts.shaders,
                                                                             writer_settings);
     ASSERT_NE(writer_layer, nullptr);
-    std::unique_ptr<ContentPipeline> lighting_layer = ContentPipeline::createScreen(lighting_facts.abi, lighting_facts.shaders);
+    std::unique_ptr<ContentPipeline> lighting_layer = ContentPipeline::createFullscreen(lighting_facts.abi, lighting_facts.shaders);
     ASSERT_NE(lighting_layer, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -5137,7 +5137,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_eight_bit, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(dim_lights, 1U)));
-    recorder.drawScreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
+    recorder.drawFullscreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(3U);
     recorder.setRenderTarget(half_float_handle.get());
@@ -5149,7 +5149,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_half_float, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(dim_lights, 1U)));
-    recorder.drawScreenProgram(half_float_handle.get(), lighting.get(), camera.get());
+    recorder.drawFullscreenProgram(half_float_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     // The BRIGHT regime: the same two chains with a light four times stronger.
     recorder.beginPass(5U);
@@ -5157,14 +5157,14 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_eight_bit, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(bright_lights, 1U)));
-    recorder.drawScreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
+    recorder.drawFullscreenProgram(eight_bit_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     recorder.beginPass(6U);
     recorder.setRenderTarget(bright_half_float_handle.get());
     recorder.setClearPolicy(clear);
     recorder.setPassInputs(std::span<const RenderTarget* const>(input_half_float, 1U));
     recorder.setLights(lightValues(std::span<const vn::graphics::Light* const>(bright_lights, 1U)));
-    recorder.drawScreenProgram(half_float_handle.get(), lighting.get(), camera.get());
+    recorder.drawFullscreenProgram(half_float_handle.get(), lighting.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
 

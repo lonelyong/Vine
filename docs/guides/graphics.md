@@ -154,8 +154,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `FullscreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
   隐式拷贝）：
   - 把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用它画一个全屏三角形；想读哪张附件，
-    就在 program 里写 `layout(binding = N)`（`screenCopyProgram(N)` 就是这个）；
-  - **纯拷贝 = `BuiltinShaders::screenCopyProgram()`**（SDK 的命名程序，不是后端默认）；
+    就在 program 里写 `layout(binding = N)`（`fullscreenCopyProgram(N)` 就是这个）；
+  - **纯拷贝 = `BuiltinShaders::fullscreenCopyProgram()`**（SDK 的命名程序，不是后端默认）；
   - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
 - `Camera` —— 观看（eye / target / up）+ 投影**参数**（fov / near / far、类型、正交盒）**与画面的形状**：
   `lookAt()`、`setPerspective(fov, near, far)`、`setOrthographic(...)`、
@@ -380,7 +380,7 @@ geometry->setRevision(geometry->revision() + 1);        // 公告：重建数据
 > （`declaration()` / `name()` 与各项读取器），没有 setter。把字段填进 `PassDesc`，一次
 > `engine->applyPlan(vn::graphics::Plan{ { desc } })` 注册；改一个字段也是同一条路（一次显式差分，见 §3.13）。
 
-不写任何 shader：`FullscreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
+不写任何 shader：`FullscreenPass` 配 `BuiltinShaders::fullscreenCopyProgram()` 就是"把一张彩色图拷到目标
 子视口"——**要显式命名**它（没有隐式拷贝），并且这条 pass 需要有相机。
 
 §3.3 / §3.4 / §3.5 三个例子**也是编译过的**：`tests/test_graphics/GuideExamplePasses.cpp` 是它们的可编译副本，
@@ -418,7 +418,7 @@ compose_pass.name          = u8"compose_to_window";
 compose_pass.order         = 0;
 compose_pass.kind          = DrawKind::Fullscreen;
 compose_pass.camera        = camera;                            // 窗口 pass 的相机决定窗口视角
-compose_pass.program       = screenCopyProgram();               // 画面是**命名**的：纯拷贝用 SDK 的这个程序
+compose_pass.program       = fullscreenCopyProgram();            // 画面是**命名**的：纯拷贝用 SDK 的这个程序
 compose_pass.input_names   = { vn::String(u8"SceneColor") };    // 名字形式
 compose_pass.input_targets = { scene_rt };                      // 对象形式（两层在地址上汇合）
 
@@ -514,7 +514,7 @@ present_pass.name          = u8"present";
 present_pass.order         = 2;
 present_pass.kind          = DrawKind::Fullscreen;
 present_pass.camera        = camera;
-present_pass.program       = screenCopyProgram();
+present_pass.program       = fullscreenCopyProgram();
 present_pass.input_names   = { vn::String(u8"Composite") };
 present_pass.input_targets = { composite };
 
@@ -528,7 +528,7 @@ return applied;
 | ① | `gbuffer`（场景，program override） | `gbuffer`（MRT 4 色 + D24） | -3 | 是 | `TestAndWrite` | `GBuffer` |
 | ② | `deferred_lighting`（FullscreenPass + program） | `composite` | 0 | 是 | 默认 | 读 `GBuffer`（整捆） |
 | ③ | `forward_transparent`（场景） | `composite`（借 gbuffer 深度） | 1 | **否** | `TestOnly` | `Composite` |
-| ④ | `present`（FullscreenPass + `screenCopyProgram()`） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
+| ④ | `present`（FullscreenPass + `fullscreenCopyProgram()`） | 无（窗口） | 2 | 否 | 默认 | 读 `Composite`（整捆） |
 
 要点：
 
@@ -760,11 +760,11 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/builtin_gbuffer.*` / `builtin_deferred_lighting.frag` |
 | 天空盒（`skyboxProgram()`，无光照 cube map 方向采样） | `src/viz/graphics/shaders/builtin_skybox.*` |
 | 纯深度（`depthOnlyProgram()`：内容自己的顶点段 + 一个**不写任何输出**的片元段；阴影 pass 用它，深度图没有颜色附件） | `src/viz/graphics/shaders/builtin_depth.frag` |
-| 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_screen_copy.frag` |
+| 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `fullscreenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_fullscreen_copy.frag` |
 
 **命名规则**：`builtin_<角色>.<阶段>`，例如 `builtin_deferred_lighting.frag`。`builtin_` 前缀是"这段文本归引擎"
 （宿主自己的 shader 永远不会出现在这个目录里），角色是**渲染器**的词（`forward` / `gbuffer` / `deferred_lighting` /
-`skybox` / `screen_copy` / `fullscreen`，也是别的引擎里同一个位置会有的词），阶段就是后缀 —— 角色里不重复阶段或
+`skybox` / `fullscreen_copy` / `fullscreen`，也是别的引擎里同一个位置会有的词），阶段就是后缀 —— 角色里不重复阶段或
 目标（`gbuffer` 已经说了它写 G-buffer，不必再写 `_geometry`），也不带产品名或 C++ 的词（`vn_` / `vsg_` /
 `std_forward` 都试过并改掉了：后者读起来是 `std::forward`）。生成常量按同一条规则推导
 （`builtin_forward.vert` → `kBuiltinForwardVert`），**内建 program 也叫这个名字**（`builtin_forward`，同一份文件
@@ -1033,7 +1033,7 @@ desc.name          = u8"compose";              // 诊断与计划表里的名字
 desc.stage         = PassStage::Transparent;    // 位置由意图决定：passStageOrder() 变成 order
 desc.kind          = DrawKind::Fullscreen;         // 怎么执行：Scene（画一个内容场景）/ Fullscreen（全屏三角形 + program）
 desc.camera        = camera.get();
-desc.program       = vn::graphics::screenCopyProgram();
+desc.program       = vn::graphics::fullscreenCopyProgram();
 desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
 desc.output.name   = u8"Presented";
 engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给计划（W9d 起唯一的路）
@@ -1473,8 +1473,8 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 的注释）。另外 cube map 在这里当 base colour 用、照片本身的天空是白的，所以太阳的明暗在它身上很淡。
 
 延迟（默认）路径还在左上角画**四格 G-buffer 预览**：按顺序是 base colour、法线（八面体编码在 rg，b/a 是 roughness /
-metallic）、遮挡（附件 2 的 **alpha**）、视图位置。每格是一次全屏复制（`screenCopyProgram(n)`，n 就是**附件下标**），
-源是那条管线自己的 G-buffer；第三格用的是 `ScreenCopyChannels::Alpha` 那个变体 —— 附件 2 的 rgb 是自发光，而自发光是
+metallic）、遮挡（附件 2 的 **alpha**）、视图位置。每格是一次全屏复制（`fullscreenCopyProgram(n)`，n 就是**附件下标**），
+源是那条管线自己的 G-buffer；第三格用的是 `FullscreenCopyChannels::Alpha` 那个变体 —— 附件 2 的 rgb 是自发光，而自发光是
 HDR 且这个场景不发光，直接拷 rgb 会得到一块**读起来像"没画"的黑矩形**，所以这一格显示的是它的遮挡因子：写过的像素
 是 1（白）、清屏处是 0（黑），这正是"这张附件到底写了没有"的证据。判"有没有画"看法线格和基础色格：法线格对着一面
 正对相机的表面应是**纯蓝**（八面体 (0,0) 在 rg、粗糙度在 b），基础色格应是场景的颜色。位置格**天生就暗**——视图位置

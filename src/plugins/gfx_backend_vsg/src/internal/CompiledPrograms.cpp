@@ -120,7 +120,7 @@ struct CompiledPrograms::Data {
             // only ever serve the draws that state it.
             settings.topology                      = key.topology;
             std::unique_ptr<ContentPipeline> layer = key.kind == core::DrawKind::Fullscreen
-                                                         ? ContentPipeline::createScreen(program.abi, program.shaders, settings)
+                                                         ? ContentPipeline::createFullscreen(program.abi, program.shaders, settings)
                                                          : ContentPipeline::create(program.abi, *geometry, program.shaders, settings);
 
             ++builds;

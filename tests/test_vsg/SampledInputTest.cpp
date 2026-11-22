@@ -95,7 +95,7 @@ using vn::backend_vsg::buildGeometryFacts;
 using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::backend_vsg::buildProgramFacts;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentFacts;
 using vn::backend_vsg::ContentPass;
@@ -436,12 +436,12 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     ASSERT_NE(storage, nullptr);
 
     // The screen program (the SDK's own copy) and the layer that compiles it: no blocks, no vertex streams.
-    const vn::intrusive_ptr<ShaderProgram> screen_program(vn::graphics::screenCopyProgram(0));
+    const vn::intrusive_ptr<ShaderProgram> screen_program(vn::graphics::fullscreenCopyProgram(0));
     ASSERT_NE(screen_program, nullptr);
     ProgramFacts screen_facts;
-    ASSERT_EQ(buildScreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
+    ASSERT_EQ(buildFullscreenProgramFacts(*screen_program, screen_facts), FactMiss::None);
 
-    std::unique_ptr<ContentPipeline> screen_pipelines = ContentPipeline::createScreen(screen_facts.abi, screen_facts.shaders);
+    std::unique_ptr<ContentPipeline> screen_pipelines = ContentPipeline::createFullscreen(screen_facts.abi, screen_facts.shaders);
     ASSERT_NE(screen_pipelines, nullptr);
 
     VariantPool   pool;
@@ -514,7 +514,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     recorder.setClearPolicy(blue_clear);
     recorder.setPassInputs(inputs);
     recorder.setViewport(kPictureInPicture.x, kPictureInPicture.y, kPictureInPicture.width, kPictureInPicture.height);
-    recorder.drawScreenProgram(source_handle.get(), screen_program.get(), camera.get());
+    recorder.drawFullscreenProgram(source_handle.get(), screen_program.get(), camera.get());
     recorder.endPass();
     recorder.endFrame();
 

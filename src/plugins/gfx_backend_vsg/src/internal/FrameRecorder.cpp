@@ -289,15 +289,15 @@ bool FrameRecorder::render(std::span<const vn::graphics::DrawItem> commands,
     return true;
 }
 
-bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera)
+bool FrameRecorder::drawFullscreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera)
 {
     // THE LEGACY DOOR (C11: additive until 5b-2c): convert once and take the value path.
     const vn::graphics::ShaderProgramDescriptionPtr text =
         program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
-    return drawScreenProgram(source, text.get(), camera);
+    return drawFullscreenProgram(source, text.get(), camera);
 }
 
-bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgramDescription* program, const vn::graphics::CameraSnapshot& camera)
+bool FrameRecorder::drawFullscreenProgram(const void* source, const vn::graphics::ShaderProgramDescription* program, const vn::graphics::CameraSnapshot& camera)
 {
     if (!pass_open_ || scope_target_released_) {
         return false; // no scope to draw in, or its target is gone: nothing is redirected

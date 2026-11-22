@@ -4,7 +4,7 @@
  *
  * The cases run the CONTENT STACK (no plan, no session): an off-screen target holds a picture, and a
  * full-screen draw copies it into another target through the SDK's own screen programs - the shipped GLSL, not
- * a text written for this test. That is what makes the claim worth something: `BuiltinShaders::screenCopyProgram`
+ * a text written for this test. That is what makes the claim worth something: `BuiltinShaders::fullscreenCopyProgram`
  * declares its sampler as `layout(binding = i) uniform sampler2D`, with no set qualifier, so if the rewrite put
  * its sampled inputs anywhere but set 0 the engine's own screen programs would compile against a layout their
  * bindings do not match.
@@ -92,7 +92,7 @@ using vn::backend_vsg::core::StateRegistry;
 using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
-using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildFullscreenProgramFacts;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::FactMiss;
@@ -187,16 +187,16 @@ class Fixture {
         }
 
         // The program the pass draws through: the SDK's own screen copy, whose fragment stage names the binding
-        // (see the file note). buildScreenProgramFacts composes it with the engine's full-screen vertex stage.
-        program = vn::graphics::screenCopyProgram(sampled_attachment);
+        // (see the file note). buildFullscreenProgramFacts composes it with the engine's full-screen vertex stage.
+        program = vn::graphics::fullscreenCopyProgram(sampled_attachment);
         if (program == nullptr) {
             return false;
         }
         ProgramFacts facts;
-        if (buildScreenProgramFacts(*program, facts) != FactMiss::None) {
+        if (buildFullscreenProgramFacts(*program, facts) != FactMiss::None) {
             return false;
         }
-        pipelines = ContentPipeline::createScreen(facts.abi, facts.shaders);
+        pipelines = ContentPipeline::createFullscreen(facts.abi, facts.shaders);
         if (pipelines == nullptr) {
             return false;
         }

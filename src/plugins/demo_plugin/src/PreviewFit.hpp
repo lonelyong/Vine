@@ -38,9 +38,9 @@ namespace vn::demo
  * @param attachment Colour attachment index of the target being previewed.
  * @return The channels the tile shows.
  */
-[[nodiscard]] inline vn::graphics::ScreenCopyChannels previewChannelsOf(int attachment) noexcept
+[[nodiscard]] inline vn::graphics::FullscreenCopyChannels previewChannelsOf(int attachment) noexcept
 {
-    return attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All;
+    return attachment == 2 ? vn::graphics::FullscreenCopyChannels::Alpha : vn::graphics::FullscreenCopyChannels::All;
 }
 
 /**

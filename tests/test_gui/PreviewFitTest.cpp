@@ -91,8 +91,8 @@ TEST(PreviewFitTest, TheEmissionRowsTileShowsItsOcclusion)
     // places once: the deferred strip kept copying attachment 2 whole, so the default demo showed a black
     // tile whatever the pass did (attachment 2 is emission - HDR, zero without emitters - plus occlusion
     // in its alpha, which is the write evidence a tile exists to show).
-    EXPECT_EQ(previewChannelsOf(0), vn::graphics::ScreenCopyChannels::All);
-    EXPECT_EQ(previewChannelsOf(1), vn::graphics::ScreenCopyChannels::All);
-    EXPECT_EQ(previewChannelsOf(2), vn::graphics::ScreenCopyChannels::Alpha) << "attachment 2's content rides in its alpha (graphics-material.md 2.8)";
-    EXPECT_EQ(previewChannelsOf(3), vn::graphics::ScreenCopyChannels::All);
+    EXPECT_EQ(previewChannelsOf(0), vn::graphics::FullscreenCopyChannels::All);
+    EXPECT_EQ(previewChannelsOf(1), vn::graphics::FullscreenCopyChannels::All);
+    EXPECT_EQ(previewChannelsOf(2), vn::graphics::FullscreenCopyChannels::Alpha) << "attachment 2's content rides in its alpha (graphics-material.md 2.8)";
+    EXPECT_EQ(previewChannelsOf(3), vn::graphics::FullscreenCopyChannels::All);
 }

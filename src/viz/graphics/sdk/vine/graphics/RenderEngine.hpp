@@ -688,7 +688,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - WHAT "IN PLACE" DOES NOT COVER: a pass whose KIND changed (Scene -> Fullscreen) cannot become the other
      *   object, so that name is removed and re-added under the same owner and role. Every other field a
      *   PassDesc states is adopted as the pass' new declaration.
-     * - THE PLAN'S VOCABULARY IS `DrawKind` (Scene / Screen), and the node built from a declaration is the built-in
+     * - THE PLAN'S VOCABULARY IS `DrawKind` (Scene / Fullscreen), and the node built from a declaration is the built-in
      *   of its kind: a custom pass CLASS (a subclass overriding `describe()`) is not registrable - what is custom
      *   about a picture is stated as data (a program override, a viewport, a depth band, a hook). There is no
      *   custom-kind registry (`G8`).

@@ -22,7 +22,7 @@
  * `vn_metallicRoughnessMap`, `vn_normalMap`, `vn_occlusionMap`, `vn_emissiveMap`) are the drawable's own maps, `vn_skyMap`
  * is the drawable's own texture TOO (the sky box carries its map in its material and the sky program names
  * that map `vn_skyMap` - see builtin_skybox.frag), `vn_shadow_map` is the map its pass declared, and every other
- * name (`vn_albedo_tex`, `vn_normal_tex`, `vn_emissive_tex`, `vn_pos_tex`, `vn_screen_tex`, ...) is a texture an earlier pass
+ * name (`vn_albedo_tex`, `vn_normal_tex`, `vn_emissive_tex`, `vn_pos_tex`, `vn_copy_tex`, ...) is a texture an earlier pass
  * produced - one of the pass' declared INPUTS. The NAME is the contract: the same name in different sets is
  * the same thing, and a set index is only where a text happens to put it (the engine puts the material, the
  * diffuse map and the shadow map in one set, and a G-buffer's four pictures in another).
@@ -66,7 +66,7 @@ struct InputImages {
     ::vsg::ref_ptr<::vsg::Sampler> depth_sampler;
     /// The WHOLE source target's colour attachments, when this input is the source of a full-screen packet.
     ///
-    /// The full-screen ABI reads binding N as the source's attachment N (see BuiltinShaders::screenCopyProgram),
+    /// The full-screen ABI reads binding N as the source's attachment N (see BuiltinShaders::fullscreenCopyProgram),
     /// so a call whose pass declared the source as ONE image still binds the whole target - that compatibility
     /// path is stated here rather than by widening `colors`, because the content path must keep binding only the
     /// image its ProducedImage declaration names (see core::CompiledInput).
