@@ -102,7 +102,10 @@ class TestHostWindow {
         // WS_VISIBLE in the create call: a Win32 window is on the screen when CreateWindowEx returns it, so
         // unlike X11 there is no asynchronous "viewable" report to wait for. The fact is still MEASURED rather
         // than assumed, and the wait is reported (it is the class construction itself).
-        window_ = CreateWindowExW(0,
+        // WS_EX_TOPMOST keeps the window COMPOSED: a fully occluded window's presents are skipped by the
+        // compositor (measured 2026-11-23: reads of an occluded test window answered black with a success code,
+        // and the same case passed whenever the window happened to be visible).
+        window_ = CreateWindowExW(WS_EX_TOPMOST,
                                   kWindowClassName,
                                   L"vine host-window test",
                                   WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
@@ -116,6 +119,7 @@ class TestHostWindow {
                                   nullptr);
         if (window_ != nullptr) {
             UpdateWindow(window_);
+            SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
         viewable_at_creation_ = window_ != nullptr && IsWindowVisible(window_) != FALSE;
         view_wait_            = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);

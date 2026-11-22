@@ -146,10 +146,48 @@ class ScenePublisher final
      * @details
      * - The one step of the derived side that needs the content thread: building reads the graph, and the box refresh
      *   reads each leaf's own data box (a cache keyed by the buffers' revisions).
+     * - It is a DISPATCHER over four steps that each answer one question (see the helpers below), so the contract above
+     *   can be read once and the paths can be tested apart.
      *
      * @return The rows, valid until the graph changes.
      */
     [[nodiscard]] const SceneBake& ensureRows() const;
+
+    /** @brief What comparing the row table with the graph found: whether the SHAPE still matches, and which rows moved. */
+    struct GraphScan {
+        /// True when the table's rows, the node each was read from and its recorded epoch still line up with the graph.
+        bool                       matches{ false };
+        /// The rows whose OWN content epoch moved (their ancestors' may have moved with them).
+        std::vector<std::uint32_t> changed;
+    };
+
+    /**
+     * @brief Compares the table's shape with the graph's, and collects the rows whose own epoch moved.
+     *
+     * @details
+     * - The structure half checks what no child count can see: the row walk order IS the child order, so a reorder or
+     *   a same-count child swap is a mismatch (the fast path must not accept it).
+     *
+     * @return Whether the shape still matches, and which rows announced a change.
+     */
+    [[nodiscard]] GraphScan rowsStillMatchTheGraph() const;
+
+    /**
+     * @brief Re-reads the rows the graph announced, and re-folds only their topmost subtrees.
+     *
+     * @details
+     * - THE INCREMENTAL PATH, and it never guesses: a structure change, a body change, or "nothing worth re-folding"
+     *   answers false, and the caller rebuilds the table instead (see rebuildRows).
+     *
+     * @return true when the rows were brought up to date in place.
+     */
+    [[nodiscard]] bool refreshChangedRows() const;
+
+    /** @brief Replaces the table with one fresh build, carrying the serial counter across (see SceneBake::next_serial). */
+    void rebuildRows() const;
+
+    /** @brief Empties the table for a scene with no rooted root, and drops the publication built from it. */
+    [[nodiscard]] const SceneBake& resetToEmpty() const;
 
   private:
     vn::graphics::Scene& scene_;

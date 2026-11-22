@@ -1,4 +1,4 @@
-# the vsg backend's trap catalogue (P1–P89)
+# the vsg backend's trap catalogue (P1–P90)
 
 > **Status**: current
 > **Last verified**: 2026-11-23
@@ -64,7 +64,7 @@ to this one, and neither is copied into the other.
 | F4 | blocks and descriptors (ABI) | changing a uniform block, a descriptor layout, push constants | P23–P35 |
 | F5 | streams, geometry and aliasing | changing stream identity, an index key, alias registration | P36–P42 |
 | F6 | targets, lifetime and device idleness | changing target creation / destruction, borrowed depth, readback | P43–P53 |
-| F7 | WSI and windows | changing present, resize, the window size, the test window | P54–P60, P87–P89 |
+| F7 | WSI and windows | changing present, resize, the window size, the test window | P54–P60, P87–P90 |
 | F8 | evidence, gates and the build | adding a case, changing a gate, adding a `.cpp` | P61–P75 |
 | F9 | the engine side (the scene bridge and shading conventions) | changing declarations / bindings, materials, colour space, the G-buffer | P76–P86 |
 
@@ -220,6 +220,7 @@ to this one, and neither is copied into the other.
 | P87 | a Win32 pixel read is a COMPOSITOR read, and the compositor lags the present | a read right after a present answers the previous picture (the window's own black background for the first content); the fixture waits for a DWM composition pass (`DwmFlush`) and a case that asserts a specific colour waits for THAT colour (`waitForPixel`), not for "some picture arrived" |
 | P88 | a Win32 test window's thread must pump its messages | a window created late in a long run never receives new content (the compositor stops serving a thread that never pumps); the fixture pumps the thread's queue inside every read |
 | P89 | the Win32 read hands back the surface's BYTE ORDER, and a GDI-painted window's order is not a Vulkan one's | a three-channel assertion fails by a swap (blue where red was expected); assert a single channel, or accept both orders - `isColour` / `isRed` do |
+| P90 | a Win32 window that is FULLY OCCLUDED stops being composed | its presents are skipped, so a read answers black with a served code while the same case passes whenever the window is visible (measured 2026-11-23); the test window is `WS_EX_TOPMOST` |
 
 ### 6.8 Evidence, gates and the build
 

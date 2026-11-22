@@ -198,16 +198,7 @@ const SceneBake& ScenePublisher::ensureRows() const
     // state, not an error: a publication of such a scene is an empty table and the frame stays correct. This is the
     // total contract of this function; a caller (the publication) has no business repeating the guard.
     if (!scene_.hasRootedRoot()) {
-        if (content_bake_ == nullptr) {
-            content_bake_ = std::make_unique<SceneBake>();
-        }
-        content_bake_->rows.clear();
-        content_bake_->nodes.clear();
-        content_bake_->node_epochs.clear();
-        // The previous publication must not answer for an empty table: a scene that stopped drawing hands out an empty
-        // picture, not the last one it had.
-        publication_cache_.reset();
-        return *content_bake_;
+        return resetToEmpty();
     }
 
     // THE GRAPH HALF, ONCE PER EPOCH: every node's own facts, then the one fold over them (see DrawListBake.hpp).
@@ -215,107 +206,12 @@ const SceneBake& ScenePublisher::ensureRows() const
     // recomputing every matrix and every fold, which is what a collection used to cost per view
     // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera). It is a named step because a collection
     // is not the only reader of the rows any more: the publication is built from them (see snapshot).
-    const std::uint64_t epoch               = scene_.root_->contentEpoch();
-    bool                refreshed_in_place = false;
+    const std::uint64_t epoch = scene_.root_->contentEpoch();
     if (content_bake_ == nullptr || bake_epoch_ != epoch) {
-        // THE INCREMENTAL PATH. A node edit bumps its own epoch and every ancestor's, so the rows whose epochs moved
-        // are the edited rows plus their ancestors. When the structure did not change and every edited row changed
-        // only its placement set (placement / opacity / layers / order / view placement), re-read those rows and
-        // re-fold only their topmost subtrees. Anything else - a child insert / remove, a state or geometry change,
-        // a material whose values moved - falls back to the full build; the fast path must never guess.
-        if (content_bake_ != nullptr && !content_bake_->rows.empty() &&
-            content_bake_->rows[0].identity == scene_.root_->id() &&
-            content_bake_->nodes.size() == content_bake_->rows.size() &&
-            content_bake_->node_epochs.size() == content_bake_->rows.size()) {
-            std::vector<std::uint32_t> changed;
-            bool                       structure_ok = true;
-            for (std::uint32_t index = 0; index < content_bake_->rows.size(); ++index) {
-                const Row&  row  = content_bake_->rows[index];
-                const Node* node = content_bake_->nodes[index];
-                if (node == nullptr || node->id() != row.identity || !node->isVisible()) {
-                    structure_ok = false;
-                    break;
-                }
-                const Node* expected_parent =
-                    row.links.parent == RowLinks::kNoParent ? nullptr : content_bake_->nodes[row.links.parent];
-                if (node->parent() != expected_parent) {
-                    structure_ok = false;
-                    break;
-                }
-                if (row.links.child_count != 0U) {
-                    const auto* group = obj_cast<Group>(node);
-                    if (group == nullptr || group->children().size() != row.links.child_count) {
-                        structure_ok = false;
-                        break;
-                    }
-                    // The row table's walk order IS the child order: checking the identities here catches a reorder or
-                    // a same-count child swap, which no child count can see (and which the hot path must not accept).
-                    std::uint32_t cursor = index + 1U;
-                    for (const auto& child : group->children()) {
-                        if (!child->isVisible()) {
-                            continue; // an invisible child states no row (see bakeSubtree)
-                        }
-                        if (cursor >= row.links.end || content_bake_->nodes[cursor] != child.get()) {
-                            structure_ok = false;
-                            break;
-                        }
-                        cursor = content_bake_->rows[cursor].links.end;
-                    }
-                    if (!structure_ok || cursor != row.links.end) {
-                        structure_ok = false;
-                        break;
-                    }
-                }
-                if (node->contentEpoch() != content_bake_->node_epochs[index]) {
-                    changed.push_back(index);
-                }
-            }
-
-            if (structure_ok && !changed.empty()) {
-                std::vector<std::uint32_t> placement_changed;
-                bool                       compatible = true;
-                for (const std::uint32_t index : changed) {
-                    const RowRefresh answer = refreshRow(*content_bake_, index);
-                    if (answer == RowRefresh::RebuildTable) {
-                        compatible = false;
-                        break;
-                    }
-                    if (answer == RowRefresh::RefoldSubtree) {
-                        placement_changed.push_back(index);
-                    }
-                }
-                if (compatible && !placement_changed.empty()) {
-                    for (const std::uint32_t index : placement_changed) {
-                        bool has_placement_ancestor = false;
-                        for (std::uint32_t above = content_bake_->rows[index].links.parent;
-                             above != RowLinks::kNoParent;
-                             above = content_bake_->rows[above].links.parent) {
-                            if (std::find(placement_changed.begin(), placement_changed.end(), above) != placement_changed.end()) {
-                                has_placement_ancestor = true;
-                                break;
-                            }
-                        }
-                        if (!has_placement_ancestor) {
-                            (void)resolveSubtree(*content_bake_, index);
-                        }
-                    }
-                    for (const std::uint32_t index : changed) {
-                        content_bake_->node_epochs[index] = content_bake_->nodes[index]->contentEpoch();
-                    }
-                    refreshed_in_place = true;
-                }
-            }
-        }
-
-        if (!refreshed_in_place) {
-            // The serial counter is carried across the rebuild: a fresh table must not hand out numbers the last
-            // publication already used for other values (see SceneBake::next_serial). The previous publication stays
-            // where it is - it belongs to the publisher, not to the table that is being replaced.
-            const std::uint64_t next_serial = content_bake_ != nullptr ? content_bake_->next_serial : 1U;
-            content_bake_                   = std::make_unique<SceneBake>();
-            content_bake_->next_serial      = next_serial;
-            // The build leaves a coherent table: rows, the node each was read from, and the epoch it was read at.
-            buildRows(*scene_.root_, *content_bake_, scene_.opacity_);
+        // THE INCREMENTAL PATH FIRST, and the full build only when it cannot account for the edit (see
+        // refreshChangedRows: it never guesses).
+        if (!refreshChangedRows()) {
+            rebuildRows();
         }
         bake_epoch_ = epoch;
         ++content_bake_count_;
@@ -342,6 +238,136 @@ const SceneBake& ScenePublisher::ensureRows() const
         published_values_ = value_generation_;
     }
     return *content_bake_;
+}
+
+const SceneBake& ScenePublisher::resetToEmpty() const
+{
+    if (content_bake_ == nullptr) {
+        content_bake_ = std::make_unique<SceneBake>();
+    }
+    content_bake_->rows.clear();
+    content_bake_->nodes.clear();
+    content_bake_->node_epochs.clear();
+    // The previous publication must not answer for an empty table: a scene that stopped drawing hands out an empty
+    // picture, not the last one it had.
+    publication_cache_.reset();
+    return *content_bake_;
+}
+
+ScenePublisher::GraphScan ScenePublisher::rowsStillMatchTheGraph() const
+{
+    GraphScan scan;
+    if (content_bake_ == nullptr || content_bake_->rows.empty() || content_bake_->rows[0].identity != scene_.root_->id() ||
+        content_bake_->nodes.size() != content_bake_->rows.size() ||
+        content_bake_->node_epochs.size() != content_bake_->rows.size()) {
+        return scan;
+    }
+
+    scan.matches = true;
+    for (std::uint32_t index = 0; index < content_bake_->rows.size(); ++index) {
+        const Row&  row  = content_bake_->rows[index];
+        const Node* node = content_bake_->nodes[index];
+        if (node == nullptr || node->id() != row.identity || !node->isVisible()) {
+            scan.matches = false;
+            break;
+        }
+        const Node* expected_parent =
+            row.links.parent == RowLinks::kNoParent ? nullptr : content_bake_->nodes[row.links.parent];
+        if (node->parent() != expected_parent) {
+            scan.matches = false;
+            break;
+        }
+        if (row.links.child_count != 0U) {
+            const auto* group = obj_cast<Group>(node);
+            if (group == nullptr || group->children().size() != row.links.child_count) {
+                scan.matches = false;
+                break;
+            }
+            // The row table's walk order IS the child order: checking the identities here catches a reorder or
+            // a same-count child swap, which no child count can see (and which the hot path must not accept).
+            std::uint32_t cursor      = index + 1U;
+            bool          children_ok = true;
+            for (const auto& child : group->children()) {
+                if (!child->isVisible()) {
+                    continue; // an invisible child states no row (see bakeSubtree)
+                }
+                if (cursor >= row.links.end || content_bake_->nodes[cursor] != child.get()) {
+                    children_ok = false;
+                    break;
+                }
+                cursor = content_bake_->rows[cursor].links.end;
+            }
+            if (!children_ok || cursor != row.links.end) {
+                scan.matches = false;
+                break;
+            }
+        }
+        if (node->contentEpoch() != content_bake_->node_epochs[index]) {
+            scan.changed.push_back(index);
+        }
+    }
+    if (!scan.matches) {
+        scan.changed.clear(); // a partial list would invite a caller to use it against a shape it does not describe
+    }
+    return scan;
+}
+
+bool ScenePublisher::refreshChangedRows() const
+{
+    // A node edit bumps its own epoch and every ancestor's, so the rows whose epochs moved are the edited rows plus
+    // their ancestors. When the structure did not change and every edited row changed only its placement set
+    // (placement / opacity / layers / order / view placement), re-read those rows and re-fold only their topmost
+    // subtrees. Anything else - a child insert / remove, a state or geometry change, a material whose values moved -
+    // answers false and the caller rebuilds; the fast path must never guess.
+    const GraphScan scan = rowsStillMatchTheGraph();
+    if (!scan.matches || scan.changed.empty()) {
+        return false;
+    }
+
+    std::vector<std::uint32_t> placement_changed;
+    for (const std::uint32_t index : scan.changed) {
+        const RowRefresh answer = refreshRow(*content_bake_, index);
+        if (answer == RowRefresh::RebuildTable) {
+            return false;
+        }
+        if (answer == RowRefresh::RefoldSubtree) {
+            placement_changed.push_back(index);
+        }
+    }
+    if (placement_changed.empty()) {
+        return false; // every changed row answered "nothing to re-fold": no reason to keep the old table for that
+    }
+    // Only the TOPMOST placement-changed row of a chain folds: an outer fold already re-derives everything beneath
+    // it, so folding a scheduled descendant as well would fold the same subtree twice.
+    for (const std::uint32_t index : placement_changed) {
+        bool has_placement_ancestor = false;
+        for (std::uint32_t above = content_bake_->rows[index].links.parent; above != RowLinks::kNoParent;
+             above = content_bake_->rows[above].links.parent) {
+            if (std::find(placement_changed.begin(), placement_changed.end(), above) != placement_changed.end()) {
+                has_placement_ancestor = true;
+                break;
+            }
+        }
+        if (!has_placement_ancestor) {
+            (void)resolveSubtree(*content_bake_, index);
+        }
+    }
+    for (const std::uint32_t index : scan.changed) {
+        content_bake_->node_epochs[index] = content_bake_->nodes[index]->contentEpoch();
+    }
+    return true;
+}
+
+void ScenePublisher::rebuildRows() const
+{
+    // The serial counter is carried across the rebuild: a fresh table must not hand out numbers the last publication
+    // already used for other values (see SceneBake::next_serial). The previous publication stays where it is - it
+    // belongs to the publisher, not to the table that is being replaced.
+    const std::uint64_t next_serial = content_bake_ != nullptr ? content_bake_->next_serial : 1U;
+    content_bake_                   = std::make_unique<SceneBake>();
+    content_bake_->next_serial      = next_serial;
+    // The build leaves a coherent table: rows, the node each was read from, and the epoch it was read at.
+    buildRows(*scene_.root_, *content_bake_, scene_.opacity_);
 }
 
 std::uint64_t ScenePublisher::collectCount() const noexcept
