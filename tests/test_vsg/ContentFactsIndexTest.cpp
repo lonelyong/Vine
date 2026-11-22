@@ -91,9 +91,15 @@ struct Rows {
             channel.key.revision   = 1U;
         }
         GeometryFacts row;
-        row.geometry              = vn::graphics::contentRefOf(identity, revision);
-        row.layout.canonical_mask = mask;
-        row.channels              = channels.back();
+        row.geometry = vn::graphics::contentRefOf(identity, revision);
+        for (std::uint32_t location = 0U; location < 4U; ++location) {
+            // One slot per DECLARED attribute: the mask this case used to pass is the set of canonical
+            // locations, and the key now names each with a width (see VertexLayoutKey).
+            if ((mask & (1U << location)) != 0U) {
+                row.layout.slots.push_back(vn::graphics::VertexLayoutSlot{ location, 3U });
+            }
+        }
+        row.channels = channels.back();
         // ONE PRIMITIVE ROW PER GEOMETRY ROW (the plan names a draw by its primitive index): indexed ones
         // carry the stream and its span, non-indexed ones are assembled from the vertex count.
         primitives.emplace_back(1U); // one draw per geometry row

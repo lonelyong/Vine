@@ -1222,7 +1222,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     vn::graphics::PassDesc screen;
     screen.name  = u8"multislot_pip";
     screen.kind  = vn::graphics::PassKind::Fullscreen;
-    // A Full-full-screen pass names its program and carries the view camera: there is no implicit copy, and a
+    // A full-screen pass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
     screen.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
     screen.program       = vn::graphics::screenCopyProgram();

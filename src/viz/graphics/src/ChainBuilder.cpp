@@ -402,7 +402,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     gbuf_desc.layer_mask       = content_layers_;
     gbuf_desc.target           = Target::explicitTarget(gbuffer);
     // The program is a SCENE pass' override (`PassDesc::program_override`): `PassDesc::program` is the
-    // full-screen field a Full-full-screen pass draws through, so naming it here left the G-buffer pass with no program at
+    // full-screen field a full-screen pass draws through, so naming it here left the G-buffer pass with no program at
     // all - every body then drew with its own (or the engine's forward) program, which writes ONE colour output:
     // the geometry landed in albedo and the normal / specular / position attachments kept their transparent-black
     // clear, so the lighting read nothing and a PiP of either of those three was black.

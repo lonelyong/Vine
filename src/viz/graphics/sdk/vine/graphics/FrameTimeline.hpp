@@ -9,22 +9,24 @@
  * @brief The frame clock: one timeline for every deferred action in the backend.
  *
  * @details
- * - WHY ONE TIMELINE. Three different things in this backend are deferred to a later frame: a replaced GPU object is
+ * - WHY ONE TIMELINE. Three different things in a backend are deferred to a later frame: a replaced GPU object is
  *   parked until the command buffer that could still name it has been re-recorded, a pass that was not announced this
  *   frame has its view detached, and the load-op variant a bootstrap left behind is swapped back. Each of them, given
  *   its own countdown, can drift a frame away from the others - and a frame of drift is exactly the width of the bug
  *   class this design exists to remove ("destroyed an object a submitted command buffer still named", "cleared a
  *   target that was still being read"). So they all read one counter.
  * - SUBMITTED IS NOT COMPLETED, and conflating them is the last silent failure available here. `submittedFrame()`
- *   counts frames handed to the queue; `completedFrame()` counts frames whose GPU work is provably done. In this
- *   backend the proof does not come from a timeline semaphore - it comes from the command-buffer slot being recycled:
- *   vsg waits that slot's fence before it re-records it (`vsg 1.1.16 - src/vsg/app/RecordAndSubmitTask.cpp -
- *   RecordAndSubmitTask::start()`), so "the slot that could still name this object has been reused" IS the completion
- *   evidence. The executor reports that by calling completeUpTo(); an executor that stops waiting on slot fences
- *   loses the evidence and must fall back to a counted device wait instead of assuming.
- * - THE SLOT COUNT IS A PROPERTY OF THE VIEWER (`numBuffers`, 3 in this vsg) and is not part of the public API, so it
- *   is probed once at session start and passed in here - `retirePoint()` is why the number is needed: a parked object
- *   must outlive the slot that recorded it, hence slots + 1.
+ *   counts frames handed to the queue; `completedFrame()` counts frames whose GPU work is provably done. The proof
+ *   is the BACKEND's to obtain, and both current backends obtain it from a REUSE: the command-buffer slot that could
+ *   still name an object is waited on before it is recorded again (vsg waits that slot's fence in
+ *   `RecordAndSubmitTask::start()`, vk waits a frame's fence before reusing its slot), so "the slot that could still
+ *   name this object has been reused" IS the completion evidence. An executor reports it by moving the watermark -
+ *   `completeUpTo()` where one slot list exists, `DeviceClock::windowCompleted()` where a device serves several
+ *   surfaces - and an executor that stops waiting on its slots' fences loses the evidence and must fall back to a
+ *   counted device wait instead of assuming.
+ * - THE SLOT COUNT BELONGS TO THE SURFACE, not to this type (`numBuffers` in vsg's viewer, `kFramesInFlight` in vk),
+ *   so it is probed once at session start and passed in here - `retirePoint()` is why the number is needed: a parked
+ *   object must outlive the slot that recorded it, hence slots + 1.
  * - SEVERAL FRAMES MAY BE OPEN AT ONCE (one per driver). A device that hands out more than one frame driver opens one
  *   frame per driver, and the numbers are MINTED AT OPENING (not derived from the submission count) so two open frames
  *   never share a number. `submitted` / `abandoned` close the token they name; the submission watermark is the highest

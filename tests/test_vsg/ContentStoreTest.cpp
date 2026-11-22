@@ -1170,7 +1170,7 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
     const VertexLayoutKey layout = both.geometries.front().layout;
     EXPECT_TRUE(both.declarations.declaresLayout(layout)) << "both rows feed the shared layout";
     VertexLayoutKey other_layout;
-    other_layout.canonical_mask = layout.canonical_mask + 1U;
+    other_layout.slots = { { 0U, 3U }, { 1U, 3U } };
     EXPECT_FALSE(both.declarations.declaresLayout(other_layout)) << "a layout no row feeds is not declared";
 
     // One geometry goes: the OTHER row still declares the buffer, so the index keeps it (the refcount, not a bit).

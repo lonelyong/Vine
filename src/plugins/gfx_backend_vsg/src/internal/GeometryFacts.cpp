@@ -115,9 +115,13 @@ FactMiss buildGeometryFacts(const vn::graphics::GeometryDescription& description
         facts.values = channel.values;
         storage.push_back(facts);
 
+        // ONE SLOT PER DECLARED ATTRIBUTE, in the order the streams are BOUND (canonical locations first,
+        // then customs - see orderedChannels), carrying its WIDTH: the layout IS the vertex format, and a
+        // locations-only key shared one pipeline across two component counts (see VertexLayoutKey).
+        out.layout.slots.push_back(vn::graphics::VertexLayoutSlot{ entry->location, channel.components });
+
         vn::graphics::VertexAttribute role{};
         if (canonicalRoleOf(entry->location, role)) {
-            out.layout.canonical_mask |= 1U << static_cast<std::uint32_t>(role);
             if (role == vn::graphics::VertexAttribute::Position) {
                 positioned        = true;
                 // The vertices a NON-indexed draw assembles from: the position stream's own count, which is
@@ -125,9 +129,6 @@ FactMiss buildGeometryFacts(const vn::graphics::GeometryDescription& description
                 // attribute, so they are the stream the count can be derived from).
                 position_vertices = channel.vertexCount();
             }
-        }
-        else {
-            out.layout.custom_locations.push_back(entry->location);
         }
     }
 

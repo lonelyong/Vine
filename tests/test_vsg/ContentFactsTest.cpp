@@ -85,19 +85,26 @@ struct GeometryHolder {
     std::vector<vn::backend_vsg::PrimitiveFacts> primitive_rows; // What `facts.primitives` points at.
     GeometryFacts                        facts;
 
-    GeometryHolder(vn::graphics::NodeId identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_locations = 0U)
+    GeometryHolder(vn::graphics::NodeId identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_channels = 0U)
       : channels(channel_count, channel(0U))
     {
-        facts.geometry              = geometryRef(identity, revision);
-        facts.layout.canonical_mask = canonical_mask;
-        facts.channels              = channels;
+        facts.geometry = geometryRef(identity, revision);
+        // The LAYOUT is one slot per declared attribute (see VertexLayoutKey): the canonical mask this case
+        // states becomes the locations it names, and the customs follow at 3.. - each with a width, because the
+        // key carries the FORMAT.
+        for (std::uint32_t location = 0U; location < 4U; ++location) {
+            if ((canonical_mask & (1U << location)) != 0U) {
+                facts.layout.slots.push_back(vn::graphics::VertexLayoutSlot{ location, 3U });
+            }
+        }
+        for (std::uint32_t extra = 0U; extra < custom_channels; ++extra) {
+            facts.layout.slots.push_back(vn::graphics::VertexLayoutSlot{ 3U + extra, 2U });
+        }
+        facts.channels = channels;
         primitive_rows.emplace_back();
         primitive_rows.back().indices.emplace(indexStream());
         primitive_rows.back().index_count = 3U;
         facts.primitives                  = primitive_rows;
-        for (std::uint32_t extra = 0; extra < custom_locations; ++extra) {
-            facts.layout.custom_locations.push_back(3U + extra);
-        }
     }
 };
 

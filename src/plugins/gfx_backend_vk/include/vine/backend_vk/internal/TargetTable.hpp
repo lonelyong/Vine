@@ -127,7 +127,7 @@ class VN_BACKEND_VK_API TargetTable final {
     struct Peek {
         bool                      built{ false }; ///< The attachments exist (see TargetObjects::built).
         bool                      fresh{ true };  ///< No pass had drawn into that set when this value was taken.
-        vn::graphics::TargetShape shape{};        ///< The shape they were built for; empty when @ref built is false.
+        vn::graphics::RenderPassCompatibility shape{}; ///< The shape they were built for; empty when @ref built is false.
     };
 
     /**

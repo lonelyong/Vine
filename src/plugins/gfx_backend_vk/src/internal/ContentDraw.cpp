@@ -328,8 +328,12 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         caches.table().vkCmdSetScissor(commands, 0U, 1U, &scissor);
         // A PASS' LINE-WIDTH SWITCH IS A REQUEST (see PassRenderState::lineWidth): the device's range is the answer,
         // and above it the command itself would be invalid.
-        caches.table().vkCmdSetLineWidth(commands, std::clamp(resolved.state.lineWidth, 1.0F, caches.lineWidthLimit()));
-        caches.table().vkCmdSetDepthBias(commands, resolved.state.polygonOffset.units, 0.0F, resolved.state.polygonOffset.factor);
+        // THE DYNAMIC HALF IS THE SEAM'S VALUE (`DynamicState` / `resolveDynamicState`): the same mapping the vsg
+        // backend writes, so a change to it lands in one place. What stays device-specific is the range: a line
+        // width above `lineWidthRange` is refused by the API, so this layer clamps it (see Capabilities::limits).
+        const vn::graphics::DynamicState dynamic = vn::graphics::resolveDynamicState(resolved);
+        caches.table().vkCmdSetLineWidth(commands, std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit()));
+        caches.table().vkCmdSetDepthBias(commands, dynamic.polygon_offset.units, 0.0F, dynamic.polygon_offset.factor);
         const VkDescriptorSet sets[2]{ content_set, draw_set };
         // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets: material (0), lights
         // (6) and the shadow block (8) of set 0, then the draw block (0) of set 1.
@@ -502,9 +506,13 @@ std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                     
     caches.table().vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     caches.table().vkCmdSetViewport(commands, 0U, 1U, &viewport);
     caches.table().vkCmdSetScissor(commands, 0U, 1U, &scissor);
-    caches.table().vkCmdSetLineWidth(commands, std::clamp(resolved.state.lineWidth, 1.0F, caches.lineWidthLimit()));
+    // The line width comes from the same seam value the content path writes (see resolveDynamicState); the device's
+    // range is this layer's clamp.
+    const vn::graphics::DynamicState dynamic = vn::graphics::resolveDynamicState(resolved);
+    caches.table().vkCmdSetLineWidth(commands, std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit()));
     // The pipeline states depth bias as DYNAMIC (the content path does the same), so a full-screen draw owes the
-    // command buffer the values too - zero is "no offset".
+    // command buffer the values too - zero is "no offset", whatever the pass' state says: this draw is the
+    // canonical triangle at the far plane.
     caches.table().vkCmdSetDepthBias(commands, 0.0F, 0.0F, 0.0F);
     // The screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
     const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + scratch.lightsOffset()),

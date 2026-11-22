@@ -33,23 +33,24 @@ using vn::graphics::LoadOp;
 using vn::backend_vsg::core::loadOpVariantOf;
 using vn::backend_vsg::core::PassClearPlan;
 using vn::backend_vsg::core::planClearValues;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
+
 
 namespace
 {
 
 /// @brief A one-colour-attachment target without depth.
-TargetShape singleColor()
+RenderPassCompatibility singleColor()
 {
-    TargetShape shape;
+    RenderPassCompatibility shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     return shape;
 }
 
 /// @brief A three-colour-attachment (MRT) target with depth.
-TargetShape multiTarget()
+RenderPassCompatibility multiTarget()
 {
-    TargetShape shape;
+    RenderPassCompatibility shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA16F);
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA32F);
@@ -58,17 +59,17 @@ TargetShape multiTarget()
 }
 
 /// @brief A one-colour-attachment target WITH a depth attachment.
-TargetShape singleColorShapeWithDepth()
+RenderPassCompatibility singleColorShapeWithDepth()
 {
-    TargetShape shape  = singleColor();
+    RenderPassCompatibility shape  = singleColor();
     shape.depth_format = RenderTarget::DepthFormat::D32;
     return shape;
 }
 
 /// @brief A depth-only target (no colour attachments at all).
-TargetShape depthOnly()
+RenderPassCompatibility depthOnly()
 {
-    TargetShape shape;
+    RenderPassCompatibility shape;
     shape.depth_format = RenderTarget::DepthFormat::D24;
     return shape;
 }
@@ -305,7 +306,7 @@ TEST(CoreClearPlanTest, TheShadowMapVariantNamesTheSampledDepthOnTheWayInAndOut)
     // (core::depthFinalLayout), so a pass that LOADS it must name THAT layout as the one it starts in - and a
     // pass that clears it discards the contents and starts from UNDEFINED. The two are different render pass
     // objects, which is what makes "the second writer of a shadow map" a variant rather than a rebuild.
-    const TargetShape shadow_shape = depthOnly();
+    const RenderPassCompatibility shadow_shape = depthOnly();
     const ImageLayout steady       = depthFinalLayout(shadow_shape, /*depth_sampleable*/ true);
     ASSERT_EQ(steady, ImageLayout::ShaderReadOnly);
 

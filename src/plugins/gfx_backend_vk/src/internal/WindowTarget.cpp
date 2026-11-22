@@ -706,14 +706,14 @@ std::uint32_t WindowTarget::height() const noexcept
 vn::graphics::RenderPassCompatibility WindowTarget::compatibility() const noexcept
 {
     using vn::graphics::RenderTarget;
-    vn::graphics::TargetShape shape;
-    shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(impl->format) });
-    shape.depth_format        = RenderTarget::DepthFormat::D24;
-    shape.device_depth_format = vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(kDepthFormat) };
-    shape.samples             = 1U;
-    shape.render_pass_key     = kSingleSubpassRenderPass;
-    return shape.compatibility();
+    vn::graphics::RenderPassCompatibility compatibility;
+    compatibility.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
+    compatibility.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(impl->format) });
+    compatibility.depth_format        = RenderTarget::DepthFormat::D24;
+    compatibility.device_depth_format = vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(kDepthFormat) };
+    compatibility.samples             = 1U;
+    compatibility.render_pass_key     = kSingleSubpassRenderPass;
+    return compatibility;
 }
 
 VkSemaphore WindowTarget::imageAvailableSemaphore() const noexcept

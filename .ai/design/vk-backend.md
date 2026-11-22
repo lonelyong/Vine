@@ -392,8 +392,14 @@ and every cache has a witness a test can read.**
 
 ### 3.1.5 F5 Content drawing
 
-- **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key = render-pass compatibility + state (polygon / cull / depth
-  test / write / compare / blend) + variant bits; one `DrawItem` = one `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision.
+- **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key is the
+  SEAM's `vn::graphics::PipelineKey` (kind, program identity + revision, the vertex layout slots, render-pass
+  compatibility, variant, topology class) PLUS the raster state a Vulkan 1.2 device must bake (polygon / cull /
+  depth test / write / compare / blend - see `ContentPipelineKey`); one `DrawItem` = one `vkCmdDrawIndexed`.
+  Instance streams are cached by buffer address + revision.
+- **What is dynamic here**: viewport, scissor, line width and the depth-bias values (`vkCmdSet*` per draw, the
+  declaration names exactly those four). The five baked items are a fact about the 1.2 floor, not about the
+  model: the vsg backend's floor has `VK_EXT_extended_dynamic_state`/`_state3`, so it moves them off identity.
 - **The declared vertex input is the vertex stage's own set**: the geometry contributes channels, but the pipeline declares only the locations the compiled vertex
   stage reads (read back from the module's `OpVariable`/`Location` interface, one location per matrix column, so the instance stream keeps 12-15). A geometry channel the
   stage does not read is neither declared nor fetched - it would otherwise be a validation warning ("attribute at location N not consumed by vertex shader") and a

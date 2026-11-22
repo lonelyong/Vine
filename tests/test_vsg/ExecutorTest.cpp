@@ -101,7 +101,7 @@ using vn::backend_vsg::core::StateRegistry;
 using vn::graphics::TargetAction;
 using vn::graphics::TargetDesc;
 using vn::backend_vsg::core::TargetFacts;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
@@ -254,9 +254,9 @@ struct Fixture {
         }
 
         ContentDraw::Draw draw;
-        draw.key.program                                             = vn::test::programRef(1, 1U);
-        draw.key.vertex_layout.canonical_mask                        = 0x1U;
-        draw.key.compatibility                                       = first->shape().compatibility();
+        draw.key.program                = vn::test::programRef(1, 1U);
+        draw.key.vertex_layout.slots    = { { 0U, 3U } };
+        draw.key.compatibility          = first->shape();
         draw.key.sampled_color_count                                 = 0U;
         draw.dynamic                                                 = pass.draws[0].commands[0].dynamic;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
@@ -515,7 +515,7 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
     // them through the same mapping create uses). Not stating them is honest - "not known" is not "absent"
     // (see CompiledShape) - while a HALF-stated device list (the old shape's, with one more engine format
     // pushed onto it) would describe a target nobody asked for, which the record step reports.
-    TargetShape wanted_shape;
+    RenderPassCompatibility wanted_shape;
     wanted_shape.color_formats   = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
     wanted_shape.depth_format    = RenderTarget::DepthFormat::D32F;
     const auto           table_3 = facts_of(TargetDesc{ 16, 12, wanted_shape });
@@ -870,7 +870,7 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
     // The truth about the target the plan resolves to: one colour attachment, and the DEVICE format its
     // image and render pass are really built with. The engine's vocabulary cannot tell two device formats
     // apart (see RenderPassCompatibility), so this is the half that only the plan's own copy can carry.
-    const TargetShape actual = fixture.first->shape();
+    const RenderPassCompatibility actual = fixture.first->shape();
     ASSERT_EQ(actual.color_formats.size(), 1U);
     ASSERT_EQ(actual.device_color_formats.size(), 1U);
 

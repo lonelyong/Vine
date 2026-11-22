@@ -108,7 +108,8 @@ struct VN_BACKEND_VSG_API PassClearPlan {
  * @param depth_borrowed Whether the depth attachment is ANOTHER target's image (see rule 3).
  * @return The per-attachment plan.
  */
-[[nodiscard]] VN_BACKEND_VSG_API PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap, bool depth_borrowed) noexcept;
+[[nodiscard]] VN_BACKEND_VSG_API PassClearPlan planClearValues(const RenderPassCompatibility& shape, const ClearValues& policy, bool bootstrap,
+                                                                bool depth_borrowed) noexcept;
 
 /** @brief Gets the layout a target leaves its depth attachment in.
  *
@@ -126,7 +127,7 @@ struct VN_BACKEND_VSG_API PassClearPlan {
  * @param depth_sampleable Whether the host asked for the depth to be usable as a texture.
  * @return The depth's steady layout for this target.
  */
-[[nodiscard]] VN_BACKEND_VSG_API ImageLayout depthFinalLayout(const TargetShape& shape, bool depth_sampleable) noexcept;
+[[nodiscard]] VN_BACKEND_VSG_API ImageLayout depthFinalLayout(const RenderPassCompatibility& shape, bool depth_sampleable) noexcept;
 
 /** @brief Names the render pass variant a pass' clear plan asks for (see LoadOpVariantKey).
  *

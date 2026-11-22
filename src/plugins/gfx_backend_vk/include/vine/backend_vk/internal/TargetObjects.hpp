@@ -168,7 +168,9 @@ struct TargetObjects {
     /** @brief Gets one colour attachment's Vulkan format (`VK_FORMAT_UNDEFINED` for an index out of range). */
     [[nodiscard]] VkFormat colorFormat(std::size_t index) const noexcept
     {
-        return index < desc.shape.device_color_formats.size() ? static_cast<VkFormat>(desc.shape.device_color_formats[index].code) : VK_FORMAT_UNDEFINED;
+        return index < desc.shape.device_color_formats.size()
+                   ? static_cast<VkFormat>(desc.shape.device_color_formats[index].code)
+                   : VK_FORMAT_UNDEFINED;
     }
 
     /** @brief Answers whether the target owns a depth attachment. */
@@ -264,10 +266,10 @@ struct TargetObjects {
         return render_pass;
     }
 
-    /** @brief Gets the pipeline compatibility of this target's shape. */
+    /** @brief Gets the pipeline compatibility of this target (the value its description states). */
     [[nodiscard]] vn::graphics::RenderPassCompatibility compatibility() const noexcept
     {
-        return desc.shape.compatibility();
+        return desc.shape;
     }
 
     /** @brief Answers whether every object a pass needs exists for @ref desc. */

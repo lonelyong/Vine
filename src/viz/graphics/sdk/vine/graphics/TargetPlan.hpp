@@ -57,49 +57,22 @@ enum class RepairReason : std::uint8_t
 };
 
 /**
- * @brief The target properties that are part of render-pass COMPATIBILITY, and therefore of a pipeline's key.
+ * @brief A target as the frame wants it: an extent plus its render-pass compatibility.
  *
  * @details
  * - What a resize may NOT be allowed to hide here is an extent: pixel size is a runtime resource, not
- *   an identity. What it MUST contain is everything a rebuild really depends on: attachment formats,
- *   the depth format (or its absence), the sample count and the render pass' structure.
- * - The device formats are carried next to the engine's spelling because only the device layer can
- *   fill them and only they can tell two render passes apart that the engine's vocabulary calls the
- *   same thing (an sRGB surface and a linear RGBA8 image are both "RGBA8"; see
- *   RenderPassCompatibility). They are opaque DeviceFormat codes: `kUndefined` means "no such
- *   attachment", or "not known" for a shape that never learned them. The pass structure is stated the
- *   same way, as one opaque RenderPassKey.
+ *   an identity. What it MUST contain is everything a rebuild really depends on - which is exactly
+ *   `RenderPassCompatibility` (attachment formats, the depth format or its absence, the sample count
+ *   and the render pass' structure), the same value a pipeline key's compatibility half is built from.
+ *   One type, so a target and a pipeline cannot describe different compatibility classes for one pass.
+ * - The device formats travel beside the engine's spelling because only the device layer can fill them,
+ *   and only they tell two render passes apart that the engine's vocabulary calls the same thing (an
+ *   sRGB surface and a linear RGBA8 image are both "RGBA8"; see RenderPassCompatibility).
  */
-struct VN_GRAPHICS_API TargetShape {
-    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;        // One per colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;         // Absent for a colour-only target.
-    std::vector<DeviceFormat>                              device_color_formats; // The same attachments, as opaque device codes.
-    DeviceFormat                                           device_depth_format;  // The device's depth code; kUndefined = no depth.
-    std::uint32_t                                          samples{ 1 };         // Sample count.
-    RenderPassKey                                          render_pass_key;      // The backend's compatibility class (pass structure).
-
-    /** @brief Compares the compatibility-relevant properties. */
-    [[nodiscard]] bool operator==(const TargetShape& other) const noexcept;
-
-    /** @brief Gets the compatibility half of a pipeline key for a target that has this shape.
-     *
-     * @details
-     * - One spelling for one fact: a pipeline is compiled against exactly the render pass its target
-     *   owns, so the key's compatibility half IS this shape's compatibility-relevant half - built here
-     *   rather than by every caller, because a caller that built it by hand could drop the device
-     *   formats and silently hand one compiled pipeline to two render passes that are not compatible
-     *   (see RenderPassCompatibility).
-     *
-     * @return The shape's compatibility, device codes and render-pass key included.
-     */
-    [[nodiscard]] RenderPassCompatibility compatibility() const noexcept;
-};
-
-/** @brief A target as the frame wants it: an extent plus a shape. */
 struct VN_GRAPHICS_API TargetDesc {
     int         width{ 0 };  // Extent in device pixels (0 = not known yet).
     int         height{ 0 }; // Extent in device pixels (0 = not known yet).
-    TargetShape shape;       // Compatibility-relevant shape.
+    RenderPassCompatibility shape; // Attachment formats, depth, samples and the pass structure.
 
     /** @brief Compares extent and shape. */
     [[nodiscard]] bool operator==(const TargetDesc& other) const noexcept;

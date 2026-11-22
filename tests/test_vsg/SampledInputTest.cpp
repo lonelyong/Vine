@@ -86,7 +86,7 @@ using vn::backend_vsg::core::Observe;
 using vn::backend_vsg::core::Rgba8;
 using vn::backend_vsg::core::StateRegistry;
 using vn::backend_vsg::core::TargetFacts;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
@@ -344,7 +344,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(consumer, facts, destination->shape().compatibility(), images, view_block, content_node));
+    ASSERT_TRUE(content.record(consumer, facts, destination->shape(), images, view_block, content_node));
     ASSERT_TRUE(messages.empty()) << "nothing may be refused: the images match the plan";
     EXPECT_EQ(draws.draws(), 2U);
     EXPECT_EQ(draws.input_binds(), 1U) << "the pass' inputs are a property of the PASS: one set, bound once for both draw packets";
@@ -380,7 +380,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     storage->beginFrame();
     messages.clear();
     ::vsg::ref_ptr<::vsg::Node> refused_node;
-    EXPECT_FALSE(content.record(consumer, facts, destination->shape().compatibility(), std::span<const InputImages>{}, view_block, refused_node));
+    EXPECT_FALSE(content.record(consumer, facts, destination->shape(), std::span<const InputImages>{}, view_block, refused_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("declares 1 input(s) and the caller offered 0"), std::string::npos) << messages[0].as_std_str();
 
@@ -388,7 +388,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     messages.clear();
     const InputImages empty_entry[] = { InputImages{} };
     EXPECT_FALSE(
-        content.record(consumer, facts, destination->shape().compatibility(), std::span<const InputImages>(empty_entry, 1U), view_block, refused_node));
+        content.record(consumer, facts, destination->shape(), std::span<const InputImages>(empty_entry, 1U), view_block, refused_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("input 0 offers 0 colour texture(s) where the plan says 1"), std::string::npos) << messages[0].as_std_str();
 }
@@ -545,7 +545,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(consumer, facts, destination->shape().compatibility(), images, view_block, content_node));
+    ASSERT_TRUE(content.record(consumer, facts, destination->shape(), images, view_block, content_node));
     ASSERT_TRUE(messages.empty()) << "nothing may be refused: the screen half is there and the images match";
     EXPECT_EQ(screen_draws.screen_draws(), 1U);
     EXPECT_EQ(screen_draws.input_binds(), 1U) << "one sampled set per pass, bound once";
@@ -832,14 +832,14 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  shadow_node;
-    ASSERT_TRUE(shadow_content.record(frame.passes[0], facts, shadow_map->shape().compatibility(), {}, view_block, shadow_node));
+    ASSERT_TRUE(shadow_content.record(frame.passes[0], facts, shadow_map->shape(), {}, view_block, shadow_node));
 
     // The caller offers what the plan says the input has: no colour texture, and the depth view.
     const InputImages offered_inputs[] = {
         InputImages{ {}, shadow_map->depthView() }
     };
     ::vsg::ref_ptr<::vsg::Node> sampling_node;
-    ASSERT_TRUE(sampling_content.record(frame.passes[1], facts, receiver->shape().compatibility(), offered_inputs, view_block, sampling_node));
+    ASSERT_TRUE(sampling_content.record(frame.passes[1], facts, receiver->shape(), offered_inputs, view_block, sampling_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: the offer matches the plan";
 
     VsgExecutor executor(diagnostics);

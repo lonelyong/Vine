@@ -78,9 +78,13 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
     EXPECT_EQ(facts.geometry.as<vn::graphics::NodeTag>(), geometry.id());
     EXPECT_EQ(facts.geometry.revision, 4U);
 
-    // Position and normal, in ABI order: the layout's mask is the same fact the pipeline key reads.
-    EXPECT_EQ(facts.layout.canonical_mask, 0x3U);
-    EXPECT_TRUE(facts.layout.custom_locations.empty());
+    // Position and normal, in ABI order: the layout's slots are the same fact the pipeline key reads,
+    // each with its WIDTH (the attribute format).
+    ASSERT_EQ(facts.layout.slots.size(), 2U);
+    EXPECT_EQ(facts.layout.slots[0].location, 0U);
+    EXPECT_EQ(facts.layout.slots[0].components, 3U);
+    EXPECT_EQ(facts.layout.slots[1].location, 1U);
+    EXPECT_EQ(facts.layout.slots[1].components, 3U);
     ASSERT_EQ(facts.channels.size(), 2U);
     EXPECT_EQ(facts.channels[0].key.location, 0U);
     EXPECT_EQ(facts.channels[1].key.location, 1U);
@@ -122,9 +126,12 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
     EXPECT_EQ(facts.channels[0].key.location, 0U); // positions
     EXPECT_EQ(facts.channels[1].key.location, 8U); // the reserved texcoord slot
     EXPECT_EQ(facts.channels[2].key.location, 4U); // then the customer
-    EXPECT_EQ(facts.layout.canonical_mask, 0x1U | 0x8U);
-    ASSERT_EQ(facts.layout.custom_locations.size(), 1U);
-    EXPECT_EQ(facts.layout.custom_locations[0], 4U);
+    ASSERT_EQ(facts.layout.slots.size(), 3U);
+    EXPECT_EQ(facts.layout.slots[0].location, 0U);
+    EXPECT_EQ(facts.layout.slots[1].location, 8U);
+    EXPECT_EQ(facts.layout.slots[1].components, 2U);
+    EXPECT_EQ(facts.layout.slots[2].location, 4U);
+    EXPECT_EQ(facts.layout.slots[2].components, 2U);
     EXPECT_TRUE(channelsMatchLayout(facts));
 }
 

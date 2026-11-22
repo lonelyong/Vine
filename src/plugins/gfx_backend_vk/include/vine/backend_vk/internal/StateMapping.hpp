@@ -129,7 +129,8 @@ struct StateMapping {
      * @brief Gets the Vulkan sample count for a target's samples per pixel.
      *
      * @details
-     * - A TARGET'S SAMPLE COUNT IS A NUMBER, not a device flag: the SDK states samples per pixel (`TargetShape::samples`),
+     * - A TARGET'S SAMPLE COUNT IS A NUMBER, not a device flag: the SDK states samples per pixel
+     *   (`RenderPassCompatibility::samples`),
      *   while Vulkan spells the same fact as a `VkSampleCountFlagBits` whose enumerator happens to be that number. The
      *   mapping is stated once, here, because the render pass and the pipeline must read the same answer - two
      *   spellings would be a render pass and a pipeline that disagree about how many samples they draw.

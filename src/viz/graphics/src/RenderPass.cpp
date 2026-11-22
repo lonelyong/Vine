@@ -71,7 +71,7 @@ Colorf RenderPass::clearColor(int attachment) const
 bool RenderPass::shouldClearDepth() const noexcept
 {
     // A STATEMENT WINS. Otherwise the KIND's policy answers a pass that CLEARS: a Scene pass clears both attachments,
-    // a Full-full-screen pass composites over what is there and clears neither. A pass that clears no colour has opted out of
+    // a full-screen pass composites over what is there and clears neither. A pass that clears no colour has opted out of
     // clearing, and depth is not implied by it - a depth-only clear is asked for by stating it (see
     // PassDesc::clear_depth), which is what a HUD overlay does to own a clean depth range inside its own rectangle.
     if (desc_.clear_depth.has_value()) {

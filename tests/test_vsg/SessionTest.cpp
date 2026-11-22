@@ -52,7 +52,7 @@ using vn::graphics::RetirementQueue;
 using vn::backend_vsg::core::Rgba8;
 using vn::graphics::TargetAction;
 using vn::backend_vsg::core::TargetFacts;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::VsgExecutor;
 using vn::backend_vsg::api::WindowSession;
@@ -724,7 +724,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
 
     // What the swapchain serves now, and a second DEVICE format a plan could claim it serves instead - taken
     // from a real target, because the layer compares format codes and never invents them.
-    const TargetShape live = window->facts().wanted.shape;
+    const RenderPassCompatibility live = window->facts().wanted.shape;
     ASSERT_EQ(live.device_color_formats.size(), 1U);
     auto other_target = TargetObjects::create(device,
                                                 TargetObjects::Layout{

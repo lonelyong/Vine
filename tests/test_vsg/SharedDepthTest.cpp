@@ -249,7 +249,7 @@ struct Stack {
 
         ContentDraw::Draw draw;
         draw.key.program                                             = vn::test::programRef(1, 1U);
-        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.vertex_layout.slots                               = { { 0U, 3U } };
         draw.key.compatibility.samples                               = 1U;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
             descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })

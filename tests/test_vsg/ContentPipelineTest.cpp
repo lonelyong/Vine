@@ -88,9 +88,9 @@ ContentPipeline::VertexAttribute positionAttribute()
 PipelineKey contentKey(std::uint64_t revision)
 {
     PipelineKey key;
-    key.program                      = vn::test::programRef(1, revision);
-    key.vertex_layout.canonical_mask = 0x1U;
-    key.compatibility.samples        = 1U;
+    key.program               = vn::test::programRef(1, revision);
+    key.vertex_layout.slots = { { 0U, 3U } };
+    key.compatibility.samples = 1U;
     return key;
 }
 
@@ -285,6 +285,14 @@ TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
     EXPECT_TRUE(declares(VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT));
     EXPECT_TRUE(declares(VK_DYNAMIC_STATE_VIEWPORT)) << "an extent is a command, never a compile";
     EXPECT_TRUE(declares(VK_DYNAMIC_STATE_SCISSOR));
+    // THE TWO HALVES OF "SET BUT HAS NO EFFECT": `StateCommands` writes the depth bias and the line width per
+    // draw, so the declaration has to name both - and the rasterisation state has to ENABLE the bias, or the
+    // driver takes its baked `VK_FALSE` and ignores `vkCmdSetDepthBias` (`.ai/bugs/vsg-depth-bias-not-declared-dynamic.md`).
+    EXPECT_TRUE(declares(VK_DYNAMIC_STATE_DEPTH_BIAS)) << "setPolygonOffset writes it per draw";
+    EXPECT_TRUE(declares(VK_DYNAMIC_STATE_LINE_WIDTH)) << "setLineWidth writes it per draw";
+    // AND NOTHING ELSE: a state declared without a writer is a value the driver takes from the create-info,
+    // which is the same silent no-op in the other direction. The count makes an accidental addition fail here.
+    EXPECT_EQ(dynamic->dynamicStates.size(), 13U) << "thirteen: every state SetDynamicState::record writes, plus the viewport and scissor the recorder's own nodes set";
 
     // The create-info still carries the structs Vulkan requires; the vertex layout is the declared one.
     const auto* vertex_input = stateOf<::vsg::VertexInputState>(*result.pipeline);
@@ -293,7 +301,9 @@ TEST(ContentPipelineTest, TheEditableHalfIsDeclaredDynamic)
     EXPECT_EQ(vertex_input->vertexBindingDescriptions[0].stride, 12U);
     ASSERT_EQ(vertex_input->vertexAttributeDescriptions.size(), 1U);
     EXPECT_EQ(vertex_input->vertexAttributeDescriptions[0].format, VK_FORMAT_R32G32B32_SFLOAT);
-    EXPECT_NE(stateOf<::vsg::RasterizationState>(*result.pipeline), nullptr);
+    const auto* raster = stateOf<::vsg::RasterizationState>(*result.pipeline);
+    ASSERT_NE(raster, nullptr);
+    EXPECT_EQ(raster->depthBiasEnable, VK_TRUE) << "without the enable the dynamic bias values are ignored";
     EXPECT_NE(stateOf<::vsg::DepthStencilState>(*result.pipeline), nullptr);
     EXPECT_NE(stateOf<::vsg::InputAssemblyState>(*result.pipeline), nullptr);
     EXPECT_NE(stateOf<::vsg::MultisampleState>(*result.pipeline), nullptr);

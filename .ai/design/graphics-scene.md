@@ -104,7 +104,7 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 | F8 | Layers | Nearest declaration wins; `clearLayers()` restores inheritance; default `kDefaultLayer`. |
 | F9 | drawOrder | Nearest declaration wins; the outer sort key within a pass (higher = drawn later). |
 | F10 | material / program | Primitive > geometry-level default > nearest `StateNode` > pass. |
-| F11 | State | Every item optional; `StateOrigin::Content / Pass / Data` records the origin. |
+| F11 | State | Every item optional; `StateOrigin::Content / Pass / Data / Default` records the origin. The ASSEMBLY (topology) is a data fact and reports its own origin beside the state (`ResolvedCommandState::topology_origin`: `Data` or `Pass`). |
 
 ### 3.3 Collection
 

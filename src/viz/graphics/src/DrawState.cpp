@@ -6,16 +6,16 @@ VN_GRAPHICS_NS_BEGIN
 
 bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
 {
-    return canonical_mask == other.canonical_mask && custom_locations == other.custom_locations;
+    return slots == other.slots;
 }
 
 std::size_t VertexLayoutKeyHash::operator()(const VertexLayoutKey& key) const noexcept
 {
     std::size_t hash = 0;
     const auto  mix  = [&hash](std::uint64_t value) noexcept { hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2); };
-    mix(key.canonical_mask);
-    for (const std::uint32_t location : key.custom_locations) {
-        mix(location);
+    for (const VertexLayoutSlot& slot : key.slots) {
+        mix(slot.location);
+        mix(slot.components);
     }
     return hash;
 }
@@ -66,16 +66,17 @@ bool DynamicState::operator==(const DynamicState& other) const noexcept
            polygon_offset == other.polygon_offset && topology == other.topology && line_width == other.line_width && blend == other.blend;
 }
 
-DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept
+DynamicState resolveDynamicState(const vn::graphics::ResolvedCommandState& command) noexcept
 {
-    DynamicState resolved;
+    const vn::graphics::ResolvedRenderState& state = command.state;
+    DynamicState                             resolved;
     resolved.depth =
         state.depth.test ? (state.depth.write ? vn::graphics::DepthMode::TestAndWrite : vn::graphics::DepthMode::TestOnly) : vn::graphics::DepthMode::Disabled;
     resolved.compare        = state.depth.compare;
     resolved.cull_mode      = state.cullMode;
     resolved.polygon_mode   = state.polygonMode;
     resolved.polygon_offset = state.polygonOffset;
-    resolved.topology       = state.topology;
+    resolved.topology       = command.topology;
     resolved.line_width     = state.lineWidth;
     resolved.blend          = state.blend;
     return resolved;
@@ -89,9 +90,9 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     mix(key.program.id.bits());
     mix(key.program.revision);
     mix(static_cast<std::uint64_t>(key.kind));
-    mix(key.vertex_layout.canonical_mask);
-    for (const std::uint32_t location : key.vertex_layout.custom_locations) {
-        mix(location);
+    for (const VertexLayoutSlot& slot : key.vertex_layout.slots) {
+        mix(slot.location);
+        mix(slot.components);
     }
     for (const auto format : key.compatibility.color_formats) {
         mix(static_cast<std::uint64_t>(format));
@@ -120,7 +121,7 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
     // that can be delivered with a set command, or written into a buffer, is "nothing".
     static constexpr std::array<KeyAuditEntry, 7> kAudit{
         {
-         { "VertexLayoutKey", "canonical channel mask + custom channel locations" },
+         { "VertexLayoutKey", "one slot per declared attribute, IN BINDING ORDER: its location and its component count (the format) - \"which channels\" alone would share a pipeline across two widths" },
          { "RenderPassCompatibility",
             "colour formats + depth format (or none) + the same attachments as OPAQUE DEVICE format codes + samples "
             "+ the backend's render-pass key (the pass structure)" },

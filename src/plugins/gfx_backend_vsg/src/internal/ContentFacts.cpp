@@ -199,7 +199,7 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
 
 bool channelsMatchLayout(const GeometryFacts& facts) noexcept
 {
-    const std::uint32_t declared = popcount(facts.layout.canonical_mask) + static_cast<std::uint32_t>(facts.layout.custom_locations.size());
+    const std::uint32_t declared = static_cast<std::uint32_t>(facts.layout.slots.size());
     if (declared != facts.channels.size()) {
         return false;
     }

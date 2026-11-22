@@ -160,7 +160,7 @@ class VN_BACKEND_VSG_API WindowTarget {
      * This is the shape the pipelines of this window were KEYS on, so it is the one the plan compares the
      * facts with; what the swapchain serves right now is a separate read (see @ref facts and @ref refresh).
      */
-    [[nodiscard]] core::TargetShape shape() const noexcept;
+    [[nodiscard]] core::RenderPassCompatibility shape() const noexcept;
 
     /** @brief Re-samples the swapchain's shape; true when it changed under this target.
      *
@@ -205,7 +205,7 @@ class VN_BACKEND_VSG_API WindowTarget {
 
   private:
     /** @brief What the swapchain serves NOW: the surface format and the traits' depth format, both spellings. */
-    [[nodiscard]] core::TargetShape sampledShape() const;
+    [[nodiscard]] core::RenderPassCompatibility sampledShape() const;
 
     struct Data;
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.

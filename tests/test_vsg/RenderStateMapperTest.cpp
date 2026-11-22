@@ -10,25 +10,25 @@ using vn::backend_vsg::RenderStateObjects;
 namespace
 {
 
-/** @brief Builds a resolved state with a custom depth comparison. */
-ResolvedRenderState resolveWithDepth(CompareOp op)
+/** @brief Builds a resolved command with a custom depth comparison. */
+ResolvedCommandState resolveWithDepth(CompareOp op)
 {
-    ResolvedRenderState state;
-    state.depth.compare = op;
-    return state;
+    ResolvedCommandState command;
+    command.state.depth.compare = op;
+    return command;
 }
 
-/** @brief Builds a resolved state with a custom primitive topology. */
-ResolvedRenderState resolveWithTopology(Topology topology)
+/** @brief Builds a resolved command with a custom primitive topology. */
+ResolvedCommandState resolveWithTopology(Topology topology)
 {
-    ResolvedRenderState state;
-    state.topology = topology;
-    return state;
+    ResolvedCommandState command;
+    command.topology = topology;
+    return command;
 }
 
 TEST(RenderStateMapperTest, DefaultStateReproducesBackendDefaults)
 {
-    const RenderStateObjects o = makeRenderStateObjects(ResolvedRenderState());
+    const RenderStateObjects o = makeRenderStateObjects(ResolvedCommandState());
 
     // Depth: test/write on; the reverse-Z backend needs GREATER for the
     // semantic default "closer wins" (CompareOp::Less).
@@ -78,20 +78,20 @@ TEST(RenderStateMapperTest, DepthCompareInvertsForReverseZ)
 
 TEST(RenderStateMapperTest, DepthTestAndWriteMapDirectly)
 {
-    ResolvedRenderState state;
-    state.depth.test  = false;
-    state.depth.write = false;
-    const auto o      = makeRenderStateObjects(state);
+    ResolvedCommandState command;
+    command.state.depth.test  = false;
+    command.state.depth.write = false;
+    const auto o              = makeRenderStateObjects(command);
     EXPECT_EQ(o.depthStencil->depthTestEnable, VK_FALSE);
     EXPECT_EQ(o.depthStencil->depthWriteEnable, VK_FALSE);
 }
 
 TEST(RenderStateMapperTest, CullModeAndPolygonMap)
 {
-    ResolvedRenderState state;
-    state.cullMode    = CullMode::Back;
-    state.polygonMode = PolygonMode::Line;
-    auto o            = makeRenderStateObjects(state);
+    ResolvedCommandState command;
+    command.state.cullMode    = CullMode::Back;
+    command.state.polygonMode = PolygonMode::Line;
+    auto o                    = makeRenderStateObjects(command);
     EXPECT_EQ(o.rasterization->cullMode, VK_CULL_MODE_BACK_BIT);
     EXPECT_EQ(o.rasterization->polygonMode, VK_POLYGON_MODE_LINE);
     // The mask means what the SDK says only PAIRED with the front face (see the default-state test): with
@@ -99,9 +99,9 @@ TEST(RenderStateMapperTest, CullModeAndPolygonMap)
     // would draw its interior instead of its outside, silently.
     EXPECT_EQ(o.rasterization->frontFace, VK_FRONT_FACE_CLOCKWISE);
 
-    state.cullMode    = CullMode::Front;
-    state.polygonMode = PolygonMode::Point;
-    o                 = makeRenderStateObjects(state);
+    command.state.cullMode    = CullMode::Front;
+    command.state.polygonMode = PolygonMode::Point;
+    o                         = makeRenderStateObjects(command);
     EXPECT_EQ(o.rasterization->cullMode, VK_CULL_MODE_FRONT_BIT);
     EXPECT_EQ(o.rasterization->polygonMode, VK_POLYGON_MODE_POINT);
 }
@@ -120,11 +120,11 @@ TEST(RenderStateMapperTest, TopologyMaps)
 
 TEST(RenderStateMapperTest, BlendFactorsAppliedWhenEnabled)
 {
-    ResolvedRenderState state;
-    state.blend.enabled = true;
-    state.blend.src     = BlendFactor::SrcColor;
-    state.blend.dst     = BlendFactor::DstColor;
-    const auto o        = makeRenderStateObjects(state);
+    ResolvedCommandState command;
+    command.state.blend.enabled = true;
+    command.state.blend.src     = BlendFactor::SrcColor;
+    command.state.blend.dst     = BlendFactor::DstColor;
+    const auto o                = makeRenderStateObjects(command);
     ASSERT_EQ(o.colorBlend->attachments.size(), 1u);
     const auto& a = o.colorBlend->attachments[0];
     EXPECT_EQ(a.blendEnable, VK_TRUE);

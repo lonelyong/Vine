@@ -114,7 +114,7 @@
 | The engine table is indexed by **handle index** and validated with generation + revision | an array, no hashing; an old frame reads the old version | the lifetime negotiation of address + `markUsed` |
 | The engine table holds **shared resources** only, never per-instance state | the table's size is prototypes × versions, not instances | touching a live object per command |
 | Residency ⟺ an accepted or in-flight Snapshot references its `(id, revision)`; a snapshot the host holds itself pins nothing | an exact rule that does not look at a time window (`I4` / `R22`) | the `parking` / `kept` safety net |
-| The pipeline cache key is a **value** (program@rev, layout@rev, state, formats, samples) | reproducible, shareable, unit-testable | a pointer + variant bits |
+| The pipeline cache key is a **value** (program@rev, the vertex layout slots with their widths, formats, samples, and whatever the device must bake - see `graphics-rendering.md` 2.11) | reproducible, shareable, unit-testable | a pointer + variant bits |
 | A row's / command's payload is **values**: `GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription` + `ContentRef`; lights are `LightValue` | the recording side reads no live object, and frame N draws the value it described with (`G1` / `G10`); each command saves 3 `intrusive_ptr` atomic increments / decrements | reading live objects (program text / material alpha mode / `Light` fields) |
 | Preparation is a first-class entry point: `prepare()` answers "what is needed" | compile stalls become budgetable, and loading can precompile everything (`R23`); the batch of transfer-only work it may do itself lands here too (ADR-2026-11-14) | discovering at record time that something must compile, or must upload |
 | A per-frame arena, zero allocation outside it during a frame | the allocation ceiling turns from a "rule" into a constant (`R24`) | a per-frame `vector` / `shared_ptr` |
@@ -258,7 +258,10 @@
 - **Behaviour**: `Plan` is a value (an ordered `PassDesc` list; a pass' **name** is its identity inside the plan);
   `applyPlan(plan)` takes the difference by name: a new name is added, a same-named one is updated **in place** (the node and the backend state survive), a name that
   disappeared is removed; `plan()` reads the current shape back into the same type (`applyPlan(plan())` is idempotent). Validation yields stable `PlanProblemCode`s
-  (`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`) and accepts the whole plan or rejects the whole plan. The return value is
+  (`EmptyPassName` / `DuplicatePassName` / `InvalidTarget` / `InvalidOutput` / `FieldUnusedByKind` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`) and
+  accepts the whole plan or rejects the whole plan. `FieldUnusedByKind` is the declaration's own rule: a field the execution its kind names never reads (a Scene
+  pass' `program`, a Fullscreen pass' `program_override` or layer mask) is refused instead of being silently ignored - `content` is NOT one of them, because a
+  full-screen pass reads it for the scene's lights. The return value is
   the three-state `PlanResult`: `Applied` / `Invalid` + a problem list / `Refused` + `PlanRefusal` (`Busy` = a frame is recording in the engine, `EngineGone` = the
   `PassRegistry`'s engine is gone). A kind change rebuilds the built-in node; a plan expresses `PassKind` only, and a pass subclass is no longer an expressible shape.
 - **Constraints** (`C7`): by name, not by pointer (in the scope form it is `(owner, name)`).

@@ -36,9 +36,9 @@ struct CompiledPrograms::Data {
             mix(key.program.id.bits());
             mix(key.program.revision);
             mix(static_cast<std::uint64_t>(key.kind));
-            mix(key.layout.canonical_mask);
-            for (const std::uint32_t location : key.layout.custom_locations) {
-                mix(location);
+            for (const core::VertexLayoutSlot& slot : key.layout.slots) {
+                mix(slot.location);
+                mix(slot.components);
             }
             mix(key.variant.bits());
             mix(key.color_attachments);

@@ -158,9 +158,9 @@ struct CompiledDraw {
     CameraSnapshot                   camera{};                  // The camera announced with the call.
     vn::graphics::Viewport           viewport{};                // Resolved: the announced rectangle, or the whole target.
     std::span<const LightRef>        lights{};                  // The consumed lights; empty = the backend default.
-    const void*                      source{ nullptr };         // Full-full-screen draws: the target whose attachments are sampled.
-    vn::graphics::ContentRef         program{};                 // Full-full-screen draws: the fragment program to draw with.
-    DynamicState                     dynamic{};                 // Full-full-screen draws: the state the PASS gives them (see below).
+    const void*                      source{ nullptr };         // full-screen draws: the target whose attachments are sampled.
+    vn::graphics::ContentRef         program{};                 // full-screen draws: the fragment program to draw with.
+    DynamicState                     dynamic{};                 // full-screen draws: the state the PASS gives them (see below).
     std::span<const CompiledCommand> commands{};                // Content draws: the instances to render.
 
     // Why a full-screen draw has its own `dynamic` field rather than resolving per command: a full-screen packet has
@@ -210,9 +210,9 @@ struct CompiledPass {
  *   linear image and an sRGB surface - measured, see RenderPassCompatibility), so the check has to
  *   read the device's opaque format codes and the backend's render-pass key as well as the engine's
  *   spelling.
- * - WHY SPANS AND NOT A TargetShape. The plan's storage rule is the arena's (see FrameArena and §2.5
+ * - WHY SPANS AND NOT A RenderPassCompatibility. The plan's storage rule is the arena's (see FrameArena and §2.5
  *   P0-1): a plan holds no span into the caller's facts, so the compiler COPIES what the facts stated
- *   into the same arena the rest of the plan lives in and points there. A `TargetShape` by value
+ *   into the same arena the rest of the plan lives in and points there. A `RenderPassCompatibility` by value
  *   would allocate a vector per target per frame, which is what the steady-state allocation gate of
  *   every phase exists to catch.
  * - "NOT KNOWN" IS NOT "ABSENT", and the fields say which is which: an EMPTY device_color_formats
@@ -245,10 +245,10 @@ struct CompiledShape {
  *   disagrees", see the record step's note for what that is worth).
  *
  * @param stated What the plan's facts said (see CompiledShape).
- * @param actual What the target reports now (see TargetShape).
+ * @param actual What the target reports now (see RenderPassCompatibility).
  * @return true when nothing the plan stated disagrees with the target.
  */
-[[nodiscard]] VN_BACKEND_VSG_API bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) noexcept;
+[[nodiscard]] VN_BACKEND_VSG_API bool statedShapeAgrees(const CompiledShape& stated, const RenderPassCompatibility& actual) noexcept;
 
 /** @brief One target the frame draws into, with what has to happen to it (see planTarget / depthPlan). */
 struct CompiledTarget {

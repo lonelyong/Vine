@@ -54,12 +54,11 @@ const vn::graphics::ProgramId program_c = vn::test::programId(3);
 PipelineKey contentKey(const vn::graphics::ProgramId* program, std::uint64_t revision)
 {
     PipelineKey key;
-    key.program                        = vn::graphics::contentRefOf(*program, revision);
-    key.vertex_layout.canonical_mask   = 0xFU;
-    key.vertex_layout.custom_locations = { 3U };
-    key.compatibility.color_formats    = { RenderTarget::ColorFormat::RGBA8 };
-    key.compatibility.depth_format     = RenderTarget::DepthFormat::D24;
-    key.compatibility.samples          = 1U;
+    key.program                      = vn::graphics::contentRefOf(*program, revision);
+    key.vertex_layout.slots         = { { 0U, 3U }, { 1U, 3U }, { 2U, 4U }, { 8U, 2U }, { 3U, 2U } };
+    key.compatibility.color_formats  = { RenderTarget::ColorFormat::RGBA8 };
+    key.compatibility.depth_format   = RenderTarget::DepthFormat::D24;
+    key.compatibility.samples        = 1U;
     return key;
 }
 
@@ -113,7 +112,7 @@ TEST(CoreVariantPoolTest, TheCompatibilityHalfOfTheKeyMatters)
     PipelineKey sampled_depth_count          = base;
     sampled_depth_count.sampled_depth_count  = 1U;
     PipelineKey layout                       = base;
-    layout.vertex_layout.canonical_mask      = 0x7U;
+    layout.vertex_layout.slots               = { { 0U, 3U }, { 1U, 3U }, { 2U, 4U } };
 
     EXPECT_EQ(pool.acquire(base).action, VariantPool::Action::Created);
     EXPECT_EQ(pool.acquire(other_format).action, VariantPool::Action::Created);
@@ -149,17 +148,18 @@ TEST(CoreVariantPoolTest, AnEntryKeepsItsKeyAfterTheCallersKeyIsGone)
     VariantPool   pool;
     std::uint64_t id = 0;
     {
-        PipelineKey key                    = contentKey(&program_a, 9);
-        key.vertex_layout.custom_locations = { 3U, 7U };
-        id                                 = pool.acquire(key).id;
+        PipelineKey key            = contentKey(&program_a, 9);
+        key.vertex_layout.slots    = { { 0U, 3U }, { 3U, 2U }, { 7U, 4U } };
+        id                         = pool.acquire(key).id;
     }
 
     const PipelineKey* kept = pool.keyOf(id);
     ASSERT_NE(kept, nullptr);
     EXPECT_EQ(kept->program, vn::graphics::contentRefOf(program_a, 9));
     EXPECT_EQ(kept->program.revision, 9U);
-    ASSERT_EQ(kept->vertex_layout.custom_locations.size(), 2U);
-    EXPECT_EQ(kept->vertex_layout.custom_locations[1], 7U);
+    ASSERT_EQ(kept->vertex_layout.slots.size(), 3U);
+    EXPECT_EQ(kept->vertex_layout.slots[2].location, 7U);
+    EXPECT_EQ(kept->vertex_layout.slots[2].components, 4U);
     EXPECT_EQ(kept->compatibility.depth_format, RenderTarget::DepthFormat::D24);
     EXPECT_EQ(pool.keyOf(9999U), nullptr) << "an id the pool does not know has no key";
 }

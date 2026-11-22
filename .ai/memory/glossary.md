@@ -1,6 +1,6 @@
 # Glossary: one spelling per concept
 
-> **Status**: living ｜ **Last verified**: 2026-11-20
+> **Status**: living ｜ **Last verified**: 2026-11-22
 > **Scope**: the vocabulary a design page, an ADR or a commit body uses about the render seam, the two
 > backends and the frame model. It is the single mapping between a concept's **code spelling** and the
 > words the Chinese pages use, so prose can be searched and translated without guessing.
@@ -53,7 +53,8 @@
 | pinned resources, `PinnedResources` | 固定资源 | Keyed residency with build-on-miss, pin-driven retirement and parked destruction; the vsg template every resource kind uses (was `ResourceTable`). |
 | snapshot, `SceneSnapshot` | 快照 | The published scene rows a frame's views select from. |
 | publication, `Scene::publish` | 发布 | Making a snapshot current; a frame reads only what is published. |
-| pipeline | 管线 | A `VkPipeline` / vsg pipeline built for one compatibility key. |
+| pipeline | 管线 | A `VkPipeline` / vsg pipeline built from one `PipelineKey` (the portable identity - its vertex-layout slots carry each attribute's component count, i.e. its format). |
+| `ContentPipelineKey` | — | vk's key: the seam's `PipelineKey` PLUS `RasterState` (the five items a Vulkan 1.2 device cannot set dynamically - cull, polygon mode, depth test/write/compare, blend). A name that exists because a device floor does, not because the model has two identities. |
 | compatibility, `RenderPassCompatibility` | 兼容性 | The render-pass half of a pipeline's key. |
 | render pass key, `RenderPassKey` | 渲染通道键 | The opaque class two render passes must share to be compatible. |
 | push range, `PushRange` | 推送区 | The per-draw push constants (was `ContentPush`). |
@@ -103,7 +104,7 @@ finishes that migration. Two spellings of one word are a defect even when they c
 | content | engine-owned scene, material, geometry, program, light | bytes on the GPU |
 | residency | whether GPU objects exist | memory pressure or an eviction policy |
 | command | `DrawItem`, one scene drawable | one recorded GPU command |
-| shape | a target's attachment formats (`TargetShape` / `TransientShape`), or a frame's counts (`FrameCounts`) | a mesh / geometry shape |
+| shape | a target's attachment formats (`RenderPassCompatibility`, or `TransientShape` for a declaration), or a frame's counts (`FrameCounts`) | a mesh / geometry shape |
 | layout | a GPU image layout (`ImageLayout`), a vertex input layout, an overlay's placement (`OverlayPlacement`), or a surface-resize step (`ResizeParticipant`) | one job - read the type's own note |
 | slot | a light block index, a content arena index, an engine pass row, a published output name (`output_name`), or an instance record (`InstanceRecord`) | one key space |
 | screen | a full-screen pass (`FullscreenPass`, the `Fullscreen` kind), or a screen-SPACE program (`drawScreenProgram`, `screenCopyProgram`) | the window or the surface - that is the `RenderArea` / `PresentTarget` |

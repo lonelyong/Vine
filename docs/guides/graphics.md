@@ -863,8 +863,11 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 > **名字的坑**：这个 `PassChain` **不是**图形 API 的 pipeline state（Vulkan 的 `VkPipeline`，通常叫 PSO）——它是**一条
 > pass 链条的编译产物**（帧图编译的结果：谁画、按什么顺序、读谁写谁），一个视图/一块区一份。后端那种"管线状态"在本仓另
-> 有一套：`core::VariantPool` 按 `core::PipelineKey`（程序与其 revision、拓扑、采样颜色/深度数…，键里还带
-> `ProgramVariant` 着色器变体）缓存 `VkPipeline`。两个名字像，层次完全不同。
+> 有一套：`core::VariantPool` 按 SDK 的 `PipelineKey`（draw kind、程序与其 revision、顶点槽位
+> （location + 分量数）、渲染通道兼容性、采样颜色/深度数、拓扑类…，键里还带
+> `ProgramVariant` 着色器变体）缓存 `VkPipeline`。vk 后端在同名键之外**组合**了一层
+> `ContentPipelineKey`（`RasterState`：Vulkan 1.2 无法动态化的 cull / 多边形模式 / 深度 / 混合），
+> 所以同一份可移植身份在两边是同一类型，差异只有那一个有名字的扩展。两个名字像，层次完全不同。
 
 > 这一层往上的一整套（`Viewer` 管什么、一个视图的 surface 是谁、多窗口怎么办、基数关系）见
 > [`render-views.md`](render-views.md) —— 那份是**模块说明**（架构图 / 类关系图 / 简单 demo），本文是逐个入口的参考。
@@ -1659,7 +1662,7 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 | 宿主的画布 | `RenderTarget` | 宿主 | 一块离屏画布（颜色 / 深度附件），跨帧存在；"画到哪里"的身份就是它的地址 |
 | 窗口的出口 | `WindowPresentTarget`（`PresentTarget` 的一种） | 设备发、`RenderArea` 持有 | swapchain + present；**不是画布**。平台重建窗口时它是被"移动"而不是重建，所以管道都还在 |
 | pass 要画到哪 | `Target`（`Window` / `Explicit` / `Transient`） | pass 的声明（`PassDesc::target`） | 一份值，三种形状互斥；`Transient` 只说要什么，不说谁来建 |
-| 兼容性与想要的尺寸 | `TargetShape` / `TargetDesc` | 值 | 重建**管道**看形状（格式 / 采样 / 通道结构），重建**图像**看尺寸 |
+| 兼容性与想要的尺寸 | `RenderPassCompatibility`（`TargetDesc::shape`） | 值 | 重建**管道**看形状（格式 / 采样 / 通道结构），重建**图像**看尺寸 |
 | 后端手上有什么 | `TargetInstance` | 后端 | 现在这组附件是按哪个 `TargetDesc` 建的、还能用么 |
 | 该做什么 | `TargetDecision`（`planTarget()` 的返回） | 后端 | `None` / `Repair`（+ 理由）/ `ResizeInPlace` / `Rebuild` |
 

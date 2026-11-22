@@ -88,7 +88,7 @@ class TargetObjects {
 
     /** @brief The target's shape in the engine's terms: several colour attachments, optional depth.
      *
-     * The shape is the core's (@ref core::TargetShape), not a list of API formats: a target the backend draws
+     * The shape is the core's (@ref core::RenderPassCompatibility), not a list of API formats: a target the backend draws
      * into has to be expressible in the SDK's vocabulary, and the conversion to the API's enums is the API
      * layer's job (the same mapping the pipeline factory uses).
      */
@@ -339,7 +339,7 @@ class TargetObjects {
      *
      * @return The shape (already stored: this is the one the render pass was created from).
      */
-    [[nodiscard]] core::TargetShape shape() const noexcept;
+    [[nodiscard]] core::RenderPassCompatibility shape() const noexcept;
 
     /** @brief Gets whether this target has a depth attachment. */
     [[nodiscard]] bool hasDepth() const noexcept;
@@ -440,7 +440,7 @@ class TargetObjects {
     /** @brief Makes the target serve a new extent, the way the plan says (`core::planTarget`).
      *
      * WHAT IS REPLACED, AND WHAT IS NOT. An extent is not part of a pipeline's identity and not part of
-     * render-pass compatibility (`core::TargetShape`), so a resize replaces EXACTLY the objects whose size is in
+     * render-pass compatibility (`core::RenderPassCompatibility`), so a resize replaces EXACTLY the objects whose size is in
      * their description - the images, their views, the copy-back buffers and nodes, the framebuffer and the
      * graph built around it - and KEEPS the render pass and its load-op variants: a pipeline compiled for this
      * target before the resize is still the pipeline for it afterwards. A resize that rebuilt the pass would
@@ -493,7 +493,7 @@ class TargetObjects {
      * WHAT A SHAPE IS, AND WHY THIS CANNOT BE A RESIZE. Extent, formats, depth format and attachment
      * count divide the world twice: the images and the framebuffer exist at an extent, while the render
      * pass and every pipeline compiled against it exist at a COMPATIBILITY - the formats, the depth and
-     * the subpass structure (`core::TargetShape`). A resize moves the first and must leave the second
+     * the subpass structure (`core::RenderPassCompatibility`). A resize moves the first and must leave the second
      * alone (a pipeline compiled for this target stays the pipeline for it). A shape change is the
      * opposite: the render pass, its load-op variants and every pipeline keyed on its compatibility are
      * no longer valid, so they are REBUILT here, and a caller that had compiled pipelines for the old
@@ -624,7 +624,7 @@ class TargetObjects {
      * @param layout The layout to describe.
      * @return The shape: attachment formats, depth format, samples and the backend's render-pass key.
      */
-    [[nodiscard]] static core::TargetShape shapeOf(const TargetLayout& layout);
+    [[nodiscard]] static core::RenderPassCompatibility shapeOf(const TargetLayout& layout);
 
     /** @brief Builds everything whose description contains the extent (images, views, copy-back, framebuffer).
      *

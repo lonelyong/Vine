@@ -22,17 +22,22 @@
  *   change in one layer must only cost that layer:
  *   - IDENTITY (PipelineKey, and the keys under it): changing it means a different GPU object. It may
  *     contain only what a pipeline is actually compiled against - the program and its revision, the
- *     vertex layout, render-pass compatibility, and whether a depth texture or a shadow map is bound.
- *     It must NOT contain an extent, a viewport, a matrix, an opacity, a material value, a cull mode
- *     or a blend choice.
+ *     vertex layout, render-pass compatibility, the draw kind and whether a depth texture or a shadow map
+ *     is bound. It must NOT contain an extent, a viewport, a matrix, an opacity, a material value or a
+ *     data fact.
  *   - DYNAMIC STATE (DynamicState): delivered per draw with a set command. Cheap by construction, and
  *     this is why a host's state change costs a command instead of a pipeline.
  *   - DATA (InstanceRecord): per-frame values written into a buffer, plus the material reference.
- * - Both historical failure families in this backend are the same mistake in two directions: a host
- *   state change that recompiled a pipeline (something dynamic had leaked into the identity key), and
- *   a resize that rebuilt every full-screen program slot (an extent had leaked into one). Splitting
- *   the layers is not tidiness; it is the fix, and the audit table below is how a new field has to
- *   declare which layer it belongs to.
+ * - WHICH ITEMS REACH IDENTITY IS THE DEVICE'S ANSWER, AND THE HEADER SAYS SO. `DynamicState` is the state
+ *   the ENGINE can move off identity; whether an item really travels as a command depends on the API floor,
+ *   because Vulkan 1.0/1.1 (and a 1.2 device without VK_EXT_extended_dynamic_state) can only BAKE cull,
+ *   polygon mode, depth test/write/compare and blend. The contract is therefore: a backend MUST move every
+ *   item its device can move off identity, and MUST state which ones it bakes. vsg (an EDS3 floor) moves all
+ *   of them; vk (a 1.2 floor) bakes those five in its own key extension (`ContentPipelineKey`).
+ * - Both historical failure families are the same mistake in two directions: a host state change that
+ *   recompiled a pipeline (something dynamic had leaked into the identity key), and a resize that rebuilt
+ *   every full-screen program slot (an extent had leaked into one). Splitting the layers is not tidiness; it
+ *   is the fix, and the audit table below is how a new field has to declare which layer it belongs to.
  * - WHAT THE AUDIT TABLE IS FOR. A comment saying "no extents in the key" is not checkable. The table
  *   lists every key with its allowed inputs, and a test pins the table - so adding a field to a key
  *   means touching the table (and the test), which is the moment to ask the question again. That is
@@ -65,12 +70,34 @@ enum class ImageLayout : std::uint8_t
     Present,         // Handed to the presentation engine.
 };
 
+/** @brief Identity of a vertex layout: the attributes a pipeline DECLARES, in binding order, each with its width. */
+struct VN_GRAPHICS_API VertexLayoutSlot {
+    std::uint32_t location{ 0 };   // Shader location the pipeline declares this attribute at.
+    std::uint32_t components{ 0 }; // Scalar components per vertex (1..4) - the attribute's FORMAT.
+
+    /** @brief Compares two slots. */
+    [[nodiscard]] bool operator==(const VertexLayoutSlot& other) const noexcept
+    {
+        return location == other.location && components == other.components;
+    }
+};
+
 /**
- * @brief Identity of a vertex layout: which canonical channels are fed, and at which custom locations.
+ * @brief Identity of a vertex layout: the attributes a pipeline DECLARES, in binding order.
+ *
+ * @details
+ * - WHAT IT MUST CARRY, and what a locations-only key got wrong: the WIDTH is part of the vertex format.
+ *   Two geometries feeding a custom channel at the same location with two and with four components are two
+ *   vertex formats, and a key that named only the location shared ONE compiled pipeline between them - the
+ *   second geometry then read a 4-component attribute out of a 2-component stream (G1 / G10).
+ * - ORDER IS PART OF IT. Binding N is `slots[N]` on both sides (the pipeline declares attribute N at binding
+ *   N, the draw binds stream N), so two layouts with the same attributes in a different order are two keys -
+ *   each backend fills this in ITS OWN binding order, and that order is a fact about the backend, not a
+ *   difference in the fact being keyed.
+ * - Canonical locations are the ABI's (see Geometry.hpp); a custom channel keeps its own location and width.
  */
 struct VN_GRAPHICS_API VertexLayoutKey {
-    std::uint32_t              canonical_mask{ 0 }; // Bit set of the canonical roles that are fed.
-    std::vector<std::uint32_t> custom_locations;    // Custom channel locations, ascending.
+    std::vector<VertexLayoutSlot> slots; // One entry per declared attribute, in binding order.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const VertexLayoutKey& other) const noexcept;
@@ -173,7 +200,8 @@ struct VN_GRAPHICS_API RenderPassKey {
  *   the key, ONE variant served both passes and the off-screen-compiled pipeline was bound in the
  *   window's render pass (two subpass dependencies against one). The device formats cannot be
  *   recovered from the engine's vocabulary, so the layer that knows them hands them over instead: a
- *   target reports them in its shape, and `TargetShape::compatibility()` copies them into this key.
+ *   target reports them in its compatibility, and `TargetDesc` carries that very value into the rebuild
+ *   decision while a pipeline key carries it into the compile.
  * - They are stated as DeviceFormat, an OPAQUE code this layer only compares: `kUndefined` (0) means
  *   "no such attachment" in the per-attachment fields and "not known" in the ones a plan may leave
  *   unstated. "Not known" is not the same as "absent": a shape that reports no device formats is a
@@ -291,9 +319,8 @@ struct VN_GRAPHICS_API DynamicState {
     vn::graphics::CullMode      cull_mode{ vn::graphics::CullMode::None };       // Face culling.
     vn::graphics::PolygonMode   polygon_mode{ vn::graphics::PolygonMode::Fill }; // Rasterisation mode.
     vn::graphics::PolygonOffset polygon_offset{};                                // Depth bias (coplanar surfaces).
-    vn::graphics::Topology      topology{
-        vn::graphics::Topology::Triangles
-    }; // Primitive assembly.    /// Width of rasterised LINE primitives, in framebuffer pixels (see RenderState::lineWidth). It is dynamic
+    vn::graphics::Topology      topology{ vn::graphics::Topology::Triangles };   // Primitive assembly.
+    /// Width of rasterised LINE primitives, in framebuffer pixels (see RenderState::lineWidth). It is dynamic
     /// state of its own (`vkCmdSetLineWidth`), so it belongs here rather than in a pipeline key.
     float                    line_width{ 1.0F };
     vn::graphics::BlendState blend; // Blend state.
@@ -303,21 +330,23 @@ struct VN_GRAPHICS_API DynamicState {
 };
 
 /**
- * @brief The dynamic layer of one instance, from the command's FINAL state.
+ * @brief The dynamic layer of one command, from the command's FINAL state and its assembly.
  *
  * @details
  * - A pure mapping, deliberately: the two depth intents (what the content authored and what the pass
  *   pipes in) were already weighed by the ONE resolution function -
- *   `resolveRenderState(command.authored_state, pass.stateOverrides())` in StateResolution.hpp - so what
- *   arrives here is the answer, not two claims to compare. The compare op is distance-semantic
+ *   `resolveRenderState(command.authored_state, pass.stateOverrides(), topology)` in StateResolution.hpp -
+ *   so what arrives here is the answer, not two claims to compare. The compare op is distance-semantic
  *   ("closer wins") and travels unchanged; the reverse-Z inversion happens at the Vulkan boundary
  *   (`RenderStateMapper::mapCompareOp`), so the default Less maps to GREATER and a scene without
  *   StateNodes stays on the pipeline it was on before.
+ * - It reads the whole resolved COMMAND because the assembly is a data fact that travels beside the state
+ *   (see ResolvedCommandState), while the set commands that write it are state.
  *
- * @param state The command's resolved state.
+ * @param command The command's resolved state, origins and topology.
  * @return The state to deliver with a set command (never part of an identity - see the file note).
  */
-[[nodiscard]] VN_GRAPHICS_API DynamicState resolveDynamicState(const vn::graphics::ResolvedRenderState& state) noexcept;
+[[nodiscard]] VN_GRAPHICS_API DynamicState resolveDynamicState(const vn::graphics::ResolvedCommandState& command) noexcept;
 
 /**
  * @brief The per-frame data of one draw: written into a buffer, never part of an identity.

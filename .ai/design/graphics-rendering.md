@@ -30,7 +30,7 @@ This file defines the current design of graphics rendering: targets, MSAA, image
 ## 2. Design Points
 
 2.1 **Description separated from GPU resources**: `RenderTarget` is only a description; the backend builds the image from the description.
-2.2 **The sample count is a target property**: `setSamples` → `TargetShape` → pipeline key → pass and image.
+2.2 **The sample count is a target property**: `setSamples` → the target's `RenderPassCompatibility` → pipeline key → pass and image.
 2.3 **Two image-source lifetimes**: produced (`ImageRef`) and imported (`Texture`) are not merged; only `ImageSource` resolves the shape uniformly.
 2.4 **Colour goes into types**: `Colorf` linear light, `Color` sRGB encoding, one named pair of conversions.
 2.5 **Shading is a thin interface**: GLSL source + typed entry points; `ShaderAbi` is the only contract between C++ and GLSL.
@@ -44,10 +44,13 @@ This file defines the current design of graphics rendering: targets, MSAA, image
   - **Three reasons for not building are reported separately** (once per build, `UnsupportedRequest`): a second casting light / a point light that cannot be represented / this path produces no lighting at all (the host's own lighting program, or a mode that does not need shading). Counting them separately is what lets "N lights cast no shadow" be located instead of guessed.
   - **The pass names a colour-less program** (`BuiltinShaders::depthOnlyProgram()`, `program_override`): a depth map has no colour attachment, so the pass draws with a fragment stage that declares no output instead of each drawable's own program. The vertex stage stays the content's (`builtin_forward.vert`) - same push constants, same instancing, same position - which is why a triangle's depth and its colour cannot disagree; the price is that the stage still transforms a normal no fragment reads, and the alternative (a position-only stage) would declare inputs the geometry is not required to carry. Reportable effect: the shadow pass does no per-fragment material/lights/shadow work, and validation no longer says the fragment output it used to write was unused.
 
-2.8 **Dynamic state is a single list**: the dynamic state the pipeline **declares** (`DynamicState`) and the dynamic state the commands **write** (`SetDynamicState`)
-must be two faces of the same list, pinned by one test "every item the commands write is declared in the pipeline, and vice versa". Miss one declaration and the driver takes the create-info
+2.8 **Dynamic state is a single list, per backend and NEXT TO ITS WRITER**: the dynamic state the pipeline **declares** (`DynamicState`) and the dynamic state the commands **write** (`SetDynamicState`
+in the vsg backend, the `vkCmdSet*` calls in vk) must be two faces of the same list, pinned by one test "every item the commands write is declared in the pipeline, and vice versa". Miss one declaration and the driver takes the create-info
 baked value — the half the commands wrote is silently dropped, and the picture is wrong without an error. This also governs the **switches** in create-info: dynamic state can only change values, not
-enables such as `depthBiasEnable`, so an enable must be fixed together with the list. Known violation: `../bugs/vsg-depth-bias-not-declared-dynamic.md`.
+enables such as `depthBiasEnable`, so an enable must be fixed together with the list.
+There is one list **per backend** (its floor decides what it can move), and each list lives beside the recorder that writes it: vsg's is `detail::makeDynamicStateDeclaration()` in
+`backend_vsg/support/VsgDynamicState.cpp` (the same file as `SetDynamicState::record`, thirteen states), vk's is the four-entry array in `ContentCaches`'s `buildPipeline` (viewport, scissor, line width, depth bias).
+The witness that the rule has teeth is `../bugs/vsg-depth-bias-not-declared-dynamic.md`: the content pipeline carried a second copy of the list without `DEPTH_BIAS` and without the enable, so `setPolygonOffset` was a silent no-op until 2026-11-21.
 
 2.9 **Capabilities are two questions, readback has one "which image"**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
 the limit fields are `Capabilities::limits.*` (source-level, BC-11), and the feature questions are `Features::supports` / `Features::bit` with `Features::Feature` as the enum.
@@ -110,6 +113,28 @@ realigned to the industry's meaning.
   module promises no source or ABI stability); renaming `FrameResult` instead of `FrameCallOutcome` ("result" is the word a host
   arrives with, and the odd one out was the CALL's value); renaming `PassKind::Scene` to `Content` (a scene pass draws lines and
   impostors too, and `Content` would read as "anything the engine owns", the full-screen program included).
+
+2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
+[`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
+
+- `vn::graphics::PipelineKey` is the PORTABLE identity both backends key a compiled pipeline by: draw kind, program
+  identity + revision, the vertex layout, render-pass compatibility, the sampled depth/colour counts, the program
+  variant and the topology class. Its `vertex_layout` is **one slot per declared attribute, in binding order, with
+  the slot's component count** - a locations-only key shared one compiled pipeline between a 2-component and a
+  4-component custom channel, i.e. between two vertex FORMATS.
+- `DynamicState` is the maximum the ENGINE can move off identity (`graphics-rendering.md` 2.8 lists how it is
+  delivered). `DrawState.hpp` states the rule the two layers follow: a backend must move every item its device CAN
+  off identity and must say which ones it cannot.
+- **vk (a Vulkan 1.2 floor, the host's default)** cannot set cull / polygon mode / depth test / write / compare /
+  blend dynamically, so it bakes exactly those five: its key is
+  `ContentPipelineKey { vn::graphics::PipelineKey identity; RasterState raster; }` (composition, so a field added
+  to the shared key is in vk's identity by construction). **vsg (an EDS3 floor)** moves all of them, and its one
+  dynamic-state list lives next to its writer (`support/VsgDynamicState.*`).
+- The witness that "one list" has teeth is `../bugs/vsg-depth-bias-not-declared-dynamic.md`: a second copy of the
+  list without `DEPTH_BIAS`, plus a pipeline without the `depthBiasEnable` switch, made `setPolygonOffset` a silent
+  no-op (fixed 2026-11-21).
+- Revisit: when no consumer needs a 1.2-class device, vk can move to EDS1/EDS3 and `RasterState` disappears
+  (backlog `T54`).
 
 ## 3. Features
 
@@ -203,7 +228,7 @@ realigned to the industry's meaning.
 
 | # | Constraint |
 |---|---|
-| C1 | The sample count is a target property; image / pass / pipeline are all driven by one `TargetShape`. |
+| C1 | The sample count is a target property; image / pass / pipeline are all driven by one `RenderPassCompatibility` (the value a target's `shape()` answers). |
 | C2 | produced and imported image sources are not merged; their lifetimes differ. |
 | C3 | Colour splits into linear-light `Colorf` and sRGB-encoded `Color`. |
 | C4 | The engine core's pass description has no shadow field; "this image is a shadow" is declared by the target itself, consumers do not guess from "the first input with depth". |

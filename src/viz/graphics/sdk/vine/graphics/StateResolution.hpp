@@ -12,12 +12,17 @@
 VN_GRAPHICS_NS_BEGIN
 
 /**
- * @brief Concrete render state after defaults are applied.
+ * @brief Concrete render state after defaults are applied: the pipeline-STATE half of a draw.
  *
- * The resolved state is what a backend uses to select pipeline variants:
- * StateNodes contribute overrides; everything they do not set falls back to
- * the defaults below (which match the backend's current default pipeline
- * state, so a scene without StateNodes resolves to today's behaviour).
+ * StateNodes contribute overrides; everything they do not set falls back to the defaults below (which
+ * match the backend's current default pipeline state, so a scene without StateNodes resolves to today's
+ * behaviour).
+ *
+ * @note
+ * - What is NOT here is a DATA fact: the primitive's topology is not state (see Topology.hpp) and lives on
+ *   `ResolvedCommandState`, next to the state it travels with. Keeping it out is what lets
+ *   `applyStateDefaults()` answer honestly: it fills what nobody stated and never invents a data fact it
+ *   was not given (G1).
  */
 struct VN_GRAPHICS_API ResolvedRenderState {
     DepthState    depth;                           // Depth state (defaults: test/write on, Less).
@@ -33,17 +38,13 @@ struct VN_GRAPHICS_API ResolvedRenderState {
     /// backend's DYNAMIC STATE (it never enters a pipeline key either), capped by the device's lineWidthRange
     /// (see Capabilities::limits.max_line_width). It does not widen `PolygonMode::Line`.
     float lineWidth   = 1.0F;
-    /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
-    /// pass' override of it for the whole view. It has no "content" layer and no default here - a command
-    /// without a primitive draws nothing - so this is filled by the caller that knows the data.
-    Topology topology = Topology::Triangles;
 };
 
 /** @brief Returns whether two resolved states are equal. */
 inline bool operator==(const ResolvedRenderState& lhs, const ResolvedRenderState& rhs)
 {
     return lhs.depth == rhs.depth && lhs.cullMode == rhs.cullMode && lhs.blend == rhs.blend && lhs.polygonMode == rhs.polygonMode &&
-           lhs.polygonOffset == rhs.polygonOffset && lhs.topology == rhs.topology && lhs.pointSize == rhs.pointSize && lhs.lineWidth == rhs.lineWidth;
+           lhs.polygonOffset == rhs.polygonOffset && lhs.pointSize == rhs.pointSize && lhs.lineWidth == rhs.lineWidth;
 }
 
 /** @brief Returns whether two resolved states differ. */
@@ -75,7 +76,6 @@ struct VN_GRAPHICS_API RenderStateOrigin {
     StateOrigin polygonOffset{ StateOrigin::Default }; // Where the depth bias came from.
     StateOrigin pointSize{ StateOrigin::Default };     // Where the point size came from.
     StateOrigin lineWidth{ StateOrigin::Default };     // Where the line width came from.
-    StateOrigin topology{ StateOrigin::Default };      // Where the topology came from (Data or Pass).
 };
 
 /**
@@ -110,10 +110,16 @@ struct VN_GRAPHICS_API PassRenderState {
     std::optional<Topology> topology{};
 };
 
-/** @brief One command's FINAL state in one pass, and the layer each item came from. */
+/** @brief One command's FINAL state in one pass, the assembly it draws with, and the layer each came from. */
 struct VN_GRAPHICS_API ResolvedCommandState {
     ResolvedRenderState state;  // The final state (defaults filled in).
     RenderStateOrigin   origin; // Which layer decided each item of it.
+    /// The EFFECTIVE primitive assembly: the PRIMITIVE's own value (see Primitive.hpp), or the pass' override
+    /// of it for the whole view. It is a DATA fact rather than state, which is why it sits BESIDE @ref state -
+    /// and why `topology_origin` has no `Default`: the data states one, or the pass overrides it.
+    Topology    topology{ Topology::Triangles };
+    /// Which layer stated @ref topology (`Data` or `Pass`).
+    StateOrigin topology_origin{ StateOrigin::Data };
 };
 
 /**
@@ -125,6 +131,9 @@ struct VN_GRAPHICS_API ResolvedCommandState {
  *   of reconstructing the layering. Everything consuming state goes through here: the geometry/state a
  *   backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that
  *   has to explain a picture.
+ * - The assembly travels in the SAME answer but not in the same field: `state` is what a StateNode may
+ *   author, `topology` is the data's own word (or the pass' view switch over it). A caller building a
+ *   pipeline key reads both, and neither is guessed (`G1`).
  *
  * @param authored The state the CONTENT authored (DrawItem::authored_state): every item left unset is
  *                 "nobody on the path said anything about it", which is not the same as "set to the default".
@@ -132,7 +141,7 @@ struct VN_GRAPHICS_API ResolvedCommandState {
  * @param data_topology The PRIMITIVE's topology (see Primitive.hpp): the data's own word, which the pass may
  *                 override but a StateNode cannot (topology is not state - it says how this draw consumes its
  *                 vertex/index data).
- * @return The final state and the origin of each item.
+ * @return The final state, the origin of each item, and the effective assembly.
  */
 VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology);
 
@@ -148,8 +157,8 @@ VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& autho
  * how a reader tells the two apart without opening the header.
  *
  * @param state Folded optional state (see collectRenderState).
- * @return Concrete state with defaults applied, usable as a pipeline-variant
- *         key component.
+ * @return Concrete state with defaults applied - the STATE half of a pipeline-variant key.
+ *         A caller building a key also names the data's topology (see resolveRenderState).
  */
 VN_GRAPHICS_API ResolvedRenderState applyStateDefaults(const RenderState& state);
 

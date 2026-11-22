@@ -95,7 +95,7 @@ using vn::backend_vsg::core::Observe;
 using vn::backend_vsg::core::Rgba8;
 using vn::backend_vsg::core::StateRegistry;
 using vn::backend_vsg::core::TargetFacts;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 using vn::backend_vsg::core::VariantPool;
 using vn::graphics::VertexLayoutKey;
 using vn::test::setPrimitiveIndices;
@@ -347,7 +347,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: every identity is in the tables";
 
     const std::uint64_t uploads_after_first = uploads.uploads();
@@ -381,7 +381,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     //    it is the reason the tables carry revisions rather than bytes.
     storage->beginFrame();
     ::vsg::ref_ptr<::vsg::Node> again;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, again));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, again));
     EXPECT_EQ(uploads.uploads(), uploads_after_first) << "the same geometry must not be uploaded twice";
     EXPECT_EQ(uploads.aliases(), 2U) << "the second frame aliases both streams the first one uploaded";
     EXPECT_EQ(storage->materialWrites(), material_writes) << "the same material must not be written twice";
@@ -396,7 +396,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
 
     storage->beginFrame();
     ::vsg::ref_ptr<::vsg::Node> missing;
-    EXPECT_FALSE(content.record(frame.passes[0], without_geometry, target->shape().compatibility(), {}, view_block, missing))
+    EXPECT_FALSE(content.record(frame.passes[0], without_geometry, target->shape(), {}, view_block, missing))
         << "a command whose geometry the table cannot answer is not drawn";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), refusals_before + 1U);
     EXPECT_EQ(uploads.uploads(), uploads_after_first) << "a refused command uploads nothing";
@@ -552,7 +552,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: the half and the stream are both present";
     EXPECT_EQ(draws.draws(), 1U) << "two placements are ONE draw";
     EXPECT_EQ(uploads.uploads(), 3U) << "positions, indices and the whole instance stream";
@@ -745,7 +745,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(messages.empty()) << "every identity is in the tables: nothing may be refused";
 
     EXPECT_EQ(pool.created(), 2U) << "one program against two layouts is two identities, not one";
@@ -759,7 +759,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
             for (const vn::backend_vsg::core::CompiledCommand& command : draw.commands) {
                 const vn::backend_vsg::DrawNeeds needs = vn::backend_vsg::drawNeeds(frame.passes[0], command, facts);
                 ASSERT_TRUE(needs.answerable());
-                const vn::graphics::PipelineKey key = needs.keyFor(target->shape().compatibility());
+                const vn::graphics::PipelineKey key = needs.keyFor(target->shape());
                 if (std::find(answered.begin(), answered.end(), key) == answered.end()) {
                     answered.push_back(key);
                 }
@@ -831,7 +831,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     storage->beginFrame();
     messages.clear();
     ::vsg::ref_ptr<::vsg::Node> refused_node;
-    EXPECT_FALSE(content.record(unserved_frame.passes[0], facts, target->shape().compatibility(), {}, view_block, refused_node));
+    EXPECT_FALSE(content.record(unserved_frame.passes[0], facts, target->shape(), {}, view_block, refused_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("vertex layout"), std::string::npos) << messages[0].as_std_str();
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), skipped_before + 1U);
@@ -857,7 +857,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     storage->beginFrame();
     messages.clear();
     ::vsg::ref_ptr<::vsg::Node> unmatched_node;
-    EXPECT_FALSE(content.record(other_frame.passes[0], facts, target->shape().compatibility(), {}, view_block, unmatched_node));
+    EXPECT_FALSE(content.record(other_frame.passes[0], facts, target->shape(), {}, view_block, unmatched_node));
     ASSERT_EQ(messages.size(), 1U);
     EXPECT_NE(messages[0].as_std_str().find("program"), std::string::npos) << messages[0].as_std_str();
     EXPECT_EQ(uploads.uploads(), uploads_before) << "a refused command uploads nothing";
@@ -1023,8 +1023,8 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  first_node;
     ::vsg::ref_ptr<::vsg::Node>  second_node;
-    ASSERT_TRUE(first_content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, first_node));
-    ASSERT_TRUE(second_content.record(frame.passes[1], facts, target->shape().compatibility(), {}, view_block, second_node));
+    ASSERT_TRUE(first_content.record(frame.passes[0], facts, target->shape(), {}, view_block, first_node));
+    ASSERT_TRUE(second_content.record(frame.passes[1], facts, target->shape(), {}, view_block, second_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: every identity is in the tables";
     EXPECT_EQ(pool.created(), 1U) << "two passes, one program, one layout: ONE variant object, because load ops are not identity";
     EXPECT_EQ(draws.pipeline_binds(), 2U) << "each pass binds it for itself: the registries do not share state";
@@ -1226,7 +1226,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: both declared sets are there";
 
     VsgExecutor executor(diagnostics);
@@ -1418,7 +1418,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     // picture still has to be right - the matrices it reads are the PUSH, filled from the plan's camera.
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing may be refused: a declared push is filled by the pass";
     EXPECT_EQ(draws.push_commands(), 1U) << "one push command per declared range, per drawable";
 
@@ -1648,7 +1648,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "nothing is refused: the map is the cache's image";
 
     VsgExecutor executor(diagnostics);
@@ -1896,7 +1896,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean());
 
     VsgExecutor executor(diagnostics);
@@ -2168,13 +2168,13 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     };
     ::vsg::ref_ptr<::vsg::Node> first_node  = recordPass(frame.passes[0],
                                                          first_halves,
-                                                         first_target->shape().compatibility(),
+                                                         first_target->shape(),
                                                          std::span<BlockDescriptors*>(first_sets, 1U),
                                                          first_registry,
                                                          first_scope);
     ::vsg::ref_ptr<::vsg::Node> second_node = recordPass(frame.passes[1],
                                                          second_halves,
-                                                         second_target->shape().compatibility(),
+                                                         second_target->shape(),
                                                          std::span<BlockDescriptors*>(second_sets, 1U),
                                                          second_registry,
                                                          second_scope);
@@ -2459,7 +2459,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "both variants are served by the pass' own halves";
 
     VsgExecutor executor(diagnostics);
@@ -2692,7 +2692,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "one declared set, and the caller built exactly it";
 
     executor.addTarget(target.get(), target.get());
@@ -2736,7 +2736,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     want_more.uploads    = &uploads;
     ContentPass                 refusing(want_more, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> refused_node;
-    EXPECT_FALSE(refusing.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, refused_node))
+    EXPECT_FALSE(refusing.record(frame.passes[0], facts, target->shape(), {}, view_block, refused_node))
         << "a set without the declared image is not the set the program declares";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), refusals_before + 1U) << "the refusal is reported, not silent";
 }
@@ -2904,7 +2904,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(diagnostics.clean()) << "the material's map binding is served by the fallback";
 
     VsgExecutor executor(diagnostics);
@@ -3270,19 +3270,19 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     StateRegistry               flat_registry(pool);
     StateRegistry               plain_registry(pool);
     ::vsg::ref_ptr<::vsg::Node> lit_node =
-        recordPass(frame.passes[2], shadow_halves, lit->shape().compatibility(), std::span<const InputImages>(lit_inputs, 2U), map_sets, lit_registry);
+        recordPass(frame.passes[2], shadow_halves, lit->shape(), std::span<const InputImages>(lit_inputs, 2U), map_sets, lit_registry);
     const InputImages flat_inputs[]{
         InputImages{ {}, plain_depth->depthView() }
     };
     ::vsg::ref_ptr<::vsg::Node> flat_node =
-        recordPass(frame.passes[3], shadow_halves, flat->shape().compatibility(), std::span<const InputImages>(flat_inputs, 1U), stand_in_sets, flat_registry);
+        recordPass(frame.passes[3], shadow_halves, flat->shape(), std::span<const InputImages>(flat_inputs, 1U), stand_in_sets, flat_registry);
     EXPECT_TRUE(diagnostics.clean()) << "a pass without a resolved map binds the white stand-in, and says nothing";
 
     // The program that cannot read the map: the draw is recorded, and the shadow it will not shade is said
     // once (the picture below is the proof the draw survived).
     const std::uint64_t         before_report = diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest);
     ::vsg::ref_ptr<::vsg::Node> plain_node =
-        recordPass(frame.passes[4], unshadowed_halves, plain->shape().compatibility(), std::span<const InputImages>(lit_inputs, 2U), none_sets, plain_registry);
+        recordPass(frame.passes[4], unshadowed_halves, plain->shape(), std::span<const InputImages>(lit_inputs, 2U), none_sets, plain_registry);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest), before_report + 1U)
         << "the map the pass resolved and the program cannot read is reported";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "and the drawable is NOT lost over it";
@@ -3295,7 +3295,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     const std::uint64_t reported_once = diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest);
     (void)recordPass(frame.passes[4],
                      unshadowed_halves,
-                     plain->shape().compatibility(),
+                     plain->shape(),
                      std::span<const InputImages>(lit_inputs, 2U),
                      none_sets,
                      second_frame_registry);
@@ -3307,7 +3307,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     StateRegistry third_frame_registry(pool);
     (void)recordPass(frame.passes[4],
                      unshadowed_halves,
-                     plain->shape().compatibility(),
+                     plain->shape(),
                      std::span<const InputImages>(lit_inputs, 2U),
                      none_sets,
                      third_frame_registry);
@@ -3733,25 +3733,25 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
         InputImages{ gbuffer_views, {}                        },
         InputImages{ {},            shadowed_map->depthView() }
     };
-    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[0], writer_halves, gbuffer->shape().compatibility(), {}, *registries[0]);
+    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[0], writer_halves, gbuffer->shape(), {}, *registries[0]);
     // The maps' own passes carry no draws - they CLEAR the map to the depth their measurement needs - and a
     // frame whose clearing passes are not recorded compares against whatever the image happened to hold.
     const std::span<const ContentPass::Scope::Entry> no_halves;
     const std::span<const InputImages>               no_inputs;
-    ::vsg::ref_ptr<::vsg::Node> lit_map_node      = recordPass(frame.passes[1], no_halves, lit_map->shape().compatibility(), no_inputs, *registries[1]);
-    ::vsg::ref_ptr<::vsg::Node> shadowed_map_node = recordPass(frame.passes[2], no_halves, shadowed_map->shape().compatibility(), no_inputs, *registries[2]);
+    ::vsg::ref_ptr<::vsg::Node> lit_map_node      = recordPass(frame.passes[1], no_halves, lit_map->shape(), no_inputs, *registries[1]);
+    ::vsg::ref_ptr<::vsg::Node> shadowed_map_node = recordPass(frame.passes[2], no_halves, shadowed_map->shape(), no_inputs, *registries[2]);
     ::vsg::ref_ptr<::vsg::Node> lit_node =
-        recordPass(frame.passes[3], shadowed_halves, lit->shape().compatibility(), std::span<const InputImages>(gbuffer_and_lit_map, 2U), *registries[3]);
+        recordPass(frame.passes[3], shadowed_halves, lit->shape(), std::span<const InputImages>(gbuffer_and_lit_map, 2U), *registries[3]);
     ::vsg::ref_ptr<::vsg::Node> shadowed_node = recordPass(frame.passes[4],
                                                            shadowed_halves,
-                                                           shadowed->shape().compatibility(),
+                                                           shadowed->shape(),
                                                            std::span<const InputImages>(gbuffer_and_shadowed_map, 2U),
                                                            *registries[4]);
     ::vsg::ref_ptr<::vsg::Node> flat_node =
-        recordPass(frame.passes[5], unshadowed_halves, flat->shape().compatibility(), std::span<const InputImages>(gbuffer_only, 1U), *registries[5]);
+        recordPass(frame.passes[5], unshadowed_halves, flat->shape(), std::span<const InputImages>(gbuffer_only, 1U), *registries[5]);
     const std::uint64_t         before_report = diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest);
     ::vsg::ref_ptr<::vsg::Node> plain_node =
-        recordPass(frame.passes[6], unshadowed_halves, plain->shape().compatibility(), std::span<const InputImages>(gbuffer_and_lit_map, 2U), *registries[6]);
+        recordPass(frame.passes[6], unshadowed_halves, plain->shape(), std::span<const InputImages>(gbuffer_and_lit_map, 2U), *registries[6]);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::UnsupportedRequest), before_report + 1U)
         << "the map the pass resolved and the program cannot read is reported";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
@@ -4049,9 +4049,9 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
         EXPECT_TRUE(content.record(pass, facts, compatibility, inputs, view_block, node));
         return node;
     };
-    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[0], writer_halves, gbuffer->shape().compatibility(), {}, *registries[0]);
+    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[0], writer_halves, gbuffer->shape(), {}, *registries[0]);
     ::vsg::ref_ptr<::vsg::Node> lit_node =
-        recordPass(frame.passes[1], lighting_halves, lit->shape().compatibility(), std::span<const InputImages>(gbuffer_only, 1U), *registries[1]);
+        recordPass(frame.passes[1], lighting_halves, lit->shape(), std::span<const InputImages>(gbuffer_only, 1U), *registries[1]);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "nothing is refused: the engine's own lighting program must be servable";
 
@@ -4384,12 +4384,12 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
         return node;
     };
     ::vsg::ref_ptr<::vsg::Node> forward_black_node =
-        recordPass(frame.passes[0], forward_halves, forward_sets, forward_black->shape().compatibility(), {}, *registries[0]);
+        recordPass(frame.passes[0], forward_halves, forward_sets, forward_black->shape(), {}, *registries[0]);
     ::vsg::ref_ptr<::vsg::Node> forward_quarter_node =
-        recordPass(frame.passes[1], forward_halves, forward_sets, forward_quarter->shape().compatibility(), {}, *registries[1]);
-    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[2], gbuffer_halves, gbuffer_sets, gbuffer->shape().compatibility(), {}, *registries[2]);
+        recordPass(frame.passes[1], forward_halves, forward_sets, forward_quarter->shape(), {}, *registries[1]);
+    ::vsg::ref_ptr<::vsg::Node> gbuffer_node = recordPass(frame.passes[2], gbuffer_halves, gbuffer_sets, gbuffer->shape(), {}, *registries[2]);
     ::vsg::ref_ptr<::vsg::Node> deferred_node =
-        recordPass(frame.passes[3], lighting_halves, {}, deferred->shape().compatibility(), std::span<const InputImages>(gbuffer_only, 1U), *registries[3]);
+        recordPass(frame.passes[3], lighting_halves, {}, deferred->shape(), std::span<const InputImages>(gbuffer_only, 1U), *registries[3]);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "nothing is refused: the engine's own programs must be servable";
 
     VsgExecutor executor(diagnostics);
@@ -4572,7 +4572,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     ContentPass                  content(scope, diagnostics);
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  node;
-    (void)content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node);
+    (void)content.record(frame.passes[0], facts, target->shape(), {}, view_block, node);
 
     ASSERT_EQ(messages.size(), 2U) << "one refusal per REASON, plus its count - got " << messages.size()
                                    << " message(s); the first is: " << (messages.empty() ? std::string("(none)") : messages[0].as_std_str());
@@ -4711,7 +4711,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     scope.uploads  = &uploads;
     ContentPass                 content(scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, node));
 
     VsgExecutor executor(diagnostics);
     executor.addTarget(target_handle.get(), target.get());
@@ -4926,7 +4926,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         ContentPass                  content(scope, diagnostics);
         const std::vector<std::byte> view_block(288U, std::byte{ 0 });
         ::vsg::ref_ptr<::vsg::Node>  node;
-        (void)content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node);
+        (void)content.record(frame.passes[0], facts, target->shape(), {}, view_block, node);
     };
 
     std::size_t before = emptyRectReports();
@@ -5223,17 +5223,17 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         return node;
     };
     ::vsg::ref_ptr<::vsg::Node> eight_bit_node =
-        recordPass(frame.passes[0], writer_halves, eight_bit_gbuffer->shape().compatibility(), {}, *eight_bit_gbuffer, *registries[0]);
+        recordPass(frame.passes[0], writer_halves, eight_bit_gbuffer->shape(), {}, *eight_bit_gbuffer, *registries[0]);
     ::vsg::ref_ptr<::vsg::Node> dim_eight_bit_node =
-        recordPass(frame.passes[1], lighting_halves, dim_eight_bit->shape().compatibility(), eight_bit_inputs, *dim_eight_bit, *registries[1]);
+        recordPass(frame.passes[1], lighting_halves, dim_eight_bit->shape(), eight_bit_inputs, *dim_eight_bit, *registries[1]);
     ::vsg::ref_ptr<::vsg::Node> half_float_node =
-        recordPass(frame.passes[2], writer_halves, half_float_gbuffer->shape().compatibility(), {}, *half_float_gbuffer, *registries[2]);
+        recordPass(frame.passes[2], writer_halves, half_float_gbuffer->shape(), {}, *half_float_gbuffer, *registries[2]);
     ::vsg::ref_ptr<::vsg::Node> dim_half_float_node =
-        recordPass(frame.passes[3], lighting_halves, dim_half_float->shape().compatibility(), half_float_inputs, *dim_half_float, *registries[3]);
+        recordPass(frame.passes[3], lighting_halves, dim_half_float->shape(), half_float_inputs, *dim_half_float, *registries[3]);
     ::vsg::ref_ptr<::vsg::Node> bright_eight_bit_node =
-        recordPass(frame.passes[4], lighting_halves, bright_eight_bit->shape().compatibility(), eight_bit_inputs, *bright_eight_bit, *registries[4]);
+        recordPass(frame.passes[4], lighting_halves, bright_eight_bit->shape(), eight_bit_inputs, *bright_eight_bit, *registries[4]);
     ::vsg::ref_ptr<::vsg::Node> bright_half_float_node =
-        recordPass(frame.passes[5], lighting_halves, bright_half_float->shape().compatibility(), half_float_inputs, *bright_half_float, *registries[5]);
+        recordPass(frame.passes[5], lighting_halves, bright_half_float->shape(), half_float_inputs, *bright_half_float, *registries[5]);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     VsgExecutor executor(diagnostics);
@@ -5531,7 +5531,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "both drawables are served from the store's tables";
 
     VsgExecutor executor(diagnostics);
@@ -5760,7 +5760,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     VsgExecutor executor(diagnostics);
@@ -5970,7 +5970,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     VsgExecutor executor(diagnostics);
@@ -6165,7 +6165,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
 
     // Recording before the frame is opened is a caller bug: an empty node and false, with nothing reported.
     ::vsg::ref_ptr<::vsg::Node> early;
-    EXPECT_FALSE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, {}, early));
+    EXPECT_FALSE(assembly.record(frame.passes[0], target->shape(), {}, {}, early));
     ASSERT_NE(early, nullptr);
 
     (void)assembly.beginFrame(frame, timeline, retirement);
@@ -6174,7 +6174,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     ASSERT_EQ(assembly.halves().halves(), 1U) << "one half serves both drawables";
     ASSERT_EQ(assembly.sets().sets(), 2U) << "one declared set per texture";
@@ -6188,7 +6188,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     (void)assembly.beginFrame(frame, timeline, retirement);
     EXPECT_EQ(storage->frames(), 1U) << "and opened the next frame's";
     ::vsg::ref_ptr<::vsg::Node> steady_node;
-    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, steady_node));
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape(), {}, view_block, steady_node));
     EXPECT_EQ(store.builds(), store_builds) << "a steady frame builds nothing";
     EXPECT_EQ(assembly.halves().builds(), half_builds);
     EXPECT_EQ(assembly.sets().builds(), set_builds);
@@ -6428,7 +6428,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     (void)assembly.beginFrame(frame, timeline, retirement);
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape(), {}, view_block, content_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "the SDK's own sky text is served, not refused";
     // TWO halves, because a material without a map is a different VARIANT of the program (VN_DIFFUSE_MAP);
     // the text is the same either way, and the variant is what the tables key their entries by.
@@ -6443,7 +6443,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     const std::uint64_t set_builds  = assembly.sets().builds();
     (void)assembly.beginFrame(frame, timeline, retirement);
     ::vsg::ref_ptr<::vsg::Node> steady_node;
-    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, steady_node));
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape(), {}, view_block, steady_node));
     EXPECT_EQ(assembly.halves().builds(), half_builds) << "a steady frame builds nothing";
     EXPECT_EQ(assembly.sets().builds(), set_builds);
     EXPECT_EQ(assembly.sets().sets(), 3U);
@@ -6639,7 +6639,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     (void)assembly.beginFrame(frame, timeline, retirement);
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  content_node;
-    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape().compatibility(), {}, view_block, content_node));
+    ASSERT_TRUE(assembly.record(frame.passes[0], target->shape(), {}, view_block, content_node));
     ASSERT_TRUE(messages.empty()) << "nothing may be refused: one half, one unindexed points draw";
     EXPECT_EQ(assembly.halves().halves(), 1U);
 
@@ -6713,7 +6713,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
 
     storage->beginFrame();
     ::vsg::ref_ptr<::vsg::Node> refused;
-    EXPECT_FALSE(flat_content.record(frame.passes[0], assembly.facts(), target->shape().compatibility(), {}, view_block, refused))
+    EXPECT_FALSE(flat_content.record(frame.passes[0], assembly.facts(), target->shape(), {}, view_block, refused))
         << "a triangle-baked half must not draw a POINT_LIST command";
     ASSERT_EQ(flat_messages.size(), 1U);
     const std::string refusal = flat_messages[0].as_std_str();

@@ -341,7 +341,7 @@ void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePh
     // The shape that is about to be replaced: its compatibility half is what a pipeline key was built from,
     // and the graph of its attachments is the observable that tells parking from dropping (this case holds
     // one reference, the frame that recorded it holds another).
-    const vn::graphics::TargetShape old_shape     = target->shape();
+    const vn::graphics::RenderPassCompatibility old_shape = target->shape();
     const ::vsg::ref_ptr<::vsg::RenderGraph> replaced      = target->renderGraph();
     const unsigned int                       counts_before = replaced->referenceCount();
 
@@ -379,11 +379,10 @@ void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePh
     EXPECT_EQ(target->passVariantCount(), 1U) << "the old shape's load-op variants went with the old render pass: their passes were built from the "
                                                  "old formats, and a pass of the new shape must not be handed one of them";
     EXPECT_TRUE(target->shape().color_formats == wanted.color_formats) << "the shape the target reports IS the new one: a pipeline key is built from it";
-    const vn::graphics::TargetShape new_shape = target->shape();
+    const vn::graphics::RenderPassCompatibility new_shape = target->shape();
     EXPECT_TRUE(new_shape.depth_format.has_value());
-    EXPECT_FALSE(new_shape.compatibility() == old_shape.compatibility())
-        << "the compatibility half really moved: every pipeline compiled for the old shape is invalid, and "
-           "that is what a caller re-compiles against";
+    EXPECT_FALSE(new_shape == old_shape) << "the compatibility really moved: every pipeline compiled for the old shape is invalid, and "
+                                            "that is what a caller re-compiles against";
     EXPECT_TRUE(target->instance().desc.shape == new_shape) << "the facts a frame is compiled with and the shape the target answers with are one fact";
     EXPECT_NE(target->renderGraph(), replaced) << "the graph built around the old framebuffer cannot serve the new shape";
     EXPECT_EQ(replaced->referenceCount(), counts_before) << "the replaced set is still alive right after the rebuild: the queue holds it, and a rebuild that "

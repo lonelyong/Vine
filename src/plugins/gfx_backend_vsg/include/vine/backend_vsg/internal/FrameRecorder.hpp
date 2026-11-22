@@ -175,8 +175,8 @@ struct CollectedDraw {
     bool                              has_viewport{ false };     // Whether this call consumed a viewport announcement.
     vn::graphics::Viewport            viewport{};                // The consumed viewport (meaningful when has_viewport).
     std::span<const LightRef>         lights{};                  // The consumed lights; empty = the backend default.
-    const void*                       source{ nullptr };         // Full-full-screen draws: the target whose colour attachments are sampled.
-    vn::graphics::ContentRef          program{};                 // Full-full-screen draws: the fragment program to draw with.
+    const void*                       source{ nullptr };         // full-screen draws: the target whose colour attachments are sampled.
+    vn::graphics::ContentRef          program{};                 // full-screen draws: the fragment program to draw with.
     std::span<const CollectedCommand> commands{};                // Content draws: the instances to render.
 };
 

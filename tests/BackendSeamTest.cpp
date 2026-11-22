@@ -72,17 +72,17 @@ struct TargetCase {
 };
 
 /// @brief The compatible shape most cases share: one RGBA8 colour attachment, no depth.
-vn::graphics::TargetShape singleColorShape()
+vn::graphics::RenderPassCompatibility singleColorShape()
 {
-    vn::graphics::TargetShape shape;
+    vn::graphics::RenderPassCompatibility shape;
     shape.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
     return shape;
 }
 
 /// @brief A shape with a depth attachment, used to move compatibility.
-vn::graphics::TargetShape colorAndDepthShape()
+vn::graphics::RenderPassCompatibility colorAndDepthShape()
 {
-    vn::graphics::TargetShape shape = singleColorShape();
+    vn::graphics::RenderPassCompatibility shape = singleColorShape();
     shape.depth_format                       = vn::graphics::RenderTarget::DepthFormat::D32;
     return shape;
 }
@@ -91,8 +91,8 @@ vn::graphics::TargetShape colorAndDepthShape()
 
 TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
 {
-    const vn::graphics::TargetShape single = singleColorShape();
-    const vn::graphics::TargetShape with_d = colorAndDepthShape();
+    const vn::graphics::RenderPassCompatibility single = singleColorShape();
+    const vn::graphics::RenderPassCompatibility with_d = colorAndDepthShape();
 
     TargetDesc built_at_512{ 512, 256, single };
     TargetDesc built_at_1024{ 1024, 256, single };

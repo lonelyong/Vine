@@ -32,6 +32,7 @@ enum class PlanProblemCode : std::uint8_t
     DuplicatePassName, // Two passes answer the same name: one plan, one pass of that name.
     InvalidTarget,     // A pass' Target value states two forms at once (or a form without its payload).
     InvalidOutput,     // A pass' Output value promises both a whole target and one image.
+    FieldUnusedByKind, // A pass states a field the execution its kind names never reads.
     UnknownInput,      // A named input no pass of the plan (and no host binding) publishes.
     DependencyCycle,   // The named inputs form a cycle: no execution order satisfies it.
     TooManyPasses,     // More passes than kMaxPlanPasses (the plan is refused, not truncated).

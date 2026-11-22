@@ -31,7 +31,7 @@ bool writes(const CollectedPass& pass) noexcept
 }
 
 /// @brief Copies the shape a target's facts state into the plan's own storage (see CompiledShape).
-CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
+CompiledShape copiedShape(FrameArena& arena, const RenderPassCompatibility& shape)
 {
     CompiledShape copy;
     copy.color_formats        = arena.copy(std::span<const vn::graphics::RenderTarget::ColorFormat>{ shape.color_formats });
@@ -45,7 +45,7 @@ CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
 
 } // namespace
 
-bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) noexcept
+bool statedShapeAgrees(const CompiledShape& stated, const RenderPassCompatibility& actual) noexcept
 {
     // The engine's half is stated by every plan (a depth-only target states an empty color_formats), so it
     // is compared as it stands. The backend's render-pass key is part of the structure half: a plan that
@@ -322,7 +322,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass& p
             // triangle lies at the reverse-Z far plane, where any depth test rejects it).
             const vn::graphics::RenderState     screen_authored{};
             const vn::graphics::PassRenderState screen_pass{ .depth = vn::graphics::DepthMode::Disabled };
-            draw.dynamic = resolveDynamicState(resolveRenderState(screen_authored, screen_pass, vn::graphics::Topology::Triangles).state);
+            draw.dynamic = resolveDynamicState(resolveRenderState(screen_authored, screen_pass, vn::graphics::Topology::Triangles));
         }
     }
     return draws;
@@ -347,10 +347,10 @@ FrameCompiler::resolveCommands(const CollectedDraw& source, const vn::graphics::
         out.instance_count                         = command.instance_count;
         // The ONE resolution: what the content authored, weighed against what the pass says
         // (StateResolution.hpp).
-        vn::graphics::ResolvedRenderState resolved = resolveRenderState(command.authored_state, pass_state, command.topology).state;
+        vn::graphics::ResolvedCommandState resolved = resolveRenderState(command.authored_state, pass_state, command.topology);
         // The item whose destination is the draw block rather than the pipeline (a point's size is a
         // vertex-shader output), so it travels beside the opacity instead of into `dynamic`.
-        out.point_size                             = resolved.pointSize;
+        out.point_size                             = resolved.state.pointSize;
         // THE ENGINE'S TRANSPARENCY DECISION IS THE COMMAND'S, made when the typed command was read
         // (`DrawItem::isTransparent`: the material's resolved alpha mode plus the drawable's opacity), and the
         // plan carried it here as one bool. A translucent command blends with the standard pair even though its
@@ -358,7 +358,7 @@ FrameCompiler::resolveCommands(const CollectedDraw& source, const vn::graphics::
         // unblended - what `ResolvedRenderState::blend` documents. The order and the blend factor read the same
         // answer because this is the one place that derives one from the other.
         if (out.transparent) {
-            resolved.blend.enabled = true;
+            resolved.state.blend.enabled = true;
         }
         out.dynamic = resolveDynamicState(resolved);
 

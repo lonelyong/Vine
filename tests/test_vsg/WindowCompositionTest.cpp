@@ -110,7 +110,7 @@ using vn::backend_vsg::core::FrameFacts;
 using vn::backend_vsg::core::FrameRecorder;
 using vn::backend_vsg::core::StateRegistry;
 using vn::backend_vsg::core::TargetFacts;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
@@ -235,7 +235,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // The depth format the WINDOW's traits asked for, taken from the window itself: this is what makes B's
     // engine-side shape the window's equal, so the case is about the two render passes that the engine's
     // vocabulary calls the same thing and the DEVICE formats tell apart.
-    const TargetShape window_shape = window_target->shape();
+    const RenderPassCompatibility window_shape = window_target->shape();
     ASSERT_EQ(window_shape.color_formats.size(), 1U);
     EXPECT_EQ(window_shape.color_formats.front(), RenderTarget::ColorFormat::RGBA8) << "the case's pixel expectations are written for an 8-bit surface";
     ASSERT_TRUE(window_shape.depth_format.has_value()) << "a window with a depth attachment is what the case is for";
@@ -472,7 +472,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     shared_scope.uploads    = &uploads;
     ContentPass                 shared_content(shared_scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> shared_node;
-    ASSERT_TRUE(shared_content.record(*shared_pass, facts, shared_target->shape().compatibility(), std::span<const InputImages>{}, shared_view, shared_node));
+    ASSERT_TRUE(shared_content.record(*shared_pass, facts, shared_target->shape(), std::span<const InputImages>{}, shared_view, shared_node));
 
     const auto* window_pass = pass_of(3U);
     ASSERT_NE(window_pass, nullptr);
@@ -484,7 +484,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     window_scope.uploads    = &uploads;
     ContentPass                 window_content(window_scope, diagnostics);
     ::vsg::ref_ptr<::vsg::Node> window_node;
-    ASSERT_TRUE(window_content.record(*window_pass, facts, window_target->shape().compatibility(), std::span<const InputImages>{}, window_view, window_node));
+    ASSERT_TRUE(window_content.record(*window_pass, facts, window_target->shape(), std::span<const InputImages>{}, window_view, window_node));
 
     StateRegistry                   screen_registry(screen_pool);
     const ContentPass::Scope::Entry screen_halves[]{
@@ -501,7 +501,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     ASSERT_NE(picture_colors[0], nullptr);
     const InputImages           overlay_images[] = { InputImages{ std::span<const ::vsg::ref_ptr<::vsg::ImageView>>(picture_colors, 1U) } };
     ::vsg::ref_ptr<::vsg::Node> overlay_node;
-    ASSERT_TRUE(overlay_content.record(*overlay, facts, window_target->shape().compatibility(), overlay_images, window_view, overlay_node));
+    ASSERT_TRUE(overlay_content.record(*overlay, facts, window_target->shape(), overlay_images, window_view, overlay_node));
 
     // One variant per render-pass family: the pool would have said "one" if the key had stayed with the
     // engine's vocabulary, and that is exactly the variant that got bound in the wrong render pass.

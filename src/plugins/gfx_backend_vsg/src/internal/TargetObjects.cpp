@@ -333,7 +333,7 @@ struct TargetObjects::Data {
     ::vsg::ref_ptr<::vsg::RenderPass> render_pass;
     std::uint32_t                     width{ 0 };
     std::uint32_t                     height{ 0 };
-    core::TargetShape                 shape;                   // What the render pass was built against.
+    core::RenderPassCompatibility                 shape;                   // What the render pass was built against.
     bool                              depth_borrowed{ false }; // The depth is the lender's image.
     /// Whether anything has been recorded into the attachments yet (see TargetObjects::written).
     bool written{ false };
@@ -390,9 +390,9 @@ core::ImageLayout TargetObjects::depthSteadyLayout() const noexcept
     return render_pass;
 }
 
-core::TargetShape TargetObjects::shapeOf(const TargetLayout& layout)
+core::RenderPassCompatibility TargetObjects::shapeOf(const TargetLayout& layout)
 {
-    core::TargetShape shape;
+    core::RenderPassCompatibility shape;
     shape.color_formats = layout.color_formats;
     shape.depth_format  = layout.depth_format;
     // Samples are part of a pipeline's compatibility (a graphics pipeline states the count it was compiled
@@ -465,7 +465,7 @@ std::unique_ptr<TargetObjects> TargetObjects::create(::vsg::ref_ptr<::vsg::Devic
     // rather than passed on - loading an UNDEFINED image is not a policy choice, it is a bug. The one LOAD
     // that is not a bug is a BORROWED depth: it is the lender's image, in the lender's layout, holding what
     // the lender's pass wrote - so the depth is declared BORROWED and the plan refuses to clear it.
-    const core::TargetShape   shape          = shapeOf(layout);
+    const core::RenderPassCompatibility shape          = shapeOf(layout);
     const bool                depth_borrowed = depth_source != nullptr;
     const core::PassClearPlan plan           = core::planClearValues(shape, layout.clear, /*bootstrap*/ true, /*depth_borrowed*/ depth_borrowed);
     for (const core::AttachmentClear& attachment : plan.colors) {
@@ -506,7 +506,7 @@ std::unique_ptr<TargetObjects> TargetObjects::create(::vsg::ref_ptr<::vsg::Devic
     }
 
     // The pass and its first variant are the SHAPE's, built once for the target's life: an extent is not part of
-    // render-pass compatibility (see TargetShape), so a resize keeps them and a pipeline compiled for this target
+    // render-pass compatibility (see RenderPassCompatibility), so a resize keeps them and a pipeline compiled for this target
     // stays the pipeline for it (see resize).
     target->d->render_pass =
         makeOffscreenRenderPass(target->d->device,
@@ -1175,7 +1175,7 @@ std::uint32_t TargetObjects::colorAttachmentCount() const noexcept
     return captureDepth();
 }
 
-core::TargetShape TargetObjects::shape() const noexcept
+core::RenderPassCompatibility TargetObjects::shape() const noexcept
 {
     return d->shape;
 }
@@ -1348,7 +1348,7 @@ TargetObjects::Rebuilt TargetObjects::rebuild(const TargetLayout& wanted, const 
     // facts this target reports, so the arms that are not Rebuild are answered rather than assumed: a shape
     // that matches (None, a resize, or the load-op repair of a target nobody has written yet) means this
     // call has no structural work - and a shape change outranks those repairs (see core::planTarget).
-    const core::TargetShape shape = shapeOf(wanted);
+    const core::RenderPassCompatibility shape = shapeOf(wanted);
     result.decision               = core::planTarget(instance(), core::TargetDesc{ static_cast<int>(wanted.width), static_cast<int>(wanted.height), shape });
     if (result.decision.action != core::TargetAction::Rebuild) {
         return give_up();
@@ -1393,7 +1393,7 @@ TargetObjects::Rebuilt TargetObjects::rebuild(const TargetLayout& wanted, const 
     // (the shape, the depth format, the clear policy and the pass its framebuffer names) - and put every one
     // of them back when the build fails: a rebuild that failed leaves the target serving the shape it had,
     // exactly like a resize. `buildAttachments` writes only into `built`, so nothing else can have moved.
-    const core::TargetShape                                      previous_shape      = std::move(d->shape);
+    const core::RenderPassCompatibility previous_shape      = std::move(d->shape);
     const std::optional<vn::graphics::RenderTarget::DepthFormat> previous_depth      = d->depth_format;
     const bool                                                   previous_sampleable = d->depth_sampleable;
     const core::ClearValues                                      previous_clear      = d->clear_policy;

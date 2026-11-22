@@ -76,9 +76,9 @@
 
 ## 3. Targets, layers, colour, image sources
 
-- `RenderTarget` is a **description**; the backend creates images from it. `RenderTarget::setSamples` is the only MSAA entry, and the sample count goes into `TargetShape` ⇒ pipeline key ⇒ attachment/image. Colour and depth each resolve to one single-sample image (depth `sample0`, no averaging).
+- `RenderTarget` is a **description**; the backend creates images from it. `RenderTarget::setSamples` is the only MSAA entry, and the sample count goes into `RenderPassCompatibility` ⇒ pipeline key ⇒ attachment/image. Colour and depth each resolve to one single-sample image (depth `sample0`, no averaging).
 - **A pass's target and its publication are each a value** (B14): `PassDesc::target` = `Target{Kind::Window|Explicit|Transient, target, name, extent, shape}` (`Target.hpp`), `PassDesc::output` = `Output{name, whole_target, image}` (`Output.hpp`); the six `writes*` / `output_*` fields are deleted. `Target::isValid` / `Output::isValid` are checked by `validatePlan` (`InvalidTarget` / `InvalidOutput`); a transient resolved by compile goes into `RenderPass::setResolvedTarget` and **does not** rewrite the declaration.
-- **The seam no longer spells Vulkan formats and subpasses** (B8, 2026-11-17): the device format of `TargetShape` / `RenderPassCompatibility` is `DeviceFormat` (an opaque code, 0 = `kUndefined` = “no such attachment / not learned”), and the render-pass structure is a backend-computed `RenderPassKey` (0 = `kNotStated`; both backends emit `kSingleSubpassRenderPass` today). Both ends only compare, never decode; `RenderPassKey` is the **structure half** and takes part in equality **beside** format/depth/sample count, not as their hash. `ImageLayout` is still the SDK's Vulkan semantics and has not been folded in yet.
+- **The seam no longer spells Vulkan formats and subpasses** (B8, 2026-11-17): the attachment formats in `RenderPassCompatibility` are `DeviceFormat` (an opaque code, 0 = `kUndefined` = “no such attachment / not learned”), and the render-pass structure is a backend-computed `RenderPassKey` (0 = `kNotStated`; both backends emit `kSingleSubpassRenderPass` today). Both ends only compare, never decode; `RenderPassKey` is the **structure half** and takes part in equality **beside** format/depth/sample count, not as their hash. `ImageLayout` is still the SDK's Vulkan semantics and has not been folded in yet.
 - Layers: `Node::setLayers` + `PassDesc::layer_mask`; the nearest declaration wins; `Node::subtreeLayerUnion` is a lazy cache driven by the layer epoch, and the three walks test `(union & mask) == 0` right after visibility.
 - Colour: `Colorf` is linear light, `Color` is sRGB-encoded bytes; `toLinear()` / `toColor()` are the pair of conversions; clear colour and pass colour use linear values.
 - Image sources: `ImageInput` / `ImageSource`; produced (`ImageRef`: target + attachment) and imported (`Texture`) lifetimes are not merged. `MaterialImages` uploads by key `(Texture*, revision)`, and samplers are cached by value.
@@ -724,7 +724,8 @@
   leaves the tree ⇒ the half is parked” O(1): no layout accumulation and no per-frame scan of geometry facts.
 - **Optional index**: when a hand-built `ContentFacts` publishes no layout index, `ContentHalves` falls back to scanning its `geometries`
   (the same rule as scanning when `program_order` is empty); the production `ContentStore` always publishes, so the frame path never takes the fallback.
-- **Public header**: `VertexLayoutKeyHash` (`backend/Keys.hpp`, the same fields as `operator==`); the `ContentDeclarations`
+- **Public header**: `VertexLayoutKeyHash` (`vine/graphics/DrawState.hpp`; since 2026-11-21 the key is one
+  `VertexLayoutSlot{location, components}` per declared attribute in binding order, and the hash covers both fields); the `ContentDeclarations`
   constructor puts layouts last, so old 2/3-argument calls are unchanged.
 - **Tests**: `ContentStoreTest.TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWindow` gained the layout's
   refcount / last-row-leaves assertions; `ContentHalvesTest.AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt`

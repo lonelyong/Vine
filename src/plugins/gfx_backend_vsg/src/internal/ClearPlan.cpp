@@ -31,7 +31,7 @@ bool PassClearPlan::operator==(const PassClearPlan& other) const noexcept
     return colors == other.colors && has_depth == other.has_depth && depth == other.depth && bootstrap == other.bootstrap;
 }
 
-PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& policy, bool bootstrap, bool depth_borrowed) noexcept
+PassClearPlan planClearValues(const RenderPassCompatibility& shape, const ClearValues& policy, bool bootstrap, bool depth_borrowed) noexcept
 {
     PassClearPlan plan;
     plan.bootstrap = bootstrap;
@@ -77,7 +77,7 @@ PassClearPlan planClearValues(const TargetShape& shape, const ClearValues& polic
     return plan;
 }
 
-ImageLayout depthFinalLayout(const TargetShape& shape, bool depth_sampleable) noexcept
+ImageLayout depthFinalLayout(const RenderPassCompatibility& shape, bool depth_sampleable) noexcept
 {
     // "Depth-only and sampleable" is the shadow-map shape (see the declaration): the depth IS the picture, so it
     // ends where a shader reads it. A target with colour attachments keeps its depth an attachment - the next

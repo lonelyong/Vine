@@ -108,9 +108,9 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     takeFloor(authored.lineWidth, resolved.state.lineWidth, resolved.origin.lineWidth, StateOrigin::Content, kMinimumLineWidth);
     // Topology: the DATA's own word (a primitive's topology) - no StateNode layer exists for it, because a
     // subtree cannot reinterpret another object's vertex/index data. The pass may override it below, which is
-    // the "show me this scene as points" view switch.
-    resolved.state.topology  = data_topology;
-    resolved.origin.topology = StateOrigin::Data;
+    // the "show me this scene as points" view switch. It travels BESIDE the state (see ResolvedCommandState).
+    resolved.topology        = data_topology;
+    resolved.topology_origin = StateOrigin::Data;
 
     // Depth: the pass states a POLICY, the content may state an intent. An authored depth wins (finer-grained
     // intent over the pass default); where the content authored none, the pass decides whether depth is used at
@@ -132,8 +132,8 @@ ResolvedCommandState resolveRenderState(const RenderState& authored, const PassR
     take(pass.polygonMode, resolved.state.polygonMode, resolved.origin.polygonMode, StateOrigin::Pass);
 
     // Same rule for the more drastic view switch: a pass that says "assemble everything as points" wins over
-    // what the data states (and the pipeline is then compiled for that topology - see core::PipelineKey).
-    take(pass.topology, resolved.state.topology, resolved.origin.topology, StateOrigin::Pass);
+    // what the data states (and the pipeline is then compiled for that topology - see PipelineKey).
+    take(pass.topology, resolved.topology, resolved.topology_origin, StateOrigin::Pass);
 
     // And the size those points are drawn at: the same viewing-switch rule as the topology above, because
     // "show me this scene as points" is useless at one pixel (see PassRenderState::pointSize).

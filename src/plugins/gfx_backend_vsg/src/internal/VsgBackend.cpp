@@ -253,7 +253,7 @@ struct PassOffers {
         if (window == nullptr) {
             return offers; // no window: a pass that names no target of its own has nowhere to draw
         }
-        offers.compatibility = window->shape().compatibility();
+        offers.compatibility = window->shape();
         offers.width         = window->width();
         offers.height        = window->height();
     }
@@ -262,7 +262,7 @@ struct PassOffers {
         if (entry == nullptr || entry->target == nullptr) {
             return offers;
         }
-        offers.compatibility = entry->target->shape().compatibility();
+        offers.compatibility = entry->target->shape();
         offers.width         = entry->target->width();
         offers.height        = entry->target->height();
     }

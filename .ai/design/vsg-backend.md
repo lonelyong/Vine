@@ -36,7 +36,7 @@ a private state table per pass, Reverse-Z) are not negotiable, and the traps alr
 cache.
 2.2 **Scheduling is in the engine**: `detail::FrameScheduler` is the only ordering point; the backend materialises in `FrameDescription.passes` order.
 2.3 **Every pass' state is private**: vsg compiles pipelines by viewID; a state registry shared across passes gets a pipeline for an incompatible render pass.
-2.4 **The target shape drives**: `TargetShape` decides image, pass and pipeline compatibility; bootstrap clears every attachment.
+2.4 **The target shape drives**: the target's `RenderPassCompatibility` decides image, pass and pipeline compatibility; bootstrap clears every attachment.
 2.5 **Streams are shared by buffer identity**: `StreamKey` = buffer + that buffer's own revision + segment; zero re-upload in the steady state.
 2.6 **Reverse-Z + CW front faces**: Vulkan's NDC z is depth as it is; a world CCW triangle is CW in the framebuffer.
 2.7 **Threefold evidence**: validation layer / counters / pixels; without all three it is not "passing".
@@ -209,7 +209,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 
 | # | Feature | Notes |
 |---|---|---|
-| F6 | Target planning | `TargetShape`: attachment count / colour format / depth format / samples / render-pass key (the device format code is the opaque `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`). |
+| F6 | Target planning | `RenderPassCompatibility` (what `TargetObjects::shape()` answers): attachment count / colour format / depth format / samples / render-pass key (the device format code is the opaque `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`). |
 | F7 | Clearing | `planClearValues`: bootstrap clears every attachment; depth clears to 0.0 (Reverse-Z far). The pass states the two dimensions separately (`ClearPolicy::clear_color` / `clear_depth`). A LATER window pass shares the frame's ONE render pass, so it can clear only the DEPTH - a scissored `vkCmdClearAttachments` at its viewport (`WindowTarget::addDepthClear`) - while its COLOUR clear is reported as `UnsupportedRequest` instead of being dropped. Witnesses: `BackendParityTest.ADepthOnlyClearKeepsThePictureOnBothBackends` (off-screen, both backends, pixel-compared) and `VsgBackendTest.ALaterWindowPassResetsOnlyTheDepthItOwns` (the window path, both halves). |
 | F8 | Lending / borrowing depth | the borrower builds no depth; `initialLayout` = the attachment layout, LOAD. |
 | F9 | Dependencies | `VkSubpassDependency`'s stage / access masks are part of compatibility; borrowing depth takes the superset. |
@@ -263,7 +263,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 
 | Layer | Current spelling | How it may change |
 |---|---|---|
-| identity | `PipelineKey`: kind, program + revision, vertex_layout, compatibility (attachment / depth formats, samples, the backend-computed render-pass key), depth_sampleable, sampled_color_count, sampled_depth_count, variant, topology (class) | a change = recompile the pipeline (the only place recompiling is allowed) |
+| identity | `PipelineKey`: kind, program + revision, vertex_layout (one slot per declared attribute, each with its COMPONENTS - the attribute format - in binding order), compatibility (attachment / depth formats, samples, the backend-computed render-pass key), depth_sampleable, sampled_color_count, sampled_depth_count, variant, topology (class) | a change = recompile the pipeline (the only place recompiling is allowed) |
 | the swapped half | `LoadOpVariantKey`: the colour / depth load and store and the initial / final layouts | one pipeline serves several compatible variants (a bootstrap variant is legitimate) |
 | dynamic | `DynamicState`: depth, cull, polygon, topology (within a class), blend | one `vkCmdSet*`; a recompile is never allowed |
 | data | the view block 288 B, the light block 112 B, `VineDrawBlock` 80 B, the material block 64 B, push ≤128 B | write bytes in place / re-point a descriptor |
@@ -279,7 +279,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 | C1 | The SDK's `graphics/` does not include vsg; only the plugin's `internal/` includes both. |
 | C2 | Every pass' state is private; a state registry is not shared across passes. |
 | C3 | Scheduling lives in the engine only; the backend materialises in `FrameDescription.passes` order. |
-| C4 | `TargetShape` decides image / pass / pipeline compatibility; bootstrap clears every attachment. |
+| C4 | `RenderPassCompatibility` decides image / pass / pipeline compatibility; bootstrap clears every attachment. |
 | C5 | `StreamKey` = buffer + buffer revision + segment; zero re-upload in the steady state. |
 | C6 | No new Vulkan spelling enters the SDK's `graphics/`: `VkFormat` values and subpass are gone from the seam (the device format is `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`); `ImageLayout` is still Vulkan semantics, and the same move retires it when a third backend lands. New device-neutral spellings land in the plugin's `internal/` first. |
 | C7 | Every report from this plugin carries a stable `vsg.<family>.<reason>` code (registered in `scripts/diagnostic_codes.txt`); readback's nine refusals are mapped by **one `switch` with no `default`** in `readbackRefusalDiagnostic`, so adding a `HostReadbackRefusal` makes naming its code a compile error — the vocabulary follows the enum instead of memory. Where the rule comes from is in `vk-backend.md` §2.13 / §2.14 (the same gate, the same value semantics). |
@@ -300,7 +300,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 | N1 | The backend does not reorder passes, build its own dependency graph or report cycles. |
 | N2 | The physical boundary: the SDK's shared mechanisms do not include vsg. |
 | N3 | The platform facts (1.4, no dynamic rendering, Reverse-Z) are not negotiable. |
-| N4 | A frame's change detection compares only the (identity, revision) key and **never content bytes or values**; material values, stream bytes and dynamic state always travel on the DATA / DYNAMIC channels. A matrix, viewport, opacity, material value, cull, blend or extent appearing in a key is a defect (`DrawState.hpp`'s audit table + tests). |
+| N4 | A frame's change detection compares only the (identity, revision) key and **never content bytes or values**; material values, stream bytes and dynamic state always travel on the DATA / DYNAMIC channels. A matrix, viewport, opacity, material value, cull, blend or extent appearing in a key is a defect (`DrawState.hpp`'s audit table + tests). **This is the vsg rule because this backend's floor has `VK_EXT_extended_dynamic_state`/`_state3`; vk (a 1.2 floor) bakes cull/polygon/depth/blend and says so in `ContentPipelineKey` - `DrawState.hpp` states the shared rule as "move off identity what the device can move".** |
 
 ## 6. Caveats and Traps
 

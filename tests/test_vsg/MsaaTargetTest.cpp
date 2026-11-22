@@ -240,7 +240,7 @@ struct Fixture {
 
         ContentDraw::Draw draw;
         draw.key.program                                             = vn::test::programRef(1, 1U);
-        draw.key.vertex_layout.canonical_mask                        = 0x1U;
+        draw.key.vertex_layout.slots                               = { { 0U, 3U } };
         // The count is part of a pipeline's identity: the pipeline the API accepts for a multisampled pass has
         // to state the same count its attachments do, and the key is how a pass says which one it needs.
         draw.key.compatibility.samples                               = samples;

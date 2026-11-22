@@ -116,6 +116,13 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
 
 ::vsg::ref_ptr<::vsg::DynamicState> makeDynamicStateDeclaration()
 {
+    // THE ONE LIST (see the header): it must name exactly the states this backend's recorded commands write -
+    // every state `SetDynamicState::record` writes (the bias values included; the bias ENABLE is baked TRUE in
+    // every pipeline, see ContentPipeline), plus VIEWPORT / SCISSOR, which the recorder sets through its own
+    // viewport/scissor nodes (a resize is a command, never a compile).
+    // A state written but not declared takes the create-info baked value: `VK_DYNAMIC_STATE_DEPTH_BIAS` was
+    // MISSING from the content pipeline's copy of this list until 2026-11-21, which is what made
+    // `setPolygonOffset` a silent no-op (see `.ai/bugs/vsg-depth-bias-not-declared-dynamic.md`).
     return ::vsg::DynamicState::create(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
                                        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
                                        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
@@ -125,7 +132,10 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
                                        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
                                        VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
                                        VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT,
-                                       VK_DYNAMIC_STATE_DEPTH_BIAS);
+                                       VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                       VK_DYNAMIC_STATE_VIEWPORT,
+                                       VK_DYNAMIC_STATE_SCISSOR,
+                                       VK_DYNAMIC_STATE_LINE_WIDTH);
 }
 
 } // namespace detail

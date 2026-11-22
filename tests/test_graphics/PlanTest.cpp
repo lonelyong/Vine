@@ -479,11 +479,63 @@ TEST(PlanTest, AnUnnamedPassIsNotRoundTrippable)
 }
 
 /*
+ * @brief A field the kind's execution never reads is refused, not silently ignored.
+ *
+ * A Fullscreen pass draws one program over its resolved inputs and never walks a scene; a Scene pass shades through
+ * `program_override` and its per-geometry programs and never reads `program`. A descriptor mixing the two would draw
+ * something other than what it declares, with no report - so the shape is refused and nothing of it is applied.
+ */
+TEST(PlanTest, AFieldTheKindDoesNotReadIsRefused)
+{
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+
+    // `content` is NOT one of them: a full-screen pass reads it for the scene's LIGHT SET (see FullscreenPass::describe),
+    // so a composite pass naming its scene is the ordinary deferred recipe.
+    PassDesc fullscreen_with_content;
+    fullscreen_with_content.name    = u8"composite";
+    fullscreen_with_content.kind    = PassKind::Fullscreen;
+    fullscreen_with_content.camera  = vn::make_intrusive<Camera>();
+    fullscreen_with_content.content = vn::make_intrusive<Scene>();
+
+    // What the kind really never reads: the scene pass' program override, and a layer mask that would select
+    // content the full-screen execution never walks.
+    PassDesc fullscreen_with_override = fullscreen_with_content;
+    fullscreen_with_override.program_override = vn::make_intrusive<ShaderProgram>();
+    PlanResult result                         = engine->applyPlan(Plan{ { fullscreen_with_override } });
+    ASSERT_TRUE(result.invalid()) << "a full-screen pass draws its `program`; an override is never read";
+    EXPECT_EQ(result.problems.front().code, PlanProblemCode::FieldUnusedByKind);
+    EXPECT_EQ(engine->passCount(), 0u) << "a refused plan applies nothing";
+
+    PassDesc fullscreen_with_mask = fullscreen_with_content;
+    fullscreen_with_mask.layer_mask = 1U;
+    result                          = engine->applyPlan(Plan{ { fullscreen_with_mask } });
+    ASSERT_TRUE(result.invalid()) << "a layer mask selects content, and the full-screen execution walks none";
+    EXPECT_EQ(result.problems.front().code, PlanProblemCode::FieldUnusedByKind);
+
+    // The other direction: `program` is the Fullscreen kind's field, and a Scene pass states its shading elsewhere.
+    PassDesc scene_with_program;
+    scene_with_program.name    = u8"main";
+    scene_with_program.camera  = vn::make_intrusive<Camera>();
+    scene_with_program.program = vn::make_intrusive<ShaderProgram>();
+    result                     = engine->applyPlan(Plan{ { scene_with_program } });
+    ASSERT_TRUE(result.invalid());
+    EXPECT_EQ(result.problems.front().code, PlanProblemCode::FieldUnusedByKind);
+
+    // The same declaration with the field on the kind that reads it is the expressible shape.
+    scene_with_program.program = nullptr;
+    EXPECT_TRUE(engine->applyPlan(Plan{ { scene_with_program } }).applied());
+}
+
+/*
  * @brief The code SPELLING is part of the contract a log and a test read.
  */
-TEST(PlanTest, TheCodeSpellingsAreStable){
+TEST(PlanTest, TheCodeSpellingsAreStable)
+{
     EXPECT_EQ(planCodeText(PlanProblemCode::EmptyPassName), u8"empty-pass-name");
     EXPECT_EQ(planCodeText(PlanProblemCode::DuplicatePassName), u8"duplicate-pass-name");
+    EXPECT_EQ(planCodeText(PlanProblemCode::InvalidTarget), u8"invalid-target");
+    EXPECT_EQ(planCodeText(PlanProblemCode::InvalidOutput), u8"invalid-output");
+    EXPECT_EQ(planCodeText(PlanProblemCode::FieldUnusedByKind), u8"field-unused-by-kind");
     EXPECT_EQ(planCodeText(PlanProblemCode::UnknownInput), u8"unknown-input");
     EXPECT_EQ(planCodeText(PlanProblemCode::DependencyCycle), u8"dependency-cycle");
     EXPECT_EQ(planCodeText(PlanProblemCode::TooManyPasses), u8"too-many-passes");

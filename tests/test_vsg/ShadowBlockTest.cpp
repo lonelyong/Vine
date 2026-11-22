@@ -773,13 +773,13 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  producer_node;
     ::vsg::ref_ptr<::vsg::Node>  consumer_node;
-    ASSERT_TRUE(producer_pass.record(frame.passes[0], producer_table, map->shape().compatibility(), {}, view_block, producer_node));
+    ASSERT_TRUE(producer_pass.record(frame.passes[0], producer_table, map->shape(), {}, view_block, producer_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     const InputImages offered_inputs[] = {
         InputImages{ {}, map->depthView() }
     };
-    ASSERT_TRUE(consumer_pass.record(receiver_pass, consumer_table, receiver->shape().compatibility(), offered_inputs, view_block, consumer_node));
+    ASSERT_TRUE(consumer_pass.record(receiver_pass, consumer_table, receiver->shape(), offered_inputs, view_block, consumer_node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "every band is a complete content draw";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 1U)
         << "band 3 announced a caster the light block cannot carry: one episode, one report";

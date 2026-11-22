@@ -179,14 +179,16 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         // this is the answer a caller gets instead of a build against null handles.
         return false;
     }
-    // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the shape - the engine's
-    // formats AND the device spelling only this backend can fill (see TargetShape).
+    // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the render-pass
+    // compatibility - the engine's formats AND the device spelling only this backend can fill (see
+    // RenderPassCompatibility).
     vn::graphics::TargetDesc wanted;
     wanted.width  = target.width();
     wanted.height = target.height();
     for (int index = 0; index < target.colorCount(); ++index) {
         wanted.shape.color_formats.push_back(target.colorFormat(index));
-        wanted.shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(colorFormatOf(target.colorFormat(index))) });
+        wanted.shape.device_color_formats.push_back(
+            vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(colorFormatOf(target.colorFormat(index))) });
     }
     if (target.hasDepth()) {
         wanted.shape.depth_format        = target.depthFormat();

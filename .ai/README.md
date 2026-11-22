@@ -91,12 +91,19 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (85)
+## decisions/ — decision records (ADRs) (86)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
+
+- `ADR-2026-11-21-state-identity-and-vertex-format.md` — **state is not data, identity carries the format, and a
+  backend bakes only what its floor cannot move**: the primitive's `topology` leaves `ResolvedRenderState` for
+  `ResolvedCommandState` (so `applyStateDefaults` cannot guess a data fact), `VertexLayoutKey` becomes one slot per
+  declared attribute with its COMPONENTS (a locations-only key shared one pipeline across two vertex formats), and
+  vk's private key becomes `vn::graphics::PipelineKey` + `RasterState` (the five items a Vulkan 1.2 device must
+  bake), with the vsg dynamic-state list unified and `depthBiasEnable` baked so `setPolygonOffset` takes effect.
 
 - `ADR-2026-11-20-draw-packet-and-fullscreen-vocabulary.md` — **a draw packet is not a draw call, and a
   full-screen pass is not a screen**: `DrawCall` → `DrawPacket` (+ `OwnedDraw` → `OwnedDrawPacket`), the

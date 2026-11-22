@@ -2,24 +2,6 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-bool TargetShape::operator==(const TargetShape& other) const noexcept
-{
-    return color_formats == other.color_formats && depth_format == other.depth_format && device_color_formats == other.device_color_formats &&
-           device_depth_format == other.device_depth_format && samples == other.samples && render_pass_key == other.render_pass_key;
-}
-
-RenderPassCompatibility TargetShape::compatibility() const noexcept
-{
-    RenderPassCompatibility compatibility;
-    compatibility.color_formats        = color_formats;
-    compatibility.depth_format         = depth_format;
-    compatibility.device_color_formats = device_color_formats;
-    compatibility.device_depth_format  = device_depth_format;
-    compatibility.samples              = samples;
-    compatibility.render_pass_key      = render_pass_key;
-    return compatibility;
-}
-
 bool TargetDesc::operator==(const TargetDesc& other) const noexcept
 {
     return width == other.width && height == other.height && shape == other.shape;

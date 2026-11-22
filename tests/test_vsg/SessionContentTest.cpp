@@ -108,7 +108,7 @@ using vn::backend_vsg::core::FrameFacts;
 using vn::backend_vsg::core::FrameRecorder;
 using vn::backend_vsg::core::StateRegistry;
 using vn::backend_vsg::core::TargetFacts;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
@@ -295,7 +295,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
 
     ContentDraw::Draw draw;
     draw.key.program                                             = vn::test::programRef(1, 1U);
-    draw.key.vertex_layout.canonical_mask                        = 0x1U;
+    draw.key.vertex_layout.slots                               = { { 0U, 3U } };
     draw.key.compatibility.samples                               = 1U;
     const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
         descriptors->bind(pipelines->layout(), BlockDescriptors::Offsets{ view.offset, block.offset, material.offset })
@@ -531,7 +531,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     const std::span<const std::byte>  view_bytes    = std::as_bytes(std::span<const vn::backend_vsg::core::VineViewBlock>(&view_block, 1U));
 
     ::vsg::ref_ptr<::vsg::Node> content_node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape().compatibility(), {}, view_bytes, content_node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape(), {}, view_bytes, content_node));
     EXPECT_TRUE(diagnostics.clean()) << "every identity is in the tables and the inputs match the plan";
 
     // The executor: the window is its default-framebuffer target, and the plan's single pass is recorded into

@@ -24,6 +24,7 @@
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
 #include <vine/backend_vsg/internal/StateCommands.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/support/VsgDynamicState.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -176,24 +177,16 @@ constexpr VkExtent2D kBakedViewportExtent{ 1U, 1U };
 /**
  * @brief The dynamic states every content pipeline declares.
  *
- * The nine a `StateNode` edits while a scene runs (depth test / write / compare, cull, front face, polygon
- * mode, topology, blend enable and equation) plus the VIEWPORT and the SCISSOR. The last two are what keeps
- * an extent out of the pipeline's identity: a resize changes a rectangle, and a rectangle is a command.
+ * THE ONE LIST, AND IT LIVES NEXT TO THE COMMAND THAT WRITES IT (`support/VsgDynamicState.cpp`). The
+ * invariant is two-way: every state `SetDynamicState::record` writes must be declared here (a state written
+ * but not declared makes the driver take the create-info value - the silent no-op that made
+ * `StateNode::setPolygonOffset` a no-op until 2026-11-21), and every state declared here must be written by
+ * it (a declared-but-never-set state is a value the driver takes from the create-info, which is the same
+ * trap in the other direction).
  */
 ::vsg::ref_ptr<::vsg::DynamicState> makeDynamicStateDeclaration()
 {
-    return ::vsg::DynamicState::create(VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
-                                       VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-                                       VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
-                                       VK_DYNAMIC_STATE_CULL_MODE,
-                                       VK_DYNAMIC_STATE_FRONT_FACE,
-                                       VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
-                                       VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
-                                       VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
-                                       VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT,
-                                       VK_DYNAMIC_STATE_VIEWPORT,
-                                       VK_DYNAMIC_STATE_SCISSOR,
-                                       VK_DYNAMIC_STATE_LINE_WIDTH);
+    return detail::makeDynamicStateDeclaration();
 }
 
 /// @brief The blend state's attachment list for @p color_count attachments (0 = a depth-only pass).
@@ -396,6 +389,9 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi&      
     auto raster_state             = ::vsg::RasterizationState::create();
     raster_state->cullMode        = kBakedCullMode;
     raster_state->frontFace       = kBakedFrontFace;
+    // THE BIAS ENABLE IS BAKED TRUE AND THE VALUES ARE DYNAMIC (see SetDynamicState): without the enable the
+    // driver ignores `vkCmdSetDepthBias` entirely, and `StateNode::setPolygonOffset` becomes a no-op.
+    raster_state->depthBiasEnable = VK_TRUE;
     auto depth_state              = ::vsg::DepthStencilState::create();
     depth_state->depthTestEnable  = kBakedDepthTestEnable;
     depth_state->depthWriteEnable = kBakedDepthWriteEnable;
@@ -536,6 +532,9 @@ std::unique_ptr<ContentPipeline> ContentPipeline::createScreen(const ProgramAbi&
     auto raster_state             = ::vsg::RasterizationState::create();
     raster_state->cullMode        = VK_CULL_MODE_NONE;
     raster_state->frontFace       = kBakedFrontFace;
+    // The same enable as the content pipeline: one dynamic-state list serves both, so both must accept the bias
+    // command (a full-screen draw writes zero).
+    raster_state->depthBiasEnable = VK_TRUE;
     auto depth_state              = ::vsg::DepthStencilState::create();
     depth_state->depthTestEnable  = VK_FALSE;
     depth_state->depthWriteEnable = VK_FALSE;

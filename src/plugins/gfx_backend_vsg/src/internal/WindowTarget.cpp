@@ -100,7 +100,7 @@ struct WindowTarget::Data {
     ::vsg::ref_ptr<::vsg::RenderGraph> graph;
     ::vsg::ref_ptr<::vsg::View>        content_view;  // The window's own view (see the file note).
     ::vsg::ref_ptr<::vsg::Group>       frame_content; // THIS frame's recorded content (see beginFrame).
-    core::TargetShape                  shape;
+    core::RenderPassCompatibility shape;
     /// The depth-clear commands THIS frame uses, taken from @ref depth_clears in order (see addDepthClear).
     std::vector<::vsg::ref_ptr<ClearDepthRect>> depth_clears;
     std::size_t                                 depth_clear_count{ 0 };
@@ -270,17 +270,17 @@ void WindowTarget::prepareWithoutClear() noexcept
     return d->graph;
 }
 
-core::TargetShape WindowTarget::shape() const noexcept
+core::RenderPassCompatibility WindowTarget::shape() const noexcept
 {
     return d->shape;
 }
 
-core::TargetShape WindowTarget::sampledShape() const
+core::RenderPassCompatibility WindowTarget::sampledShape() const
 {
     // The window's own answer, in both spellings: the engine's vocabulary cannot tell the window's sRGB
     // surface from a linear off-screen target, and the two are not render-pass compatible (see
     // RenderPassCompatibility: the crossing is measured), so the device's format travels with it.
-    core::TargetShape shape;
+    core::RenderPassCompatibility shape;
     shape.color_formats.push_back(toColorFormat(d->window->surfaceFormat().format));
     shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(d->window->surfaceFormat().format) });
     shape.depth_format        = toDepthFormat(d->window->depthFormat());
@@ -291,7 +291,7 @@ core::TargetShape WindowTarget::sampledShape() const
 
 bool WindowTarget::refresh()
 {
-    core::TargetShape sampled = sampledShape();
+    core::RenderPassCompatibility sampled = sampledShape();
     if (sampled == d->shape) {
         return false;
     }

@@ -1,7 +1,8 @@
 # The vsg backend's polygon offset has no effect (the depth-bias state is not declared dynamic)
 
-- **Status**: Open; the static code path is confirmed, a pixel or depth regression on a real device is missing.
+- **Status**: Fixed on the static path (2026-11-21); the pixel/depth regression is still missing (backlog `T50`).
 - **Found**: 2026-11-02
+- **Fixed**: 2026-11-21
 - **Module**: `src/plugins/gfx_backend_vsg`
 - **Files**: `makeDynamicStateDeclaration()` (`internal/ContentPipeline.cpp`, `support/VsgDynamicState.cpp`),
   `makeDynamicStateCommand()` (`internal/StateCommands.cpp`), `SetDynamicState::record()` (`support/VsgDynamicState.cpp`)
@@ -59,3 +60,22 @@ apply here, so the offset is necessarily a no-op.
 The finding touches **G4** (writing state and declaring state must agree; there is no interface where "written but
 ineffective" is acceptable), **G6** (two dynamic-state lists in one backend are an inconsistent implementation) and **G10**
 (the real cost of "set but ineffective" is hidden instead of stating how the enable and the dynamic value divide the work).
+
+## Correction (2026-11-21)
+
+Fixed by unifying the two lists, not by adding one entry to the copy:
+
+1. `internal/ContentPipeline.cpp`'s private `makeDynamicStateDeclaration()` is deleted; both pipeline builders
+   (content and full-screen) call `detail::makeDynamicStateDeclaration()` from `support/VsgDynamicState.cpp`, which
+   sits next to `SetDynamicState::record` - the thing that writes the values. That list now also names
+   `VK_DYNAMIC_STATE_DEPTH_BIAS` (and already named viewport / scissor / line width).
+2. Both rasterisation states bake `depthBiasEnable = VK_TRUE`, the same convention `RenderStateMapper` used: a zero
+   offset is zero factors, so one pipeline serves the offset and the plain case. The enable is NOT dynamic, which is
+   the rule `graphics-rendering.md` 2.8 states (a switch cannot ride the value list).
+3. The missing witness is added: `ContentPipelineTest.TheEditableHalfIsDeclaredDynamic` now asserts
+   `VK_DYNAMIC_STATE_DEPTH_BIAS` and `VK_DYNAMIC_STATE_LINE_WIDTH` are declared and that the pipeline's
+   `depthBiasEnable` is `VK_TRUE`. Before that, the test named eleven of the thirteen states the recorder writes,
+   and the two it did not name were the two the bug was about.
+4. The pixel proof from the verification plan (two coplanar triangles, one offset) remains to be written; it is
+   backlog `T50` (a `test_vsg` off-screen readback case). The static path is now pinned, so that case is a witness for
+   the DEVICE, not for the list.

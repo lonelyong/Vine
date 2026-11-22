@@ -109,9 +109,9 @@ class Fixture {
     ContentDraw::Draw draw(std::uint64_t revision = 1U) const
     {
         ContentDraw::Draw result;
-        result.key.program                      = vn::test::programRef(1, revision);
-        result.key.vertex_layout.canonical_mask = 0x1U;
-        result.key.compatibility.samples        = 1U;
+        result.key.program               = vn::test::programRef(1, revision);
+        result.key.vertex_layout.slots = { { 0U, 3U } };
+        result.key.compatibility.samples = 1U;
         // THE IDENTITY IS RESOLVED BEFORE THE RECORDING (see api/ContentDraw): the recorder binds a value and never
         // asks the pool, so a case that records through it resolves the identity first - the same order a frame's
         // head and its recording take.
@@ -237,9 +237,9 @@ TEST(ContentDrawTest, ADrawThatNamesNoGeometryIsRefusedBeforeAnythingIsMemoised)
     // must come before anything else is touched - a refused draw records nothing, memoises nothing and does not tell
     // the registry a variant is bound (or the next draw would run with whatever the last pass left bound).
     ContentDraw::Draw empty;
-    empty.key.program                      = vn::test::programRef(1, 1U);
-    empty.key.vertex_layout.canonical_mask = 0x1U;
-    empty.key.compatibility.samples        = 1U;
+    empty.key.program                = vn::test::programRef(1, 1U);
+    empty.key.vertex_layout.slots    = { { 0U, 3U } };
+    empty.key.compatibility.samples  = 1U;
     empty.index                            = nullptr;
     empty.vertex_count                     = 0U;
 

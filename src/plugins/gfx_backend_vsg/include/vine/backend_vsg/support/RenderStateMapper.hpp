@@ -163,12 +163,13 @@ inline VkBlendFactor mapBlendFactor(vn::graphics::BlendFactor factor)
  * SrcAlpha / OneMinusSrcAlpha); blend.enabled=false does not disable blending
  * in this backend.
  *
- * @param state Resolved render state to translate.
+ * @param command The command's resolved state and assembly (see ResolvedCommandState).
  * @return The four vsg pipeline-state objects.
  */
-inline RenderStateObjects makeRenderStateObjects(const vn::graphics::ResolvedRenderState& state)
+inline RenderStateObjects makeRenderStateObjects(const vn::graphics::ResolvedCommandState& command)
 {
-    RenderStateObjects out;
+    const vn::graphics::ResolvedRenderState& state = command.state;
+    RenderStateObjects                        out;
 
     // Depth: test/write map 1:1; the comparison op is inverted for the
     // backend's reverse-Z convention (see detail::mapCompareOp).
@@ -221,9 +222,10 @@ inline RenderStateObjects makeRenderStateObjects(const vn::graphics::ResolvedRen
     attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     out.colorBlend->attachments.push_back(attachment);
 
-    // Primitive topology.
+    // Primitive topology. The ASSEMBLY travels beside the state (it is the data's fact, or the pass' view
+    // switch over it), so it comes from the resolved command rather than from the state value.
     out.inputAssembly           = ::vsg::InputAssemblyState::create();
-    out.inputAssembly->topology = detail::mapTopology(state.topology);
+    out.inputAssembly->topology = detail::mapTopology(command.topology);
 
     return out;
 }

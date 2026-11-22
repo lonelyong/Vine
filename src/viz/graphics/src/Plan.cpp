@@ -70,6 +70,37 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
                                                 String(u8"' promises both a whole target and one image for its output; "
                                                        u8"one name covers one claim") });
         }
+        // A KIND READS ITS OWN FIELDS. The values below are documented as belonging to one execution, so stating
+        // one on the other kind is a declaration nothing consumes - refused here instead of being left to look like
+        // a declaration at the call site (see PassKind).
+        //
+        // `content` is NOT one of them for a Fullscreen pass: FullscreenPass reads it for the scene's LIGHT SET, so a
+        // composite pass names the scene whose lights its program shades with. The fields below are the ones the
+        // other execution truly never reads.
+        if (pass.kind == PassKind::Fullscreen) {
+            if (pass.program_override != nullptr) {
+                problems.push_back(PlanProblem{ PlanProblemCode::FieldUnusedByKind,
+                                                name,
+                                                String(u8"pass '") + name +
+                                                    String(u8"' is a Fullscreen pass and states program_override; its "
+                                                           u8"program is `program`") });
+            }
+            if (pass.layer_mask != kAllLayers) {
+                problems.push_back(PlanProblem{ PlanProblemCode::FieldUnusedByKind,
+                                                name,
+                                                String(u8"pass '") + name +
+                                                    String(u8"' is a Fullscreen pass and states a layer mask; it draws "
+                                                           u8"no content, so the mask would select nothing") });
+            }
+        }
+        else if (pass.program != nullptr) {
+            problems.push_back(PlanProblem{ PlanProblemCode::FieldUnusedByKind,
+                                            name,
+                                            String(u8"pass '") + name +
+                                                String(u8"' is a Scene pass and states `program`; a scene pass shades "
+                                                       u8"its content through program_override and its per-geometry "
+                                                       u8"programs") });
+        }
         if (name.empty()) {
             problems.push_back(PlanProblem{ PlanProblemCode::EmptyPassName,
                                             String(),
@@ -156,6 +187,7 @@ String planCodeText(PlanProblemCode code)
     case PlanProblemCode::TooManyPasses: return String(u8"too-many-passes");
     case PlanProblemCode::InvalidTarget: return String(u8"invalid-target");
     case PlanProblemCode::InvalidOutput: return String(u8"invalid-output");
+    case PlanProblemCode::FieldUnusedByKind: return String(u8"field-unused-by-kind");
     }
     return String(u8"unknown");
 }

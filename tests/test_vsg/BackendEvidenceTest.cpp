@@ -65,7 +65,7 @@ using vn::backend_vsg::core::Phase;
 using vn::backend_vsg::core::PhaseTable;
 using vn::backend_vsg::core::PixelProbe;
 using vn::backend_vsg::core::Rgba8;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 
 namespace
 {
@@ -491,7 +491,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
         return gate.allocations();
     };
 
-    TargetShape shape;
+    RenderPassCompatibility shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     ClearValues policy;
     policy.color             = true;

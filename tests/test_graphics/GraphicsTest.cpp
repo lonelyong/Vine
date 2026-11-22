@@ -7251,7 +7251,7 @@ TEST(PassChainTest, DeferredPresetBuildsGbufferAndLightingPasses)
     EXPECT_EQ(window->renderTarget(), nullptr);
 
     // The G-buffer pass draws the content THROUGH the G-buffer program, and it is a SCENE pass: the program
-    // rides on that pass' OVERRIDE. `PassDesc::program` is the field only a Full-full-screen pass draws through, so a
+    // rides on that pass' OVERRIDE. `PassDesc::program` is the field only a full-screen pass draws through, so a
     // scene declaration that names it is a scene pass with NO program at all - every body then draws with its
     // own program (or the engine's forward one) which writes ONE colour output: the geometry lands in albedo
     // and the normal / specular / position attachments keep their transparent-black clear, which is exactly
@@ -8984,11 +8984,16 @@ TEST(StateNodeTest, TopologyIsNotStateAtAll)
 {
     // It used to be a subtree override; it is the PRIMITIVE's fact now (see Primitive.hpp), because it says
     // how a draw consumes its vertex/index data. A StateNode contributes the state items only, so the
-    // resolved state's topology is whatever the DATA said - the default here is the caller's argument.
-    StateNode state;
-    EXPECT_EQ(effectiveRenderState(&state).topology, Topology::Triangles) << "the content-only spelling has no data layer, so it keeps the documented default";
-    EXPECT_EQ(resolveRenderState(RenderState{}, PassRenderState{}, Topology::Lines).state.topology, Topology::Lines) << "the data's word is what resolves";
-    EXPECT_EQ(resolveRenderState(RenderState{}, PassRenderState{}, Topology::Lines).origin.topology, StateOrigin::Data);
+    // resolved command reports the topology BESIDE the state - and the content-only spelling has no topology
+    // to guess, which is what makes it a value a tool may use without inventing a data fact.
+    const ResolvedCommandState resolved = resolveRenderState(RenderState{}, PassRenderState{}, Topology::Lines);
+    EXPECT_EQ(resolved.topology, Topology::Lines) << "the data's word is what resolves";
+    EXPECT_EQ(resolved.topology_origin, StateOrigin::Data);
+
+    RenderState authored;
+    authored.cullMode = CullMode::Back;
+    EXPECT_EQ(applyStateDefaults(authored), resolveRenderState(authored, PassRenderState{}, Topology::Triangles).state)
+        << "the state half is the same value either way; only the assembly has no content layer";
 }
 
 TEST(StateNodeTest, SettersAndClears)
@@ -9118,7 +9123,8 @@ TEST(StateNodeTest, ResolveAppliesDefaults)
     EXPECT_EQ(fallback.cullMode, CullMode::None);
     EXPECT_FALSE(fallback.blend.enabled);
     EXPECT_EQ(fallback.polygonMode, PolygonMode::Fill);
-    EXPECT_EQ(fallback.topology, Topology::Triangles);
+    // There is no topology assertion here: the content-only spelling has no assembly to answer (it is the
+    // data's fact, see ResolvedCommandState::topology).
     EXPECT_TRUE(fallback.polygonOffset.isZero()) << "no offset unless the content states one";
 
     RenderState partial;
@@ -9394,8 +9400,8 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Content);
     EXPECT_TRUE(resolved.state.blend.enabled);
     EXPECT_EQ(resolved.origin.blend, StateOrigin::Content);
-    EXPECT_EQ(resolved.state.topology, Topology::Lines);
-    EXPECT_EQ(resolved.origin.topology, StateOrigin::Data) << "topology is the DATA's word, not a StateNode's";
+    EXPECT_EQ(resolved.topology, Topology::Lines);
+    EXPECT_EQ(resolved.topology_origin, StateOrigin::Data) << "topology is the DATA's word, not a StateNode's";
     // ... except the one item the pass OVERRIDES: rasterisation is a viewing switch, so it wins even over a
     // content-authored Line (otherwise "back to shaded" could never be reached).
     EXPECT_EQ(resolved.state.polygonMode, PolygonMode::Point);
@@ -9424,18 +9430,18 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     EXPECT_EQ(defaults.state.cullMode, CullMode::None);
     EXPECT_FALSE(defaults.state.blend.enabled);
     EXPECT_EQ(defaults.state.polygonMode, PolygonMode::Fill);
-    EXPECT_EQ(defaults.state.topology, Topology::Triangles);
+    EXPECT_EQ(defaults.topology, Topology::Triangles);
     EXPECT_EQ(defaults.origin.cullMode, StateOrigin::Default);
     EXPECT_EQ(defaults.origin.blend, StateOrigin::Default);
     EXPECT_EQ(defaults.origin.polygonMode, StateOrigin::Default);
-    EXPECT_EQ(defaults.origin.topology, StateOrigin::Data) << "even the default topology came from the data layer (a draw always has one)";
+    EXPECT_EQ(defaults.topology_origin, StateOrigin::Data) << "even the default topology came from the data layer (a draw always has one)";
 
     // The pass' viewpoint override: it wins over the data, and says so.
     PassRenderState as_points;
     as_points.topology                = Topology::Points;
     const ResolvedCommandState viewed = resolveRenderState(RenderState{}, as_points, Topology::Triangles);
-    EXPECT_EQ(viewed.state.topology, Topology::Points);
-    EXPECT_EQ(viewed.origin.topology, StateOrigin::Pass);
+    EXPECT_EQ(viewed.topology, Topology::Points);
+    EXPECT_EQ(viewed.topology_origin, StateOrigin::Pass);
 
     // The content-only spelling answers exactly like the same call with a pass that overrides nothing.
     const ResolvedRenderState  alone           = applyStateDefaults(content);
@@ -9516,7 +9522,7 @@ TEST(SceneTest, CollectCommandsDefaultsStateWithoutStateNode)
     EXPECT_EQ(resolved.state.cullMode, CullMode::None);
     EXPECT_EQ(resolved.state.polygonMode, PolygonMode::Fill);
     EXPECT_EQ(resolved.origin.cullMode, StateOrigin::Default) << "and it says so, per item";
-    EXPECT_EQ(resolved.origin.topology, StateOrigin::Data) << "topology is never 'nobody said': it comes from the primitive (or the pass), see Primitive.hpp";
+    EXPECT_EQ(resolved.topology_origin, StateOrigin::Data) << "topology is never 'nobody said': it comes from the primitive (or the pass), see Primitive.hpp";
 }
 
 TEST(GeometryTest, RawPositionsDriveCountsAndBounds)
@@ -10846,7 +10852,7 @@ TEST(SceneTest, TheFoldedStateAgreesWithTheUpWalkingHelpers)
     EXPECT_EQ(resolved.state.depth.compare, expected.depth.compare);
     EXPECT_EQ(resolved.state.polygonMode, expected.polygonMode);
     EXPECT_EQ(resolved.state.blend.enabled, expected.blend.enabled);
-    EXPECT_EQ(resolved.state.topology, expected.topology);
+    EXPECT_EQ(resolved.topology, Topology::Triangles) << "the assembly is the resolved command's, beside the state";
     EXPECT_TRUE(command.authored_state.depth.has_value()) << "explicit depth is authored on a StateNode";
     EXPECT_EQ(resolved.origin.depth, StateOrigin::Content);
 
@@ -13336,7 +13342,7 @@ TEST(RenderEngineTest, AFullscreenPassCanBeDeclaredAsAValueToo)
  *
  * The descriptor is not a second set of defaults to keep in step with the node's: silence means "the kind's
  * policy", which is the only reading that keeps a declared pass and a hand-built one the same pass. It matters
- * most where the kinds disagree - a Full-full-screen pass composites over what is already there, so a `clear_enabled`
+ * most where the kinds disagree - a full-screen pass composites over what is already there, so a `clear_enabled`
  * default of true would repaint the target it was about to draw over.
  */
 TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)

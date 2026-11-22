@@ -26,6 +26,7 @@ using vn::graphics::BlendState;
 using vn::graphics::CompareOp;
 using vn::graphics::CullMode;
 using vn::graphics::PolygonMode;
+using vn::graphics::ResolvedCommandState;
 using vn::graphics::ResolvedRenderState;
 using vn::graphics::Topology;
 using vn::backend_vsg::makeRenderStateObjects;
@@ -259,9 +260,8 @@ TEST(SceneRulesTest, VariantHashHoldsOnlyWhatAPipelineIsAFunctionOf)
     changed.polygonMode = PolygonMode::Line;
     EXPECT_EQ(variantHash(changed), base_hash) << "the polygon mode needs an extension, and this backend requires it";
 
-    changed          = base;
-    changed.topology = Topology::Lines;
-    EXPECT_EQ(variantHash(changed), base_hash);
+    // No topology item exists to poke here: the assembly is a DATA fact and lives on the resolved command
+    // (see ResolvedCommandState), while this hash is over the state a drawable resolves to.
 
     changed               = base;
     changed.blend.enabled = !base.blend.enabled;
@@ -282,7 +282,6 @@ TEST(SceneRulesTest, VariantHashHoldsOnlyWhatAPipelineIsAFunctionOf)
     all.depth.compare       = CompareOp::Greater;
     all.cullMode            = CullMode::Back;
     all.polygonMode         = PolygonMode::Line;
-    all.topology            = Topology::Points;
     all.blend               = BlendState{ true, BlendFactor::One, BlendFactor::Zero };
     EXPECT_EQ(variantHash(all), base_hash);
 
@@ -322,7 +321,7 @@ TEST(SceneRulesTest, ColourAttachmentCountIsAtLeastOne)
 
 TEST(SceneRulesTest, OpaqueBlendDisablesBlendingOnEveryAttachment)
 {
-    RenderStateObjects states = makeRenderStateObjects(ResolvedRenderState());
+    RenderStateObjects states = makeRenderStateObjects(ResolvedCommandState());
     applyOpaqueBlendForAttachments(states, 3);
 
     ASSERT_NE(states.colorBlend, nullptr);

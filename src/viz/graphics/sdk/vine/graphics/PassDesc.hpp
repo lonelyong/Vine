@@ -107,7 +107,7 @@ struct VN_GRAPHICS_API PassDesc {
     /// Name-based declared inputs, in declaration order: the sugar over the object-typed ones.
     std::vector<String> input_names;
 
-    /// Whether this pass clears its target's COLOUR attachments, or unset for the KIND's own policy: a Full-full-screen pass
+    /// Whether this pass clears its target's COLOUR attachments, or unset for the KIND's own policy: a full-screen pass
     /// never clears (it composites over what is already there), a Scene pass does. It is ONE OF TWO independent
     /// dimensions - `clear_depth` is the other - so a pass that keeps the picture and resets only depth states `false`
     /// here and `true` there (a HUD overlay owning the depth inside its rectangle).
@@ -123,7 +123,7 @@ struct VN_GRAPHICS_API PassDesc {
     /// black. This is what a G-buffer needs (a normal image cleared to (0,0,1,0) rather than the pass' colour).
     std::vector<Colorf> clear_extra_colors;
     /// Whether the depth attachment is cleared, or unset for the kind's own policy: it follows `clear_enabled` for a
-    /// pass that clears (a Scene pass clears both, a Full-full-screen pass neither), and a pass that clears NO colour clears no
+    /// pass that clears (a Scene pass clears both, a full-screen pass neither), and a pass that clears NO colour clears no
     /// depth either unless it says so here. `clear_enabled = false` + `clear_depth = true` is therefore a DEPTH-ONLY
     /// clear, applied inside the pass' viewport (see ClearPolicy for what each target can express).
     std::optional<bool> clear_depth;
@@ -140,7 +140,7 @@ struct VN_GRAPHICS_API PassDesc {
     /// a LAYER value, so nothing else may read that depth back as geometry (see DepthRange).
     std::optional<DepthRange> depth_range;
 
-    /// The full-screen program a Full-full-screen pass draws through (null draws nothing; reported once).
+    /// The full-screen program a full-screen pass draws through (null draws nothing; reported once).
     intrusive_ptr<ShaderProgram> program{ nullptr };
     /// The program override a Scene pass draws ALL of its geometry with (the view-mode path, see M1).
     intrusive_ptr<ShaderProgram> program_override{ nullptr };

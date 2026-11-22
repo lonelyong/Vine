@@ -68,7 +68,7 @@ using vn::graphics::TargetAction;
 using vn::backend_vsg::core::TargetFacts;
 using vn::graphics::DeviceFormat;
 using vn::graphics::RenderPassKey;
-using vn::graphics::TargetShape;
+using vn::graphics::RenderPassCompatibility;
 
 namespace
 {
@@ -102,9 +102,9 @@ struct Rig {
     }
 
     /// @brief A shape with @p colors colour attachments (the count an input's offer is reported as).
-    static TargetShape colorShape(int colors = 1)
+    static RenderPassCompatibility colorShape(int colors = 1)
     {
-        TargetShape shape;
+        RenderPassCompatibility shape;
         for (int index = 0; index < colors; ++index) {
             shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
         }
@@ -997,7 +997,7 @@ TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
 
 TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
 {
-    TargetShape actual; // what a target really reports: the engine's spellings and the device's
+    RenderPassCompatibility actual; // what a target really reports: the engine's spellings and the device's
     actual.color_formats        = { RenderTarget::ColorFormat::RGBA8 };
     actual.depth_format         = RenderTarget::DepthFormat::D32F;
     actual.device_color_formats = { DeviceFormat{ 44U }, DeviceFormat{ 45U } };

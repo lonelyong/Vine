@@ -361,7 +361,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  node;
-    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape().compatibility(), {}, view_block, node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, target->shape(), {}, view_block, node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U) << "nothing may be refused: every band is a complete content draw";
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 0U)
         << "a DISABLED light is not a drop: the two unusable bands said so themselves (see the announced lists)";
@@ -585,7 +585,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     ::vsg::ref_ptr<::vsg::Node>  node;
     const ContentFacts           facts; // a full-screen packet reads no tables: its half is looked up by program identity
-    ASSERT_TRUE(content.record(frame.passes[0], facts, destination->shape().compatibility(), {}, view_block, node));
+    ASSERT_TRUE(content.record(frame.passes[0], facts, destination->shape(), {}, view_block, node));
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     EXPECT_EQ(diagnostics.count(vn::graphics::DiagnosticCategory::ChannelIgnored), 0U)
         << "both calls announced lights that fit the block, so neither kind of path reports a drop";

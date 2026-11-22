@@ -40,7 +40,7 @@ namespace backend_vsg
 // The real cost is that a NEW SDK name becomes visible unqualified here without a line changing in this
 // plugin. Measured 2026-11-18 (remove the directive, build `gfx_backend_vsg`, read the compiler's errors):
 // the surface it supplies is 31 names - DrawKind / LoadOp / StoreOp / DynamicState / ImageLayout /
-// LoadOpVariantKey / PipelineKey / PipelineKeyHash / TargetShape / VertexLayoutKey / FrameToken /
+// LoadOpVariantKey / PipelineKey / PipelineKeyHash / RenderPassCompatibility / VertexLayoutKey / FrameToken /
 // FrameTimeline / RetirementQueue / DeviceClock / DepthFacts / DepthPlan / TargetAction / TargetDecision /
 // TargetDesc / TargetInstance / depthPlan / planTarget / ReadbackAnswer / ReadbackFormat / ReadbackKind /
 // ReadbackRequest / colorReadbackOf / depthReadbackOf / decodeDepth / readbackOf / Diagnostics.

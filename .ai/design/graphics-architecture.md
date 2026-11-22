@@ -124,7 +124,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Window target | `WindowTarget` | `WindowTarget` |
 | Window / offscreen session | no separate type (the device's own frame machinery) | `WindowSession` / `OffscreenSession` |
 | Content facts and rows | `ContentCaches` (rows and command plans included) | `ContentStore` + `ContentFacts` |
-| Compiled half (per (program, rev, layout, variant)) | no separate type (the pipeline key in `ContentDraw`) | `CompiledPrograms` |
+| Compiled half (per (program, rev, layout, variant)) | no separate type (`ContentCaches`'s `ContentPipelineKey`) | `CompiledPrograms` |
 | Declared descriptor sets | `ContentCaches`'s set cache | `BindingSets` |
 | Readback | `ReadbackStaging` | `HostReadback` |
 | Lights | SDK `LightSet` | SDK `LightSet` |
