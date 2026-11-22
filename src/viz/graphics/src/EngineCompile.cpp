@@ -705,7 +705,7 @@ void SessionShape::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputI
                                           u8" (check the producer's order and its enabled state)")));
 }
 
-SessionShape::OutputIdentity SessionShape::OutputIdentity::of(const ImageRef& image) noexcept
+OutputIdentity OutputIdentity::of(const ImageRef& image) noexcept
 {
     OutputIdentity identity;
     identity.target     = image.target();
@@ -716,7 +716,7 @@ SessionShape::OutputIdentity SessionShape::OutputIdentity::of(const ImageRef& im
     return identity;
 }
 
-SessionShape::OutputIdentity SessionShape::OutputIdentity::colorOf(const RenderTarget& target, int attachment) noexcept
+OutputIdentity OutputIdentity::colorOf(const RenderTarget& target, int attachment) noexcept
 {
     OutputIdentity identity;
     identity.target     = &target;
@@ -724,7 +724,7 @@ SessionShape::OutputIdentity SessionShape::OutputIdentity::colorOf(const RenderT
     return identity;
 }
 
-SessionShape::OutputIdentity SessionShape::OutputIdentity::depthOf(const RenderTarget& target) noexcept
+OutputIdentity OutputIdentity::depthOf(const RenderTarget& target) noexcept
 {
     OutputIdentity identity;
     identity.target     = &target;
@@ -733,7 +733,7 @@ SessionShape::OutputIdentity SessionShape::OutputIdentity::depthOf(const RenderT
     return identity;
 }
 
-SessionShape::OutputIdentity SessionShape::OutputIdentity::targetOf(const RenderTarget& target) noexcept
+OutputIdentity OutputIdentity::targetOf(const RenderTarget& target) noexcept
 {
     OutputIdentity identity;
     identity.target     = &target;
@@ -741,12 +741,12 @@ SessionShape::OutputIdentity SessionShape::OutputIdentity::targetOf(const Render
     return identity;
 }
 
-bool SessionShape::OutputIdentity::operator==(const OutputIdentity& other) const noexcept
+bool OutputIdentity::operator==(const OutputIdentity& other) const noexcept
 {
     return target == other.target && attachment == other.attachment && depth == other.depth && declared == other.declared;
 }
 
-bool SessionShape::OutputIdentity::operator<(const OutputIdentity& other) const noexcept
+bool OutputIdentity::operator<(const OutputIdentity& other) const noexcept
 {
     if (target != other.target) {
         // std::less, not the built-in `<`: comparing unrelated pointers with `<` is unspecified,
@@ -763,6 +763,80 @@ bool SessionShape::OutputIdentity::operator<(const OutputIdentity& other) const 
     return attachment < other.attachment;
 }
 
+void WiringReport::clear() noexcept
+{
+    filled.clear();
+    claimed.clear();
+    colliding.clear();
+    unbound.clear();
+    promised_images.clear();
+}
+
+const Declaration* WiringReport::findFilled(raw_ptr<const RenderTarget> target) const noexcept
+{
+    const auto it = std::find_if(filled.begin(), filled.end(), [target](const Declaration& entry) { return entry.target == target; });
+    return it == filled.end() ? nullptr : &*it;
+}
+
+void WiringReport::noteFilled(Declaration declaration)
+{
+    if (findFilled(declaration.target) == nullptr) {
+        filled.push_back(std::move(declaration));
+    }
+}
+
+const Declaration* WiringReport::findClaimed(const OutputIdentity& identity) const noexcept
+{
+    const auto it = std::find_if(claimed.begin(), claimed.end(), [&identity](const Declaration& entry) { return entry.identity == identity; });
+    return it == claimed.end() ? nullptr : &*it;
+}
+
+void WiringReport::noteColliding(const OutputIdentity& identity)
+{
+    const auto known = std::any_of(colliding.begin(), colliding.end(), [&identity](const OutputIdentity& entry) { return entry == identity; });
+    if (!known) {
+        colliding.push_back(identity);
+    }
+}
+
+bool WiringReport::isColliding(const OutputIdentity& identity) const noexcept
+{
+    return std::any_of(colliding.begin(), colliding.end(), [&identity](const OutputIdentity& entry) { return entry == identity; });
+}
+
+void WiringReport::noteUnbound(raw_ptr<const ImageRef> image, raw_ptr<const RenderPass> pass, bool as_output)
+{
+    const auto known = std::any_of(unbound.begin(), unbound.end(), [image](const UnboundDeclaration& entry) { return entry.image == image; });
+    if (!known) {
+        unbound.push_back(UnboundDeclaration{ image, pass, as_output });
+    }
+}
+
+String targetName(raw_ptr<const RenderTarget> target)
+{
+    if (target == nullptr) {
+        return String(u8"(no target)");
+    }
+    return target->name().empty() ? String(u8"(unnamed target)") : target->name();
+}
+
+String drawnIntoName(raw_ptr<const RenderPass> pass)
+{
+    raw_ptr<const RenderTarget> drawn_into = pass->renderTarget();
+    return (drawn_into == nullptr) ? String(u8"the window") : targetName(drawn_into);
+}
+
+String identityName(const OutputIdentity& identity)
+{
+    if (identity.attachment == OutputIdentity::kWholeTarget) {
+        return String(u8"the images of target '") + targetName(identity.target) + u8"'";
+    }
+    if (identity.depth) {
+        return String(u8"the depth of target '") + targetName(identity.target) + u8"'";
+    }
+    return String(u8"an image of target '") + targetName(identity.target) + u8"'";
+}
+
 void SessionShape::collectPlanProblems()
 {
     // Every pass on its own is valid, so only the whole table can see these; and they are properties of the
@@ -770,90 +844,29 @@ void SessionShape::collectPlanProblems()
     // what is REPORTED is decided once, by comparing this list with the previous compile's (see
     // reportPlanProblems) - the checks below only say what they found.
     //
-    // Two phases, because a consumer may be registered before its producer: the producers have to be collected
-    // before any consumer is judged against them.
-    const auto target_name = [](raw_ptr<const RenderTarget> target) -> String {
-        if (target == nullptr) {
-            return String(u8"(no target)");
-        }
-        return target->name().empty() ? String(u8"(unnamed target)") : target->name();
-    };
-    /// What a pass writes, for a message about a promise it cannot keep (null render target = the
-    /// window, which is a wire of its own).
-    const auto drawn_into_name = [&target_name](raw_ptr<const RenderPass> pass) -> String {
-        raw_ptr<const RenderTarget> drawn_into = pass->renderTarget();
-        return (drawn_into == nullptr) ? String(u8"the window") : target_name(drawn_into);
-    };
-    const auto identity_name = [&target_name](const OutputIdentity& identity) -> String {
-        if (identity.attachment == OutputIdentity::kWholeTarget) {
-            return String(u8"the images of target '") + target_name(identity.target) + u8"'";
-        }
-        if (identity.depth) {
-            return String(u8"the depth of target '") + target_name(identity.target) + u8"'";
-        }
-        return String(u8"an image of target '") + target_name(identity.target) + u8"'";
-    };
+    // FOUR PHASES, IN AN ORDER THAT IS A DEPENDENCY: a consumer may be registered before its producer, so the
+    // producers are collected before any consumer is judged (phase 1 -> 2); a fullscreen pass is judged on its own
+    // declaration alone (phase 3); and an unbound image is spoken about only once the collision check has had its
+    // chance to speak for the same object (phase 1 -> 4).
+    wiring_.clear();
+    collectOutputClaims();
+    collectUnproducedInputs();
+    collectFullscreenPassProblems();
+    collectUnboundImages();
+}
 
-    /// Who fills what: the lowest-indexed pass that renders into a target or promises the whole of
-    /// it. Keyed by TARGET, because filling a target fills every image it has. A DISABLED pass still
-    /// declares its wire: toggling a pass off is not a wiring mistake, it is a paused pass.
-    /// Who claims which image: a fine promise, and the images of a coarse one. Two claimants of one
-    /// image is what the collision report is about.
-    /// Both tables (and the collision/unbound ones below) are the ENGINE's, cleared here: the pass count is small, so a
-    /// flat scan both beats a tree and keeps its capacity - a steady frame allocates nothing while it checks the wiring.
-    auto& filled           = wiring_filled_;
-    auto& claimed          = wiring_claimed_;
-    auto& colliding_images = wiring_colliding_;
-    auto& unbound_declared = wiring_unbound_;
-    filled.clear();
-    claimed.clear();
-    colliding_images.clear();
-    unbound_declared.clear();
-
-    // First wins in every table, exactly as the keyed containers did: a second filler of one target, or a second
-    // claimant of one image, is a fact the reports below are about, not a replacement.
-    const auto findFilled = [this](raw_ptr<const RenderTarget> target) -> const Declaration* {
-        const auto it = std::find_if(wiring_filled_.begin(), wiring_filled_.end(), [target](const Declaration& entry) { return entry.target == target; });
-        return it == wiring_filled_.end() ? nullptr : &*it;
-    };
-    const auto noteFilled = [this, &findFilled](Declaration declaration) {
-        if (findFilled(declaration.target) == nullptr) {
-            wiring_filled_.push_back(std::move(declaration));
-        }
-    };
-    const auto findClaimed = [this](const OutputIdentity& identity) -> const Declaration* {
-        const auto it =
-            std::find_if(wiring_claimed_.begin(), wiring_claimed_.end(), [&identity](const Declaration& entry) { return entry.identity == identity; });
-        return it == wiring_claimed_.end() ? nullptr : &*it;
-    };
-    const auto noteColliding = [this](const OutputIdentity& identity) {
-        const auto known =
-            std::any_of(wiring_colliding_.begin(), wiring_colliding_.end(), [&identity](const OutputIdentity& entry) { return entry == identity; });
-        if (!known) {
-            wiring_colliding_.push_back(identity);
-        }
-    };
-    const auto isColliding = [this](const OutputIdentity& identity) {
-        return std::any_of(wiring_colliding_.begin(), wiring_colliding_.end(), [&identity](const OutputIdentity& entry) { return entry == identity; });
-    };
-    const auto noteUnbound = [this](raw_ptr<const ImageRef> image, raw_ptr<const RenderPass> pass, bool as_output) {
-        const auto known =
-            std::any_of(wiring_unbound_.begin(), wiring_unbound_.end(), [image](const UnboundDeclaration& entry) { return entry.image == image; });
-        if (!known) {
-            wiring_unbound_.push_back(UnboundDeclaration{ image, pass, as_output });
-        }
-    };
-
-    // Phase 1: who fills and who claims. The fillers come from ALL passes (a declaration is a
-    // declaration), the claims from the ENABLED ones only — what the collision report is about is
-    // "whoever runs last silently wins", and a disabled pass runs nothing.
+void SessionShape::collectOutputClaims()
+{
+    // PHASE 1: WHO FILLS AND WHO CLAIMS. Drawing into a target fills every attachment it has, and a promise claims
+    // the image (or images) it names. The fillers come from ALL passes (a declaration is a declaration), the claims
+    // from the ENABLED ones only — what the collision report is about is "whoever runs last silently wins", and a
+    // disabled pass runs nothing.
     //
-    // A host binding (publish) is filled by the HOST: it is there from the start of the frame and no
-    // pass owns its hand-off, so a declared input addressing it is answered like one addressing a
-    // pass' target.
+    // A host binding (publish) is filled by the HOST: it is there from the start of the frame and no pass owns its
+    // hand-off, so a declared input addressing it is answered like one addressing a pass' target.
     for (const auto& binding : resources_.hostBindings()) {
         if (binding.second != nullptr) {
-            noteFilled(Declaration{ nullptr, binding.second.get(), nullptr, 0 });
+            wiring_.noteFilled(Declaration{ nullptr, binding.second.get(), nullptr, 0 });
         }
     }
 
@@ -885,7 +898,7 @@ void SessionShape::collectPlanProblems()
         // Drawing into a target fills it: every attachment it has holds this pass' content
         // afterwards. This is the physical fact the input rules below are answered from.
         if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
-            noteFilled(Declaration{ nullptr, drawn_into, pass, index });
+            wiring_.noteFilled(Declaration{ nullptr, drawn_into, pass, index });
         }
 
         // A content pass whose mask selects nothing. Legal (see PassDesc::layer_mask), and nearly always a
@@ -916,9 +929,9 @@ void SessionShape::collectPlanProblems()
                                        reportedPassName(pass)));
         }
         if (raw_ptr<RenderTarget> promised = pass->outputTarget(); promised != nullptr) {
-            noteFilled(Declaration{ nullptr, promised, pass, index });
+            wiring_.noteFilled(Declaration{ nullptr, promised, pass, index });
 
-            std::vector<OutputIdentity>& promised_images = wiring_promised_images_;
+            std::vector<OutputIdentity>& promised_images = wiring_.promised_images;
             promised_images.clear();
             promised_images.reserve(static_cast<std::size_t>(promised->colorCount()) + 1);
             for (int attachment = 0; attachment < promised->colorCount(); ++attachment) {
@@ -931,20 +944,20 @@ void SessionShape::collectPlanProblems()
             }
 
             for (const auto& identity : promised_images) {
-                const Declaration* entry = findClaimed(identity);
+                const Declaration* entry = wiring_.findClaimed(identity);
                 if (entry == nullptr) {
-                    claimed.push_back(Declaration{ nullptr, promised, pass, index, identity });
+                    wiring_.claimed.push_back(Declaration{ nullptr, promised, pass, index, identity });
                     continue;
                 }
                 if (entry->pass == pass) {
                     continue; // one pass claiming twice is one claim
                 }
-                noteColliding(identity);
+                wiring_.noteColliding(identity);
                 {
                     noteProblem(compileProblem(u8"engine.pass.output_collision",
                                                vn::graphics::DiagnosticCategory::ContentSkipped,
                                                String(u8"two passes ('") + reportedPassName(entry->pass) + String(u8"' and '") + reportedPassName(pass) +
-                                                   String(u8"') claim ") + identity_name(identity) +
+                                                   String(u8"') claim ") + identityName(identity) +
                                                    String(u8" as their output, so a consumer of it gets whichever pass"
                                                           u8" runs last"),
                                                String{}));
@@ -965,28 +978,25 @@ void SessionShape::collectPlanProblems()
                 // Recorded, not reported yet: if another pass also claims this image, the collision
                 // report below names both passes and the image, and binding the image alone would not
                 // fix a double claim — one mistake, one message. Phase 4 reports the rest.
-                noteUnbound(output, pass, true);
+                wiring_.noteUnbound(output, pass, true);
             }
             // Same rule as the coarse form: a fine promise is about a target this pass has to write.
             raw_ptr<RenderTarget> promised_target = output->target();
             if (promised_target != nullptr && pass->renderTarget() != promised_target) {
-                const OutputIdentity identity = OutputIdentity::of(*output);
-                {
-                    noteProblem(compileProblem(u8"engine.pass.output_image_mismatch",
-                                               vn::graphics::DiagnosticCategory::ContentSkipped,
-                                               String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") + output->label() +
-                                                   String(u8"' of target '") + target_name(promised_target) + String(u8"' as its output but renders into '") +
-                                                   drawn_into_name(pass) + String(u8"', so the promise is about content this pass never writes"),
-                                               reportedPassName(pass)));
-                }
+                noteProblem(compileProblem(u8"engine.pass.output_image_mismatch",
+                                           vn::graphics::DiagnosticCategory::ContentSkipped,
+                                           String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") + output->label() +
+                                               String(u8"' of target '") + targetName(promised_target) + String(u8"' as its output but renders into '") +
+                                               drawnIntoName(pass) + String(u8"', so the promise is about content this pass never writes"),
+                                           reportedPassName(pass)));
             }
             const OutputIdentity identity = OutputIdentity::of(*output);
-            const Declaration*   entry    = findClaimed(identity);
+            const Declaration*   entry    = wiring_.findClaimed(identity);
             if (entry == nullptr) {
-                claimed.push_back(Declaration{ output, output->target(), pass, index, identity });
+                wiring_.claimed.push_back(Declaration{ output, output->target(), pass, index, identity });
             }
             else if (entry->pass != pass) {
-                noteColliding(identity);
+                wiring_.noteColliding(identity);
                 {
                     const String first  = reportedPassName(entry->pass);
                     const String second = reportedPassName(pass);
@@ -1002,7 +1012,7 @@ void SessionShape::collectPlanProblems()
                                   String(u8"') that are the same attachment of one target; a consumer of it"
                                          u8" gets whichever pass runs last")
                             : String(u8"two passes ('") + first + String(u8"' and '") + second + String(u8"') claim the image '") + output->label() +
-                                  String(u8"' of target '") + target_name(output->target()) +
+                                  String(u8"' of target '") + targetName(output->target()) +
                                   String(u8"', one of them as part of the whole target; a consumer of it gets"
                                          u8" whichever pass runs last");
                     noteProblem(detail::engineProblem(u8"engine.pass.output_collision", vn::graphics::DiagnosticCategory::ContentSkipped, message));
@@ -1010,11 +1020,14 @@ void SessionShape::collectPlanProblems()
             }
         }
     }
+}
 
-    // Phase 2: every declared input its consumer cannot draw from — nobody fills the image (or the
-    // whole target), or the image asked for is a depth the target does not have. WHERE the producer was
-    // registered is no longer a wiring fact: the scheduler orders a later-announced producer first (see
-    // scheduleRows), so registration order says nothing about execution order.
+void SessionShape::collectUnproducedInputs()
+{
+    // PHASE 2: EVERY DECLARED INPUT ITS CONSUMER CANNOT DRAW FROM - nobody fills the image (or the whole target), or
+    // the image asked for is a depth the target does not have. WHERE the producer was registered is not a wiring
+    // fact: the scheduler orders a later-announced producer first (see scheduleRows), so registration order says
+    // nothing about execution order.
     for (const Slot& slot : slots_) {
         RenderPass* pass = slot.pass.get();
         if (pass == nullptr) {
@@ -1026,7 +1039,7 @@ void SessionShape::collectPlanProblems()
                 continue;
             }
             const OutputIdentity identity = OutputIdentity::targetOf(*target);
-            const Declaration*   entry    = findFilled(target.get());
+            const Declaration*   entry    = wiring_.findFilled(target.get());
             // A pass reading what it draws into is a feedback loop the backend supports on purpose
             // (an overlay reading the frame it is about to composite into): never a bogus wire.
             if (entry != nullptr && entry->pass == pass) {
@@ -1040,7 +1053,7 @@ void SessionShape::collectPlanProblems()
             unusable_inputs_this_frame_.emplace(pass, identity);
             {
                 const String consumer = reportedPassName(pass);
-                const String message  = String(u8"pass '") + consumer + String(u8"' declares the input target '") + target_name(target.get()) +
+                const String message  = String(u8"pass '") + consumer + String(u8"' declares the input target '") + targetName(target.get()) +
                                         String(u8"' but no pass writes it, so nothing fills it");
                 noteProblem(detail::engineProblem(u8"engine.pass.input_target_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
             }
@@ -1056,13 +1069,13 @@ void SessionShape::collectPlanProblems()
             // deliberately says nothing — declaring it is what is wrong). Reported once per IMAGE:
             // by the producer side above when a pass declares it as its output, otherwise here.
             if (!image->isBound()) {
-                noteUnbound(image, pass, false);
+                wiring_.noteUnbound(image, pass, false);
                 continue;
             }
             // An unbound image has no address, so no target account can say anything about it: only
             // a promise of that same object can.
-            const Declaration* claim = findClaimed(identity);
-            const Declaration* entry = (identity.target != nullptr) ? findFilled(identity.target) : nullptr;
+            const Declaration* claim = wiring_.findClaimed(identity);
+            const Declaration* entry = (identity.target != nullptr) ? wiring_.findFilled(identity.target) : nullptr;
 
             // A pass that promises the very image it reads, or draws into its target, is a feedback
             // loop the backend supports on purpose (an overlay reading the frame it composites
@@ -1089,18 +1102,21 @@ void SessionShape::collectPlanProblems()
                 const String message  = !has_filler ? String(u8"pass '") + consumer + String(u8"' declares the input image '") + image->label() +
                                                           String(u8"' but no pass declares it as an output, so nothing fills it")
                                                     : String(u8"pass '") + consumer + String(u8"' declares the input image '") + image->label() +
-                                                          String(u8"' (the depth of target '") + target_name(identity.target) +
+                                                          String(u8"' (the depth of target '") + targetName(identity.target) +
                                                           String(u8"') but that target has no depth attachment, so nothing fills it");
                 noteProblem(detail::engineProblem(u8"engine.pass.input_image_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
             }
         }
     }
+}
 
-    // Phase 3: a FullscreenPass that cannot draw what it declares. Every one of these is a property of
-    // the DECLARATION (nothing else can see them: the backend only ever sees "a pass with nothing to
-    // draw"), they are found by the compile (so the frame they belong to is the frame that says so), and
-    // they are checked in the order a host has to fix them — each check `continue`s, because the next one is
-    // moot until this one is answered and one mistake should read as one message.
+void SessionShape::collectFullscreenPassProblems()
+{
+    // PHASE 3: A FULLSCREEN PASS THAT CANNOT DRAW WHAT IT DECLARES. Every one of these is a property of the
+    // DECLARATION (nothing else can see them: the backend only ever sees "a pass with nothing to draw"), they are
+    // found by the compile (so the frame they belong to is the frame that says so), and they are checked in the
+    // order a host has to fix them — each check `continue`s, because the next one is moot until this one is
+    // answered and one mistake should read as one message.
     for (const auto& slot : slots_) {
         auto* pass = obj_cast<FullscreenPass>(slot.pass.get());
         if (pass == nullptr || !pass->isEnabled()) {
@@ -1152,15 +1168,18 @@ void SessionShape::collectPlanProblems()
             }
         }
     }
+}
 
-    // Phase 4: a declared image nobody bound to a target. An unbound identity has no address, so
-    // nothing can be delivered through it (resolveDeclaredImage() returns null and says nothing,
-    // because declaring it is what is wrong) and the promise check had nothing to compare with the
-    // target the pass renders into. One report per IMAGE: a producer and its consumers share the same
-    // unbound object. An image whose double claim the collision check already reported is skipped —
-    // that message names both passes and the fix, and one mistake gets one message.
-    for (const UnboundDeclaration& unbound : unbound_declared) {
-        if (isColliding(OutputIdentity::of(*unbound.image))) {
+void SessionShape::collectUnboundImages()
+{
+    // PHASE 4: A DECLARED IMAGE NOBODY BOUND TO A TARGET. An unbound identity has no address, so nothing can be
+    // delivered through it (resolveDeclaredImage() returns null and says nothing, because declaring it is what is
+    // wrong) and the promise check had nothing to compare with the target the pass renders into. One report per
+    // IMAGE: a producer and its consumers share the same unbound object. An image whose double claim the collision
+    // check already reported is skipped — that message names both passes and the fix, and one mistake gets one
+    // message.
+    for (const UnboundDeclaration& unbound : wiring_.unbound) {
+        if (wiring_.isColliding(OutputIdentity::of(*unbound.image))) {
             continue;
         }
         noteProblem(detail::engineProblem(

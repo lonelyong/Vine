@@ -22,6 +22,7 @@
 #include <vine/graphics/graphics_global.hpp>
 
 #include "EngineFrame.hpp"
+#include "WiringReport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -196,40 +197,6 @@ class SessionShape {
         vn::graphics::RenderDiagnostic diagnostic;
     };
 
-    /** @brief WHICH image a declared output is, as the wiring check compares it (design §14.4). */
-    struct OutputIdentity {
-        raw_ptr<const RenderTarget> target{ nullptr };   // set once the image is bound
-        int                         attachment = 0;      // colour index; kWholeTarget = the whole target
-        bool                        depth      = false;  // a depth attachment is NOT attachment 0
-        raw_ptr<const ImageRef>     declared{ nullptr }; // identity while unbound
-
-        /// @brief The coarse form: a whole target, as a bundle declaration names it.
-        static constexpr int kWholeTarget = -1;
-
-        [[nodiscard]] bool operator==(const OutputIdentity& other) const noexcept;
-        [[nodiscard]] static OutputIdentity of(const ImageRef& image) noexcept;
-        [[nodiscard]] static OutputIdentity colorOf(const RenderTarget& target, int attachment) noexcept;
-        [[nodiscard]] static OutputIdentity depthOf(const RenderTarget& target) noexcept;
-        [[nodiscard]] static OutputIdentity targetOf(const RenderTarget& target) noexcept;
-        [[nodiscard]] bool operator<(const OutputIdentity& other) const noexcept;
-    };
-
-    /** @brief What one pass declared about one image or target, as the wiring checks compare it. */
-    struct Declaration {
-        raw_ptr<const ImageRef>     image{ nullptr };
-        raw_ptr<const RenderTarget> target{ nullptr };
-        raw_ptr<const RenderPass>   pass{ nullptr };
-        std::size_t                 index{ 0 };
-        OutputIdentity              identity{};
-    };
-
-    /** @brief A declared image nobody bound to a target, and who declared it. */
-    struct UnboundDeclaration {
-        raw_ptr<const ImageRef>   image{ nullptr };
-        raw_ptr<const RenderPass> pass{ nullptr };
-        bool                      as_output{ false };
-    };
-
     /** @brief One pass whose rectangle and camera disagreed, and whether that episode was said. */
     struct ShapeMismatchEpisode {
         raw_ptr<const RenderPass> pass = nullptr;
@@ -248,6 +215,18 @@ class SessionShape {
 
     /** @brief Collects the problems this frame's declarations carry (see CompileProblem). */
     void collectPlanProblems();
+
+    /** @brief Phase 1: what each pass fills and claims, and the declaration mistakes a pass states itself. */
+    void collectOutputClaims();
+
+    /** @brief Phase 2: every declared input its consumer cannot draw from (nobody fills it, or no depth exists). */
+    void collectUnproducedInputs();
+
+    /** @brief Phase 3: a FullscreenPass whose own declaration says it can never draw. */
+    void collectFullscreenPassProblems();
+
+    /** @brief Phase 4: a declared image nobody bound to a target (one report per image). */
+    void collectUnboundImages();
 
     /** @brief Collects this frame's declared picture shapes against the cameras that project them. */
     void collectPictureShapeMismatches();
@@ -306,13 +285,8 @@ class SessionShape {
 
     std::vector<Slot> slots_; // uniform ordered pass registry
 
-    // The wiring checks' tables (see collectPlanProblems). MEMBERS, cleared every compile: the pass count is small, a
-    // flat scan beats a tree, and a vector keeps its capacity - so a steady frame allocates nothing here.
-    std::vector<Declaration>        wiring_filled_;
-    std::vector<Declaration>        wiring_claimed_;
-    std::vector<OutputIdentity>     wiring_colliding_;
-    std::vector<UnboundDeclaration> wiring_unbound_;
-    std::vector<OutputIdentity>     wiring_promised_images_;
+    /// The wiring checks' tables and their lookups (see WiringReport), cleared every compile.
+    WiringReport wiring_;
 
     /// This frame's compiled rows, in the order they run (reused; one per slot).
     std::vector<PlanRow> plan_rows_;

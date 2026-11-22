@@ -58,7 +58,7 @@ behaviour changed.
 
 | # | Candidate | Size today | Shape | Risk |
 |---|---|---|---|---|
-| 1 | `SessionShape::collectPlanProblems` | 412 lines, four comment-numbered phases + nine capturing lambdas | A `WiringReport` (four vectors + the six lookups) and four methods: fill/claim, inputs-produced, screen-pass, unbound-images | Lowest of the four: diagnostic-only code, phases already delimited; the diagnostic tests are the oracle |
+| 1 | `SessionShape::collectPlanProblems` | 412 lines, four comment-numbered phases + nine capturing lambdas | **landed 2026-11-22**: `WiringReport.hpp` owns `OutputIdentity` / `Declaration` / `UnboundDeclaration`, the four report tables, the working vector and the six lookups; `collectPlanProblems` is the four-phase dispatcher and `collectOutputClaims` / `collectUnproducedInputs` / `collectFullscreenPassProblems` / `collectUnboundImages` are the phases. No message, no check and no public signature changed |
 | 2 | `ScenePublisher::ensureRows` | 151 lines, nesting depth 7 | `resetToEmpty` / `rowsStillMatchTheGraph` / `refreshChangedRows` / `rebuildRows` | Do AFTER review 6's regression test: review-6 §3 shows the incremental path has no independent oracle, so a structural change now could hide P0-1/P0-2 rather than expose them |
 | 3 | `Plan::validatePlan` | 111 lines | Declaration checks -> producer edges -> cycle report, three scopes | Low |
 | 4 | `RenderEngine::buildContentHalf` | 101 lines | `takeFrameExtent` / `capturePresentedView` / `capturePresentedSnapshot` / `announceContentFrame` | Low |
@@ -82,7 +82,4 @@ observations, not effects of this batch.
 
 ## 6. Next step
 
-Take §4's candidate 1 (`collectPlanProblems`) as its own batch: it is the module's longest function,
-its phases are already named in comments, and nothing outside the diagnostics path changes. Candidate 2
-waits for review 6's regression test. The §3 API deletions need an owner decision; they are not quality
-sweeps.
+Candidate 1 landed 2026-11-22: `test_graphics`, `test_vk`, `content_seam` and `vk_exposure` are green, `test_vsg` shows only the pre-existing Windows Debug failure recorded in §5, and the API-style / doc-symbol / diagnostic-format / include-hygiene gates are at their baselines. Next: candidate 3 (`Plan::validatePlan`) or 4 (`RenderEngine::buildContentHalf`), both low risk. Candidate 2 still waits for review 6's regression test.
