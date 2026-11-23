@@ -595,6 +595,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `BarrierPlan.hpp` / `StateMapping` | `stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf`; `StateMapping` turns SDK state into Vulkan enums | §2.7 |
 | `ShaderCompiler.hpp` / `ProgramVariant` | `compileStage` + `SpirvModule` (glslang); the variant bits | F5 |
 | `Handles` (`internal/` + `support/`) | the escape hatch | F15 |
+| `ContentAbi.hpp` | the content block layout this backend packs (offsets are the SDK's ABI) | F5, `graphics-material.md` |
+| `SampleCounts.hpp` | which sample counts this device builds, and the refusal when one is asked for | F4, `ADR-2026-11-14` |
+| `NumberText.hpp` | the number spelling every refusal uses, so a report's digits read the same everywhere | §2.13 |
+| `backend_vk_global.hpp` | the export macro and the namespace the plugin is built under | F15 |
 
 ## 5. Constraints, Requirements and Invariants
 
@@ -865,7 +869,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/**`: every contract (`Device`, `ContentDraw`, `TargetObjects`, `ContentImages`, `WindowTarget`,
   `MemoryAllocator`, `PipelineCacheFile`, `ReadbackStaging`, `BarrierPlan`, `DynamicRendering`, `StateMapping`, `Handles`).
 - `src/plugins/gfx_backend_vk/src/shell/**`: `Plugin`, `BackendFactory`.
-- `tests/test_vk/**`: behaviour; `tests/test_vsg/BackendParityTest.cpp`: the comparison.
+- `tests/test_vk/**`: behaviour; `tests/test_vk/FrameRecordTest.cpp`: the five frame-shape facts the retired parity
+  suite had no successor for (the other ten already had a `test_vk` case; see `ADR-2026-11-23` D4 step 4).
 - `scripts/check_vk_exposure.py`: the exposure-boundary gate.
 
 ### 10.2 Documents and ADRs

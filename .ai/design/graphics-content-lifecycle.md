@@ -3,8 +3,8 @@
 > **Status**: current
 > **Last verified**: 2026-11-16
 > **Scope**: host ownership of content objects, GPU residency release and caching policy, and the reclamation of upload staging.
-> **Sources**: `RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
-> `vine/backend_vsg/internal/MaterialArena.hpp` / `.../Streams.hpp` / `.../PinnedResources.hpp` / `BlockStorage.hpp`.
+> **Sources**: `RenderDevice.hpp` / `RenderEngine.hpp` / `ContentImages.hpp` /
+> `vine/backend_vk/internal/FrameScratch.hpp` / `.../ContentCaches.hpp` / `.../ResidencyClaims.hpp` / `.../TargetTable.hpp`.
 > **Backlog**: `../backlog/graphics.md`
 
 ## 1. Overview
@@ -68,7 +68,7 @@ The cost is written in D14: it relies on vsg's protected block state (the derive
    the host dropping the last reference (the object leaves the tree, and only then are rows and residency swept), and **merely not being drawn this frame** (hidden, culled by the frustum).
    The first two are decided by **holdings**; the third does not change holdings, so it releases **nothing**:
    - Table rows (`ContentStore`'s geometry / program / material) look only at holdings: while the object is there (the scene graph holds it) the row stays,
-     so hiding/culling causes no build-row-drop-row churn (`ContentStore.cpp`'s `releaseAbandoned` requires `useCount() <= 1`).
+     so hiding/culling causes no build-row-drop-row churn (`ContentCaches`' residency account releases a geometry key only when nothing holds it).
    - Uploads (`StreamUploads`) also look only at **holdings**, and what they look at is the **declaration**: the declaration index published by the content layer
      (`ContentFacts::declarations`) says "is there still a live row declaring this buffer", and the entry's own handle says "is the revision still the one it
      uploaded". Hiding or culling does not delete the row ⇒ the address is still declared ⇒ the upload stays, and coming back **retransmits nothing**;
@@ -180,11 +180,12 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 
 | Interface | Purpose |
 |---|---|
-| `MaterialImages::acquire()` / `releaseTexture()` / `beginFrame()` / `released()` / `bytes()` | Texture cache (lifetime reads `ContentDeclarations::declaresTexture` + the textures imported that frame + the entry's own revision) |
-| `core::MaterialArena::write()` / `capacityNeed()` / `live()` | Material blocks |
-| `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `retireUnpinnedMaterials()` | Per-frame blocks |
-| `BlockStorage::strides()` / `regions()` / `bytes()` | Layout and observation |
-| `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | Stream uploads (entries held by `core::PinnedResources`; lifetime reads `ContentFacts::declarations` + the entry's own revision) |
+| `ContentImages::releaseTexture()` / `viewFor()` / `releaseFrame()` / `progress()` | Texture cache and upload batches (lifetime reads the declarations + the textures imported that frame + the entry's own revision) |
+| `FrameScratch::beginFrame()` / `reserveSlice()` / `slice()` | The frame's constant ring and descriptor pool (written per frame, owned by the frame's driver) |
+| `ContentCaches::ensureContentPipeline()` / `planDraw()` / `resolveTextures()` / `releaseGeometry()` | Identity-keyed caches (geometry / program / pipeline / material / texture), resolved at the frame head |
+| `ResidencyClaims::admit()` / `publish()` / `forget()` | Who may BUILD a key: `Use` (published), `Build` (this claimant), `Copy` (a competitor is filling it) |
+| `ReadbackStaging::open()` / `recordCopy()` / `run()` | One readback's own command pool, staging buffer and fence |
+| `TargetTable::ensure()` / `claim()` / `lease()` / `peek()` | The target's object (map + shape + build/rebuild/repair) and who may draw it this frame |
 
 ## 5. Constraints, Requirements and Invariants
 
@@ -263,8 +264,8 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 
 - How it fails: the host swaps the instance slice of a primitive (`Geometry::setInstanceTransforms`)
   without then reporting `Geometry::bumpRevision()`. That setter only advances the content epoch (`Node::invalidateBounds`) and
-  does **not** touch `revision()`; the backend's geometry row, however, is only rebuilt when the revision moves (`ContentStore.cpp`'s
-  `findGeometry(..., contentRefOf(identity, live.shape->revision()))`). So the plan reads the new buffer from the primitive every frame while
+  does **not** touch `revision()`; the backend's geometry row, however, is only rebuilt when the revision moves (the
+  geometry key `contentRefOf(identity, live.shape->revision())`). So the plan reads the new buffer from the primitive every frame while
   the fact row still declares the old buffer, and the upload entry is **built and retired every frame**: the picture is right and the cost is silent.
 - How to detect it: in a steady state where nothing changed and only the frame is redrawn, `StreamUploads::uploads()` and `retired()` both rise per frame,
   while `live()` does not (only all three together rule out "the content really changes every frame"); the replaced buffer never appears in the declaration index.

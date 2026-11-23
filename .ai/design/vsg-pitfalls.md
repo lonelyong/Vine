@@ -1,6 +1,7 @@
-# the vsg backend's trap catalogue (P1–P90)
+# the vsg backend's trap catalogue (P1–P90)（历史登记）
 
-> **Status**: current
+> **Status**: retired 2026-11-23 with the backend (`ADR-2026-11-23` D4 step 4). The traps that outlived it are
+> restated in `vk-backend.md` §6; this is the record of the ones the reference backend produced.
 > **Last verified**: 2026-11-23
 > **Scope**: the traps the vsg backend has hit, in nine risk areas; each entry gives its symptom and its criterion.
 > **Sources**: `src/plugins/gfx_backend_vsg/**`, `docs/guides/graphics-backends.md` (the user page), `.ai/bugs/`.

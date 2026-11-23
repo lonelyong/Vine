@@ -1,6 +1,8 @@
-# the vsg backend: architecture, contract, traps
+# the vsg backend: architecture, contract, traps（历史登记）
 
-> **Status**: current
+> **Status**: retired 2026-11-23 by `ADR-2026-11-23` D4 step 4 - the backend, its tests and its 24 codes are gone.
+> This page stays as the RECORD of what it did (49 documents cite it); the runnable tree is the git tag
+> `retained/vsg-final`. It is not maintained: every fact here that still matters was moved to `vk-backend.md`.
 > **Last verified**: 2026-11-23
 > **Scope**: how the vsg backend materialises a compiled frame value into Vulkan commands; the platform facts and the traps already hit.
 > **Sources**: `RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/` (the 8 shared mechanisms) /

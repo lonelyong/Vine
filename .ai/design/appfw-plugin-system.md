@@ -305,7 +305,7 @@ Adding the non-virtual `PluginLoadContext::registerCommand()` adds a symbol and 
 - `src/fw/appfw/sdk/vine/appfw/PluginManager.hpp`
 - `src/fw/appfw/src/PluginManager.cpp`
 - `src/fw/appfw/src/gui/PluginManagerDialog.cpp`
-- `tests/test_gui` (`PluginLifecycleTest`), `tests/test_vsg` (`VsgBackendPluginTest`)
+- `tests/test_gui` (`PluginLifecycleTest`)
 
 ### 10.2 Documents and ADRs
 

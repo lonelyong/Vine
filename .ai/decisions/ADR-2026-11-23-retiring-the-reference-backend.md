@@ -304,3 +304,49 @@ it is a spelling Vulkan-1.3, Metal and D3D12 do not share (`G6` / `G9`).
 Counts at this amendment: `test_vk` 178 cases / 42 suites (the two-frame multisampled shadow case and the same-state
 barrier case landed with the depth-pair fix), `test_vsg` 576, `test_graphics` 639, ten gates green. Step 4 (the
 deletion) is all that remains.
+
+## Amendment 2026-11-23 - D4 step 4 landed (the deletion)
+
+The batch is complete. `src/plugins/gfx_backend_vsg/` and `tests/test_vsg/` are gone (139 + 78 files), the 24 `vsg.*`
+codes are gone with no aliases, and `src/plugins/CMakeLists.txt` no longer names the plugin - which also removes the
+plugin's `FetchContent` for VulkanSceneGraph, so the dependency leaves the build.
+
+**What was kept, and where it went.** The parity suite's own note (review 8, C2) had already sorted its 15 cases:
+ten facts have a standalone `test_vk` case of their own (its note maps each one), five had no successor and moved to
+`tests/test_vk/FrameRecordTest.cpp` (a depth-only clear over a drawn picture, the prepare shape against the record,
+one packet counting two draws, a pass with no effect, an entry that names no pass), and the sample-limit comparison
+retired with the comparison it was. `TestHostWindow.hpp` and `HostWindowReadTest.cpp` moved to `tests/test_vk/`
+(`WindowPresentTest` includes them from there), and the SDK-level `ReportOnceTest.cpp` moved to `tests/test_graphics/`.
+`BackendSeamTest.cpp` was already compiled into every suite and stays where it is.
+
+**The gates were re-pinned on the shipped backend**, which is the promise rule rather than a reader count:
+`check_include_hygiene.py`'s `BACKEND_ROOTS` names one root and `SEAM_SHARED_HEADERS` was re-measured as the 35
+headers that backend includes directly (it used to be the 25-header intersection of two); `check_doc_symbols.py`
+maps `gfx_backend_vk`'s units against `vk-backend.md` §4.3 (which gained the four units it did not name);
+`check_diagnostic_formats.py` scans the shipped plugin's sources. The three vsg-only scripts and
+`vsg_rewrite_gate.sh` are deleted.
+
+**A gate rule changed, and it is the one policy this amendment decides beyond the batch:** `check_ai_docs.py` used to
+require every `.ai/**` sentence naming a path or unit to resolve. A record cannot satisfy that - an ADR cites the
+paths it measured, a postmortem names the file that broke - so `.ai/decisions/`, `.ai/bugs/`, `.ai/memory/` and
+`.ai/research/` are now exempt from the name-resolution rule, which applies to the LIVING pages (`.ai/design/`,
+`.ai/backlog/`, the index). The alternative was 60 `<!-- drift-ok -->` markers sprinkled through records, which is
+the same rule applied by hand without a reason to point at. The living pages were edited instead: their vsg paths
+became the shipped backend's units (`ResidencyClaims`, `FrameScratch`, `ContentCaches`, `TargetTable`, `FrameHead`),
+and the two sentences that compare a *present* shape to the reference's carry `<!-- drift-ok -->` because they name
+a tree that no longer exists.
+
+**`vsg-backend.md` and `vsg-pitfalls.md` stay as records** (`（历史登记）` in the title, status "retired", pointer to
+the tag) rather than being deleted: 49 documents cite them, most of them ADRs and bug postmortems, and rewriting a
+record to make a link resolve is the one thing this corpus forbids. They are not maintained; every fact that still
+matters moved to `vk-backend.md`.
+
+**The archive, and the history policy the owner asked for.** The last tree that builds is the annotated tag
+`retained/vsg-final` (`git worktree add ../vsg-final retained/vsg-final`); `vsg-backend.md`'s status block points at
+it. Policy recorded here: `dev` / `master` are not rewritten (`filter-repo`, `filter-branch`, force-push), and a
+future history slimming saves about 1 MiB of a 68 MiB pack in this case, so it is not worth the rewrite risk
+(`ADR-2026-11-23` D4 step 4).
+
+Counts after the deletion: `test_vk` 186 cases / 44 suites, `test_graphics` 642 cases / 82 suites, ten gates green,
+`vk_exposure` green. `test_vsg` and its 576 cases are gone, and what they covered was overwhelmingly the retired
+backend itself (64 of its 66 source files include it).

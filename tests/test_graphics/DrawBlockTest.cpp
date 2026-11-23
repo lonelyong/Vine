@@ -6,8 +6,8 @@
  * wrong way / the object is somewhere else", which reads as a modelling bug. The values are chosen so every element
  * is distinct and its position in the flat array says which convention was used.
  *
- * The value PATH (host command → plan → bytes) is a different claim and lives in `tests/test_vsg/DrawBlockTest.cpp`,
- * where the frame compiler and recorder are available.
+ * The value PATH (host command → plan → bytes) is a different claim and lives in the backend's own suite - the draw
+ * block is uploaded and read back through a real frame in `tests/test_vk/ContentDrawTest.cpp`.
  */
 
 #include <gtest/gtest.h>

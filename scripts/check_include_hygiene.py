@@ -187,8 +187,10 @@ SEAM_DOCS = (
     ".ai/design/graphics-architecture.md",  # 2.9, the argument
     "docs/guides/graphics-backends.md",     # 5, the reader's table
 )
-# Measured 2026-11-18: the 25 SDK headers a vk TU and a vsg TU both include directly. A change here is
-# not automatically wrong - it is a decision about the seam or about the model surface.
+# Measured 2026-11-23, after the reference backend retired (ADR-2026-11-23 D4 step 4): the 35 SDK headers the
+# SHIPPED backend includes directly. Before the retirement this set was the intersection of two backends (25); with one
+# reader it is "what the backend reaches", and the promise rule still makes a change here a decision about the seam
+# or about the model surface, not about the backend that happens to need it.
 SEAM_SHARED_HEADERS = frozenset((
     "BuiltinShaders.hpp",
     "DepthRange.hpp",
@@ -215,9 +217,19 @@ SEAM_SHARED_HEADERS = frozenset((
     "StateResolution.hpp",
     "TargetPlan.hpp",
     "Texture.hpp",
+    "Topology.hpp",
+    "WindowPresentTarget.hpp",
+    "Capabilities.hpp",
+    "FrameDescription.hpp",
+    "MaterialValues.hpp",
+    "PolygonMode.hpp",
+    "PrepareReport.hpp",
+    "PresentTarget.hpp",
+    "Primitive.hpp",
+    "RenderDiagnostic.hpp",
 ))
 SDK_GRAPHICS_ROOT = "src/viz/graphics/sdk/vine/graphics"
-BACKEND_ROOTS = ("src/plugins/gfx_backend_vk", "src/plugins/gfx_backend_vsg")
+BACKEND_ROOTS = ("src/plugins/gfx_backend_vk",)
 GRAPHICS_INCLUDE = re.compile(r'^#include\s*[<"]vine/graphics/([^>"]+)[>"]')
 
 
@@ -246,7 +258,7 @@ def seam_findings():
                 for backend in missing_roots]
 
     direct = {backend: graphics_includes_of(root / backend) for backend in BACKEND_ROOTS}
-    vk_direct, vsg_direct = (direct[backend] for backend in BACKEND_ROOTS)
+    shipped = direct[BACKEND_ROOTS[0]]
 
     def with_one_hop(names):
         """The direct includes plus what those SDK headers include (the seam is one hop deep)."""
@@ -261,7 +273,7 @@ def seam_findings():
                     reached.add(match.group(1))
         return reached
 
-    reached = {BACKEND_ROOTS[0]: with_one_hop(vk_direct), BACKEND_ROOTS[1]: with_one_hop(vsg_direct)}
+    reached = {backend: with_one_hop(names) for backend, names in direct.items()}
     findings = []
     for name in sorted(SEAM_HEADERS):
         if not (sdk / name).is_file():
@@ -270,18 +282,17 @@ def seam_findings():
         for backend in BACKEND_ROOTS:
             if name not in reached[backend]:
                 findings.append(
-                    f"{name}: the seam list says both backends need it, but {backend} neither includes it"
+                    f"{name}: the seam list says the shipped backend needs it, but {backend} neither includes it"
                     " nor includes a seam header that does")
 
-    shared = vk_direct & vsg_direct
-    for name in sorted(shared - SEAM_SHARED_HEADERS):
+    for name in sorted(shipped - SEAM_SHARED_HEADERS):
         findings.append(
-            f"{name}: both backends now include it directly, so it is part of the seam's shared surface -"
-            " decide whether it is a mechanism (add to SEAM_HEADERS) or model surface, then add it to"
+            f"{name}: the shipped backend now includes it directly, so it is part of the surface the seam"
+            " reaches - decide whether it is a mechanism (add to SEAM_HEADERS) or model surface, then add it to"
             " SEAM_SHARED_HEADERS")
-    for name in sorted(SEAM_SHARED_HEADERS - shared):
+    for name in sorted(SEAM_SHARED_HEADERS - shipped):
         findings.append(
-            f"{name}: SEAM_SHARED_HEADERS says both backends include it directly, but that is no longer"
+            f"{name}: SEAM_SHARED_HEADERS says the shipped backend includes it directly, but that is no longer"
             " true - update the list (and SEAM_HEADERS if it was a mechanism)")
     findings.extend(seam_doc_findings(root))
     return findings

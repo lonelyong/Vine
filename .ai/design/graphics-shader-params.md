@@ -131,7 +131,7 @@ its (variant's) descriptor interface — the backend serves bindings by declarat
 
 The guards are `VN_PARAM_MATERIAL` / `VN_PARAM_DRAW` / `VN_PARAM_LIGHTS`; `#include` must stand alone at the start of a line (P5).
 The shadow block (§1.1) and the view block are not in the fragment: no built-in shader declares the view block — the content path implements the view as a 128 B push
-range (see `PushRange.hpp`), a program that wants this block declares it with its own layout.
+range (see `ShaderAbi.hpp`), a program that wants this block declares it with its own layout.
 
 The light block's set/binding is set 0 / binding 6 **shared** by both paths (content set: material 0, slots 1–5, lights 6, shadow 7/8, see `graphics-material.md` §3.3).
 2 is therefore free; the full-screen set: source colours 0..N-1, depth 4, lights 5, the shadow pair 6/7), so the fragment writes the same number, no

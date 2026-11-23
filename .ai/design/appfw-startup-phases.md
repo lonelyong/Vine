@@ -149,7 +149,7 @@ the rest of the process.
 ### 3.1.5 F5 The occupancy gate
 
 - **Behaviour**: the application thread's longest continuous occupancy is written to stderr (measured by a 10 ms timer);
-  `scripts/vsg_rewrite_gate.sh`'s application stage requires `<= VN_GATE_BOOT_OCCUPANCY_MS` (150 ms by default).
+  the application's startup occupancy `<= VN_GATE_BOOT_OCCUPANCY_MS` (150 ms by default), measured by running the app and reading its boot line.
 - **Constraints** (C5): moving a piece back onto the application thread makes the gate red outright; a missing log line also counts as red.
 - **Requirements** (R5): prove it with `VN_GATE_BOOT_OCCUPANCY_MS=1` on the same gate.
 - **Acceptance** (T5): `[FAIL] app ... the boot held the application thread for N ms`.
@@ -259,7 +259,7 @@ The host's half is the public `run()` and the three protected hooks. Everything 
 | T2 | the host's work runs on another thread while the main thread keeps dispatching | `test_appfw` thread-id / timer assertions |
 | T3 | the synchronous door loads a plugin that comes back to the main thread | `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread` |
 | T4 | the cancellation / failure paths | `test_appfw` cancellation / failure cases |
-| T5 | the occupancy gate | `scripts/vsg_rewrite_gate.sh`'s app stage |
+| T5 | the occupancy gate | running the app and reading its boot line |
 | T6 | `initAsync()` does not suspend | `RenderControlTest.InitAsyncCompletesWithoutSuspending` |
 | T7 | a cancellation delivered as `TaskCancelledException` exits 0 and skips the last phase | `HeadlessBootTest.ACancelledWaitEndsTheBootWithoutCallingItAFailure` |
 | T8 | a loop stop during a phase closes the door and skips the rest | `HeadlessBootTest.ALoopStopDuringAPhaseLeavesNoReportingDoorAndSkipsTheRest` |

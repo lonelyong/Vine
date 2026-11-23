@@ -45,21 +45,21 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLUGIN = ROOT / "src" / "plugins" / "gfx_backend_vsg"
+PLUGIN = ROOT / "src" / "plugins" / "gfx_backend_vk"
 DOCS = [
     ROOT / "docs" / "guides" / "graphics-backends.md",
     ROOT / "docs" / "guides" / "graphics.md",
 ]
-# The document whose job is the vsg unit map: rule 2 reads this one alone, so a second document cannot
+# The document whose job is the backend's unit map: rule 2 reads this one alone, so a second document cannot
 # make an undocumented unit look documented.
 COVERAGE_DOCS = [
-    ROOT / "docs" / "guides" / "graphics-backends.md",
+    ROOT / ".ai" / "design" / "vk-backend.md",
 ]
 # Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
 # `src/internal` + `src/core` (and `include/vine/backend_vsg/internal` + `core`), and a walk that stopped at the top level
 # would enumerate the seven flat files that are left (19 units) while 143 exist - which is exactly how this
 # script silently stopped covering the new architecture (the finding that put the recursion here).
-MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "backend_vsg"]
+MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "backend_vk"]
 # Where a unit mention is looked for when deciding whether it names SOMETHING: every unit this repository
 # has, so a doc sentence may name the SDK's `RenderBackend.hpp` or a framework unit without being drift.
 # The prefix list this replaces only knew the old flat names (`Vsg*`, `SceneBridge*`, ...), so it neither

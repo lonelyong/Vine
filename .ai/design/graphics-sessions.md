@@ -6,8 +6,9 @@
 > several engines; the contract's **why** and its landing record are in the ADR, and the threading model's **present** is in `graphics-threading.md`.
 > **Sources**: `RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp` (the contract),
 > `graphics/FrameGate.hpp` / `graphics/DeviceClock.hpp` / `graphics/RetirementQueue.hpp` (the mechanisms),
-> `src/plugins/gfx_backend_vk/src/internal/Device.cpp` and `ContentDraw.cpp` (the device-level frame machinery),
-> `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` (the half that is already "device + per window").
+> `src/plugins/gfx_backend_vk/src/internal/Device.cpp` and `ContentDraw.cpp` (the device-level frame machinery)
+> carry every session rule this page states; the retired reference backend's half was the comparison that made them
+> a fact rather than an assumption (`ADR-2026-11-23` D4, tag `retained/vsg-final`).
 > **Backlog**: no session migration step is unlanded; trigger-gated work is in §9.2 and `../backlog/graphics.md`
 
 ## 1. Overview
@@ -53,7 +54,7 @@ resolves those caches into session-local tables once at the frame head** — so 
 - **What it is**: `FrameDriver` = who drives frames: the command pool, command buffers, fence, constant ring, descriptor pool, the frame books, and the target it claims.
   The type name stays `RenderFrameExecutor` (a public contract, the vocabulary of `ADR-2026-11-16`); a driver presents to **at most** one window (the window is its target,
   not its identity).
-- **Why it needs a name**: `gfx_backend_vsg`'s `api::WindowSession` is **one window, one device, one swap chain** (`WindowSession.hpp`), while the
+- **Why it needs a name**: the shape is **one window, one device, one swap chain** - the reference backend proved it could be built (archived at tag `retained/vsg-final`), while the
   **collection / compilation / execution** frame pipeline is a **device-level singleton** in `VsgBackend::Data` (`recorder` / `compiler` / `arena` / `facts` / `packets` /
   `frame` / `driving`, see `VsgBackend.cpp:444`–`534`). That is: **vsg's "session" is a window session, not a frame driver** — the ADR's "vsg is closer" was only half right.
   That correction decides the division of work: what vsg has to move is the **collection scratch**, not the swap chain.
@@ -635,8 +636,8 @@ on the design side: release is two things (§2.6), and readback waits for the de
 - the mechanisms: `src/viz/graphics/sdk/vine/graphics/FrameGate.hpp`, `DeviceClock.hpp`, `RetirementQueue.hpp`, `FrameTimeline.hpp`
 - vk's present shape: `src/plugins/gfx_backend_vk/src/internal/Device.cpp` (`FrameDriver`'s frame machinery),
   `src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp` (the recorder and the cache wiring)
-- vsg's present shape: `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` (`Data`'s frame-scratch singleton),
-  `src/plugins/gfx_backend_vsg/src/internal/WindowSession.cpp` (the window session), `src/plugins/gfx_backend_vsg/src/internal/OffscreenSession.cpp`
+- the present shape this page was written against is the reference backend's, archived at `retained/vsg-final` (`VsgBackend.cpp`'s frame-scratch singleton, <!-- drift-ok -->
+  `WindowSession.cpp` / `OffscreenSession.cpp` - one window, one device, one swap chain, <!-- drift-ok -->
 - the engine side: `src/viz/graphics/src/RenderEngine.cpp` (`setDevice` / `frame`), `src/viz/graphics/src/RenderPass.cpp` (the single-pass driver)
 
 ### 10.2 Documents and ADRs

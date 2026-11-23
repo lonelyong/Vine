@@ -4,7 +4,7 @@
 > **Last verified**: 2026-11-16
 > **Scope**: the shape, identity, lifetime and plan semantics of the four layers content → snapshot → derivation → execution. It excludes the geometry / picking
 > algorithms, the material model, backend implementation details (`vsg-backend.md`) and the threading contract's migration-era state (`graphics-threading.md`).
-> **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/PinnedResources.hpp`,
+> **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/ResidencyClaims.hpp`,
 > `src/viz/graphics/src/SceneSnapshot.hpp` (the prototype), `Scene.hpp` / `RenderEngine.hpp` (the live entry points).
 > **Backlog**: `../backlog/graphics.md`
 
@@ -706,9 +706,9 @@ scope (`PassChain::build(engine, desc, owner)`) so that a rebuild updates in pla
 - `src/viz/graphics/src/DrawListDiff.hpp` / `DrawListDiff.cpp` (the shadow path's field-level comparison)
 - `src/viz/graphics/src/SceneRows.cpp` (the publication's cache side)
 - `src/viz/graphics/src/DrawListBake.cpp` (the live collection and sorting)
-- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/PinnedResources.hpp` (residency by key)
-- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp` (`drawNeeds`: the only key builder preparation and recording share)
-- `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp` (fact rows and epoch reclamation)
+- `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/ResidencyClaims.hpp` (who may BUILD a key)
+- `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/FrameHead.hpp` (`planDraw`: the values preparation and recording share by value)
+- `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/TargetTable.hpp` (target rows and the per-frame lease)
 
 ### 10.2 Documents and ADRs
 

@@ -29,6 +29,11 @@ WHAT IS SKIPPED, ON PURPOSE (one convention, shared with `check_doc_symbols.py`)
     there. This is why "document the decision, then mark the section" is the way to retire a note.
   * a line carrying `<!-- drift-ok -->` - the escape hatch for a sentence that must name something
     absent (explaining a rejected design, say).
+  * A RECORD FOLDER. `.ai/decisions/`, `.ai/bugs/`, `.ai/memory/` and `.ai/research/` record what the
+    tree WAS at a moment (an ADR cites the paths it measured, a postmortem names the file that broke);
+    a name there that no longer resolves is the record doing its job, not drift. The rule therefore
+    applies to the LIVING pages - `.ai/design/`, `.ai/backlog/` and this index - and a record that has
+    become a liability is deleted, not edited (git keeps it; `ADR-2026-11-23` D4 step 4 states this).
 
 Usage:
     python3 scripts/check_ai_docs.py [--strict]
@@ -62,6 +67,8 @@ INDEX_MD_RE = re.compile(r"`([A-Za-z0-9._-]+\.md)`")
 # The roots that may define a "this exists somewhere" unit. Recursive, like check_doc_symbols.py: the
 # rewrite moved whole layers, and a top-level walk would have missed the new ones.
 UNIT_ROOTS = ("src", "tests", "tools", "cmake")
+# Folders that record what the tree was, not what it is (see the module docstring).
+RECORD_FOLDERS = ("decisions", "bugs", "memory", "research")
 
 
 def notes() -> list[pathlib.Path]:
@@ -182,6 +189,8 @@ def main() -> int:
     docs = existing_docs()
     references = []
     for note in notes_found:
+        if note.relative_to(AI).parts[0] in RECORD_FOLDERS:
+            continue  # a record keeps the paths of its moment (see the module docstring)
         for number, line in current_sections(note):
             for match in UNIT_RE.finditer(line):
                 if match.group(1) not in units:

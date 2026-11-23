@@ -1,8 +1,7 @@
 set(TEST_NAME test_vk)
 
-# The plugin is a MODULE library and cannot be linked, so this target compiles its implementation sources directly -
-# the same arrangement tests/test_vsg uses for gfx_backend_vsg. No VulkanSceneGraph is linked: this backend reaches
-# Vulkan through volk (tp::volk carries the Vulkan headers).
+# The plugin is a MODULE library and cannot be linked, so this target compiles its implementation sources directly.
+# No VulkanSceneGraph is linked: this backend reaches Vulkan through volk (tp::volk carries the Vulkan headers).
 add_executable(${TEST_NAME}
         BackendTest.cpp
         BarrierPlanTest.cpp
@@ -11,7 +10,9 @@ add_executable(${TEST_NAME}
         ContentTargetTest.cpp
         ConcurrentFrameTest.cpp
         DeferredTest.cpp
+        FrameRecordTest.cpp
         HandlesTest.cpp
+        HostWindowReadTest.cpp
         MemoryTest.cpp
         MsaaTest.cpp
         MultiSessionTest.cpp
@@ -64,14 +65,14 @@ target_include_directories(${TEST_NAME} PRIVATE
 # THE MODULE'S OWN EXPORT MACRO. This target compiles the plugin's sources instead of linking the MODULE, so it HAS to
 # define them the way the module does: `VN_BACKEND_VK_API` is dllexport under `VN_BACKEND_VK_LIB` and dllimport without
 # it, and a target that declares dllimport for symbols it compiles itself fails to link on Windows (on Linux the
-# attribute is visibility and the omission goes unnoticed). test_vsg states `VN_BACKEND_VSG_LIB` for the same reason.
+# attribute is visibility and the omission goes unnoticed).
 target_compile_definitions(${TEST_NAME} PRIVATE VN_BACKEND_VK_LIB)
 
 target_link_libraries(${TEST_NAME} PRIVATE vn::Appfw vn::Graphics tp::volk glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
 
-# THE WINDOW INSTRUMENT. WindowPresentTest reads a presented window back through tests/test_vsg/TestHostWindow.hpp,
-# the fixture T12 gave both halves: an XGetImage through xcb on X11 and a PrintWindow compositor read on Win32. The
-# Win32 half waits for a composition pass, so it needs dwmapi (the same link test_vsg makes). On Linux the xcb block
+# THE WINDOW INSTRUMENT. WindowPresentTest and HostWindowReadTest read a presented window back through
+# tests/test_vk/TestHostWindow.hpp, the fixture T12 gave both halves: an XGetImage through xcb on X11 and a PrintWindow
+# compositor read on Win32. The Win32 half waits for a composition pass, so it needs dwmapi. On Linux the xcb block
 # below is what makes the fixture compilable at all; without it the window cases compile out and skip.
 if(WIN32)
     target_link_libraries(${TEST_NAME} PRIVATE dwmapi)

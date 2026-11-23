@@ -53,7 +53,7 @@ DEFAULT_GLOBS = (
     # `**` because the plugin's sources live in layers (`src/{shell,internal,support}`): the flat
     # `src/*.cpp` this used to be went from 7 files to 0 the moment they moved, and the script still
     # reported "0 suspicious call(s)" - which is why a pattern matching nothing is a finding below.
-    "src/plugins/gfx_backend_vsg/src/**/*.cpp",
+    "src/plugins/gfx_backend_vk/src/**/*.cpp",
 )
 
 

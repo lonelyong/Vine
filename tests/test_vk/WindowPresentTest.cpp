@@ -7,9 +7,9 @@
  *   - `executeFrame(frame, target)` draws a pass whose `target` is null into the acquired swapchain image and returns
  *     `Presented`; a later frame after `resize()` presents again (the swapchain follows the surface);
  *   - the WINDOW's pixels are what the frame drew: after the present, the test reads the window back through the
- *     SAME instrument the vsg window cases use - `tests/test_vsg/TestHostWindow.hpp`: an `XGetImage` on X11 and a
- *     `PrintWindow` / `PW_RENDERFULLCONTENT` compositor read on Win32, with that file's platform traps (P87-P89)
- *     in one home - and compares the centre with the triangle's colour. The vk backend never sees the instrument.
+ *     host-window instrument `tests/test_vk/TestHostWindow.hpp`: an `XGetImage` on X11 and a `PrintWindow` /
+ *     `PW_RENDERFULLCONTENT` compositor read on Win32, with that file's platform traps (P87-P89) in one home - and
+ *     compares the centre with the triangle's colour. The vk backend never sees the instrument.
  *
  * The cases skip when there is no Vulkan device, no desktop to create a window on, or no window instrument (a Linux
  * build without the xcb development package; the backend itself opens `libxcb.so.1` with dlopen and never links it).
@@ -50,7 +50,7 @@
 // development package on Linux, so a build without it has no instrument and the window cases skip.
 #if defined(_WIN32) || defined(VN_TEST_HAVE_XCB)
 #    define VN_TEST_HAVE_WINDOW_INSTRUMENT 1
-#    include "../test_vsg/TestHostWindow.hpp"
+#    include "TestHostWindow.hpp"
 #endif
 
 using vn::Colorf;

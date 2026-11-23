@@ -1557,38 +1557,26 @@ VN_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forward
 ./build/bin/test_vsg --gtest_filter=SdkPixelTest.*   # SDK 级**像素**判据（真设备；见下）
 ./build/bin/test_core                # buffer、math、io
 
-bash scripts/vsg_rewrite_gate.sh      # 一条命令的后端门禁：构建 + 全套件（设备用例不许 SKIP）+ validation 层
-                                      # 0 VUID + 同步验证 0 SYNC-HAZARD + 卫生脚本 + 自检相位行逐字节 + 真窗口读像素
 bash scripts/vn_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
-ctest --test-dir build                # CTest 视角（32 个套件；见下面那段的口径）
+ctest --test-dir build                # CTest 视角（见下面那段的口径）
 ```
 
-**卫生脚本**（`vsg_rewrite_gate.sh` 第 5 阶段，也可以单独跑）：
-`scripts/check_include_hygiene.py`、`check_diagnostic_formats.py`、`check_doc_symbols.py`、
-**`check_public_docs.py`**（公开 SDK 头的 `@brief` / `@param` / `@return` 基线门禁：新增的公开声明必须带文档，
-补文档只会让基线条目变 `stale` 而不变红，`--update` 才是降基线的那一步）、`check_ai_docs.py --strict`、
-`check_vsg_window_surface_state.py`、`check_vsg_upstream_capabilities.py`、`check_export_annotations.py`。
-2026-10-13 对账：这一段早先还点名过 `scripts/gfx_lavapipe_check.sh` 与 `scripts/vsg_selftest_evidence.sh`，
-两个脚本在树里**已不存在**（能力并进了 `vsg_rewrite_gate.sh`），别再照那两行跑。
+**卫生脚本**（也可以单独跑）：`scripts/check_include_hygiene.py`、`check_diagnostic_formats.py`、
+`check_doc_symbols.py`、`check_cross_refs.py`、**`check_public_docs.py`**（公开 SDK 头的 `@brief` / `@param` /
+`@return` 基线门禁：新增的公开声明必须带文档，补文档只会让基线条目变 `stale` 而不变红，`--update` 才是降基线的那一步）、
+`check_ai_docs.py --strict`、`check_export_annotations.py`、`check_vk_exposure.py`。
 
-**SDK 级像素判据**（`test_vsg/SdkPixelFixture.hpp` + `SdkPixelTest.cpp`）：用 SDK 自己的入口（引擎 + 视图 + 管线 +
-一 pass 配方）在**真设备**上画一帧到离屏 `RenderTarget`，再用 `readColorBuffer` + `PixelProbe` 读回来判。它补的
-是"结构对了、像素不一定对"的那一段：`test_graphics` 能证"该画的 pass 在画"，这里证"画出来的像素对"——
-今天两条：①延迟配方 + 线框档 ⇒ 画面里真的有边，且边落在同一批几何的实体版覆盖的那块轮廓上（同一视图、同一相机、
-同一条 pass，只换光栅化模式）；②夹具本身带一条**没有视图**的最小用例（手搭一条 pass 画同一批内容），证明它不是
-为某一条用例特制的。门禁问的是"有没有一个满足后端下限的设备 / 会话起得起得来 / 离屏像素给不给得回来"，起不来就
-`SKIP` 并说出原因（不假装通过）；不靠 `getenv("DISPLAY")` 判"有没有窗口系统"——那在 Windows 上是"没有"，而那里
-离屏像素照常可读。这一份探测是**共享入口**（`SdkPixelFixture::available()`，一次进程内只答一次）：套件里其余那些
-只需要设备的用例也问它（`BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest`），
-只有真正需要宿主窗口的用例才用 `tests/test_vsg/TestHostWindow.hpp`（X11 走 `XGetImage`、Win32 走 `PrintWindow`
-合成器读回，两个平台同一份夹具），平台不提供窗口时据此 `SKIP`。
+**设备证据在 `test_vk` 里**：离屏像素判据（`VkContentTargetTest` 的线框用例、`VkDeferredTest`、`VkContentDrawTest`
+的混合/全屏用例、`VkShadowTest` 与 `VkMsaaTest`）都在真设备上画一帧、`readColorBuffer` 读回、逐像素判；宿主窗口的
+读像素在 `VkWindowPresentTest` / `VkHostWindowReadTest`，夹具是 `tests/test_vk/TestHostWindow.hpp`（X11 走
+`XGetImage`、Win32 走 `PrintWindow` 合成器读回），平台不提供窗口时据此 `SKIP` 并说出原因。
 
 **后端自检已退役**：`vsg_backend_selftest` 与 `scripts/vsg_selftest_evidence.sh` 随旧渲染器一起删除（它们是那个渲染器自己的
-相位门禁）。今天的端到端证据是 `scripts/vsg_rewrite_gate.sh`：在 lavapipe + validation 层上跑 demo，resize 前后各取一张图，
-出现任何未知 VUID 即失败（见 `src/plugins/gfx_backend_vsg/CMakeLists.txt` 里那段注释）。
+相位门禁）。今天的端到端证据是 `test_vk` 与 `test_graphics` 两套设备/引擎套件加上 `scripts/` 的十道门禁；`vk_exposure` 作为 ctest 门禁
+钉住"插件外壳不出现 `Vk*`"。
 
 仓库有 **33 个 CTest 套件**（`ctest --test-dir build -N`；2026-11-23 计数）。判定看失败的是哪一条：
-`test_vsg` 的宿主窗口用例在 WSLg 下对 500 ms 的 resize 期限敏感——**同一二进制**直接跑绿、`ctest` 偶发红，
+`test_vk` 的宿主窗口用例在 WSLg 下对 500 ms 的 resize 期限敏感——**同一二进制**直接跑绿、`ctest` 偶发红，
 用 `--repeat until-pass:3` 复验（backlog T36 同族）。早先在这里登记为"既有失败"的 `test_cppstd`（5）/
 `test_runtime`（28）/ `test_system`（12 + 1 skip）现在都是绿的。
 `test_gui` 在 CTest 下用 `QT_QPA_PLATFORM=offscreen`（见 `tests/test_gui/CMakeLists.txt`）：那条**脚本化真实文件对话框**的
