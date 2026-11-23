@@ -215,9 +215,11 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
 
 TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
 {
-    // K1 / K3 FOR THE BRIDGE. `SceneRows::snapshot` still copies today's whole `SceneBake` and `ensureRows` still
-    // rebuilds the whole row table when the graph epoch moves; this test exposes both halves separately. If the
-    // total is far above K1's 500 us, the next step is the chunked hot/cold table - not a smaller copy.
+    // K1 / N2 FOR THE BRIDGE, OBSERVED AS A SHAPE RATHER THAN A CLOCK. The claim is "one edit publishes in
+    // O(changed)": `SceneRows::snapshot` copies the 32-row chunks that moved and shares the rest. The chunk count is
+    // how that is checked, and it means the same thing on a fast machine and a slow one; the microseconds are
+    // printed as the record (`../memory/graphics.md`), because an absolute time is a property of the hardware - the
+    // rule `SelectTest`'s measurement states as "the times are the record, not a CI gate".
     auto root = intrusive_ptr<Group>(new Group());
     for (std::size_t index = 0; index < 2000U; ++index) {
         root->addChild(triangle());
@@ -264,10 +266,12 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
                 shared_chunks,
                 warm_snapshot->chunks.size());
     std::fflush(stdout);
+
+    ASSERT_GT(warm_snapshot->chunks.size(), 1U) << "the fixture must span several chunks, or sharing says nothing";
     EXPECT_EQ(selected.size(), 2000U);
-#if defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
-    EXPECT_LE(publish_avg, 250) << "N2: one edit at 2000 rows must publish within 250 us in an optimized build";
-#endif
+    EXPECT_NE(latest_snapshot.get(), warm_snapshot.get()) << "an edit is a new publication, never the cached value";
+    EXPECT_EQ(shared_chunks, warm_snapshot->chunks.size() - 1U)
+        << "one edit must share every chunk but the one it touched; K1 is that stopping, i.e. the whole table copied";
 }
 
 TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)

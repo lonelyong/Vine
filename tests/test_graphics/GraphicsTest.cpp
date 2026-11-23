@@ -11386,6 +11386,49 @@ TEST(SceneContentCacheTest, EveryMutationThatChangesACommandEndsTheMemo)
     }
 }
 
+/**
+ * @brief A material's OWN edit ends the memo, and re-sorts the picture.
+ *
+ * A material is a live object edited through its own setters, so no node mutator announces it and the graph epoch
+ * cannot see the change - the publication is what carries it instead: `refreshValues` re-takes the values a row
+ * holds, a moved value advances the publication's version, and the memo keyed on that publication misses. The half
+ * only a picture shows is the SORT: a draw that becomes Blend has to leave the opaque segment, or it keeps its old
+ * slot and is covered by what should be behind it.
+ */
+TEST(SceneContentCacheTest, AMaterialAlphaModeEditRebatchesAndReorders)
+{
+    auto scene    = intrusive_ptr<Scene>(new Scene());
+    auto root     = setIdentityRoot(*scene);
+    auto material = intrusive_ptr<Material>(new Material());
+    // Near and far. While both are opaque the near one is drawn first (front to back); once the NEAR one blends it
+    // has to move behind the far one (transparent back to front) - an order only a re-sorted table can produce.
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -2), material, u8"near"));
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -4), nullptr, u8"far"));
+    Camera cam;
+    setupLookAtCamera(cam);
+    scene->setContentFrame(1);
+
+    const auto opaque = scene->collectDrawItems(&cam);
+    ASSERT_EQ(opaque->size(), 2u);
+    ASSERT_EQ(scene->contentCollectCount(), 1u);
+    EXPECT_FALSE((*opaque)[0].isTransparent());
+    EXPECT_EQ((*opaque)[0].geometry->name(), u8"near") << "opaque content sorts front to back";
+
+    material->setAlphaMode(AlphaMode::Blend); // the live object's own setter: nothing announces it on the graph
+
+    scene->setContentFrame(2);
+    const auto blended = scene->collectDrawItems(&cam);
+    ASSERT_EQ(blended->size(), 2u);
+    EXPECT_EQ(scene->contentCollectCount(), 2u) << "a value the row re-takes is a new publication, so the memo ends";
+    EXPECT_EQ(scene->contentBakeCount(), 1u) << "a re-sort, not a re-bake of the graph";
+
+    ASSERT_EQ((*blended)[1].material_description != nullptr, true);
+    EXPECT_EQ((*blended)[1].material_description->values().alpha_mode, AlphaMode::Blend)
+        << "the command carries the values the material holds now, not the ones it was collected with";
+    EXPECT_TRUE((*blended)[1].isTransparent()) << "the blended draw moved to the transparent segment";
+    EXPECT_EQ((*blended)[1].geometry->name(), u8"near") << "transparent content sorts back to front";
+}
+
 TEST(ContentLayersTest, TheMaskIsPartOfWhatTheMemoIsKeyedOn)
 {
     Scene scene;
