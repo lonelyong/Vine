@@ -567,8 +567,10 @@ class VN_GRAPHICS_API Geometry : public Node {
      * - Optional: a geometry without colours is drawn WITHOUT a colour attribute (the shading does not fetch
      *   one), which is not the same thing as a channel of white — a null buffer or an empty one both mean
      *   absent.
-     * - The values are LINEAR light, like every colour this module accepts (see ClearPolicy); alpha is the
-     *   per-vertex opacity the shading multiplies into the material's own.
+     * - The values are LINEAR light, like every colour this module accepts (see ClearPolicy). The fourth
+     *   component is deliberately NOT an opacity input: opacity belongs to the drawable (`Node::opacity`,
+     *   collected into `DrawItem::opacity`), so one geometry's vertex alpha cannot leak into another drawable
+     *   that shares the same stream - the shading stage modulates the albedo by rgb only (see `builtin_forward.frag`).
      * - The defaults state the WHOLE buffer; stating a vertex range states an arena's segment (see
      *   setPositions for the units).
      *

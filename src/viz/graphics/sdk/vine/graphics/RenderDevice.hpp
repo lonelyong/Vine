@@ -415,6 +415,15 @@ class VN_GRAPHICS_API RenderDevice {
      * - Synchronously copies the colour attachment into @p outPixels as tightly packed RGBA8 - width * height * 4
      *   bytes, row-major. A logical RenderTarget holds no GPU pixels, so the transfer belongs to the device that owns
      *   the attachments.
+     * - THE BYTES ARE THE STORED TEXELS, NO CONVERSION: the four channels are R, G, B, A in that order and hold the
+     *   numbers the colour attachment already contains - no channel swap, no linear/sRGB conversion, no tone mapping.
+     *   An off-screen `ColorFormat::RGBA8` target is a `*_UNORM` image in both backends, so the values are what the
+     *   shading stage wrote.
+     * - ROW 0 IS THE TOP ROW of the attachment: the copy preserves the image's own row order, so a caller indexing
+     *   `y * width + x` reads the picture the right way up.
+     * - ANY OTHER COLOUR FORMAT IS `Unsupported`, permanently: which formats a device can pack is a fact about the
+     *   format, not about this frame (see `colorReadbackOf` / `ReadbackRefusal::UnreadableFormat`), and it is RGBA8
+     *   alone today - a float attachment is refused rather than handed back as bytes that would misread every texel.
      * - The default implementation reports the operation as unsupported; a device that implements readback overrides
      *   it (staging buffer, image-to-buffer copy, queue/fence synchronisation and format conversion).
      * - The answer IS the return value (`ReadbackOutcome`): `Unsupported` (this device never can), `NotReady` (retry

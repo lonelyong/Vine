@@ -100,7 +100,7 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 | # | Fact | Rule |
 |---|---|---|
 | F6 | Visibility | `isVisible` is a hard gate: an invisible subtree leaves collection, picking and the scene box. |
-| F7 | Opacity | scene × every ancestor × itself, clamped to [0,1] at the leaf; materials contribute no alpha. |
+| F7 | Opacity | The MAGNITUDE: scene × every ancestor × itself, clamped to [0,1] at the leaf. Material alpha (its factor and its base map's) is a second magnitude and the material's `alphaMode` says how the product is used, so classification reads both - see `graphics-material.md` §2.7 and `DrawItem::isTransparent`. |
 | F8 | Layers | Nearest declaration wins; `clearLayers()` restores inheritance; default `kDefaultLayer`. |
 | F9 | drawOrder | Nearest declaration wins; the outer sort key within a pass (higher = drawn later). |
 | F10 | material / program | Primitive > geometry-level default > nearest `StateNode` > pass. |
@@ -114,7 +114,7 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 | F13 | Command snapshot | geometry, primitive, model matrix, opacity, draw_order, state, material, program, instance. |
 | F14 | memo | Key = published revision + view-projection + eye + layer_mask (+ viewport when needed); invalidated automatically when a new publication is created because the picture/box/value changed. |
 | F15 | Frustum culling | The subtree box `subtreeBounds` is cached persistently in the node's own frame; moving the camera does not recompute. |
-| F16 | Sorting | `detail::SortKey` total order: drawOrder → layer → opaque/transparent segment → quantised camera depth → row/primitive index; the representative point is the world box centre. Classification is evaluated at collection and the order is frozen in the table (see §6.3); the content query and the frame's source use the same `selectSnapshot`. |
+| F16 | Sorting | `detail::SortKey` total order: drawOrder → layer → opaque/transparent segment → quantised camera depth → row/primitive index; the representative point is the world box centre. Classification is evaluated when a publication is built, so the order is a property of that publication: a material edited through its live object is re-taken into the next one (`refreshValues`), which moves the publication's revision - the memo key - and the table is re-sorted, as `SceneContentCacheTest.AMaterialAlphaModeEditRebatchesAndReorders` requires. The content query and the frame's source use the same `selectSnapshot`. |
 | F17 | Scene box | `Scene::boundingBox(mask)` counts only visible content that hits the layer mask. |
 
 ### 3.4 Layers and view context
@@ -235,13 +235,6 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 - How it fails: platform differences are written into the engine/application layer, and every platform change forks everywhere.
 - How to detect it: an "if Windows/X11 then …" branch appears.
 - How to prevent it: platform facts stay in the backend, the engine consumes only compiled frame values.
-
-### 6.3 Transparent classification's "order" is frozen in the command table
-
-- How it fails: `DrawItem::isTransparent()` takes part in sorting **at collection time** (F16), while F14's memo key has no material revision — a material setter only bumps `Material::revision()`, there is no announcement channel to the scene (N3 is about the node side). So after changing `Material::setAlphaMode()` (Opaque ↔ Blend/Mask) at runtime, the command table a memo hit returns **is not re-batched**: the command stays in its old batch and position until the next picture edit (pose change, node add/remove, `Scene::invalidateContent()`).
-- Only the **order** is frozen. The plan's transparent flag is re-read from the live material every frame (`target.transparent = source.isTransparent()` in `src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp`), and blending follows on that frame; the shading side re-packs the alpha mode with the material block `flags` (bits 8-9) as the revision advances. What goes stale is "is it in the opaque batch or the transparent batch, and at which position".
-- How to detect it: after changing alphaMode, `Scene::contentCollectCount()` does not grow (which means a memo hit), while the front/back occlusion of overlapping objects still follows the old classification — the typical symptom is "the one that just became transparent is drawn at the opaque batch's position" (drawn first, covered later), or a translucent object sits on top of something it should cover.
-- How to prevent it: call `Scene::invalidateContent()` once after switching alphaMode at runtime; or express "draw first/later" through an entry that announces (`Node::setOpacity`, `Node::setDrawOrder`, layers). With a single drawable there is no effect — there is no other command to order it wrongly against.
 
 ## 7. Rejected Options
 

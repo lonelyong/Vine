@@ -106,6 +106,13 @@
 - Vulkan NDC z is the depth (there is no OpenGL `z*0.5+0.5`); reverse-Z far = 0.0, so a depth clear must not clear to 1.0.
 - Dynamic `vkCmdSetPrimitiveTopology` may only stay inside the pipeline's topology class; `Topology` goes into `PipelineKey`.
 - `POINT_LIST` requires the vertex stage to write `gl_PointSize` statically; the built-in programs write 1.0.
+- **A variant define reaches a vsg-compiled stage only when that stage's own `#pragma import_defines` lists it**: passed but
+  not imported, it is dropped silently - no compile error, the "variant" simply compiles to the other one. `ProgramAbiTest`
+  pins the forward program's import list, so adding a variant define is a two-file change.
+- **MSBuild's incremental build is not trustworthy after a large tree move**: after the 2026-11-23 fast-forward over 403
+  commits, objects built against the old headers survived and this suite's binary mixed two vtables
+  (`0xc0000005` at 0 ms in a case that passes alone). Delete `build/src`, `build/tests`, `build/tools` objects and rebuild,
+  or a stale-object crash gets blamed on the new code.
 - Vertex/index upload is an **alias, not a copy**: `StreamUploads` uses `VsgBufferView` + a real `vsg::floatArray` / `vsg::uintArray` to read the model bytes
   (a vertex channel aliases its segment, the indices alias the **whole buffer** — the span is stated by the draw). The model may die first: array → view → buffer is one owning chain.
   Binding a `vsg::Data` subclass **directly** as the array **does not work** (the validation layer is clean but nothing draws); it must be wrapped in a real array first.
@@ -135,7 +142,7 @@
 - Shader naming: files keep the `builtin_*` / `vine_*` prefixes; functions are `vnXxx`, and variables, block instances, stage outputs and samplers all carry the `vn_` prefix.
 - A sampler name **is** an ABI key (`ContentImages::imageOriginOf` / `MaterialSlotCheck`): renaming it in the shader must change the table in the same commit;
   changing one side does not error, it just swaps the drawable's image for a pass input (`vn_shadow_map`, the five material slots, `vn_skyMap`).
-- Transparency: the engine's only transparency channel is `Node::opacity`; materials do not contribute alpha; blend is always on and `enabled` only selects the factors.
+- Transparency: magnitude = drawable opacity × material alpha × base-map alpha, meaning = the material's AlphaMode (`graphics-material.md` 2.7); blend is per-draw dynamic state (baked false, EDS3 enable), not a pipeline constant.
 - Device readback pixels are in BGR byte order; assert a single channel with `isRed()` and friends, never by reading `pixel[0]`.
 - Changing a public signature or a name requires a full build; an old plugin `.so` reports `undefined symbol`.
 - **A hidden / culled upload is not dropped — leaving the tree drops it**: the lifetime is two O(1) facts — the declaration index published by the content layer
@@ -406,6 +413,8 @@
 - **N2 was adjusted to ≤250 µs** (2026-11-11): 50 µs needs content-side dirty notification, which conflicts with “Node has no back pointer to Scene”;
   203 µs is inside 250 µs, and the RelWithDebInfo timing test now asserts N2. Next: step 3
   (the engine table of `ContentRegistry` + `ContentRef{id,rev}`). Do not take Debug's 2.2 ms as the final number.
+  **Superseded 2026-11-23**: the case now asserts the shared-chunk shape instead of a wall-clock limit - see the
+  dated entry at the end of this file.
 
 ### Step 3a (identity/residency prototype; 2026-11-11)
 
@@ -2042,3 +2051,22 @@
   `ARowThatDoesNotCountBytesSaysSoRatherThanReportingZero` (the "absent is not zero" rule at row level, and why only
   the COUNT is summed) and `ANoteReplacesItsKindInsteadOfAccumulating` (a row is replaced, and its bytes must go
   down). 5 cases in the suite.
+
+## 2026-11-23 — a measurement states the shape, the time is the record (N2 / K1)
+
+- **What changed**: `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` no longer asserts `publish ≤ 250 µs`.
+  It asserts what N2 actually means - an edit is a NEW publication that shares every 32-row chunk but the one it
+  touched (`shared == chunks - 1`) - and still prints `publish` / `select` / `shared`. `N2` and `K1` in
+  `graphics-frame-pipeline.md` are restated in the same terms.
+- **Why**: an absolute microsecond figure is a property of the machine. On this box (Windows, MSVC 19.52,
+  RelWithDebInfo) the case reads **publish 321-346 µs, select 560-600 µs, shared 62/63** over ten runs - stable,
+  not noise - while `SelectTest`'s 2026-11-13 reading of a comparable workload was 337-340 µs for select. A gate
+  calibrated on a faster box therefore fails here while the code does exactly what it should, and a red test that
+  cannot tell "this machine is slower" from "the copy-on-write broke" teaches nothing. `SelectTest` already states
+  the rule ("the times are the record, not a CI gate"); this case now follows it.
+- **What still catches the defect K1 names**: the sharing count. A whole-table copy makes `shared` 0 while
+  `makeSceneSnapshot` otherwise looks perfectly correct, and the assertion fails on any machine.
+- **If the time is ever revisited, measure the split first**: on an epoch change `ensureRows` walks the row table
+  three times (`rowsStillMatchTheGraph`, `refreshBoxes`, `refreshValues`) before `makeSceneSnapshot` copies the one
+  dirty chunk. The chunk copy is NOT the cost (`shared == 62/63`); the three walks are the candidates, and the
+  250 µs figure predates the four-named-steps refactor (`17ab42eb`) that made them explicit.

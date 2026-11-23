@@ -224,7 +224,7 @@ unchanged.
 | F20 | `ShaderProgram` | Vertex / Fragment stages + entry points; `addStage` / `setStage` / `clearStages` / `replaceStages` bump the revision. |
 | F21 | Built-in programs | forward / flat / gbuffer / deferred lighting / shadowed; `builtin_<role>.<stage>`. |
 | F22 | ABI | Vertex locations, `VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`, 128 B push. |
-| F23 | Transparency | The only channel is `Node::opacity`; materials contribute no alpha; blend is always on. |
+| F23 | Transparency | TWO INPUTS, ONE RULE: the magnitude is the drawable's `opacity` × the material's own alpha × the base map's alpha, and the material's `AlphaMode` says what that product means (Opaque ignores it, Mask thresholds it, Blend uses it as the output alpha) - sorting and shading read the same pair (`graphics-material.md` §2.7). Blending is not a pipeline constant: `blendEnable` is baked false and switched per draw through `VK_EXT_extended_dynamic_state3` (`StateCommands`), and a draw whose resolved `BlendState` is enabled - which is what an effective opacity below 1 resolves to - is the one that turns it on. |
 | F24 | Shadows | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`; the light camera is derived by `directionalShadowMatrix` (orthographic) / `spotShadowMatrix` (perspective). **One map per chain, one light (the first buildable directional or spot light)**, point lights unsupported (see 2.7). |
 | F26 | Line width | `StateNode::setLineWidth` / `RenderPass::setLineWidthOverride`: the width of **line primitives** (`Topology::Lines`), framebuffer pixels, dynamic state (`vkCmdSetLineWidth`) so no rebuild; `wideLines` is a required device feature, the limit is the device's `lineWidthRange` (`Capabilities::limits.max_line_width`), the floor 1.0. It does **not** widen `PolygonMode::Line` wireframe edges. |
 
@@ -291,7 +291,7 @@ unchanged.
 | N3 | The default window / default framebuffer stays single-sampled; anti-aliasing draws into an MS offscreen target and then goes to the screen. |
 | N4 | A produced input binds only the declared attachment in a content pass; do not assume the whole target. |
 | N5 | `Sampler` is a cache key: its fields must be finite; NaN makes the cache miss every frame. |
-| N6 | Materials contribute no alpha; transparency comes only from `Node::opacity`. |
+| N6 | The material's alpha mode and the drawable's opacity are the two halves of one rule: the mode says how alpha is USED, the opacity is its magnitude - never substitute one for the other (`graphics-material.md` N5), and do not read the mode as "the material's own alpha": Opaque ignores the material's alphas, Mask thresholds them, Blend multiplies them into the output. |
 | N7 | Changing one `ShaderAbi` block layout / location means changing C++ and GLSL together. |
 | N8 | Shadow-casting lights are directional and spot (orthographic / perspective light cameras, the same 2D depth map, the same `VineShadowBlock`); **each chain has only one map** — a second casting light gets no map; a point light needs a six-face cube, and `setCastShadow` on a point light builds no pass. The three reasons for not building (second casting light / point light / this path produces no lighting) are reported separately by `ChainBuilder::reportRequestedShadows`, see 2.7 and backlog S6. CSM / PCSS are not done. |
 | N9 | The dynamic state a pipeline declares must cover every item the commands write; an item written but not declared takes the create-info baked value (silently). |

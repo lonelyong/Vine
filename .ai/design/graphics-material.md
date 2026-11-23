@@ -156,6 +156,11 @@ An instance copies neither textures nor bytes beyond the block.
 - **Requirement** (R4): `vn_draw.params.x` is still the only per-drawable magnitude; the material does not copy it.
 - **Acceptance** (T4): a Mask leaf discards correctly on both sides of the cutoff; a Blend leaf blends by opacity × material alpha.
 - **Caveat** (N4): the deferred G-buffer does not write Blend content; it can only appear in the forward overlay.
+- **Caveat** (N6): on a MULTISAMPLED target a Mask fragment still discards whole fragments, so its cutout edges keep
+  their pixel steps - alpha-to-coverage is not implemented. The pipeline switch is not available on the vsg path: its
+  render graph and compile traversal push their own `MultisampleState` (which states `alphaToCoverageEnable = false`)
+  after the application's, so the only door is a shader-side `gl_SampleMask`. Trigger, design sketch and cost are
+  backlog T58; nothing in this tree draws Mask content into a multisampled target today.
 
 ### 3.6 F8 import conversion
 

@@ -219,12 +219,19 @@ struct VN_GRAPHICS_API ChainDesc {
     /** @brief Optional axis-gizmo HUD overlay stacked above the window pass.
      *
      * @note Disabled when AxisGizmoOptions::source_camera is null.
+     *
+     * @note A PRESET, not the extension point: the built-in recipe registers this overlay through
+     *       `addOverlay(role, content, desc, layout)`, the same public door a host uses. A third HUD layer is a
+     *       call there, not another field here, so this description never grows a case per overlay (`G8`).
      */
     AxisGizmoOptions gizmo;
 
     /** @brief Optional frame-rate readout HUD overlay (bottom-right corner).
      *
      * @note Opt-in (like the gizmo); the app-shell demo enables it by default via FpsOverlayOptions::enabled = true.
+     *
+     * @note The same preset rule as `gizmo` above: `addOverlay` is how an overlay enters a chain, and this field only
+     *       states the options of the readout the library ships.
      */
     FpsOverlayOptions fps;
 };
