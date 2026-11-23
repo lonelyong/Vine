@@ -364,17 +364,8 @@ struct ContentImages::Impl {
         whole.baseArrayLayer = 0U;
         whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
 
-        const VkImageMemoryBarrier to_transfer = barrierBetween(entry.image, from, to, whole);
-        table->vkCmdPipelineBarrier(commands,
-                                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                    0U,
-                                    0U,
-                                    nullptr,
-                                    0U,
-                                    nullptr,
-                                    1U,
-                                    &to_transfer);
+        const VkImageMemoryBarrier2 to_transfer = barrierBetween(entry.image, from, to, whole);
+        recordBarrier(*table, commands, to_transfer);
 
         for (int layer = 0; layer < texture.layerCount(); ++layer) {
             const raw_ptr<const vn::imaging::Image> image = texture.layer(layer);
@@ -667,17 +658,8 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
     whole.levelCount     = static_cast<std::uint32_t>(texture.mipCount());
     whole.baseArrayLayer = 0U;
     whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
-    const VkImageMemoryBarrier to_sampled = barrierBetween(entry.image, transfer, sampled, whole);
-    impl->table->vkCmdPipelineBarrier(commands,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                      0U,
-                                      0U,
-                                      nullptr,
-                                      0U,
-                                      nullptr,
-                                      1U,
-                                      &to_sampled);
+    const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry.image, transfer, sampled, whole);
+    recordBarrier(*impl->table, commands, to_sampled);
 
     // THE BOOKS: a REPLACED revision is a rebuild (its bytes leave the total, the entry never stopped being
     // resident), a fresh upload is a build.
@@ -814,18 +796,9 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
     std::memcpy(mapped, white, sizeof(white));
 
     const ImageState transfer = transferWriteState();
-    const VkImageMemoryBarrier to_transfer =
+    const VkImageMemoryBarrier2 to_transfer =
         barrierBetween(impl->fallback_image, stateOf(ImageLayout::Undefined), transfer, VK_IMAGE_ASPECT_COLOR_BIT);
-    impl->table->vkCmdPipelineBarrier(commands,
-                                      VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      0U,
-                                      0U,
-                                      nullptr,
-                                      0U,
-                                      nullptr,
-                                      1U,
-                                      &to_transfer);
+    recordBarrier(*impl->table, commands, to_transfer);
 
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -839,17 +812,8 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
                                         &region);
 
     const ImageState sampled = stateOf(ImageLayout::ShaderReadOnly);
-    const VkImageMemoryBarrier to_sampled = barrierBetween(impl->fallback_image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
-    impl->table->vkCmdPipelineBarrier(commands,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                      0U,
-                                      0U,
-                                      nullptr,
-                                      0U,
-                                      nullptr,
-                                      1U,
-                                      &to_sampled);
+    const VkImageMemoryBarrier2 to_sampled = barrierBetween(impl->fallback_image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
+    recordBarrier(*impl->table, commands, to_sampled);
             impl->batches[batch].staging.emplace_back(staging_buffer, staging_memory);
 
     VkImageViewCreateInfo view{};

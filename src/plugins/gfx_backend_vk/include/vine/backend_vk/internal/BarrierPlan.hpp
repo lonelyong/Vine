@@ -24,18 +24,20 @@ VN_BACKEND_VK_NS_BEGIN
  *   (`LoadOp` / `StoreOp`, and what a pass declares); a LAYOUT is one family's spelling of "this image is being
  *   written as colour", so it lives here with the table that consumes it (backlog T15, review 8 §4.7/§4.8).
  *   A second API family replaces THIS TABLE and this input, not the seam.
- * - LEGACY BARRIERS, NOT SYNCHRONIZATION2. The first render pass of this backend needs one transition and a clear; the
- *   Vulkan-1.0 form (`VkImageMemoryBarrier` + `vkCmdPipelineBarrier`) needs no device feature and no extension, so M1
- *   uses it and the table stays honest about what it emits.
- * - IT IS PURE. No device, no allocation, no state: the table answers the same thing on a machine with no Vulkan
- *   loader, which is what makes it testable before anything can be drawn.
+ * - SYNCHRONISATION 2, NOT THE VULKAN-1.0 FORM. The floor is Vulkan 1.3, so a barrier is a
+ *   `VkImageMemoryBarrier2` inside a `VkDependencyInfo` and is recorded by `vkCmdPipelineBarrier2`: the stage masks live
+ *   ON the barrier (they are the two rows of this table), which is why no call site passes a stage pair of its own any
+ *   more. `recordBarrier` is the one place that names the 1.3 command.
+ * - THE TABLE IS PURE. No device, no allocation, no state: the table answers the same thing on a machine with no Vulkan
+ *   loader, which is what makes it testable before anything can be drawn. `recordBarrier` takes the device table
+ *   because a recording call needs one; it keeps no state of its own.
  *
  * @note Not thread-safe only in the sense that every function here is stateless; they may be called from any thread.
  */
 struct ImageState {
-    VkImageLayout        layout{ VK_IMAGE_LAYOUT_UNDEFINED };            // The layout that usage requires.
-    VkPipelineStageFlags stages{ VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT };    // The stages a barrier must synchronise.
-    VkAccessFlags        access{ 0 };                                    // The memory a barrier must make visible.
+    VkImageLayout         layout{ VK_IMAGE_LAYOUT_UNDEFINED };         // The layout that usage requires.
+    VkPipelineStageFlags2 stages{ VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT }; // The stages a barrier must synchronise.
+    VkAccessFlags2        access{ 0 };                                 // The memory a barrier must make visible.
 };
 
 /**
@@ -76,12 +78,12 @@ struct ImageState {
  * @param from   Usage the image is in now.
  * @param to     Usage the image is about to be in.
  * @param aspect Aspect mask (colour or depth).
- * @return The barrier, ready to be recorded.
+ * @return The barrier, ready to be recorded (see recordBarrier).
  */
-[[nodiscard]] VkImageMemoryBarrier barrierFor(VkImage           image,
-                                             ImageLayout from,
-                                             ImageLayout to,
-                                              VkImageAspectFlags aspect) noexcept;
+[[nodiscard]] VkImageMemoryBarrier2 barrierFor(VkImage           image,
+                                              ImageLayout from,
+                                              ImageLayout to,
+                                               VkImageAspectFlags aspect) noexcept;
 
 /**
  * @brief Gets the state a copy READS from: `TRANSFER_SRC_OPTIMAL` with the transfer stage and read access.
@@ -102,9 +104,9 @@ struct ImageState {
  * @param from   State the image is in.
  * @param to     State the image is about to be in.
  * @param aspect Aspect mask (colour or depth).
- * @return The barrier, ready to be recorded.
+ * @return The barrier, ready to be recorded (see recordBarrier).
  */
-[[nodiscard]] VkImageMemoryBarrier barrierBetween(VkImage            image,
+[[nodiscard]] VkImageMemoryBarrier2 barrierBetween(VkImage            image,
                                                   const ImageState&  from,
                                                   const ImageState&  to,
                                                   VkImageAspectFlags aspect) noexcept;
@@ -122,12 +124,28 @@ struct ImageState {
  * @param from   Usage the image is in now.
  * @param to     Usage the image is about to be in.
  * @param range  The subresources the transition covers.
- * @return The barrier, ready to be recorded.
+ * @return The barrier, ready to be recorded (see recordBarrier).
  */
-[[nodiscard]] VkImageMemoryBarrier barrierBetween(VkImage                        image,
+[[nodiscard]] VkImageMemoryBarrier2 barrierBetween(VkImage                        image,
                                                   const ImageState&              from,
                                                   const ImageState&              to,
                                                   const VkImageSubresourceRange& range) noexcept;
+
+/**
+ * @brief Records one image barrier on @p commands through synchronisation 2.
+ *
+ * @details
+ * - THE ONE PLACE the 1.3 command is named: every barrier this backend records goes through here, so there is no
+ *   second spelling of "submit a dependency" to drift. Nothing else is set - the barrier already carries both stage
+ *   masks and both access masks (see @ref ImageState).
+ * - A barrier that names no image is still legal to record (see @ref barrierBetween); the caller decides whether it is
+ *   worth recording at all (see @ref requiresTransition).
+ *
+ * @param table    The device table to record through.
+ * @param commands The command buffer being recorded.
+ * @param barrier  The barrier to record.
+ */
+void recordBarrier(const VolkDeviceTable& table, VkCommandBuffer commands, const VkImageMemoryBarrier2& barrier) noexcept;
 
 /**
  * @brief Gets the attachment load operation for @p op.

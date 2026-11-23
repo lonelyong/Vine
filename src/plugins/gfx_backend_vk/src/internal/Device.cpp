@@ -904,18 +904,9 @@ struct Device::Impl {
             if (!sampled.depth_sampled) {
                 const ImageState from =
                     stateOf(sampled.fresh.load(std::memory_order_relaxed) ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
-                const VkImageMemoryBarrier barrier =
+                const VkImageMemoryBarrier2 barrier =
                     barrierBetween(sampled.depthPicture(), from, stateOf(ImageLayout::ShaderReadOnly), depthAspectMask(sampled.depthFormat()));
-                device_table.vkCmdPipelineBarrier(commands,
-                                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                  0U,
-                                                  0U,
-                                                  nullptr,
-                                                  0U,
-                                                  nullptr,
-                                                  1U,
-                                                  &barrier);
+                recordBarrier(device_table, commands, barrier);
                 sampled.depth_sampled = true;
             }
 
@@ -1545,17 +1536,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             for (const VkImage image : sampled.colors) {
                 const ImageState from = sampled.fresh.load(std::memory_order_relaxed) ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
                 const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
-                const VkImageMemoryBarrier barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
-                owner.device_table.vkCmdPipelineBarrier(commands,
-                                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                        0U,
-                                                        0U,
-                                                        nullptr,
-                                                        0U,
-                                                        nullptr,
-                                                        1U,
-                                                        &barrier);
+                const VkImageMemoryBarrier2 barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
+                recordBarrier(owner.device_table, commands, barrier);
             }
             sampled.color_sampled = true;
         }
@@ -1598,20 +1580,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             // writes them.
             if (images->color_sampled) {
                 for (const VkImage image : images->colors) {
-                    const VkImageMemoryBarrier back = barrierBetween(image,
+                    const VkImageMemoryBarrier2 back = barrierBetween(image,
                                                                      stateOf(ImageLayout::ShaderReadOnly),
                                                                      stateOf(ImageLayout::ColorAttachment),
                                                                      VK_IMAGE_ASPECT_COLOR_BIT);
-                    owner.device_table.vkCmdPipelineBarrier(commands,
-                                                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                            0U,
-                                                            0U,
-                                                            nullptr,
-                                                            0U,
-                                                            nullptr,
-                                                            1U,
-                                                            &back);
+                    recordBarrier(owner.device_table, commands, back);
                 }
                 images->color_sampled = false;
             }
@@ -1619,20 +1592,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth PICTURE in SHADER_READ_ONLY: put it back before
             // this pass writes the depth (the mirror of the colour rule above, on the depth attachment).
             if (images->depth_sampled) {
-                const VkImageMemoryBarrier back = barrierBetween(images->depthPicture(),
+                const VkImageMemoryBarrier2 back = barrierBetween(images->depthPicture(),
                                                                  stateOf(ImageLayout::ShaderReadOnly),
                                                                  stateOf(ImageLayout::DepthAttachment),
                                                                  depthAspectMask(images->depthFormat()));
-                owner.device_table.vkCmdPipelineBarrier(commands,
-                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                                        0U,
-                                                        0U,
-                                                        nullptr,
-                                                        0U,
-                                                        nullptr,
-                                                        1U,
-                                                        &back);
+                recordBarrier(owner.device_table, commands, back);
                 images->depth_sampled = false;
             }
 
@@ -2421,7 +2385,7 @@ bool Device::initialize()
     application.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
     application.pEngineName        = "Vine";
     application.engineVersion      = VK_MAKE_VERSION(0, 1, 0);
-    application.apiVersion         = VK_API_VERSION_1_2;
+    application.apiVersion         = VK_API_VERSION_1_3;
 
     const char*   layer_names[1]{};
     std::uint32_t layer_name_count = 0;
@@ -2568,6 +2532,20 @@ bool Device::initialize()
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(impl->physical, &properties);
 
+    // THE API VERSION IS A FLOOR, NOT A PREFERENCE (`ADR-2026-11-23` D4, step 1 in T54 and step 2 in `T11`): the
+    // barrier table records synchronisation 2, and dynamic rendering replaces the render-pass objects, both core in 1.3.
+    // A device below it would have to be served by a second recording path - the legacy one this backend deliberately
+    // does not keep - so it is refused with its own code instead.
+    if (properties.apiVersion < VK_API_VERSION_1_3) {
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.api_version_low",
+                                          u8"vk: this backend needs a Vulkan 1.3 device (dynamic rendering and "
+                                          u8"synchronisation 2 are core there), and this device is older"));
+        shutdown();
+        return false;
+    }
+
     constexpr float         kQueuePriority = 1.0F;
     VkDeviceQueueCreateInfo queue_info{};
     queue_info.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -2653,20 +2631,32 @@ bool Device::initialize()
 
     // THE RASTER FLOOR (`T54`, `ADR-2026-11-23` D4): cull, polygon mode, depth test/write/compare and blend are
     // DYNAMIC state, so they are no longer part of a pipeline's identity and a state change costs commands instead of
-    // a compile. That is only possible on a driver that implements the three extensions, so they are REQUIRED: a
-    // device without them would have to bake silently (there is no second path any more) and the picture would be
-    // wrong in a way no test could name. The refusal names what was missing instead.
-    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT  dynamic_state_available{};
-    dynamic_state_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    // a compile. On a 1.3 device cull and the depth items are CORE dynamic state; POLYGON MODE and COLOUR BLEND remain
+    // `VK_EXT_extended_dynamic_state3`, which is therefore the one extension this floor requires - a device without it
+    // would have to bake silently, and the picture would be wrong in a way no test could name.
+    //
+    // THE 1.3 FEATURES ARE FEATURES, NOT VERSIONS: `synchronization2` (the barrier table records `vkCmdPipelineBarrier2`)
+    // and `dynamicRendering` (step 2 of the batch) must both be ENABLED, and a 1.3 device that does not offer them is
+    // refused. A version alone is not evidence that a feature is on.
+    VkPhysicalDeviceVulkan13Features     vk13_available{};
+    vk13_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state3_available{};
     dynamic_state3_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
     VkPhysicalDeviceFeatures2 dynamic_state_query{};
     dynamic_state_query.sType     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    dynamic_state_query.pNext     = &dynamic_state_available;
-    dynamic_state_available.pNext = &dynamic_state3_available;
+    dynamic_state_query.pNext     = &vk13_available;
+    vk13_available.pNext          = &dynamic_state3_available;
     vkGetPhysicalDeviceFeatures2(impl->physical, &dynamic_state_query);
-    const bool dynamic_raster_floor = has_extended_dynamic_state && has_extended_dynamic_state2 && has_extended_dynamic_state3 &&
-                                      dynamic_state_available.extendedDynamicState == VK_TRUE &&
+    if (vk13_available.synchronization2 == VK_FALSE || vk13_available.dynamicRendering == VK_FALSE) {
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.device_features_missing",
+                                          u8"vk: this backend needs the Vulkan 1.3 synchronization2 and dynamicRendering "
+                                          u8"features, and this device does not offer them"));
+        shutdown();
+        return false;
+    }
+    const bool dynamic_raster_floor = has_extended_dynamic_state3 &&
                                       dynamic_state3_available.extendedDynamicState3PolygonMode == VK_TRUE &&
                                       dynamic_state3_available.extendedDynamicState3ColorBlendEnable == VK_TRUE &&
                                       dynamic_state3_available.extendedDynamicState3ColorBlendEquation == VK_TRUE;
@@ -2674,25 +2664,24 @@ bool Device::initialize()
         reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
                                           u8"vk.init.dynamic_state_missing",
-                                          u8"vk: this backend needs VK_EXT_extended_dynamic_state / _state2 / _state3 with polygon mode "
-                                          u8"and colour blend (cull / depth / polygon / blend are dynamic state), and this device does "
-                                          u8"not offer them"));
+                                          u8"vk: this backend needs VK_EXT_extended_dynamic_state3 with polygon mode and "
+                                          u8"colour blend (cull / depth / polygon / blend are dynamic state), and this device "
+                                          u8"does not offer them"));
         shutdown();
         return false;
     }
-    device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
-    device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
     device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
-    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT dynamic_state_enable{};
-    dynamic_state_enable.sType                = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
-    dynamic_state_enable.extendedDynamicState = VK_TRUE;
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state3_enable{};
-    dynamic_state3_enable.sType                                  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
-    dynamic_state3_enable.extendedDynamicState3PolygonMode       = VK_TRUE;
-    dynamic_state3_enable.extendedDynamicState3ColorBlendEnable  = VK_TRUE;
+    dynamic_state3_enable.sType                                   = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
+    dynamic_state3_enable.extendedDynamicState3PolygonMode        = VK_TRUE;
+    dynamic_state3_enable.extendedDynamicState3ColorBlendEnable   = VK_TRUE;
     dynamic_state3_enable.extendedDynamicState3ColorBlendEquation = VK_TRUE;
-    dynamic_state_enable.pNext = &dynamic_state3_enable;
-    device_info.pNext          = &dynamic_state_enable;
+    VkPhysicalDeviceVulkan13Features vk13_enable{};
+    vk13_enable.sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    vk13_enable.synchronization2 = VK_TRUE;
+    vk13_enable.dynamicRendering = VK_TRUE;
+    vk13_enable.pNext            = &dynamic_state3_enable;
+    device_info.pNext            = &vk13_enable;
     if (!device_extension_names.empty()) {
         device_info.enabledExtensionCount   = static_cast<std::uint32_t>(device_extension_names.size());
         device_info.ppEnabledExtensionNames = device_extension_names.data();
@@ -3625,51 +3614,24 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
     // own transition names COLOR_ATTACHMENT_OPTIMAL as the old layout.
     if (images.color_sampled) {
         for (const VkImage image : images.colors) {
-            const VkImageMemoryBarrier back =
+            const VkImageMemoryBarrier2 back =
                 barrierBetween(image, stateOf(ImageLayout::ShaderReadOnly), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-            impl->device_table.vkCmdPipelineBarrier(staging.commands(),
-                                                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                    0U,
-                                                    0U,
-                                                    nullptr,
-                                                    0U,
-                                                    nullptr,
-                                                    1U,
-                                                    &back);
+            recordBarrier(impl->device_table, staging.commands(), back);
         }
         images.color_sampled = false;
     }
 
-    const VkImageMemoryBarrier to_transfer =
+    const VkImageMemoryBarrier2 to_transfer =
         barrierBetween(color_image, stateOf(ImageLayout::ColorAttachment), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
-    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
-                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                            0U,
-                                            0U,
-                                            nullptr,
-                                            0U,
-                                            nullptr,
-                                            1U,
-                                            &to_transfer);
+    recordBarrier(impl->device_table, staging.commands(), to_transfer);
 
     staging.recordCopy(color_image,
                        VK_IMAGE_ASPECT_COLOR_BIT,
                        VkExtent3D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U });
 
-    const VkImageMemoryBarrier to_attachment =
+    const VkImageMemoryBarrier2 to_attachment =
         barrierBetween(color_image, transferReadState(), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
-                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                            0U,
-                                            0U,
-                                            nullptr,
-                                            0U,
-                                            nullptr,
-                                            1U,
-                                            &to_attachment);
+    recordBarrier(impl->device_table, staging.commands(), to_attachment);
 
     const StagingRun run = staging.run(impl->queue, impl->queue_submit);
     if (!run.ran()) {
@@ -3799,20 +3761,11 @@ vn::graphics::ReadbackOutcome Device::readDepthBuffer(const vn::graphics::ImageR
     // readback's own transition names DEPTH_ATTACHMENT as the old layout (the mirror of readColorBuffer's
     // colour_sampled note, and the same stage masks executeFrame's restore records).
     if (images.depth_sampled) {
-        const VkImageMemoryBarrier back = barrierBetween(depth_image,
+        const VkImageMemoryBarrier2 back = barrierBetween(depth_image,
                                                          stateOf(ImageLayout::ShaderReadOnly),
                                                          stateOf(ImageLayout::DepthAttachment),
                                                          depthAspectMask(images.depthFormat()));
-        impl->device_table.vkCmdPipelineBarrier(staging.commands(),
-                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                                0U,
-                                                0U,
-                                                nullptr,
-                                                0U,
-                                                nullptr,
-                                                1U,
-                                                &back);
+        recordBarrier(impl->device_table, staging.commands(), back);
         images.depth_sampled = false;
     }
 
@@ -3820,33 +3773,15 @@ vn::graphics::ReadbackOutcome Device::readDepthBuffer(const vn::graphics::ImageR
     // aspect it reads, because a depth readback is the depth half - the stencil half is not a depth and nothing here
     // decodes it (which is also why a combined format is refused above: this backend serves the formats the SDK's
     // table can decode, and that table has no combined entry).
-    const VkImageMemoryBarrier to_transfer =
+    const VkImageMemoryBarrier2 to_transfer =
         barrierBetween(depth_image, stateOf(ImageLayout::DepthAttachment), transferReadState(), depthAspectMask(images.depthFormat()));
-    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
-                                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                            0U,
-                                            0U,
-                                            nullptr,
-                                            0U,
-                                            nullptr,
-                                            1U,
-                                            &to_transfer);
+    recordBarrier(impl->device_table, staging.commands(), to_transfer);
 
     staging.recordCopy(depth_image, VK_IMAGE_ASPECT_DEPTH_BIT, extent);
 
-    const VkImageMemoryBarrier to_attachment =
+    const VkImageMemoryBarrier2 to_attachment =
         barrierBetween(depth_image, transferReadState(), stateOf(ImageLayout::DepthAttachment), depthAspectMask(images.depthFormat()));
-    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
-                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                            0U,
-                                            0U,
-                                            nullptr,
-                                            0U,
-                                            nullptr,
-                                            1U,
-                                            &to_attachment);
+    recordBarrier(impl->device_table, staging.commands(), to_attachment);
 
     const StagingRun run = staging.run(impl->queue, impl->queue_submit);
     if (!run.ran()) {

@@ -8,6 +8,7 @@
 
 #include <volk.h>
 
+#include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/TargetObjects.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -731,30 +732,15 @@ void WindowTarget::recordPresentTransition(const VkCommandBuffer commands) const
     if (commands == VK_NULL_HANDLE || impl == nullptr || !impl->image_acquired || impl->image_index >= impl->images.size()) {
         return;
     }
-    VkImageMemoryBarrier barrier{};
-    barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout                       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barrier.newLayout                       = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image                           = impl->images[impl->image_index];
-    barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel   = 0U;
-    barrier.subresourceRange.levelCount     = 1U;
-    barrier.subresourceRange.baseArrayLayer = 0U;
-    barrier.subresourceRange.layerCount     = 1U;
-    barrier.srcAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.dstAccessMask                   = 0U;
-    impl->device.table->vkCmdPipelineBarrier(commands,
-                                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                             0U,
-                                             0U,
-                                             nullptr,
-                                             0U,
-                                             nullptr,
-                                             1U,
-                                             &barrier);
+    // THE TRANSITION IS TWO ROWS OF THE BARRIER TABLE: colour attachment -> present. The table owns the layouts, the
+    // stage masks and the access masks (BarrierPlan), so this function names none of them and cannot pair a layout with
+    // the wrong mask.
+    recordBarrier(*impl->device.table,
+                  commands,
+                  barrierBetween(impl->images[impl->image_index],
+                                 stateOf(ImageLayout::ColorAttachment),
+                                 stateOf(ImageLayout::Present),
+                                 VK_IMAGE_ASPECT_COLOR_BIT));
 }
 
 vn::graphics::PresentOutcome WindowTarget::present()

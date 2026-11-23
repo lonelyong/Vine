@@ -182,6 +182,18 @@ commands issued by `recordRasterState`.
 - What a backend author must know: identity holds the PROGRAM and the pass SHAPE, never a state a `vkCmdSet*` can move.
   The rule now has no exception, because `RasterState` was the only one.
 
+**The same day, step 1b: the API floor is 1.3 and barriers are synchronisation 2** (`BC-38`; `ADR-2026-11-23` D4).
+`gfx_backend_vk` requires a Vulkan 1.3 device with the `synchronization2` and `dynamicRendering` features enabled, and
+`BarrierPlan` emits `VkImageMemoryBarrier2` recorded by the one `recordBarrier` (`vkCmdPipelineBarrier2`). The
+Vulkan-1.0 barrier form is not kept.
+
+- What a host must change: nothing on a 1.3 driver - a device below it answers `vk.init.api_version_low`, and a 1.3
+device without the two features answers `vk.init.device_features_missing`.
+- What a backend author must know: the stage masks belong to the table rows, so a call site cannot pair a layout with
+another row's stages; `recordBarrier` is the single place the sync2 command is named.
+- Dynamic rendering is the next step of the same batch (`T11`); until it lands, pass objects are still `VkRenderPass`,
+  which the 1.3 floor permits.
+
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
 

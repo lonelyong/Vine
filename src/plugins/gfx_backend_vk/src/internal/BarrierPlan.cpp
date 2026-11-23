@@ -14,25 +14,25 @@ ImageState stateOf(const ImageLayout usage) noexcept
     switch (usage) {
     case ImageLayout::Undefined:
         return ImageState{ VK_IMAGE_LAYOUT_UNDEFINED,
-                           VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                            0 };
     case ImageLayout::ColorAttachment:
         return ImageState{ VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT };
+                           VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT };
     case ImageLayout::DepthAttachment:
         return ImageState{ VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT };
+                           VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                           VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT };
     case ImageLayout::ShaderReadOnly:
         return ImageState{ VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                           VK_ACCESS_SHADER_READ_BIT };
+                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_READ_BIT };
     case ImageLayout::Present:
         // The one layout the platform owns rather than a queue operation: nothing is synchronised beyond handing the
         // image over, which is why it carries the bottom-of-pipe stage and no access mask.
         return ImageState{ VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                           VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
                            0 };
     }
     // An out-of-range value is not a usage this backend serves; answering "undefined" is the honest fallback because it
@@ -48,14 +48,14 @@ bool requiresTransition(const ImageLayout from, const ImageLayout to) noexcept
 ImageState transferReadState() noexcept
 {
     return ImageState{ VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT,
-                       VK_ACCESS_TRANSFER_READ_BIT };
+                       VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                       VK_ACCESS_2_TRANSFER_READ_BIT };
 }
 
-VkImageMemoryBarrier barrierBetween(const VkImage            image,
-                                    const ImageState&        from,
-                                    const ImageState&        to,
-                                    const VkImageAspectFlags aspect) noexcept
+VkImageMemoryBarrier2 barrierBetween(const VkImage            image,
+                                     const ImageState&        from,
+                                     const ImageState&        to,
+                                     const VkImageAspectFlags aspect) noexcept
 {
     VkImageSubresourceRange range{};
     range.aspectMask     = aspect;
@@ -64,14 +64,16 @@ VkImageMemoryBarrier barrierBetween(const VkImage            image,
     return barrierBetween(image, from, to, range);
 }
 
-VkImageMemoryBarrier barrierBetween(const VkImage               image,
-                                    const ImageState&            from,
-                                    const ImageState&            to,
-                                    const VkImageSubresourceRange& range) noexcept
+VkImageMemoryBarrier2 barrierBetween(const VkImage               image,
+                                     const ImageState&            from,
+                                     const ImageState&            to,
+                                     const VkImageSubresourceRange& range) noexcept
 {
-    VkImageMemoryBarrier barrier{};
-    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    VkImageMemoryBarrier2 barrier{};
+    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barrier.srcStageMask        = from.stages;
     barrier.srcAccessMask       = from.access;
+    barrier.dstStageMask        = to.stages;
     barrier.dstAccessMask       = to.access;
     barrier.oldLayout           = from.layout;
     barrier.newLayout           = to.layout;
@@ -82,12 +84,21 @@ VkImageMemoryBarrier barrierBetween(const VkImage               image,
     return barrier;
 }
 
-VkImageMemoryBarrier barrierFor(const VkImage              image,
-                                const ImageLayout          from,
-                                const ImageLayout          to,
-                                const VkImageAspectFlags   aspect) noexcept
+VkImageMemoryBarrier2 barrierFor(const VkImage              image,
+                                 const ImageLayout          from,
+                                 const ImageLayout          to,
+                                 const VkImageAspectFlags   aspect) noexcept
 {
     return barrierBetween(image, stateOf(from), stateOf(to), aspect);
+}
+
+void recordBarrier(const VolkDeviceTable& table, const VkCommandBuffer commands, const VkImageMemoryBarrier2& barrier) noexcept
+{
+    VkDependencyInfo dependency{};
+    dependency.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.imageMemoryBarrierCount  = 1U;
+    dependency.pImageMemoryBarriers     = &barrier;
+    table.vkCmdPipelineBarrier2(commands, &dependency);
 }
 
 VkAttachmentLoadOp loadOpOf(const LoadOp op) noexcept

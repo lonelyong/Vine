@@ -510,6 +510,22 @@ Four batches; R0–R2 pay for themselves even if the retirement never happens, R
 - Counts: `test_vk` **176** / 42, `test_vsg` **576** / 83, `test_graphics` **639** / 81. Remaining in the batch:
   `T11` (dynamic rendering), `T58` (alpha-to-coverage), the deletion itself.
 
+### 5.6 R3 step 1b landed 2026-11-23: the API floor is 1.3 and barriers are synchronisation 2
+
+- `gfx_backend_vk` requires a Vulkan **1.3** device (`vk.init.api_version_low` below it) AND the 1.3 FEATURES
+  `synchronization2` / `dynamicRendering` (`vk.init.device_features_missing` when absent - a version is not a feature;
+  the first attempt of this step forgot the feature struct and 36 cases went red on
+  `vkCmdPipelineBarrier2(): the synchronization2 feature was not enabled`, which is validation doing its job).
+- `VK_EXT_extended_dynamic_state` / `_state2` left the required list (core in 1.3); only `_state3` remains (polygon
+  mode, colour blend). The recorder uses the core `vkCmdSetCullMode` / `vkCmdSetDepthTestEnable` /
+  `vkCmdSetDepthWriteEnable` / `vkCmdSetDepthCompareOp`, and the pipeline declares the core dynamic-state enums.
+- `BarrierPlan` emits `VkImageMemoryBarrier2` with both stage masks taken from its own rows, and one `recordBarrier`
+  wraps `vkCmdPipelineBarrier2`. Fourteen call sites lost their hand-written stage pairs; `WindowTarget`'s manual
+  present barrier became `barrierBetween(ColorAttachment, Present)` - the table now owns that transition too.
+  `BarrierPlanTest` pins `srcStageMask`/`dstStageMask` on the barrier, so the sync2 fact is asserted, not assumed.
+- Counts: `test_vk` 176 / 42 green. Still to come in the batch: dynamic rendering (`T11`, the pass objects), `T58`,
+  then the deletion.
+
 ## 6. Backlog candidates (listed for approval; not added)
 
 - **T61 - Stability before the deletion.** Golden-ize `BackendParityTest`'s assertions, add the capabilities

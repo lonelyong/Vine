@@ -62,10 +62,10 @@ void recordRasterState(const VolkDeviceTable&                   table,
                        std::uint32_t                            color_attachments) noexcept
 {
     table.vkCmdSetPolygonModeEXT(commands, StateMapping::polygonMode(state.polygonMode));
-    table.vkCmdSetCullModeEXT(commands, StateMapping::cullMode(state.cullMode));
-    table.vkCmdSetDepthTestEnableEXT(commands, state.depth.test ? VK_TRUE : VK_FALSE);
-    table.vkCmdSetDepthWriteEnableEXT(commands, state.depth.write ? VK_TRUE : VK_FALSE);
-    table.vkCmdSetDepthCompareOpEXT(commands, StateMapping::compareOp(state.depth.compare));
+    table.vkCmdSetCullMode(commands, StateMapping::cullMode(state.cullMode));
+    table.vkCmdSetDepthTestEnable(commands, state.depth.test ? VK_TRUE : VK_FALSE);
+    table.vkCmdSetDepthWriteEnable(commands, state.depth.write ? VK_TRUE : VK_FALSE);
+    table.vkCmdSetDepthCompareOp(commands, StateMapping::compareOp(state.depth.compare));
     if (color_attachments == 0U) {
         return; // a depth-only pass has no attachment to blend into
     }

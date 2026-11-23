@@ -63,7 +63,7 @@ TEST(BarrierPlanTest, ATransitionCarriesBothSidesOfTheTable)
     // A synthetic handle: the function is pure, so its value is checkable without an image.
     const VkImage image = reinterpret_cast<VkImage>(static_cast<std::uint64_t>(0x1234));
 
-    const VkImageMemoryBarrier barrier =
+    const VkImageMemoryBarrier2 barrier =
         barrierFor(image, ImageLayout::ColorAttachment, ImageLayout::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT);
 
     const ImageState before = stateOf(ImageLayout::ColorAttachment);
@@ -71,6 +71,8 @@ TEST(BarrierPlanTest, ATransitionCarriesBothSidesOfTheTable)
 
     EXPECT_EQ(barrier.oldLayout, before.layout);
     EXPECT_EQ(barrier.newLayout, after.layout);
+    EXPECT_EQ(barrier.srcStageMask, before.stages) << "the writer's stages travel on the barrier (synchronisation 2)";
+    EXPECT_EQ(barrier.dstStageMask, after.stages) << "the reader's stages travel on the barrier too";
     EXPECT_EQ(barrier.srcAccessMask, before.access);
     EXPECT_EQ(barrier.dstAccessMask, after.access) << "the reader must be made to wait for the writer's access";
     EXPECT_EQ(barrier.image, image);
@@ -86,11 +88,12 @@ TEST(BarrierPlanTest, UndefinedDiscardsAndPresentOwnsNothing)
     // The two ends of the table are the ones a mistake hides in: "discard the contents" and "hand it to the platform".
     const ImageState undefined = stateOf(ImageLayout::Undefined);
     EXPECT_EQ(undefined.layout, VK_IMAGE_LAYOUT_UNDEFINED);
+    EXPECT_EQ(undefined.stages, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
     EXPECT_EQ(undefined.access, 0U) << "nothing is made visible for a layout whose contents do not matter";
 
     const ImageState present = stateOf(ImageLayout::Present);
     EXPECT_EQ(present.layout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-    EXPECT_EQ(present.stages, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    EXPECT_EQ(present.stages, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 }
 
 TEST(BarrierPlanTest, LoadAndStoreOperationsMapOneToOne)

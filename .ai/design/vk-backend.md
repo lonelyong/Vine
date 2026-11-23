@@ -122,9 +122,13 @@ and every cache has a witness a test can read.**
 
 ### 2.7 Barriers are one table, not scattered calls
 
-- **What it is**: `BarrierPlan.hpp` (`stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf`) maps this module's
-  `ImageLayout` (a "purpose") into Vulkan's layout + stage + access; every transition goes through `barrierBetween`.
+- **What it is**: `BarrierPlan.hpp` (`stateOf` / `barrierBetween` / `recordBarrier` / `loadOpOf` / `storeOpOf`) maps this
+  module's `ImageLayout` (a "purpose") into Vulkan's layout + stage + access; every transition goes through
+  `barrierBetween`, and `recordBarrier` is the ONE place that names `vkCmdPipelineBarrier2`.
 - **Why**: `G1` (one definition, one owner) + `G11` (a synchronisation mistake has exactly one place it can be made, and both the tests and validation point there).
+- **Synchronisation 2**: the stage masks travel ON the barrier (they are two rows of the table), so no call site passes a
+  stage pair of its own and no site can pair a layout with another row's stages. The Vulkan-1.0 form is not kept - the
+  floor is 1.3 and the `synchronization2` feature is enabled and required (`vk.init.device_features_missing` otherwise).
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
   a new purpose is one more row, not one more inline barrier.
 
@@ -780,7 +784,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - **Audit F5 (several frames in flight)**: **decided to keep one frame in flight** (`../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`), with the trigger
   conditions written in the ADR (device time under half the wall clock, an artefact shape that must overlap the GPU, or a second backend needing the same semantics).
-- **Audit F9 / F10**: `vkCmdPipelineBarrier2` and dynamic rendering, waiting for the API 1.3 target.
+- **Audit F9 / F10**: `vkCmdPipelineBarrier2` is landed (the floor is 1.3, `synchronization2` enabled - `BC-38`);
+  dynamic rendering is the remaining step of `T60`'s batch (backlog `T11`), and the 1.3 floor it was waiting for is now
+  the device requirement.
 - **Backlog `T35` (becoming the default backend)**'s gate (`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`): `releaseRenderTarget` really frees the
   attachments, `readDepthBuffer` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
   `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
@@ -797,10 +803,12 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **SDK**: `DeviceDesc` gains `cache_directory` (it has a default, so the old two-argument aggregate initialisation is unchanged).
 - **Plugin ABI**: only `RenderBackend` / `RenderBackendFactory` face the host; the internal headers (`internal/`) promise no stability.
 - **Cache file**: format version `1`; a mismatched version is refused (no migration, no guessing).
-- **Device requirements**: the Vulkan 1.2 APIs this backend already used, PLUS `VK_EXT_extended_dynamic_state` /
-  `_state2` / `_state3` with the polygon-mode and colour-blend features (`T54`: cull / depth / polygon / blend are
-  dynamic state); a device without them is refused at `initialize` with `vk.init.dynamic_state_missing`. Multisample
-  depth resolve uses 1.2's `vkCreateRenderPass2`; a 1.3 device mostly uses core creation feedback and needs no
+- **Device requirements**: a Vulkan **1.3** device (step 2 of `T60`'s batch, `ADR-2026-11-23` D4) with the
+  `synchronization2` and `dynamicRendering` FEATURES enabled - a 1.3 device that does not offer them is refused with
+  `vk.init.device_features_missing`, and an older one with `vk.init.api_version_low` - PLUS
+  `VK_EXT_extended_dynamic_state3` with the polygon-mode and colour-blend features (`T54`); a device without that
+  extension is refused with `vk.init.dynamic_state_missing`. Multisample depth resolve is core 1.2 (`vkCreateRenderPass2`)
+  and creation feedback is core 1.3, so neither needs an extension any more.
   extension.
 - **Platforms**: Linux/X11 and Win32 both have a `WindowSystem` implementation and both are measured with a pixel instrument; Wayland is implemented against the WSI
   contract only.
