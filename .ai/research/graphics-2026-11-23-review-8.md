@@ -260,7 +260,6 @@ Four batches; R0–R2 pay for themselves even if the retirement never happens, R
 | R3 | Delete vsg | one batch: C4, T10's vsg half, T11, T54, T58, the seam gates re-pinned | T60's rule: paid only as one batch |
 
 ### 5.1 R0 landed 2026-11-23
-
 - The X11 `TestDisplay` build break (§2.1), and this page with its index entry.
 - The three `backend/<Header>.hpp` paths now name `FrameGate.hpp` / `FrameTimeline.hpp` directly.
 - `ShaderAbi.hpp`'s shadow block now states the map convention as a requirement both backends keep, and cites
@@ -275,6 +274,33 @@ Four batches; R0–R2 pay for themselves even if the retirement never happens, R
   that existed when it was written), `gfx_backend_vsg/CMakeLists.txt:124` ("USED TO BE HERE" is the accurate
   note explaining the missing target) and `docs/guides/graphics.md:1586` (the user-facing "retired" note).
 
+### 5.2 R1 landed 2026-11-23 (the witnesses a deletion must not remove)
+
+- **K2 - feature and report tied**: `VkPassTimingTest` now skips on `!features.supports(GpuTimings)` and then
+  `ASSERT_TRUE(report.timing.has_value())`. Mutation: dropping `report.timing = books.timing` in
+  `Device::FrameDriver::frameReport` turns exactly that case red (it used to skip, i.e. pass). **Trap met while
+  reverting it**: `test_vk` compiles the backend sources, so reverting `Device.cpp` without relinking `test_vk`
+  left the mutated backend in the binary and the case stayed red 20/20 - a stale binary looks exactly like a
+  regression, and only `cmake --build build --target test_vk` tells them apart. After the relink: 10/10 green.
+  One branch stays "absent" by design and is NOT measured to fire: a completed, sampled frame whose two
+  timestamps are EQUAL answers disengaged (`Device.cpp`: `stamps[1] > stamps[0]`), i.e. a frame shorter than
+  one tick reports no clock while the feature says true. Left alone - no measurement shows it, and turning a
+  zero into a value is a decision about `FrameTiming`, not a test fix.
+- **K3 - two windows on one device**: `VkWindowPresentTest.TwoWindowsOnOneDeviceKeepTheirOwnPictures` creates two
+  host windows, two targets before `initialize()`, presents a magenta-cleared frame into the first and a
+  green-cleared one into the second, and reads the FIRST window AFTER the second presented - one shared swapchain
+  would show the second window's picture there. Both handles then answer `WindowOccupied`. Mutation: asking for
+  the first handle twice turns exactly that case red. The pixel half measured on this machine (no skip message).
+- **C2 - every parity case states its absolute expectation twice**: `expectPixelOnBoth` asserts the same pixel on
+  the reference and on the candidate; the count cases assert the candidate's own numbers as well as equality; the
+  two "no picture" cases use `EXPECT_FALSE(candidate.read)`. The file header now maps each fact to the standalone
+  `test_vk` case that already asserts it (ten facts), and names the five that exist ONLY here - a depth-only clear
+  over a drawn picture, packet/draw counts, the prepare shape agreeing with the record, a pass with no effect, and
+  an entry that names no pass - which is what makes moving this file into `test_vk` mandatory rather than optional.
+  The sample-limit case is the one that retires with its successor named (`VkMsaaTest`).
+- Verification after R1: `test_vk` 175 cases / 42 suites, `test_vsg` 576 / 83, `test_graphics` 639 / 81; all green;
+  the parity suite 15/15; `check_include_hygiene` and `check_api_style` at their baselines.
+
 ## 6. Backlog candidates (listed for approval; not added)
 
 - **T61 - Stability before the deletion.** Golden-ize `BackendParityTest`'s assertions, add the capabilities
@@ -287,8 +313,9 @@ Four batches; R0–R2 pay for themselves even if the retirement never happens, R
 - **T63 - Correct the retirement ledger's premise.** T60 no longer has "the default" as one of its three
   justifications, and T10's trigger (a) cannot be hit by the shipped app. Trigger: none (a truth fix).
   Source: C7.
-- Two fixes from §4 remain open and belong in whichever batch opens those files: `PassTimingTest.cpp:105` (K2)
-  and the second half of K3 (a two-window case for vk). The R0 truth sweep is §5.1, landed.
+- Two fixes from §4 were R1's substance and landed (§5.2): `PassTimingTest.cpp`'s self-skip (K2) and vk's
+  two-window case (K3), together with the parity re-hosting (C2). What remains before R2 is a decision, not a
+  fix: whether the five mechanisms of C1 move into the vk plugin in the retirement batch.
 
 ## 7. Verification
 
