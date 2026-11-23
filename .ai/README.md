@@ -237,6 +237,14 @@ the next refactor batch.
   `Geometry::updatePrimitive`, one `retakeDescription`, `Aabbd::isValid()` / `Light::hasDirection()`
   rather than their hand spellings, nine comment corrections, and the verified candidates left alone
   with their reasons (the two ray formulas, zero-consumer public API, the four large splits).
+- `graphics-2026-11-23-review-8.md` — the eighth pass, on concepts and capabilities with `vsg` on its way
+  out: the five seam mechanisms whose only consumer becomes vk (and the three that are vocabulary), the
+  parity suite as vk's only cross-implementation oracle, the 20 public SDK headers that name a backend
+  (41 mentions) and the 24 `vsg.*` diagnostic codes as a compatibility event, the capability proofs that
+  die with the folder (two live windows on one device; the feature↔report pair whose only case skips
+  itself), the floor raise as the capability the retirement buys, and four batches to run before the
+  deletion. Also the Linux build break this round found and fixed (the X11 `TestDisplay` lost its default
+  constructor), and two stale premises in T10/T60.
 
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
