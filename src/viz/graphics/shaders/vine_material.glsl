@@ -48,8 +48,8 @@ struct VineSurface
 // BINARY (one VN_TEXTURED bit for the whole set, see 2.5), so all five are declared together even though a
 // material rarely has more than two.
 //
-// THE FIVE NAMES ARE ABI KEYS, not this file's locals: the backend decides what a declared sampler receives BY
-// NAME (ContentImages::imageOriginOf keys on these exact spellings), so the prefix is not decoration - it marks
+// THE FIVE NAMES ARE ABI KEYS, not this file's locals: the content set decides what a declared sampler receives
+// BY NAME (an image's origin is answered from these exact spellings), so the prefix is not decoration - it marks
 // the drawable's own maps as the engine's vocabulary, and renaming one side alone silently rebinds them to the
 // pass' inputs.
 #if defined(VN_TEXCOORD_CUBE)

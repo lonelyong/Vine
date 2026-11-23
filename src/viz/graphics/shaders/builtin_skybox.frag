@@ -12,8 +12,8 @@ layout(location = 0) out vec4 vn_out_color;
 // from becoming an unbindable descriptor. The pair branch is VN_TEXCOORD_UV and the no-kind build
 // the vertex stage explains (a sky whose channel is not a direction).
 //
-// `vn_skyMap` is an ABI key, not a local: the backend routes an image BY NAME
-// (ContentImages::imageOriginOf keys on this exact spelling), so the prefix marks the drawable's own texture -
+// `vn_skyMap` is an ABI key, not a local: the content set routes an image BY NAME (an image's origin is
+// answered from this exact spelling), so the prefix marks the drawable's own texture -
 // renaming one side alone silently rebinds the slot to a pass input.
 #if defined(VN_TEXCOORD_CUBE)
 layout(set = 0, binding = 1) uniform samplerCube vn_skyMap;

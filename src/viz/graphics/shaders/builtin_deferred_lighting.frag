@@ -2,7 +2,7 @@
 layout(location = 0) in vec2 vn_uv;
 layout(location = 0) out vec4 vn_out_color;
 // The canonical G-buffer's four colour attachments, bound by INDEX (the fullscreen ABI: attachment N sits at
-// binding N - see ContentImages / BuiltinShaders::deferredLightProgram). What each one CARRIES is the packing
+// binding N - see BuiltinShaders::deferredLightProgram). What each one CARRIES is the packing
 // contract in vine_gbuffer.glsl, not this file's business.
 layout(binding = 0) uniform sampler2D vn_albedo_tex;
 layout(binding = 1) uniform sampler2D vn_normal_tex;

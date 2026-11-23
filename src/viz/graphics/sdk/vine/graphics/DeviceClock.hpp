@@ -47,8 +47,9 @@ VN_GRAPHICS_NS_BEGIN
  *   clock removes it.
  * - NEVER REUSED within one clock: a removed driver's id is not handed out again, so an id that outlived its driver
  *   answers "unknown" rather than naming another driver's frames.
- * - ONE SPELLING: `DeviceClock`'s verbs, `TargetTable::lease` and `ResidencyClaims::admit` all take this type. The two
- *   backends used to spell the same concept `WindowId` / `SessionId`, in three widths (`D-01`).
+ * - ONE SPELLING: `DeviceClock`'s verbs take this type, and so does every seam a backend keys by driver - a backend's
+ *   own tables (which driver may build a key, which driver holds a target for a frame) answer with THIS id rather than
+ *   minting their own. It used to be spelled `WindowId` / `SessionId`, in three widths (`D-01`).
  * - WHY u32: a device hands out a handful of drivers in its lifetime, so the width is a namespace, not a count.
  *
  * @note An id means something WITHIN the clock that minted it: two devices both start at 0, so it is not a

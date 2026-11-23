@@ -215,11 +215,11 @@ struct VN_GRAPHICS_API PipelineKey {
     std::uint32_t sampled_depth_count{ 0 };
 
     /// Which VARIANT of that program this pipeline is compiled for. The core carries it as a NUMBER
-    /// because the defines it stands for are the engine's naming rather than the core's, and
-    /// `api/ProgramVariant` is the one spelling of what the number means (the `VN_TEXTURED`
-    /// family the engine's own stages gate their declarations on). Two variants of one program agree
-    /// on every other field here and must never share a pipeline: their texts differ, so the same
-    /// draws would come out as different pictures.
+    /// because the defines it stands for are the engine's naming rather than the core's; the ONE spelling of
+    /// what the number means is the built-in shaders' `#pragma import_defines` line (the `VN_TEXTURED` family
+    /// the engine's own stages gate their declarations on), and a backend maps the number to the define names
+    /// its compiler takes. Two variants of one program agree on every other field here and must never share a
+    /// pipeline: their texts differ, so the same draws would come out as different pictures.
     std::uint32_t variant{ 0 };
 
     /// The primitive assembly the pipeline's STATIC topology states. It is IDENTITY rather than dynamic

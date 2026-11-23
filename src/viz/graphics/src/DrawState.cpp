@@ -121,7 +121,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
          { "PipelineKey",
             "program IDENTITY + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
             "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "
-            "defines that change what its text means - see api/ProgramVariant) + the topology CLASS (a static "
+            "defines that change what its text means - the built-in shaders' `#pragma import_defines` line) + the "
+            "topology CLASS (a static "
             "topology may only be changed dynamically within its own class, so it is compiled in)" },
          { "DynamicState",
             "depth policy + compare + cull + polygon + topology + blend - delivered per draw with set commands (the "

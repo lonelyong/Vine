@@ -35,6 +35,14 @@ This gate is that split made executable:
      after the reference retired it also points at a tree that no longer exists. The one exception is a
      diagnostic code's prefix (`vk.<category>.<cause>`), which is an identity a host matches
      (`.ai/design/graphics-architecture.md` C4).
+  6. V6 - the SDK face names no PLUGIN-INTERNAL unit. V5 catches a backend's NAME; this catches the next step of the
+     same leak - a public header explaining the contract by pointing at a type only one plugin keeps in `internal/`
+     (`ResidencyClaims`, `TargetTable`), which is the SDK shipping that plugin's vocabulary. The set is derived from
+     the tree: every `src/plugins/*/include/**/internal/*.hpp` stem that the SDK does not own (naming the SDK's own
+     type is what a contract sentence does: `RetirementQueue` is both) and that has at least two capitalised words
+     (`Device` and `Handles` are ordinary words a sentence may use). The scan set is the SDK's headers AND the shipped
+     shader sources, because a host reads both. Derivation is what makes the rule serve the NEXT backend: the day a
+     second backend brings its own residency table, the SDK may still name neither (backlog T30).
 
 What this gate deliberately does NOT check (§6.2): `internal/` and `support/` may name Vulkan freely, and no
 rule here constrains them. There is no consumer to protect - those headers are included only by the plugin
@@ -82,6 +90,10 @@ VK_GRAPHICS_FREE_UNITS = (
     "src/plugins/gfx_backend_vk/src/internal/ReadbackStaging.cpp",
     "src/plugins/gfx_backend_vk/src/internal/WindowSystem.cpp",
 )
+
+# V6: where every plugin keeps the units only it may name. The NAMES are derived at run time (see main), because a list
+# written here would go stale the day a backend lands its own table - which is exactly the event this rule exists for.
+PLUGIN_INTERNAL_DIRS = "src/plugins/*/include/**/internal"
 
 # V2: the graphics SDK's headers must name no render API. `<vulkan` also covers `<vulkan.hpp>`; `<volk` and
 # `<vsg` are the other two ways the same dependency arrives, and the design names all three. The scope is the
@@ -154,7 +166,7 @@ def display(root: Path, path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Checks the Vulkan exposure boundary of "
-        ".ai/research/graphics-2026-11-13-vk-exposure-boundary.md (V2, V4, E1) and the graphics-free "
+        ".ai/research/graphics-2026-11-13-vk-exposure-boundary.md (V2, V4, E1, V5, V6) and the graphics-free "
         "unit boundary of .ai/design/vk-backend.md (E2)."
     )
     parser.add_argument(
@@ -164,6 +176,19 @@ def main() -> int:
     )
     args = parser.parse_args()
     root = resolve_root(args.root)
+
+    # V6's pattern is built from the tree: a plugin unit's stem, unless the SDK owns the same stem or the stem is one
+    # ordinary word. Sorted and joined once, so the scan stays one regex per file rather than one per unit. The SDK's
+    # stems include its subdirectories: `api/ProgramVariant` is the SDK's own spelling even though the plugin keeps a
+    # `ProgramVariant` of its own.
+    sdk_stems = {path.stem for path in (root / SDK_FACE).rglob("*.hpp")}
+    unit_stems = {
+        path.stem
+        for directory in root.glob(PLUGIN_INTERNAL_DIRS)
+        for path in directory.rglob("*.hpp")
+        if path.stem not in sdk_stems and len(re.findall(r"[A-Z][a-z0-9]*", path.stem)) >= 2
+    }
+    plugin_unit_re = re.compile(r"\b(?:" + "|".join(sorted(unit_stems)) + r")\b") if unit_stems else re.compile(r"(?!)")
 
     # Each check is (label, repo-relative glob, pattern, why a hit is wrong).
     checks = (
@@ -199,6 +224,14 @@ def main() -> int:
             "this unit is graphics-free by contract (see .ai/design/vk-backend.md C10): a low-level piece a tool can "
             "use beside the plugin, which one render-seam include would end",
         ),
+        (
+            "V6 graphics-sdk-plugin-units",
+            (SDK_FACE, "src/viz/graphics/shaders"),
+            plugin_unit_re,
+            "the public SDK states the contract, not a backend's internals (graphics-architecture.md C4): a header names "
+            "no unit a plugin keeps in `internal/` - the id's meaning is the contract, the table that answers it is "
+            "that plugin's (backlog T30)",
+        ),
     )
 
     total = 0
@@ -227,6 +260,11 @@ def main() -> int:
             print(f"  {reason}")
         total += len(findings)
         counts.append(f"{label}={len(files)}")
+
+    if not unit_stems:
+        print(f"{PLUGIN_INTERNAL_DIRS}: no plugin-internal header to derive a unit name from")
+        print("  update this check with the tree: a rename must not silence the gate")
+        total += 1
 
     print(f"vk_exposure: {total} finding(s) - scanned {', '.join(counts)} file(s)")
     return 1 if total else 0

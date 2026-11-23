@@ -16,8 +16,8 @@
 //
 // The set/binding numbers are the CONTENT set's arrangement (.ai/design/graphics-material.md §3.3): the
 // material at 0, its five texture slots at 1-5, the lights at 6, the shadow pair at 7/8. The samplers stay the
-// declaring program's own - their names and kinds are the texture set's policy (api/ContentImages), which is
-// not a fact about a block.
+// declaring program's own - their names and kinds are the texture set's policy (the content decides which image
+// fills each), which is not a fact about a block.
 //
 // NOT HERE. `VineShadowBlock` names a set/binding that belongs to the PROGRAM that declares it (a full-screen
 // program's source already occupies the low bindings of its set), so its one declaration is
