@@ -238,13 +238,15 @@ static_assert(offsetof(VineMaterialBlock, flags) == 48U, "std140: the flag row c
  *   state it on the map through RenderTarget::setProducerViewProjection) — so the matrix means the same thing on
  *   every backend. Which CAMERA produced it (orthographic for a directional light, perspective for a spot) is not
  *   in this block: a matrix is a matrix, and the shading only maps through it.
- * - The MAP it is compared against is a GPU image the backend rasterised, and its two axes are the backend's
- *   business: the vsg backend renders reverse-Z (near = 1, far = 0) into a top-down image (v = 0 is world up, the
- *   same fact that makes its G-buffer upright).
+ * - The MAP it is compared against is a GPU image the backend rasterised, and its two axes follow the backend's
+ *   clip fold: reverse-Z (near = 1, far = 0) into a top-down image (v = 0 is world up, the same convention that
+ *   makes the G-buffer upright). Both backends fold that way, so the convention is a requirement rather than a
+ *   reading of one implementation.
  * - A shader therefore converts x/y by `xy * vec2(0.5, -0.5) + 0.5` and z by `1 - (z * 0.5 + 0.5)` before comparing —
  *   the z line IS the [-1, 1] -> [1, 0] remap, so a producer that stated a [0, 1] matrix here would sample the wrong
  *   end of the map — and getting either sign wrong is invisible: the picture loses its sun, or samples a mirrored
- *   texel. Both were measured, one at a time, by vsg_backend_selftest's deferred shadow phase.
+ *   texel. Each sign has been got wrong once; only a pixel read can tell, and
+ *   `BackendParityTest.TheSameShadowMapIsTheSamePictureOnBothBackends` is the witness.
  */
 struct alignas(16) VineShadowBlock {
     std::array<float, 16> view_to_light{}; // View space -> the SDK's light clip, column-major (see the conventions

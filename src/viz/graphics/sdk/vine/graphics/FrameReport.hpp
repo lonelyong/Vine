@@ -52,7 +52,7 @@ struct VN_GRAPHICS_API RetentionStats {
  *   counts frames handed to the queue, `completed` counts frames whose GPU work is provably done, and the difference
  *   is how many frames are still in flight.
  * - A backend's proof of completion is its own (this one reads the command slot being recycled - see
- *   backend/FrameTimeline.hpp); the SDK's vocabulary is only the two watermarks, so a host, a HUD or a gate asks any
+ *   `FrameTimeline.hpp`); the SDK's vocabulary is only the two watermarks, so a host, a HUD or a gate asks any
  *   backend the same question.
  * - Cumulative for the backend's lifetime, like RetentionStats. There is no frame-scoped half here, because a
  *   watermark that could go backwards would be a lie.

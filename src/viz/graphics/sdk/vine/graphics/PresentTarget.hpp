@@ -29,7 +29,7 @@ enum class PresentOutcome : std::uint8_t
     Skipped,   // There was nothing to present into (no target, or a device that presents nothing).
     Lost,      // There was a surface and the picture did not reach it (refused, gone, or out of date).
     Refused,   // The device did not RECORD the frame at all: the calling thread already drives one (see
-               // `backend/FrameGate.hpp`), so nothing was drawn and nothing was presented.
+               // `FrameGate.hpp`), so nothing was drawn and nothing was presented.
     Failed,    // The ENGINE could not finish the frame: its engine half threw, so nothing was drawn and nothing was
                // presented. Re-attaching does not help (that is #Lost) - the diagnostic the engine reported says
                // what threw, and the frame is over.

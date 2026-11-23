@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Diff two callgrind profiles and report what changed, by function name.
 
-Written for the A/B in .ai/memory/graphics-perf-backlog.md item H7, where two
-revisions of vsg_backend_selftest print byte-identical logs, so the only way to
-tell them apart is to count instructions. callgrind_annotate prints one profile
-at a time; this prints the deltas.
+Written for an A/B where two revisions of ONE binary print byte-identical logs, so the only
+way to tell them apart is to count instructions. callgrind_annotate prints one profile at a
+time; this prints the deltas.
 
     clang -O3 -g ...            # both revisions, same flags
-    valgrind --tool=callgrind --callgrind-out-file=A.out ./a/vsg_backend_selftest
-    valgrind --tool=callgrind --callgrind-out-file=B.out ./b/vsg_backend_selftest
+    valgrind --tool=callgrind --callgrind-out-file=A.out ./a/app
+    valgrind --tool=callgrind --callgrind-out-file=B.out ./b/app
     python3 scripts/callgrind_diff.py A.out B.out
 
 Keys are FUNCTION NAMES, not (object, function): the two binaries are built in

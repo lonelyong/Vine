@@ -113,8 +113,8 @@ std::u8string shadowBindings(std::uint32_t set_index, std::uint32_t map_binding,
  * the light its map belongs to (params.w): a map is produced by ONE light, and scaling every light's
  * term by it makes lights that do not cast lose their contribution wherever that one light is blocked.
  * The demo's fill light lit the faces the sun cannot reach; with the term unconditional, those faces
- * went to ambient-only in the shape of the sun's shadow (measured by vsg_backend_selftest's lit-face
- * phase, which asserts exactly that they do not move).
+ * went to ambient-only in the shape of the sun's shadow, and a term that ignored the light's identity
+ * moves exactly those faces - which is why the parity shadow case asserts they do not move.
  */
 constexpr char8_t shadow_term[] = u8"        if (vn_shadow.params.x > 0.5 && vn_i == int(vn_shadow.params.w))\n"
                                   u8"        {\n"
@@ -124,13 +124,13 @@ constexpr char8_t shadow_term[] = u8"        if (vn_shadow.params.x > 0.5 && vn_
                                   u8"            //\n"
                                   u8"            // The block's matrix is the SDK's clip convention: x to the right, y UP, z 0 at\n"
                                   u8"            // the near plane to 1 at the far one. The MAP is a Vulkan image this renderer\n"
-                                  u8"            // rasterised, and BOTH of those axes are inverted there: v = 0 is the TOP row\n"
-                                  u8"            // (world up - the same fact that makes the G-buffer upright), and the depth is\n"
-                                  u8"            // REVERSE-Z (near = 1, far = 0 - see SceneBridgePipeline.h DEPTH CONVENTION).\n"
+                                  u8"            // rasterised with the backend's clip fold: v = 0 is the TOP row (world up -\n"
+                                  u8"            // the same fact that makes the G-buffer upright), and the depth is REVERSE-Z\n"
+                                  u8"            // (near = 1, far = 0 - the depth range the pass declared, see DepthRange).\n"
                                   u8"            // Getting the conversion wrong is not an error anywhere: the picture simply loses\n"
                                   u8"            // the sun (a z that never matches) or samples a mirrored texel (a v that lands\n"
-                                  u8"            // somewhere else). Both were measured, one bug at a time, by vsg_backend_selftest's\n"
-                                  u8"            // deferred shadow phase - it is the only gate that can see them.\n"
+                                  u8"            // somewhere else). Each sign has been got wrong once; nothing but a pixel read\n"
+                                  u8"            // can tell, so keep the conversion as the block states it.\n"
                                   u8"            vec4  vn_light_clip = vn_shadow.viewToLight * vec4(vn_pos, 1.0);\n"
                                   u8"            vec3  vn_light_uv   = vn_light_clip.xyz / vn_light_clip.w;\n"
                                   u8"            vec2  vn_map_uv     = vn_light_uv.xy * vec2(0.5, -0.5) + 0.5;\n"

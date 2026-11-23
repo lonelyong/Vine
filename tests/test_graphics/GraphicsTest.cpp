@@ -6925,8 +6925,7 @@ TEST(PassChainTest, AShadowThisChainCannotShadeIsReported)
     // The SAME request on the deferred path is honoured the same way: the pass is built, so there is
     // nothing to report. A report here — which the unconditional report this replaced produced — tells
     // the host its picture is unshadowed while it is shadowed, i.e. the one thing a diagnostic must
-    // not do. (vsg_backend_selftest's deferred shadow phase is what caught it: the map was bound and
-    // empty while the host had been told the shadow was not built at all.)
+    // not do.
     reported.clear();
     ChainDesc opts;
     opts.camera           = cam.get();
@@ -7020,8 +7019,9 @@ TEST(PassChainTest, TheBuiltInChainsShadowBoundaryNamesItsThreeCases)
 /**
  * @brief The deferred path BUILDS the shadow an isCastingShadow light asks for.
  *
- * The pixel proof lives in vsg_backend_selftest (only a GPU can tell a shadow from a dark pixel),
- * so this one pins the STRUCTURE the pixels then depend on: the frame opens with a pass drawing
+ * The pixel proof lives in the DEVICE suites (`VkShadowTest`, and the shadow parity case) - only a GPU
+ * can tell a shadow from a dark pixel - so this one pins the STRUCTURE the pixels then depend on: the
+ * frame opens with a pass drawing
  * into a depth-only target at the light's resolution, whose depth stays sampleable, which states
  * the SDK's ONE light-camera derivation for that light and that content, and which is drawn
  * through an ORTHOGRAPHIC camera that is not the view camera. A shadow pass that renders through
@@ -7103,7 +7103,7 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheDeferredPath)
  * declared INPUT of the content pass itself (the pass that draws into the window), which is what
  * makes the backend bind it into the content set's shadow binding. A forward path that built the
  * pass but forgot the declaration would look complete here and shade an unshadowed picture on the
- * GPU - the one failure the pixel gate in vsg_backend_selftest exists to catch.
+ * GPU - the one failure the device pixel gate (`VkShadowTest`) exists to catch.
  */
 TEST(PassChainTest, ARequestedShadowIsBuiltOnTheForwardPathToo)
 {

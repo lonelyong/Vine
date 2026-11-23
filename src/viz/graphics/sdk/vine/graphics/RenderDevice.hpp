@@ -136,7 +136,7 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   engine's initialize() would destroy the first one's - both silently. A borrowed device is up by definition, so
  *   an engine whose device is not up reports it instead of driving frames into nothing.
  * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED. An executor call from a second thread WAITS for that
- *   executor's frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is the shared
+ *   executor's frame in flight and a re-entrant call is REFUSED - `FrameGate.hpp` is the shared
  *   implementation, and the two backends answer the same way. SEVERAL EXECUTORS MAY RUN AT THE SAME TIME: a backend
  *   that hands out drivers through `createFrameDriver()` may run their frame bodies concurrently (vk does), which is what
  *   makes two engines cost two frames' worth of host time rather than two assets' worth. What a backend must state is
