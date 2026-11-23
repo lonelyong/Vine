@@ -334,6 +334,13 @@ mapping (`StateMapping.hpp`), barrier/state planning (`BarrierPlan`), the format
 and the residency tables' storage. Those are exactly where the families differ; the seam is everything that
 must not.
 
+The directory skeleton landed the same day: `src/plugins/gfx_backend_d3d12/` holds the plugin root, the module's
+global header, the `shell` / `internal` / `support` split, and an **unwired** `CMakeLists.txt` that refuses
+configuration with the reason - `src/plugins/CMakeLists.txt` does not add it, so the build is byte-identical.
+No unit names were invented: those are the design (P2/P4), and an empty header with a guessed name would be a
+decision made by inertia. The directory's own `README.md` is the signpost; this page stays the one home for the
+argument.
+
 ## 5. Proposed orderFour batches; R0–R2 pay for themselves even if the retirement never happens, R3 is T60's batch.
 
 | # | Batch | Contents | Why now |
