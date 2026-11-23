@@ -29,16 +29,17 @@ VN_BACKEND_VK_NS_BEGIN
  *   `VineShadowBlock` a pass' declared inputs resolve to; M10 runs the engine's DEFERRED chain - the four-attachment
  *   RGBA16F G-buffer, then a full-screen lighting pass that samples it through the pass' declared inputs; M11 draws
  *   MULTI-SAMPLED targets - the colour is drawn into multisampled sample buffers and RESOLVED into the single-sample
- *   image a later pass samples and a readback answers, a sampleable depth is resolved the same way through
- *   `VkSubpassDescriptionDepthStencilResolve` (`sample0`, which needs `vkCreateRenderPass2`), and a count the device
- *   cannot build is REFUSED once rather than lowered (ADR-2026-11-14-sample-count-refused-not-lowered); M12 opens the
- *   one escape door (`support/Handles.hpp`) and is kept honest by `scripts/check_vk_exposure.py`; M13 lets a warm-up
- *   submit ONE transfer-only batch, so `prepareFrame` can stage a texture without running a frame. It answers
+ *   image a later pass samples and a readback answers, a sampleable depth is resolved the same way through the depth
+ *   attachment's own `resolveMode` / `resolveImageView` (`sample0`), and a count the device cannot build is REFUSED once
+ *   rather than lowered (ADR-2026-11-14-sample-count-refused-not-lowered); M12 opens the one escape door
+ *   (`support/Handles.hpp`) and is kept honest by `scripts/check_vk_exposure.py`; M13 lets a warm-up submit ONE
+ *   transfer-only batch, so `prepareFrame` can stage a texture without running a frame. It answers
  *   `capabilities()` from what it can really serve - `render_targets == true`, and `presentation == true` once a
  *   window target can present.
  * - WHAT IT STILL DOES NOT DO. Point-light (cube) shadows: the engine's one map is 2D, so a cube needs a layered
- *   target and six matrices (backlog S6, not triggered). The depth RESOLVE needs Vulkan 1.2; a device without it
- *   refuses a multisampled target whose depth a shader samples, once, instead of drawing a depth nobody can read.
+ *   target and six matrices (backlog S6, not triggered). A depth resolve needs a mode the device supports
+ *   (`supportedDepthResolveModes` including `sample0`); a device without it refuses a multisampled target that resolves
+ *   its depth, once, instead of resolving a depth a later pass would not have written.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the frame's passes in the order it carries and records the draws of each
  *   `DrawPacket` - an off-full-screen pass into its target, and a pass naming no target into the acquired image of the
  *   window the frame presents through. A draw naming no program is reported and left out. The readbacks answer the

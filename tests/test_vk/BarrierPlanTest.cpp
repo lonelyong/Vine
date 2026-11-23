@@ -49,13 +49,37 @@ TEST(BarrierPlanTest, EveryUsageHasItsOwnLayoutAndStage)
     EXPECT_EQ(layouts.size(), kUsages.size()) << "two usages sharing a layout would make one of them a lie";
 }
 
-TEST(BarrierPlanTest, AUsageNeedsNoBarrierAgainstItself)
+TEST(BarrierPlanTest, AUsageTransitionsNoLayoutAgainstItself)
 {
+    // WHAT THE ANSWER MEANS: `requiresTransition` describes the LAYOUT half only. Two identical usages need no layout
+    // change - and they may still need the barrier, which the next case pins.
     for (const ImageLayout usage : kUsages) {
-        EXPECT_FALSE(requiresTransition(usage, usage)) << "a same-usage barrier is a flush point for nothing";
+        EXPECT_FALSE(requiresTransition(usage, usage)) << "two identical usages state the same layout";
     }
     EXPECT_TRUE(requiresTransition(ImageLayout::ColorAttachment, ImageLayout::ShaderReadOnly));
     EXPECT_TRUE(requiresTransition(ImageLayout::Present, ImageLayout::ColorAttachment));
+}
+
+TEST(BarrierPlanTest, ASameStateBarrierStillCarriesTheDependency)
+{
+    // THE RULE DYNAMIC RENDERING RESTS ON (see DynamicRendering::beginRendering): a pass into an attachment an earlier
+    // pass wrote states the SAME layout twice, and that barrier is the execution dependency between the two passes - the
+    // half `vkCmdBeginRendering` does not insert. A BORROWING target's depth is the extreme case: the image belongs to
+    // the lender, the layout does not move at all, and the barrier is still what orders the lender's write before the
+    // borrower's LOAD and depth test. So a same-state barrier must carry a real source AND a real destination scope.
+    const VkImage image = reinterpret_cast<VkImage>(static_cast<std::uint64_t>(0x1234));
+
+    const VkImageMemoryBarrier2 barrier =
+        barrierFor(image, ImageLayout::DepthAttachment, ImageLayout::DepthAttachment, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+    EXPECT_EQ(barrier.oldLayout, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    EXPECT_EQ(barrier.newLayout, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    EXPECT_NE(barrier.srcStageMask, 0U) << "the writer must still be waited for";
+    EXPECT_NE(barrier.srcAccessMask, 0U) << "the write must still be made available";
+    EXPECT_NE(barrier.dstStageMask & (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT), 0U)
+        << "the pass' depth test is what reads the attachment";
+    EXPECT_NE(barrier.dstAccessMask & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT, 0U)
+        << "a LOAD (and the depth test) reads, so the destination scope must include the read";
 }
 
 TEST(BarrierPlanTest, ATransitionCarriesBothSidesOfTheTable)

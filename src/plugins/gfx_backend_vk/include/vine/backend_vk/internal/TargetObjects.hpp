@@ -62,12 +62,16 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  *   produces reads like "out of memory" while the device may be nearly empty. This record owns the SLICES, not the
  *   memory - `destroyTarget` gives them back to the pool.
  * - WHO MAY TOUCH IT, AND UNDER WHAT (audit A3-01). `buildTarget` / `resizeTarget` / `destroyTarget` all run inside
- *   `TargetTable::ensure` (or the session-end drain) with the table's map lock held, so every field except @ref fresh
- *   is written under that one lock - and a reader that wants them takes the same lock (`TargetTable::peek`) instead
- *   of borrowing this record for a field read: the record outlives its map entry (`release` parks it, the park
- *   destroys it), so a borrow has no synchronisation to point at. @ref fresh is the exception because the FRAME BODY
- *   writes it on the record path, where no lock may be taken (`C3` / `C5`): it is atomic, and the claim hand-off
- *   (writer to next claimer) and the frame gate (writer to host verb) are what make its value current.
+ *   `TargetTable::ensure` (or the session-end drain) with the table's map lock held, so the SHAPE, the images and the
+ *   views are written under that one lock - and a reader that wants them takes the same lock (`TargetTable::peek`)
+ *   instead of borrowing this record for a field read: the record outlives its map entry (`release` parks it, the park
+ *   destroys it), so a borrow has no synchronisation to point at.
+ * - THE THREE LAYOUT BITS ARE THE FRAME BODY'S. @ref fresh, @ref color_sampled and @ref depth_sampled answer where the
+ *   images are, and the recording path writes them where no lock may be taken (`C3` / `C5`: @ref beginPass,
+ *   `Device::resolveShadow`, the full-screen source transition) - so the FRAME GATE serialises them, not the map lock:
+ *   one frame records at a time, and the claim hand-off (writer to next claimer) plus the gate (writer to a host verb;
+ *   the readback verbs hold it exclusively) are what make their values current. @ref fresh is atomic as well, because
+ *   the pipeline planner reads it outside the gate as a hint.
  * - IT IS A VALUE-LIKE RECORD with explicit build/destroy calls, because Vulkan has no destructors: `destroyTarget()`
  *   is idempotent so an error path may call it unconditionally.
  */
@@ -102,13 +106,15 @@ struct TargetObjects {
     VkImageView    depth_resolve_view{ VK_NULL_HANDLE };
 
     /// True when the depth attachment is ANOTHER target's image (see RenderTarget::shareDepth): `depth`,
-    /// `depth_memory` and `depth_view` stay null and the pass attaches @ref borrowed_depth_view instead. The shape
-    /// still states a depth format - the LENDER's, which is what a pipeline is built with - and every pass LOADs that
-    /// depth, because a pass may not clear an image an earlier pass wrote.
+    /// `depth_memory` and `depth_view` stay null and the pass attaches the lender's picture instead. The shape still
+    /// states a depth format - the LENDER's, which is what a pipeline is built with - and every pass LOADs that depth,
+    /// because a pass may not clear an image an earlier pass wrote.
     bool depth_borrowed{ false };
-    /// The view a borrowing target's pass ATTACHES: the lender's `depthPictureView()` as it was when this one was built.
-    /// NOT owned here - the lender's record owns the image, and this target is rebuilt whenever that picture moves (see
-    /// TargetTable::ensure), so the value can never outlive what it names.
+    /// The lender's picture as it was when this one was built: the IMAGE a barrier names and the VIEW the pass attaches.
+    /// NOT owned here - the lender's record owns both, and this target is rebuilt whenever that picture moves (see
+    /// TargetTable::ensure), so neither value can outlive what it names. They are one pair because they are one image:
+    /// a barrier over this image is what orders the LENDER's pass before this one.
+    VkImage     borrowed_depth_image{ VK_NULL_HANDLE };
     VkImageView borrowed_depth_view{ VK_NULL_HANDLE };
 
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
@@ -199,6 +205,12 @@ struct TargetObjects {
         return depth_borrowed ? borrowed_depth_view : depth_view;
     }
 
+    /** @brief Gets the DEPTH IMAGE a pass ATTACHES: the owned one, or the lender's picture when this target borrows. */
+    [[nodiscard]] VkImage depthAttachmentImage() const noexcept
+    {
+        return depth_borrowed ? borrowed_depth_image : depth;
+    }
+
     /**
      * @brief Gets the depth image a READER sees: the resolve image on a multisampled target, the attachment else.
      *
@@ -227,8 +239,13 @@ struct TargetObjects {
      *   reader sampled the picture last time, so it is in `SHADER_READ_ONLY_OPTIMAL`), the attachment layout otherwise.
      * - IT UPDATES THAT BOOKKEEPING: after the call every attachment is in the rendering layout and has been written,
      *   so `fresh` becomes false and both sampled bits clear. The pass is expected to end with @ref endPass.
-     * - A BORROWED DEPTH IS ALWAYS LOADED (see RenderTarget::shareDepth): the caller's @p load states the policy for
-     *   THIS target's own attachments, and a target whose depth belongs to another one may never clear it.
+     * - TWO DEPTH IMAGES, TWO RECORDS. The depth attachment and the picture it resolves into are stated separately (see
+     *   `PassAttachments`): `depth_sampled` moves the PICTURE to `SHADER_READ_ONLY_OPTIMAL` while the sample buffer stays
+     *   an attachment, because a multisampled image may not be sampled at all. Stating one layout for both is an illegal
+     *   barrier on whichever of them never had it.
+     * - A BORROWED DEPTH IS NEVER "FRESH" HERE: the image holds the LENDER's pass' depth, so it starts from the depth
+     *   attachment layout whatever this set's own `fresh` says - and a pass may not clear it (see
+     *   RenderTarget::shareDepth).
      *
      * @param table    The device's entry points (volk table).
      * @param commands The command buffer being recorded (outside any rendering instance).

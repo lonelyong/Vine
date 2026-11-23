@@ -615,10 +615,10 @@ struct Device::Impl {
     /// this device cannot build (see `TargetTable::ensure`).
     std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT };
 
-    /// Whether this device can resolve a multisampled DEPTH. Dynamic rendering states the resolve as one attachment
-    /// field (`resolveMode` / `resolveImageView`, core in Vulkan 1.3), and this backend refuses to come up below 1.3 -
-    /// so the answer is always true; it stays a VALUE because `TargetTable::ensure` asks it before it builds a shape and
-    /// the refusal has to remain expressible for a family that cannot do it.
+    /// Whether this device can resolve a multisampled DEPTH *the way this backend states it*. Dynamic rendering makes the
+    /// resolve a field (`resolveMode` / `resolveImageView`) instead of a structure, but the MODE is the device's answer:
+    /// `VK_RESOLVE_MODE_SAMPLE_ZERO_BIT` in `supportedDepthResolveModes`, the only one no multisampled draw can change.
+    /// Asked once in `initialize`, refused per shape in `TargetTable::ensure`.
     bool depth_resolve_supported{ false };
 
     /// Whether this device answers PIPELINE CREATION FEEDBACK (Vulkan 1.3 or `VK_EXT_pipeline_creation_feedback`): the
@@ -1595,8 +1595,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         PassLoad load{};
         load.load_color   = load_color;
         load.load_depth   = load_depth;
-        load.color        = color_clears.empty() ? VkClearValue{} : color_clears[0];
-        load.extra_colors = color_count > 1U ? std::span<const VkClearValue>(color_clears).subspan(1U) : std::span<const VkClearValue>{};
+        load.color_clears = color_clears; // one value per colour attachment, in output-location order (see PassLoad)
         load.depth        = depth_clear;
 
         // THE SET OWNS THE TRANSITIONS AND THE INSTANCE (see TargetObjects::beginPass / WindowTarget::beginPass): the
@@ -2721,10 +2720,20 @@ bool Device::initialize()
     // CAPABILITIES ARE WHAT THIS BACKEND CAN SERVE, not what the device can do: M1 builds off-screen colour targets and
     // reads them back, and still presents nothing (M5).
 
-    // DEPTH RESOLVE IS THE FLOOR'S (see Impl::depth_resolve_supported): a multisampled depth is resolved by the
-    // rendering instance's own attachment info, which is core in Vulkan 1.3 - the version `initialize` refuses to go
-    // below - so every device this backend comes up on can serve the shape.
-    impl->depth_resolve_supported = true;
+    // DEPTH RESOLVE IS ASKED OF THE DEVICE, NOT ASSUMED FROM THE FLOOR: the SHAPE is core in Vulkan 1.3 (one
+    // `resolveMode` field on the depth attachment), but the MODE this backend states is `SAMPLE_ZERO` - the only one no
+    // multisampled draw can change - and which modes a device supports is its own answer
+    // (`VkPhysicalDeviceDepthStencilResolveProperties::supportedDepthResolveModes`). A device without that mode refuses
+    // the one shape, once, instead of being handed a resolve the spec does not allow.
+    {
+        VkPhysicalDeviceDepthStencilResolveProperties depth_resolve{};
+        depth_resolve.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &depth_resolve;
+        vkGetPhysicalDeviceProperties2(impl->physical, &properties2);
+        impl->depth_resolve_supported = (depth_resolve.supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) != 0U;
+    }
 
     // THE DEVICE CLOCK (see FrameTiming): the frame's own pair to start; the per-pass boundaries are added by the first
     // frame that needs them, between frames (see ensureTimestampQueries).

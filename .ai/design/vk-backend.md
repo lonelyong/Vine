@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **176 cases / 42 suites** (2026-11-23), and the comparison against vsg by
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **178 cases / 42 suites** (2026-11-23), and the comparison against vsg by
   `BackendParityTest` (15 cases, inside `test_vsg`).
 
 ### 1.2 Goals
@@ -133,6 +133,12 @@ and every cache has a witness a test can read.**
   from the layout its owner records to the rendering layout, INCLUDING a barrier between two identical states (that is the
   execution dependency), then the instance. `TargetObjects::beginPass` / `WindowTarget::beginPass` are the two call sites; the
   layout bookkeeping is theirs (see `F4` and `P15`).
+- **Two depth images, two layouts; a borrowed depth is a dependency, not an exception**: the depth ATTACHMENT and the picture
+  it resolves into carry separate records (`depth_from` / `depth_picture_from`), because `depth_sampled` moves only the
+  picture - a multisampled image may not be sampled at all, so stating the picture's layout for the sample buffer is an illegal
+  barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). A `shareDepth` target states the LENDER's picture and the
+  depth attachment layout it is in; the barrier that follows transitions nothing and is recorded for exactly that reason - it is
+  the execution dependency between the lender's pass and the borrower's LOAD.
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
   a new purpose is one more row, not one more inline barrier. An ATTACHMENT row states the read side of its access as well as
   the write side, because under dynamic rendering the LOAD (and a blend's destination read) has no implicit ordering.
@@ -401,8 +407,11 @@ and every cache has a witness a test can read.**
   a PER-IMAGE layout record: a swapchain image is `UNDEFINED` on its first use, `PRESENT_SRC_KHR` after it was presented, and
   the colour layout between two passes of one frame. An MSAA target draws into the sample buffers and resolves colour with
   `AVERAGE` and depth with `SAMPLE_ZERO` in the attachment info (`resolveMode` / `resolveImageView`, core 1.3 - no
-  `vkCreateRenderPass2`); a depth-only target is a shadow map; a `shareDepth` target attaches the lender's depth view and
-  ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared).
+  `vkCreateRenderPass2`); a depth-only target is a shadow map; a `shareDepth` target attaches the lender's depth picture and
+  ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared), and its
+  barrier is recorded against that LENDER's image as a same-layout barrier: the dependency, not a transition. The depth
+  ATTACHMENT and the depth RESOLVE PICTURE keep separate layout records, because sampling the picture does not move the sample
+  buffer.
 - **A target it cannot build is named at BUILD time**: a target with no usable extent answers `vk.target.size_unknown` and a borrowed
   depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
   announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
@@ -739,6 +748,16 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   between two identical states, which IS the dependency - and the LAYOUT it starts from is the owner's own record
   (`TargetObjects::fresh` / `color_sampled` / `depth_sampled`, `WindowTarget`'s per-image record). A new caller must state its
   layouts instead of assuming a render pass would move them.
+- Two IMAGES are not one layout: a multisampled target's depth ATTACHMENT and the picture it resolves into part company as soon
+  as the picture is sampled - the sample buffer stays an attachment (it may not be sampled at all) and the picture moves to
+  `SHADER_READ_ONLY_OPTIMAL`. One record for both states a layout an image never had. How to detect: a second frame over the same
+  multisampled map reports `VUID-VkImageMemoryBarrier2-oldLayout-01211` (MEASURED; `VkShadowTest.AMultisampledMapDrawnAgainStatesBothDepthImages`
+  is red without the split).
+- A BORROWED depth is a dependency, not an exception: `shareDepth`'s image belongs to the lender, its layout does not move, and
+  the barrier must still be recorded - it orders the lender's write before the borrower's LOAD and depth test. NOT measured: an
+  ordered implementation shows no pixel difference and this environment's validation does not report the missing hazard, so the
+  rule is pinned by `BarrierPlanTest.ASameStateBarrierStillCarriesTheDependency` (the table) and by the comment at the call
+  site, not by a device case.
 
 ### 6.16 P16 An allocation failure classified across kinds
 

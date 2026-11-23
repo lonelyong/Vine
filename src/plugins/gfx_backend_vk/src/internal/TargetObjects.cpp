@@ -97,10 +97,10 @@ bool TargetObjects::built() const noexcept
     // ... and a multisampled DEPTH is not built without its resolve picture either: the instance resolves into that one,
     // and it is the image a shader samples (see depthPicture).
     const bool depth_picture = !resolvesDepth() || hasDepthResolve();
-    // A BORROWED depth has no images of its own to check: what it needs is the lender's view, which the device
-    // resolved when it built this record (see TargetTable::ensure).
-    const bool depth_attachment = !depth_borrowed || borrowed_depth_view != VK_NULL_HANDLE;
-    return attachments && sample_buffers && depth_picture && depth_attachment;
+    // A BORROWED depth has no images of its own to check: what it needs is the lender's PICTURE - the image a barrier
+    // names and the view the pass attaches, resolved when this record was built (see TargetTable::ensure).
+    const bool borrowed_picture = !depth_borrowed || (borrowed_depth_image != VK_NULL_HANDLE && borrowed_depth_view != VK_NULL_HANDLE);
+    return attachments && sample_buffers && depth_picture && borrowed_picture;
 }
 
 VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noexcept
@@ -330,11 +330,19 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
 {
     // THE LAYOUTS ARE THIS RECORD'S OWN BOOKKEEPING (see the header's beginPass note): `fresh` means nothing has been
     // written yet, the sampled bits mean a reader left the picture in SHADER_READ_ONLY, and the attachment layout is the
-    // answer otherwise. The multisampled SAMPLE BUFFERS are never sampled, so they only ever go Undefined -> Color.
-    const bool        is_fresh      = fresh.load(std::memory_order_relaxed);
-    const ImageLayout colour_now    = is_fresh ? ImageLayout::Undefined : (color_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::ColorAttachment);
+    // answer otherwise. The multisampled SAMPLE BUFFERS are never sampled, so they only ever go Undefined -> attachment.
+    const bool        is_fresh       = fresh.load(std::memory_order_relaxed);
+    const ImageLayout colour_now     = is_fresh ? ImageLayout::Undefined : (color_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::ColorAttachment);
     const ImageLayout attachment_now = is_fresh ? ImageLayout::Undefined : ImageLayout::ColorAttachment;
-    const ImageLayout depth_now     = is_fresh ? ImageLayout::Undefined : (depth_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::DepthAttachment);
+    // A BORROWED DEPTH IS NOT THIS SET'S TO BE FRESH: the image holds the depth the LENDER's pass wrote, so it starts
+    // from the depth attachment layout whatever `fresh` says about this set's own attachments.
+    const bool depth_fresh = !depth_borrowed && is_fresh;
+    // TWO DEPTH IMAGES, TWO LAYOUTS (see the header): the ATTACHMENT is only ever Undefined or a depth attachment -
+    // nothing samples it, because a multisampled image may not be sampled at all - while `depth_sampled` is the
+    // PICTURE's bit, and the picture is the one image a reader moves.
+    const ImageLayout depth_now = depth_fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment;
+    const ImageLayout depth_picture_now =
+        depth_fresh ? ImageLayout::Undefined : (depth_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::DepthAttachment);
 
     PassAttachments attachments{};
     attachments.extent = VkExtent2D{ static_cast<std::uint32_t>(width()), static_cast<std::uint32_t>(height()) };
@@ -347,18 +355,18 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
     }
     attachments.color_from   = isMultisampled() ? attachment_now : colour_now;
     attachments.picture_from = colour_now;
-    attachments.depth_image       = depth;
-    attachments.depth_view        = depthAttachmentView();
+    attachments.depth_image         = depthAttachmentImage();
+    attachments.depth_view          = depthAttachmentView();
     attachments.depth_resolve_image = depth_resolve;
     attachments.depth_resolve_view  = depth_resolve_view;
     attachments.depth_aspect        = depthAspectMask(depthFormat());
-    attachments.depth_borrowed      = depth_borrowed;
     attachments.depth_from          = depth_now;
+    attachments.depth_picture_from  = depth_picture_now;
 
-    // A BORROWED DEPTH IS ALWAYS LOADED: the image is the LENDER's, and the picture it already holds is the whole reason
-    // this target borrows it - clearing it would erase another pass' depth. The pass' own depth policy is about the
-    // target's OWN attachments, so this is the one place that overrides it (the render pass this replaces built its only
-    // variant with the LOAD op for the same reason).
+    // A BORROWED DEPTH IS ALWAYS LOADED: the image is the LENDER's, and the depth it holds is the whole reason this
+    // target borrows it - clearing it would erase another pass' depth. The pass' own policy describes THIS set's
+    // attachments, so this is the one place that overrides it; it is the same fact as `depth_fresh` above, because an
+    // image another pass wrote is never fresh here.
     PassLoad effective = load;
     if (depth_borrowed) {
         effective.load_depth = true;
@@ -416,6 +424,7 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAl
 {
     destroyAttachments(table, device, allocator, images);
     images.depth_borrowed         = false;
+    images.borrowed_depth_image   = VK_NULL_HANDLE;
     images.borrowed_depth_view    = VK_NULL_HANDLE;
     images.fresh.store(true, std::memory_order_relaxed);
     images.color_sampled          = false;

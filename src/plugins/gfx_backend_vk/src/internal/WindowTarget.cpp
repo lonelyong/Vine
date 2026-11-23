@@ -101,6 +101,9 @@ struct WindowTarget::Impl {
 
     std::uint32_t image_index{ 0U };
     bool          image_acquired{ false };
+    /// True between @ref beginPass and @ref endPass in the file's own terms: it records whether a rendering instance is
+    /// open, so the pair cannot close one that was never opened (see WindowTarget::beginPass' guard).
+    bool          pass_open{ false };
 
     /** @brief Gets the present-wait semaphore of the image acquired NOW (`VK_NULL_HANDLE` when none is). */
     [[nodiscard]] VkSemaphore renderFinishedOfAcquiredImage() const noexcept
@@ -569,10 +572,15 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
     beginRendering(*impl->device.table, commands, attachments, load);
     impl->image_layouts[index] = ImageLayout::ColorAttachment;
     impl->depth_layout         = ImageLayout::DepthAttachment;
+    impl->pass_open            = true;
 }
 
 void WindowTarget::endPass(const VkCommandBuffer commands) const noexcept
 {
+    if (impl == nullptr || !impl->pass_open) {
+        return; // nothing was opened (see beginPass): the pair closes only what it opened
+    }
+    impl->pass_open = false;
     endRendering(*impl->device.table, commands);
 }
 

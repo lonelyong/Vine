@@ -142,6 +142,10 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
     /**
      * @brief Closes the rendering instance @ref beginPass opened.
      *
+     * @details
+     * - The pair is symmetric: a call that follows a @ref beginPass which opened nothing (no image acquired) closes
+     *   nothing, so a frame can never record `vkCmdEndRendering` without a matching instance.
+     *
      * @param commands The command buffer the pass was recorded into.
      */
     void endPass(VkCommandBuffer commands) const noexcept;

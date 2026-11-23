@@ -565,3 +565,44 @@ TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
 
     backend->shutdown();
 }
+
+TEST(VkShadowTest, AMultisampledMapDrawnAgainStatesBothDepthImages)
+{
+    // TWO FRAMES, ONE MAP. The first frame writes the map's multisampled depth and then SAMPLES its resolved picture, so
+    // the second frame is the first one that has to state where BOTH images are: the SAMPLE BUFFER (still a depth
+    // attachment) and the PICTURE (SHADER_READ_ONLY since it was sampled). They are two images with two layouts, and a
+    // recorder that derives one from the other names an illegal `oldLayout` for one of them: validation reports it,
+    // and a driver that honours the value discards a picture that was meant to be kept.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    const vn::graphics::Capabilities capabilities = backend->capabilities();
+    if (capabilities.limits.max_samples <= 1U) {
+        GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> driver_messages;
+    backend->setDiagnosticSink([&driver_messages](const vn::graphics::RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
+
+    Scene scene = makeScene();
+    ASSERT_NE(scene.program, nullptr);
+    ASSERT_TRUE(scene.map->isDepthPromoted());
+    scene.map->setSamples(std::min<std::uint32_t>(4U, capabilities.limits.max_samples));
+
+    const std::vector<std::uint8_t> first = runAndRead(*backend, shadowFrame(scene, /*declare*/ true, /*casting*/ true), scene.target.get());
+    // THE MAP'S DEPTH PICTURE IS SHADER_READ_ONLY NOW: the next pass into the map must move IT back, and must not claim
+    // the same about the sample buffer, which nothing has ever sampled.
+    const std::vector<std::uint8_t> second = runAndRead(*backend, shadowFrame(scene, /*declare*/ true, /*casting*/ true), scene.target.get());
+
+    EXPECT_EQ(second, first) << "the second frame's map resolved a different picture than the first";
+    EXPECT_LT(lumAt(second, 16, kTargetSize / 2), lumAt(second, 48, kTargetSize / 2)) << "the second frame lost its shadow";
+    for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
+        EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
+            << "the driver rejected an object of the map's second frame: "
+            << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
+    }
+
+    backend->shutdown();
+}

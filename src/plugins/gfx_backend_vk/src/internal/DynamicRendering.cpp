@@ -54,23 +54,30 @@ void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands
     for (const VkImage image : attachments.picture_images) {
         recordBarrier(table, commands, barrierBetween(image, picture_now, color_to, VK_IMAGE_ASPECT_COLOR_BIT));
     }
-    // A BORROWED DEPTH BELONGS TO THE LENDER: it keeps the layout the lender's own pass left it in, and the borrower
-    // was rebuilt whenever that picture moved - so there is no transition for this pass to record (see the header).
-    if (!attachments.depth_borrowed) {
-        const ImageState depth_now = stateOf(attachments.depth_from);
-        if (attachments.depth_image != VK_NULL_HANDLE) {
-            recordBarrier(table, commands, barrierBetween(attachments.depth_image, depth_now, depth_to, attachments.depth_aspect));
-        }
-        if (attachments.depth_resolve_image != VK_NULL_HANDLE) {
-            recordBarrier(table, commands, barrierBetween(attachments.depth_resolve_image, depth_now, depth_to, attachments.depth_aspect));
-        }
+    // THE DEPTH PAIR: the attachment and the picture it resolves into are TWO images with TWO records (they part company
+    // as soon as a reader samples the picture - see the header), so each one names its own source. A BORROWED depth is
+    // one more case of that rule rather than an exception to it: its image is the LENDER's, the layout it states is the
+    // one the lender's pass left it in, and the barrier that follows then transitions nothing - what it adds is the
+    // EXECUTION DEPENDENCY between the lender's pass and this one, which is the half dynamic rendering does not insert.
+    if (attachments.depth_image != VK_NULL_HANDLE) {
+        recordBarrier(table,
+                      commands,
+                      barrierBetween(attachments.depth_image, stateOf(attachments.depth_from), depth_to, attachments.depth_aspect));
+    }
+    if (attachments.depth_resolve_image != VK_NULL_HANDLE) {
+        recordBarrier(table,
+                      commands,
+                      barrierBetween(attachments.depth_resolve_image,
+                                     stateOf(attachments.depth_picture_from),
+                                     depth_to,
+                                     attachments.depth_aspect));
     }
 
     // THE INSTANCE: one attachment per colour output location, and the depth attachment when the set has one.
     std::vector<VkRenderingAttachmentInfo> colors;
     colors.reserve(attachments.color_views.size());
     for (std::size_t index = 0; index < attachments.color_views.size(); ++index) {
-        const VkClearValue clear = index == 0U ? load.color : (index - 1U < load.extra_colors.size() ? load.extra_colors[index - 1U] : VkClearValue{});
+        const VkClearValue clear = index < load.color_clears.size() ? load.color_clears[index] : VkClearValue{};
         colors.push_back(colorAttachmentInfo(attachments.color_views[index],
                                              index < attachments.picture_views.size() ? attachments.picture_views[index] : VK_NULL_HANDLE,
                                              load.load_color ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR,

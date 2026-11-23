@@ -82,7 +82,7 @@ class VN_BACKEND_VK_API TargetTable final {
      */
     struct Limits {
         std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT }; ///< The counts both attachments offer.
-        bool          depth_resolve_supported{ false };                 ///< A multisampled depth can be resolved.
+        bool          depth_resolve_supported{ false };                 ///< A multisampled depth can be resolved the way this backend states it (`sample0`).
     };
 
     /**

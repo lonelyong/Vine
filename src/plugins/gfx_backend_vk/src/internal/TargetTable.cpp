@@ -233,12 +233,12 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     samples_report_.rearm(); // a target with a count this device builds: the episode is over
     wanted.shape.samples         = requested_samples;
     wanted.shape.render_pass_key = kSingleSubpassRenderPass;
-    // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
-    // `TargetObjects` builds the single-sample picture the rendering instance resolves into and every reader uses
-    // (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so multisampling cannot change the
-    // depth a later pass tests against. The resolve is Vulkan 1.2 (see Limits::depth_resolve_supported), and a device
-    // below that genuinely cannot serve this shape: nothing is created, nothing is drawn, and `readColorBuffer`
-    // answers NotReady.
+    // A MULTISAMPLED DEPTH IS RESOLVED, and a device whose modes do not include the one this backend states refuses the
+    // combination (ADR-2026-11-14). `TargetObjects` builds the single-sample picture the rendering instance resolves
+    // into and every reader uses (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so
+    // multisampling cannot change the depth a later pass tests against. `Limits::depth_resolve_supported` is the
+    // device's own answer (`supportedDepthResolveModes`), and a device without that mode genuinely cannot serve this
+    // shape: nothing is created, nothing is drawn, and `readColorBuffer` answers NotReady.
     if (requested_samples > 1U && target.hasDepth() && !limits_.depth_resolve_supported) {
         if (samples_depth_report_.shouldReport()) {
             if (report_) {
@@ -248,7 +248,8 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                          u8"vk.target.multisampled_depth_unsupported",
                                          vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
                                              u8" samples per pixel and a depth attachment; this device cannot resolve a multisampled depth "
-                                             u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::limits.max_samples)",
+                                             u8"(its supportedDepthResolveModes does not include sample0), so the target is refused "
+                                             u8"(see Capabilities::limits.max_samples)",
                                          vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
             }
         }
@@ -265,8 +266,9 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     //  - the LENDER is a target THIS device has built and that has a depth - the SDK's ordering rule (the lender
     //    renders earlier in the frame) is what makes that true, and a frame that breaks it is wiring, not a capability;
     //  - both targets are EQUALLY SIZED: the lender's picture is bound into a framebuffer of the borrower's extent.
-    const vn::graphics::RenderTarget* lender      = target.depthSource();
-    VkImageView                       lender_view = VK_NULL_HANDLE;
+    const vn::graphics::RenderTarget* lender       = target.depthSource();
+    VkImageView                       lender_view  = VK_NULL_HANDLE;
+    VkImage                           lender_image = VK_NULL_HANDLE;
     if (lender != nullptr) {
         if (requested_samples > 1U) {
             if (borrow_samples_report_.shouldReport()) {
@@ -316,7 +318,11 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
             return false;
         }
         borrow_extent_report_.rearm(); // equally sized: the episode is over
-        lender_view = source->second->depthPictureView();
+        // THE LENDER'S PICTURE IS ONE IMAGE WITH TWO SPELLINGS: the view a pass attaches and the image a barrier names.
+        // Both are taken from the same build, so they move together - and the next comparison below notices either one
+        // moving (a rebuilt lender changes its picture, hence its view).
+        lender_view  = source->second->depthPictureView();
+        lender_image = source->second->depthPicture();
         // THE LENDER'S DEPTH FORMAT IS WHAT THIS TARGET'S PASS IS BUILT WITH: the borrower's own declaration is not a
         // picture anyone has, and the shape states what the attachment IS - so a lender rebuilt at another format
         // rebuilds the borrower through `planTarget`'s own comparison.
@@ -386,6 +392,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         destroyTarget(*device_.table, device_.device, *device_.allocator, images);
         images.desc                = wanted;
         images.depth_borrowed      = lender != nullptr;
+        images.borrowed_depth_image = lender_image;
         images.borrowed_depth_view = lender_view;
         if (!buildTarget(*device_.table, device_.device, *device_.allocator, images)) {
             if (report_) {

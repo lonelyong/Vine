@@ -29,10 +29,16 @@ VN_BACKEND_VK_NS_BEGIN
  *   is why `picture_*` are parallel to `color_*` and empty on a single-sampled set. The same holds for the depth
  *   resolve, which is one `VkRenderingAttachmentInfo` whose `resolveMode` is `SAMPLE_ZERO` - the mode a render pass
  *   could only state through `VkSubpassDescriptionDepthStencilResolve` and `vkCreateRenderPass2`.
- * - A BORROWED DEPTH IS NOT TRANSITIONED HERE. `RenderTarget::shareDepth` gives one image to two targets; the LENDER
- *   owns it and keeps it in the depth layout, and this backend's contract (`TargetTable::ensure`) rebuilds the
- *   borrower whenever that picture moves - so a borrower states `depth_borrowed` and this module records no depth
- *   barrier of its own.
+ * - TWO IMAGES, TWO LAYOUTS, ON THE DEPTH SIDE TOO. A multisampled depth attachment and the picture it resolves into
+ *   part company the moment a reader samples the picture: the sample buffer stays a depth attachment (it may not be
+ *   sampled at all), while the picture moves to `SHADER_READ_ONLY`. That is why `depth_from` and
+ *   `depth_picture_from` are two records, exactly as `color_from` and `picture_from` are - deriving one from the other
+ *   states a layout for an image that never had it.
+ * - A BORROWED DEPTH IS AN IMAGE, NOT AN EXCEPTION. `RenderTarget::shareDepth` gives one image to two targets, so a
+ *   borrowing set states the LENDER's picture and the layout it is in (the depth attachment layout, because that is
+ *   where the lender's own pass left it). The barrier that follows transitions nothing - what it adds is the execution
+ *   dependency between the lender's pass and this one, which is the half dynamic rendering does not insert, and the
+ *   one thing a borrowing pass must not skip.
  */
 struct PassAttachments {
     /// The extent the rendering instance covers (the attachment set's own; there is no framebuffer to disagree with).
@@ -47,22 +53,25 @@ struct PassAttachments {
     std::span<const VkImage>     picture_images{};
     std::span<const VkImageView> picture_views{};
 
-    /// The depth attachment and, on a set that resolves depth, its single-sample picture (see `TargetObjects`).
+    /// The depth attachment and, on a set that resolves depth, its single-sample picture (see `TargetObjects`). A
+    /// BORROWING set names the LENDER's picture here, so these values belong to ANOTHER record: this set states them and
+    /// does not own them.
     VkImage            depth_image{ VK_NULL_HANDLE };
     VkImageView        depth_view{ VK_NULL_HANDLE };
     VkImage            depth_resolve_image{ VK_NULL_HANDLE };
     VkImageView        depth_resolve_view{ VK_NULL_HANDLE };
-    /// The aspect a depth barrier over this image must name (`DEPTH|STENCIL` for a combined format).
+    /// The aspect a depth barrier over these images must name (`DEPTH|STENCIL` for a combined format).
     VkImageAspectFlags depth_aspect{ VK_IMAGE_ASPECT_DEPTH_BIT };
-    /// True when `depth_view` is ANOTHER target's image (see the note above), so no depth barrier is recorded.
-    bool depth_borrowed{ false };
 
     /// The layout the images rendering writes are in (colour; meaningless for an empty set).
     ImageLayout color_from{ ImageLayout::Undefined };
     /// The layout the resolve pictures are in (ignored when `picture_images` is empty).
     ImageLayout picture_from{ ImageLayout::Undefined };
-    /// The layout the depth attachment and its resolve picture are in (ignored when borrowed).
+    /// The layout the DEPTH ATTACHMENT is in. Never `ShaderReadOnly`: a multisampled depth may not be sampled at all.
     ImageLayout depth_from{ ImageLayout::Undefined };
+    /// The layout the depth RESOLVE picture is in (ignored when `depth_resolve_image` is empty). This is the record a
+    /// reader's sampling moves.
+    ImageLayout depth_picture_from{ ImageLayout::Undefined };
 };
 
 /**
@@ -72,18 +81,17 @@ struct PassAttachments {
  * - THE PASS' TWO INDEPENDENT DIMENSIONS (see `ClearPolicy`): colour and depth are decided separately, which is what
  *   lets a HUD pass keep the picture and own the depth inside its rectangle without a second attachment set.
  * - A CLEAR VALUE IS ONLY READ WHEN THE MATCHING LOAD OP IS `CLEAR`; a loading attachment keeps what an earlier pass
- *   wrote and its value is ignored. The extra colours are attachments 1..n-1 of an MRT target, in output-location
- *   order; an entry the pass does not state is transparent black (`ClearPolicy`'s rule, applied by the caller).
+ *   wrote and its value is ignored. `color_clears` is parallel to the colour attachments - one entry per output
+ *   location, in the order a fragment's outputs are written - and an absent entry is transparent black, which is
+ *   `ClearPolicy`'s rule for an attachment a pass does not state.
  */
 struct PassLoad {
     /// Whether the colour attachments LOAD what an earlier pass wrote (false CLEARs them).
     bool load_color{ false };
     /// Whether the depth attachment LOADs what an earlier pass wrote (false CLEARs it).
     bool load_depth{ false };
-    /// The clear value of colour attachment 0.
-    VkClearValue color{};
-    /// The clear values of colour attachments 1..n-1 (read in order; a missing entry is transparent black).
-    std::span<const VkClearValue> extra_colors{};
+    /// One clear value per colour attachment, in output-location order (parallel to `color_images`).
+    std::span<const VkClearValue> color_clears{};
     /// The clear value of the depth attachment.
     VkClearValue depth{};
 };
@@ -98,11 +106,15 @@ struct PassLoad {
  *   attachment - from the layout the set states to the layout rendering requires - and then opens the instance. A
  *   barrier between two IDENTICAL states is recorded on purpose: it is the execution dependency between this pass and
  *   the previous one into the same image, which is the half Vulkan does not insert for dynamic rendering.
- * - THE CALLER OWNS THE BOOKKEEPING. `color_from` / `picture_from` / `depth_from` are the facts the owner tracks (see
- *   `TargetObjects` and `WindowTarget`); after this call every attachment is in the rendering layout, so the owner
- *   stores exactly that.
+ * - CALLER OWNS THE BOOKKEEPING. `color_from` / `picture_from` / `depth_from` / `depth_picture_from` are the facts the
+ *   owner tracks (see `TargetObjects` and `WindowTarget`); after this call every attachment is in the rendering layout,
+ *   so the owner stores exactly that.
  * - DRAWS FOLLOW, then @ref endRendering. Nothing may be recorded between the barrier set and the draws that needs the
  *   old layout.
+ * - ONE ALLOCATION, AND WHY IT STAYS: the colour attachment info array is sized by the set's colour attachment COUNT,
+ *   which is a runtime property (`maxColorAttachments` varies by device), so it is a vector - one small allocation per
+ *   pass, the same order as the per-draw arrays the content recorder builds. A fixed array would have to cap the count,
+ *   and a silent cap is a worse defect than one allocation.
  *
  * @param table       The device's entry points (volk table).
  * @param commands    The command buffer being recorded (outside any rendering instance).

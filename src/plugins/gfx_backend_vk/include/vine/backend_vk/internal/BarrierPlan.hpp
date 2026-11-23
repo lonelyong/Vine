@@ -58,14 +58,20 @@ struct ImageState {
 [[nodiscard]] ImageState stateOf(ImageLayout usage) noexcept;
 
 /**
- * @brief Answers whether a barrier is needed to go from @p from to @p to.
+ * @brief Answers whether moving from @p from to @p to also TRANSITIONS the layout, i.e. whether the two usages differ.
  *
  * @details
- * - Same usage means same layout, stage and access - a barrier would be a no-op that costs a pipeline flush point.
+ * - WHAT IT ANSWERS IS THE LAYOUT HALF, NEVER THE DEPENDENCY HALF. Two different usages need a barrier that changes the
+ *   layout; two IDENTICAL usages may still need one, because something has to be ordered against an earlier access - and
+ *   under dynamic rendering that is the common case: `DynamicRendering::beginRendering` records a barrier between two
+ *   identical states on purpose, because it IS the execution dependency between two passes into one image. A caller that
+ *   skips a barrier because this answered false has therefore ordered nothing.
+ * - Same usage means the same layout, stage and access, which is what makes the LAYOUT half skippable at all - it is not
+ *   a statement that the barrier has no consequences.
  *
  * @param from Usage the image is in now.
  * @param to   Usage the image is about to be in.
- * @return true when a barrier must be recorded; false when the two usages are identical.
+ * @return true when the two usages differ (the barrier also transitions the layout); false when they are identical.
  */
 [[nodiscard]] bool requiresTransition(ImageLayout from, ImageLayout to) noexcept;
 
@@ -102,6 +108,15 @@ struct ImageState {
 
 /**
  * @brief Builds a barrier between two states, each of which may come from either table.
+ *
+ * @details
+ * - THE TWO QUEUE-FAMILY INDICES ARE `VK_QUEUE_FAMILY_IGNORED`, which is a statement about this backend's model rather
+ *   than an omission: every command it records goes on ONE family (the graphics queue that also presents), so there is
+ *   no ownership to transfer - a swapchain image included, because the family that draws it is the family that presents
+ *   it. An explicit release/acquire pair would describe a transfer that never happens; a second family would be the
+ *   feature that makes this line change.
+ * - The same `oldLayout` / `newLayout` + stage/access pair is used for every caller, so a caller cannot pair a layout
+ *   with another row's stages or access mask (see `stateOf`).
  *
  * @param image  Image to transition.
  * @param from   State the image is in.
@@ -142,7 +157,8 @@ struct ImageState {
  *   second spelling of "submit a dependency" to drift. Nothing else is set - the barrier already carries both stage
  *   masks and both access masks (see @ref ImageState).
  * - A barrier that names no image is still legal to record (see @ref barrierBetween); the caller decides whether it is
- *   worth recording at all (see @ref requiresTransition).
+ *   worth recording at all - and a barrier between two IDENTICAL states is worth recording whenever something has to be
+ *   ordered (see @ref requiresTransition).
  *
  * @param table    The device table to record through.
  * @param commands The command buffer being recorded.
