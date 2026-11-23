@@ -189,7 +189,7 @@ void chooseRenderBackend()
 {
     // THE APPLICATION NAMES ITS BACKEND. The registry answers what is installed; asking it for "the first one" would
     // pick by the ALPHABET, so a newly installed plugin could switch every window's renderer without a line changing
-    // here (G4). This also makes the vsg reference backend reachable in a normal build: `VN_RENDER_BACKEND=vsg`.
+    // here (G4). This also lets another installed backend run in a normal build: `VN_RENDER_BACKEND=<name>`.
     String name(u8"vk");
     if (const char* chosen = std::getenv("VN_RENDER_BACKEND"); chosen != nullptr && *chosen != '\0') {
         name = String::fromUtf8(chosen);

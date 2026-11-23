@@ -9,7 +9,7 @@
  * implementation of a promise a host can observe (`graphics-architecture.md` 2.9) - not because two backends happen
  * to call it. Their types are pure values, they need no device, and each case below pins one promise. The suites are
  * the seam's own (`Core*` after the layer they pin, `FrameGateTest` after the type), and each used to live in
- * `test_vsg`/`test_vk` alone:
+ * `test_vk` alone:
  *
  *   * `CoreTargetPlanTest` - a target's GPU objects are a decision function, and extent is not identity;
  *   * `CoreRetirementQueueTest` - deferred destruction is ordered by one timeline, and completion is evidence;
@@ -20,10 +20,9 @@
  *     park's release point is derived from the slot count;
  *   * `FrameGateTest` - frame bodies share a gate, host verbs own it, and no caller waits for itself.
  *
- * The vsg-only core (the frame arena, the phase table, the observe cross-check, the depth probe and the device
- * requirements) stays in `tests/test_vsg/BackendCoreTest.cpp`: those headers are that backend's portable half, not
- * the seam (`.ai/decisions/ADR-2026-11-16-no-backend-half.md` records the relocation
- * that gave the vsg-only frame machinery its own home).
+ * The retired backend's core (the frame arena, the phase table, the observe cross-check, the depth probe and the device
+ * requirements) was that backend's portable half and never joined the seam
+ * (`.ai/decisions/ADR-2026-11-16-no-backend-half.md` records that division); it left the tree with the backend.
  */
 
 #include <gtest/gtest.h>
@@ -314,9 +313,8 @@ TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
 
     // A clear instead of a load is a different VARIANT of the same pipeline, not a different pipeline: the
     // API's compatibility rule excludes load ops, which is why the bootstrap can swap one in. That is now
-    // STRUCTURAL rather than a convention - the variant key is each backend's own type (vsg's
-    // `core::LoadOpVariantKey`, a D3D12 PSO key, nothing at all on Metal), so it cannot enter `PipelineKey`
-    // (backlog T15, review 8 §4.8).
+    // STRUCTURAL rather than a convention - a load-op variant key is each backend's own type (a D3D12 PSO key,
+    // nothing at all on Metal), so it cannot enter `PipelineKey` (backlog T15's landing, review 8 §4.8).
 }
 
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)

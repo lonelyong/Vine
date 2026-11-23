@@ -91,15 +91,15 @@ struct ContentCaches::Impl {
      * @brief What one pipeline is built for: THE PORTABLE IDENTITY, and no state at all.
      *
      * @details
-     * - COMPOSITION IS THE POINT (`G1`). @ref identity is `vn::graphics::PipelineKey` - the same value the vsg
-     *   backend keys its variants by - so a field added to the shared key is part of this key automatically.
+     * - COMPOSITION IS THE POINT (`G1`). @ref identity is `vn::graphics::PipelineKey` - the seam's key - so a field
+     *   added to the shared key is part of this key automatically.
      * - NO STATE IS IN IT. Cull, polygon mode, depth test/write/compare and blend are DYNAMIC (`VK_EXT_extended_dynamic_state`
      *   and `_state3`, which this backend now requires - see the device requirements in `Device::initialize`), so a
      *   state change is a command on the recording path and never a compile. That is what `T54` bought and
      *   `ADR-2026-11-23` D4 states: one pipeline serves a filled and a wireframe draw of the same program.
      * - THE FIELDS THIS BACKEND LEAVES AT ZERO are the ones its FIXED descriptor-set layouts do not depend on
-     *   (`depth_sampleable`, `sampled_color_count`, `sampled_depth_count`): vsg builds a sampled set per count,
-     *   vk builds one set layout for content and one for the full-screen ABI. A constant cannot split an identity.
+     *   (`depth_sampleable`, `sampled_color_count`, `sampled_depth_count`): it builds one set layout for content and
+     *   one for the full-screen ABI, so those counts cannot split an identity.
      * - THE VERTEX LAYOUT IS `identity.vertex_layout` AND NOTHING ELSE: one slot per declared attribute, IN THE
      *   ORDER `planDraw` hands the streams to `vkCmdBindVertexBuffers` (binding N is slot N).
      */

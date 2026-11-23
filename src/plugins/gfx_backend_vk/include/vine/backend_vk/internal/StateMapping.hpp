@@ -22,16 +22,14 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHY A TABLE AND NOT INLINE SWITCHES. The same three facts - how a depth comparison, a blend factor and a cull mode
  *   are spelled on a device - are needed by the pipeline builder and by anything that explains a picture; writing the
  *   switches where they are used is how a second backend ends up with two answers for one state. This header is the vk
- *   backend's half of the seam (the same role vsg's `RenderStateMapper` plays for that backend), and it is PURE: no
- *   device, no allocation, so every row is testable without a GPU.
+ *   backend's half of the seam, and it is PURE: no device, no allocation, so every row is testable without a GPU.
  * - TWO CONVENTIONS DECIDE THE NON-OBVIOUS ROWS, and both are stated here rather than at a call site:
  *   - REVERSE-Z. The engine renders with the far plane at 0 and the near plane at 1 (see Camera), so the SDK's
  *     `CompareOp::Less` ("closer passes") is Vulkan's `GREATER`: a nearer fragment has the LARGER stored value.
  *     Mapping it literally would make every depth test pass backwards.
  *   - THE SDK'S FRONT FACE IS COUNTER-CLOCKWISE IN A RIGHT-HANDED WORLD, and this backend flips Y in the projection
  *     (`buildViewBlock`) so the picture is upright in Vulkan's top-left framebuffer space. That flip turns the SDK's
- *     CCW into a CLOCKWISE polygon in framebuffer coordinates, which is why @ref kVkFrontFace is CLOCKWISE - the same
- *     mapping the vsg backend states (its `perspective` negates the Y term).
+ *     CCW into a CLOCKWISE polygon in framebuffer coordinates, which is why @ref kVkFrontFace is CLOCKWISE.
  * - A value this header does not know (a new enumerator) falls back to the least surprising choice and is meant to be
  *   added here: the switches name every SDK value, so adding one makes the compiler point at this file.
  */

@@ -3322,7 +3322,7 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
             answer(SurfaceTargetResult::WindowOccupied);
             // AND THE HOST HAS TO HEAR IT: createSurfaceTarget promises that the two refusals which are not "this
             // device presents nothing" are said once per episode, and a host that asked has to learn why the picture
-            // it expected never appears (the reference backend says the same sentence, see vsg.window.occupied).
+            // it expected never appears.
             if (impl->window_reports.occupied.shouldReport()) {
                 reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
                                                   DiagnosticCategory::UnsupportedRequest,

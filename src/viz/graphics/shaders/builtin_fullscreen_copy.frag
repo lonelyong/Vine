@@ -13,7 +13,7 @@ layout(location = 0) out vec4 vn_out_color;
 layout(binding = 0) uniform sampler2D vn_copy_tex;
 void main()
 {
-    // vsg projects world-up to the top image row (reverse-Y perspective), and the fullscreen
+    // The projection maps world-up to the top image row (reverse-Y perspective), and the fullscreen
     // triangle's vn_uv.y == 0 sits at the top of the screen, so sampling vn_uv directly keeps the
     // source upright (no Y flip) — the same orientation readColorBuffer() hands back.
     vn_out_color = texture(vn_copy_tex, vn_uv);

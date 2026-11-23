@@ -2,7 +2,7 @@
  * @brief What a frame RECORDS is what had an EFFECT: the five frame-shape facts that used to live only in the parity suite.
  *
  * @details
- * - These are the five cases `tests/test_vsg/BackendParityTest.cpp` named as having NO standalone successor when the
+ * - These are the five cases the retired parity suite named as having NO standalone successor when the
  *   reference backend retired (`ADR-2026-11-23` D4 step 4): a depth-only clear over a drawn picture, a prepare's shape
  *   against the record, one packet carrying several draws, a pass with no effect, and an entry that names no pass. The
  *   other ten facts that file asserted already have a `test_vk` case of their own (its note lists them), so they are

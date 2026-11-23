@@ -1,7 +1,7 @@
 // The engine's parameter blocks, declared ONCE (see .ai/design/graphics-shader-params.md).
 //
-// The GLSL half of the shader ABI; ShaderAbi.hpp is the C++ half (and LightBlock.hpp is the lights block's,
-// while the vsg backend is its only consumer). A shader that declares one of these blocks itself is a SECOND
+// The GLSL half of the shader ABI; ShaderAbi.hpp is the C++ half (and LightBlock.hpp is the lights block's).
+// A shader that declares one of these blocks itself is a SECOND
 // owner, and two owners drift silently: the picture keeps drawing, with half of it reading bytes nobody
 // wrote. The build inlines this file into every shader that includes it (cmake/VineEmbedShaders.cmake), so a
 // program text is one self-contained source and nothing is resolved at run time.

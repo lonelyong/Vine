@@ -24,10 +24,7 @@
 #
 # The registry name will be "d3d12" (RenderBackendRegistry), the classes `vn::backend_d3d12::Device` /
 # `BackendFactory` / `Plugin`, and the tests a `tests/test_d3d12` that compiles these sources directly - a MODULE
-# cannot be linked, which is why test_vk and test_vsg do the same.
-#
-# Tests cannot link a MODULE library; tests/test_d3d12 will compile the implementation sources directly, exactly as
-# tests/test_vk and tests/test_vsg do.
+# cannot be linked, which is why test_vk does the same.
 
 message(FATAL_ERROR
     "gfx_backend_d3d12 is a skeleton: it has no sources yet, so it must not be added to the build. "

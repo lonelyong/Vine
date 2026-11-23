@@ -109,7 +109,7 @@ TEST(SceneBuildTest, TheTreeShapeNamesAndTransformsComeFromTheModel)
 
 TEST(SceneBuildTest, AMeshUsedTwiceIsOneAllocationBehindTwoLeaves)
 {
-    // OSG / vsg scene graphs share a drawable under several transforms; this graph is a strict tree, so the LEAF is
+    // Scene graphs (OSG and the like) share a drawable under several transforms; this graph is a strict tree, so the LEAF is
     // copied and the DATA is not: both geometries must read the same position buffer.
     auto        mesh = makeTriangle(u8"shared");
     Model       model;

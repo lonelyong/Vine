@@ -12,7 +12,7 @@
 //   * `backend`  - this is an IMPLEMENTATION of the render seam (`vine/graphics/` is the seam itself), not a
 //                  wrapper library around Direct3D and not part of the host SDK;
 //   * `d3d12`    - it is the DIRECT Direct3D 12 one: it creates its own ID3D12Device / command queues / pipeline
-//                  states instead of driving a scene graph, which is what the `vsg` backend does.
+//                  states, with no scene graph between the engine and the driver.
 // The namespace mirrors the include path one for one (`vine/backend_d3d12/` -> `vn::backend_d3d12`), the rule
 // `vine/backend_vk/` -> `vn::backend_vk` follows.
 //

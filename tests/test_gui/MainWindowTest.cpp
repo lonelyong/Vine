@@ -5,9 +5,8 @@
 // Why this is a test and not a comment: without an explicit size Qt sizes the first show from the
 // layout's size hint - and what this window's hint follows is its surroundings (ribbon, docks, their
 // content). Measured on 2026-09-25: six starts of the demo produced six different render areas
-// (378x247, 1037x509, 491x319, 378x406, 558x247 and one gate run 3418x1110). The gate states the
-// judged size itself because of that (scripts/vsg_rewrite_gate.sh, "the app's own start-up size is
-// NOT deterministic"); this window states 800x600 - the documented default, also its minimum.
+// (378x247, 1037x509, 491x319, 378x406, 558x247 and one gate run 3418x1110). The judged size is stated
+// explicitly because of that; this window states 800x600 - the documented default, also its minimum.
 // See `MainWindow`'s own default size.
 //
 // The process shares one GuiApplication (see test_gui.cpp's global environment); this file builds its

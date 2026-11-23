@@ -11,12 +11,13 @@ VN_BACKEND_VK_NS_BEGIN
  * @details
  * - Registration is a pointer store, so the factory is a static object in its own translation unit and the name is the
  *   only thing a host needs: `RenderBackendRegistry::instance().create(u8"vk")`.
- * - "vk" says the IMPLEMENTATION path (Vulkan directly), not the API family - the "vsg" backend is Vulkan too.
+   * - "vk" says the IMPLEMENTATION path (Vulkan directly), not the API family: a scene-graph-based backend would be
+   *   Vulkan too.
  * - WHICH ONE RUNS IS THE APPLICATION'S DECISION, never the registry's (it answers by name, because "the first one"
  *   would pick by the alphabet): `app_shell`'s `chooseRenderBackend()` names `"vk"` and honours `VN_RENDER_BACKEND`,
- *   which is how the "vsg" reference backend stays reachable in a normal build. Whether that name stays is the switch
- *   gate's question (`.ai/backlog/graphics.md` T35 and `.ai/decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`);
- *   this header does not restate the gate's evidence.
+   *   which is how another installed backend is selected in a normal build. What this backend's own acceptance still
+   *   wants is in `.ai/backlog/graphics.md` T35 and `.ai/decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`;
+   *   this header does not restate that evidence.
  */
 class VN_BACKEND_VK_API BackendFactory final : public vn::graphics::RenderBackendFactory {
   public:

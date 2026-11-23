@@ -449,10 +449,10 @@ String SurfaceWindow::useDefaultBackend()
     // window input events to it, so nothing is wired here.
 
     // WHICH BACKEND IS NOT THE REGISTRY'S DECISION. This used to take entries().front(): that vector is ordered by
-    // NAME, so the renderer was picked by the alphabet ("vk" before "vsg") and a plugin named "aa" would have switched
-    // every window without a single line changing (G4 - a default a reader cannot find is not a contract). The
-    // application states its backend (RenderControl::setDefaultBackendName); chooseBackend owns the rule for "stated
-    // none", and every refusal names what IS registered so the host can get it right from the message.
+    // NAME, so the renderer was picked by the alphabet (an entry named "aa" would sort first) and such a plugin would
+    // have switched every window without a single line changing (G4 - a default a reader cannot find is not a
+    // contract). The application states its backend (RenderControl::setDefaultBackendName); chooseBackend owns the rule
+    // for "stated none", and every refusal names what IS registered so the host can get it right from the message.
     const auto& registry = vn::graphics::RenderBackendRegistry::instance();
     const auto  entries  = registry.entries();
     const BackendChoice choice = chooseBackend(entries, RenderControl::defaultBackendName());

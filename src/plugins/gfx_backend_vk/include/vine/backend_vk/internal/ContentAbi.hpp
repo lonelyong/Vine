@@ -91,8 +91,8 @@ inline constexpr vn::graphics::Sampler kShadowSampler{
  * - IT LIVES HERE, WITH THE ABI: the caches size the pipeline layout from it and the recorder fills it, so the two
  *   cannot disagree about how wide the range is.
  * - THE NAME IS THE SDK'S: the range was called `ContentPush` before B17 renamed it `PushRange`, and this block is
- *   that range's layout. `PushConstants` was not used because `::vsg::PushConstants` names a different thing in the
- *   same TUs (`G1`: one concept, one word).
+ *   that range's layout. `PushConstants` was not used because the stage's own type already carries that name in the
+ *   same translation units (`G1`: one concept, one word).
  */
 struct PushRangeConstants {
     std::array<float, 16> projection{}; // View -> clip, column-major, in the device's clip convention.

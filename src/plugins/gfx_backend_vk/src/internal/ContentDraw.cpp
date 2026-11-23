@@ -381,9 +381,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         caches.table().vkCmdSetScissor(commands, 0U, 1U, &scissor);
         // A PASS' LINE-WIDTH SWITCH IS A REQUEST (see PassRenderState::lineWidth): the device's range is the answer,
         // and above it the command itself would be invalid.
-        // THE DYNAMIC HALF IS THE SEAM'S VALUE (`DynamicState` / `resolveDynamicState`): the same mapping the vsg
-        // backend writes, so a change to it lands in one place. What stays device-specific is the range: a line
-        // width above `lineWidthRange` is refused by the API, so this layer clamps it (see Capabilities::limits).
+        // THE DYNAMIC HALF IS THE SEAM'S VALUE (`DynamicState` / `resolveDynamicState`): a change to it lands in one
+        // place. What stays device-specific is the range: a line width above `lineWidthRange` is refused by the API,
+        // so this layer clamps it (see Capabilities::limits).
         const vn::graphics::DynamicState dynamic = vn::graphics::resolveDynamicState(resolved);
         caches.table().vkCmdSetLineWidth(commands, std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit()));
         caches.table().vkCmdSetDepthBias(commands, dynamic.polygon_offset.units, 0.0F, dynamic.polygon_offset.factor);

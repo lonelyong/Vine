@@ -25,7 +25,7 @@ namespace
 /**
  * @brief A fake native window the wrapper queries.
  *
- * Stands in for a real OS/GUI window (HWND, vsg::Window, ...) whose live state
+ * Stands in for a real OS/GUI window (HWND, an X11 window, ...) whose live state
  * the WindowContext wrapper exposes through its overridden accessors.
  */
 struct FakeNativeWindow {
@@ -39,7 +39,7 @@ struct FakeNativeWindow {
 /**
  * @brief A WindowContext wrapper holding a pointer to a native window.
  *
- * Mirrors how a real backend wrapper (e.g. a VSG or Qt based wrapper) queries
+ * Mirrors how a real backend wrapper (e.g. a Win32 or Qt based wrapper) queries
  * the underlying window: it stores the native window pointer and overrides
  * the read-only accessors to forward the live state.
  */

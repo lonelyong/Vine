@@ -1,5 +1,5 @@
 #version 450
-// The backend toggles these per drawable through vsg's compile settings, and vsg delivers a define
+// The backend compiles this stage once per variant, and a variant's define is delivered
 // ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vn_shader_check.sh compiles every combination of these names.

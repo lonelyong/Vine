@@ -37,9 +37,9 @@ VN_BACKEND_VK_NS_BEGIN
  *   died after the host released the content (`forget`), a claim that was already withdrawn, and a newer claim made
  *   after either. Stale attempts are COUNTED instead of ignored (`Numbers::stale`), because they mean a caller
  *   believes it owns something it does not.
- * - WHAT IT IS NOT. It is not vsg's `PinnedResources` (`vn::backend_vsg::core`): that table answers "may this resident value go
- *   now?" for ONE thread and retires by pins; this one answers "who may build this key?" for TWO drivers and never
- *   decides destruction. It also does not destroy anything, and it is not a retirement schedule: the caller forgets
+ * - WHAT IT IS NOT. It answers "who may build this key?" for TWO drivers and never decides destruction; it destroys
+ *   nothing and it is not a retirement schedule ("may this resident value go now?" is `RetirementQueue`'s sentence).
+ *   The caller forgets
  *   the entry (`forget`) and hands the Vulkan objects to `RetirementQueue`, exactly as `releaseContent` does today
  *   (`Retiring(epoch)` is the queue's state, not this table's).
  * - KEYS ARE IMMUTABLE IDENTITIES. A key is the address of the description the frame named (which already carries the

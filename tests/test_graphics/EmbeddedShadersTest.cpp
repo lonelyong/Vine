@@ -584,7 +584,7 @@ std::string nameRuleViolation(std::string_view name)
     if (role.starts_with("std_") || role == "std") {
         return "std_ is the C++ standard library's namespace, not a renderer's word";
     }
-    if (role.starts_with("vn_") || role.starts_with("vsg_")) {
+    if (role.starts_with("vn_") || role.starts_with("osg_")) {
         return "a product prefix belongs to the module namespace, not to a shading role";
     }
     if (role.front() == '_' || role.back() == '_' || role.find("__") != std::string_view::npos) {
@@ -618,7 +618,7 @@ TEST(EmbeddedShadersTest, EveryShaderNameFollowsTheInventorysRule)
     // The gate has to be able to fail, and on names this repository has actually used or flirted with.
     EXPECT_FALSE(nameRuleViolation("std_forward.vert").empty());
     EXPECT_FALSE(nameRuleViolation("vn_forward.frag").empty());
-    EXPECT_FALSE(nameRuleViolation("vsg_phong.frag").empty());
+    EXPECT_FALSE(nameRuleViolation("osg_phong.frag").empty());
     EXPECT_FALSE(nameRuleViolation("builtin_forward.hlsl").empty());
     EXPECT_FALSE(nameRuleViolation("builtin_Forward.vert").empty());
     EXPECT_FALSE(nameRuleViolation("builtin_forward_vert.vert").empty());

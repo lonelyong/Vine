@@ -25,7 +25,7 @@ layout(binding = 3) uniform sampler2D vn_pos_tex;
 // VN_SHADOW_BINDINGS
 void main()
 {
-    // vsg projects world-up to the top G-buffer row (reverse-Y
+    // The projection maps world-up to the top G-buffer row (reverse-Y
     // perspective) and vn_uv.y == 0 is the top of the screen,
     // so vn_uv samples the buffers upright (no Y flip).
     vec4 vn_pos4 = texture(vn_pos_tex, vn_uv);

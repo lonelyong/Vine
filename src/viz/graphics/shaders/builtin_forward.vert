@@ -1,5 +1,5 @@
 #version 450
-// The backend toggles these per drawable through vsg's compile settings, and vsg delivers a define
+// The backend compiles this stage once per variant, and a variant's define is delivered
 // ONLY when the source asks for it on this line: a name that is missing here is silently dropped (the
 // branch that tests it stays dead, with no error from any layer). Keep the list in sync with the
 // backend's variants — scripts/vn_shader_check.sh compiles every combination of these names.
@@ -30,7 +30,7 @@ layout(location = 2) in vec4 vn_Color;
 // IS cannot be built at all. The fragment stage below declares the matching sampler.
 #if defined(VN_TEXCOORD_CUBE)
 // A cube map is sampled BY DIRECTION, so the same slot carries three scalars (xyz) instead of a UV
-// pair (see VsgPipelineFactory / SceneBridgePipeline).
+// pair (the program's variant declares the texcoord kind).
 layout(location = 8) in vec3 vn_TexCoord0;
 #elif defined(VN_TEXCOORD_UV)
 layout(location = 8) in vec2 vn_TexCoord0;
@@ -56,7 +56,7 @@ void main()
 {
     // View space on purpose: the lights arrive in view space (VineLightsBlock),
     // so the fragment stage never needs the world matrix and the model matrix
-    // stays the only per-drawable data vsg has to push. An instanced draw multiplies
+    // stays the only per-drawable data the draw block carries. An instanced draw multiplies
     // the instance's local matrix on the right, which is exactly the drawn node's placement
     // in the drawable's frame.
     mat4 vn_model = vn_pc.modelView;

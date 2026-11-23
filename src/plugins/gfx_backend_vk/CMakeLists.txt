@@ -1,10 +1,9 @@
 # gfx_backend_vk: the DIRECT Vulkan backend, delivered as an appfw plugin.
 #
-# WHAT IT IS FOR. The backend that REPLACES VulkanSceneGraph: it creates its own VkInstance / VkDevice / pipelines
-# instead of driving VulkanSceneGraph, so the SDK's backend seam gets a second implementation to be judged against.
-# The name says that path: "vsg" goes through VulkanSceneGraph, "vk" calls Vulkan itself. It is NOT the default yet -
-# the switch is gated (see ADR-2026-11-14-vk-becomes-the-default-target): the Windows window-pixel assertion, a
-# measured Wayland fallback and a performance reading the gate accepts come first.
+# WHAT IT IS FOR. The shipped render backend: it creates its own VkInstance / VkDevice / pipelines, with no scene graph
+# between the engine and the driver. The name says that path: "vk" calls Vulkan itself, not the API family.
+# What its own acceptance still wants (see ADR-2026-11-14-vk-becomes-the-default-target): a measured Wayland fallback and
+# a performance reading the gate accepts.
 #
 # PLATFORMS. Linux/X11 and Win32 both have a WindowSystem implementation (one file each, selected in WindowSystem.cpp,
 # no change to Device). A platform this build does not serve answers UnsupportedSurface.
@@ -15,8 +14,7 @@
 # NAMING. Vulkan's own spellings (`VkDevice`, `VkInstance`, ...) belong to the driver layer; this module's classes are
 # `vn::backend_vk::Device` / `BackendFactory` / `Plugin` (see backend_vk_global.hpp).
 #
-# Tests cannot link a MODULE library; tests/test_vk compiles the implementation sources directly, exactly as
-# tests/test_vsg does.
+# Tests cannot link a MODULE library; tests/test_vk compiles the implementation sources directly.
 
 vn_add_plugin(VK_BACKEND_TARGET gfx_backend_vk)
 
@@ -34,7 +32,7 @@ target_link_libraries(${VK_BACKEND_TARGET} PRIVATE
     # VulkanSceneGraph just to get them.
     tp::volk
     # GLSL -> SPIR-V at run time, through glslang's own front end (M2). Provisioned ONCE for every shader-compiling
-    # backend by cmake/VineGlslang.cmake, so this plugin never depends on the vsg plugin being configured first.
+    # backend by cmake/VineGlslang.cmake, so this plugin does not own the compiler.
     glslang::glslang
     glslang::SPIRV
     # GetDefaultResources(): the resource limits every parse call takes (header-only declaration, library symbol).

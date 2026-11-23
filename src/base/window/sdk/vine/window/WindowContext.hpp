@@ -18,7 +18,7 @@ VN_WINDOW_NS_BEGIN
  *
  * WindowContext is an abstract interface, NOT a window manager and NOT a data
  * store: it does not create, destroy, own or mutate a native window. A derived
- * class holds a pointer to the real window (vsg::Window, a Qt wrapper, ...)
+ * class holds a pointer to the real window (an OS window wrapper, a Qt wrapper, ...)
  * and overrides the accessors below to query that window's live state. The
  * render layer (RenderBackend, RenderEngine, camera manipulator) consumes the
  * context through this interface — reading the native handle for surface

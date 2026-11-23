@@ -34,7 +34,6 @@ target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/
 # case takes it from the plugin's source rather than loading the plugin. That is only safe because
 # nothing here dlopens model_viewer (the sandbox cases load app_shell / test_plugin): if one ever
 # does, the payload metadata has to move out of this target again.
-# (test_vsg compiles gfx_backend_vsg sources for the same kind of reason.)
 target_sources(${TEST_NAME}
     PRIVATE ${CMAKE_SOURCE_DIR}/src/plugins/model_viewer/src/ModelPayload.cpp
             # The "display mode" commands: their cases register and run them through the REAL command

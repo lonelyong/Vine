@@ -6916,8 +6916,8 @@ TEST(PassChainTest, AShadowThisChainCannotShadeIsReported)
     // The FORWARD path HONOURS the request (S2b): the shadow pass is built and the content pass
     // declares its map as an input, so there is nothing to report. Whether that shadow then reaches
     // the picture is decided by the content PROGRAM — the set declares the ABI and the program has to
-    // use it — which is a per-drawable question the backend answers (see the vsg backend's
-    // "declares no vn_shadow_map" report).
+    // use it — which is a per-drawable question the backend answers (see the shipped backend's
+    // "declares no vn_shadow_map" content refusal).
     EXPECT_TRUE(reported.empty()) << "the forward path builds the shadow pass, so it has nothing to report";
     EXPECT_NE(forward->presentingPass(), nullptr);
     EXPECT_EQ(forward->offscreenTarget(), nullptr);
@@ -8819,8 +8819,7 @@ TEST(AxisGizmoTest, ViewportPlacedBottomLeft)
 TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
 {
     // A window mid-layout can be smaller than the corner box plus its margins: measured 100x30 on the
-    // demo's first shown frame, where the naive fit computed -2 pixels for the box side (see
-    // .ai/design/vsg-backend.md). "No room" must be spelled as a zero-area rectangle
+    // demo's first shown frame, where the naive fit computed -2 pixels for the box side. "No room" must be spelled as a zero-area rectangle
     // - the backend's empty-rectangle rule then skips the draw packet - never as a negative one.
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     gizmo->onSurfaceResized(100, 30);
@@ -15176,9 +15175,8 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
 
 TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 {
-    // A GATE with a generous ceiling, not a benchmark: it answers the question the cost model
-    // (`.ai/design/vsg-backend.md` 2.11) could not - "the demo's collection is a memo hit or ~42
-    // commands, so the cost is unmeasurable there". The printed figures are the record; the assertion is a
+    // A GATE with a generous ceiling, not a benchmark: it answers a question the cost model could not - "the demo's
+    // collection is a memo hit or ~42 commands, so the cost is unmeasurable there". The printed figures are the record; the assertion is a
     // ceiling that only a structural regression (losing the memo/bake, an O(n^2) walk) can cross. The budget
     // is per drawable so it scales with the case instead of encoding one machine's absolute time:
     //   budget_us = drawables * 3 + 1000

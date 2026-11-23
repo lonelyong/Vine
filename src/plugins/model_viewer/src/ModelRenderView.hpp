@@ -507,8 +507,8 @@ inline void ModelRenderView::activate()
         fitted_ = true;
     }
 
-    // 载入完成 = 内容已经画出来了：这一帧真的画（上传就发生在这一帧里），后端在**下一帧的开头**发现那次拷贝的 fence
-    // 已完成就把中转暂存还掉 —— 不需要宿主做任何事（见 `vsg-backend.md` F16.2）。所以不能用 `requestFrame()` 之外
+    // 载入完成 = 内容已经画出来了：这一帧真的画（上传就发生在这一帧里），后端在这一帧的尾部等完 fence 之后
+    // 就把这一批的中转暂存还掉 —— 不需要宿主做任何事（见 `graphics-content-lifecycle.md` F16/F18）。所以不能用 `requestFrame()` 之外
     // 的猜测：`renderFrame()` 在这一调用内部就把帧画完，返回时正好是帧边界，下一帧来时那块暂存自然回落。
     control_->renderFrame();
 

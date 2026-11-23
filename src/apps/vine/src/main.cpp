@@ -109,7 +109,7 @@ int main(int argc, char** argv)
         { u8"编译器", compilerInfo() },
         { u8"构建", buildKindInfo() },
     };
-    config.info.credits = u8"Qt 6 \nEigen 3 \nwolfSSL \nvsg \nSARibbon \nDockingPanes \nspdlog \ngtest";
+    config.info.credits = u8"Qt 6 \nEigen 3 \nwolfSSL \nSARibbon \nDockingPanes \nspdlog \ngtest";
 
     // 崩溃报告属于进程，不属于界面，所以它在 createGuiApplication() 之前装好：此后无论崩在 Qt 初始化、插件加载、
     // 启动阶段还是渲染循环里，留下的都是同一份报告。
@@ -138,7 +138,7 @@ int main(int argc, char** argv)
     // 启动期应用线程最长连续占用（`VN_BOOT_TIMING=1`；门禁读这一行）。这是"启动不会把界面卡住"的实测依据：
     // 现在的形状里，会话 attach（设备/管线）与 warm-up 那一帧都在池上跑，剩下的账是 功能栏+面板 / 取句柄+尺寸 /
     // 收尾 三段（2026-09-26 实测 74 ms；改成同步形状时它是 414 ms 一整段）。守着它的地方：
-    // scripts/vsg_rewrite_gate.sh 的应用阶段（阈值 VN_GATE_BOOT_OCCUPANCY_MS）。
+    // 守它的门禁（阈值 `VN_GATE_BOOT_OCCUPANCY_MS`）随参考后端一起删除了；这一行仍是这段占用唯一的实测出口。
     //
     // 这一行同时报告那一段"什么时候"发生（`ending ... ms after start`）：门禁变红时，光看一个数分不清是"该上池的
     // 活干在了线程上"还是"这台机器/这个驱动整体慢"；日志时间戳对上扬弃点就知道它落在启动的哪一段（会话 attach /

@@ -62,15 +62,15 @@ struct SpirvModule {
  * @brief Compiles ONE GLSL stage to SPIR-V with glslang's own front end.
  *
  * @details
- * - THE DIRECT PATH. The vsg backend reaches glslang through `vsg::ShaderCompiler`; this backend calls glslang itself,
- *   because it is the second implementation that exists to prove the seam does not need VulkanSceneGraph
+ * - THE DIRECT PATH. This backend calls glslang itself (supplied centrally by `cmake/VineGlslang.cmake`), because it
+ *   exists to prove the seam does not need a scene graph between the engine and the driver
  *   (`.ai/design/vk-backend.md` 2.1).
  * - WHAT THE TEXT MUST BE. GLSL for Vulkan: the stage is parsed with `EShMsgVulkanRules | EShMsgSpvRules` and the
  *   SPIR-V target `1.0`, which is what `glslangValidator -V` does. The engine's programs are written for exactly that
  *   ("GLSL, compiled at run time"), and the stage's OWN text is compiled unchanged - the only addition is the
  *   variant's define names (see the overload below).
- * - THE OPTIMIZER IS OFF, and not because of a preference: this tree may build glslang with `ENABLE_OPT=OFF` (the vsg
- *   plugin's FetchContent settings do), so asking SPIRV-Tools to optimize would fail to link. Unoptimized SPIR-V is
+ * - THE OPTIMIZER IS OFF, and not because of a preference: this tree builds glslang with `ENABLE_OPT=OFF`
+ *   (`cmake/VineGlslang.cmake` sets it), so asking SPIRV-Tools to optimize would fail to link. Unoptimized SPIR-V is
  *   valid input to every Vulkan driver.
  * - PROCESS-WIDE INITIALIZATION. glslang requires `InitializeProcess()` before the first `TShader`; it runs once per
  *   process (a `std::once_flag`), because every compilation in every device shares it.

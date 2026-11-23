@@ -4,7 +4,7 @@
  * WHY THIS FILE EXISTS. `graphics-threading.md` C21 says a device drives one frame at a time, and the audit (A9) said
  * that claim had no evidence. `FrameGate` makes it a checked fact; this case is the integration half - two threads,
  * one device, real frames, each clearing its own target to its own colour - so "the second thread waits" is observed
- * as "nothing was refused, nothing was mixed up" rather than as a comment. `test_vsg`'s
+ * as "nothing was refused, nothing was mixed up" rather than as a comment. `HeadlessBackendTest`'s
  * `OneDeviceServesSeveralAreasWithoutCrossingThem` is the SEQUENTIAL form of the same statement.
  */
 

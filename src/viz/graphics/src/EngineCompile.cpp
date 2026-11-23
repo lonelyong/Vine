@@ -657,7 +657,7 @@ raw_ptr<RenderTarget> SessionShape::resolveDeclaredTarget(raw_ptr<RenderPass> pa
         return target;
     }
     // A pass reading what it draws into is the feedback pattern, and whether the actual draw call is
-    // a feedback loop is the BACKEND's to judge (the vsg backend rejects source == destination and
+    // a feedback loop is the BACKEND's to judge (the shipped backend rejects source == destination and
     // says so): this layer stays quiet about it, so one mistake is reported once.
     if (pass->renderTarget() == target) {
         return nullptr;

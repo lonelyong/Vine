@@ -11,8 +11,8 @@
 // WHAT THE NAME SAYS. `backend_vk` has two parts and each part carries one fact:
 //   * `backend` - this is an IMPLEMENTATION of the render seam (`vine/graphics/` is the seam itself), not a
 //     wrapper library around Vulkan and not part of the host SDK;
-//   * `vk`      - it is the DIRECT Vulkan one: it creates its own VkInstance / VkDevice / pipelines instead of driving
-//     VulkanSceneGraph, which is what the `vsg` backend does. Both are Vulkan; the suffix names the path taken.
+//   * `vk`      - it is the DIRECT Vulkan one: it creates its own VkInstance / VkDevice / pipelines, with no scene graph
+//     between the engine and the driver. The suffix names the path taken, not the API family.
 // The namespace mirrors the include path one for one (`vine/backend_vk/` -> `vn::backend_vk`), the same rule
 // `vine/meshio/` -> `vn::meshio` and `vine/robotics/io/` -> `vn::robotics::io` follow.
 //

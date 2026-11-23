@@ -408,7 +408,7 @@ class TestHostWindow {
  * @brief The display a host window is created on, in RAII form: the X connection and the screen it names.
  *
  * `xcb_connect` has no RAII of its own, and the device cases connected and never disconnected: the WHOLE
- * strict-leak ASan/LSan report of test_vsg was these connections ("Direct leak of 21176 byte(s)" x22, the
+ * strict-leak ASan/LSan report of the window suite was these connections ("Direct leak of 21176 byte(s)" x22, the
  * connection's buffer, measured 2026-09-25). Declare one of these right AFTER opening the display and make
  * sure it outlives every window built on it: C++ destroys in reverse declaration order, so the windows go
  * first and this closes the connection last.
@@ -712,7 +712,7 @@ class TestHostWindow {
     /** @brief Reads (x, y) until @p accept accepts it, and returns the LAST read either way.
      *
      * WHY A WINDOW READ MAY NEED TO WAIT. A session's presents are answered before the DISPLAY PATH has the
-     * picture (see VsgBackend::framesPresented, which moves when swapBuffers returns), so the read that
+     * picture (the frame's completion moves when `swapBuffers` returns), so the read that
      * follows can answer the window's own background. Measured 2026-09-24 with a 20-run probe: a run read
      * (0,0,0) with `readError() == 8` (`BadMatch`, the window not viewable - the constructor now waits for
      * that) and then (0,0,0) with `readError() == 0` for four more reads over ≈ 1.3 s, and answered the

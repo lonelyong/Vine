@@ -1,11 +1,11 @@
 /**
- * @brief The LIGHT BLOCK: the SDK's fifth L1 block and the ONE packing rule both backends fill it with.
+ * @brief The LIGHT BLOCK: the SDK's fifth L1 block and the ONE packing rule the backend fills it with.
  *
  * Why these are device-free unit cases. The block is a function of the announced lights and the camera, so its
  * arithmetic - the world -> view rotation, the slot order, the ambient fill, the count, the unused-slot tag - is
  * pinned here without a device. The picture that proves the block reaches a shader (per draw packet, on both the
- * content and the full-screen path) needs a device and therefore lives in the vsg suite
- * (`tests/test_vsg/LightBlockTest.cpp`), which is also where a host can compare it with the reference backend.
+ * content and the full-screen path) needs a device and therefore lives in `test_vk` (`VkContentDrawTest`'s pixel
+ * cases and `VkDeferredTest`).
  *
  * The ownership rule these cases belong to: the struct and the packing are the engine's, not a backend's
  * (see .ai/design/graphics-shader-params.md §2.1/§3.3) - a backend only decides WHERE the bytes go.

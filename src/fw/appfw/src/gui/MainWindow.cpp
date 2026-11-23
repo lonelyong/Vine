@@ -104,9 +104,8 @@ MainWindow::MainWindow()
     // The opening size is STATED, not inherited from the dock layout. Without an explicit size Qt sizes
     // the first show from the layout's size hint, which follows the dock contents: a start whose console
     // log is long opened the window several times larger (measured up to 3418x1110, and six starts gave
-    // six different render areas). 800x600 is the documented default the gate judges the picture at (see
-    // scripts/vsg_rewrite_gate.sh, "the app's own start-up size is NOT deterministic"); a resize the user
-    // makes afterwards is left alone.
+    // six different render areas). 800x600 is the documented default the picture is judged at - without an explicit
+    // size the app's own start-up size is NOT deterministic; a resize the user makes afterwards is left alone.
     impl<itype>()->resize(QSize(800, 600));
     // qobject_cast, not static_cast: the wrapper is built around a QWidget here, but unwrapping a UIElement is the one
     // place the checked cast is required (see the same rule in DockPanelManager.cpp and DockPanel.cpp).

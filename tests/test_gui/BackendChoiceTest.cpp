@@ -24,15 +24,15 @@ RenderBackendRegistry::Entry entry(const char8_t* name)
 
 } // namespace
 
-// The application's name wins, whatever the alphabet says: with both backends installed, naming "vsg" brings up "vsg"
-// even though "vk" sorts first.
+// The application's name wins, whatever the alphabet says: with two registered entries, naming "zz_stub" brings up
+// "zz_stub" even though "vk" sorts first.
 TEST(BackendChoiceTest, TheNameTheApplicationStatedWins)
 {
-    const std::vector<RenderBackendRegistry::Entry> entries{ entry(u8"vk"), entry(u8"vsg") };
+    const std::vector<RenderBackendRegistry::Entry> entries{ entry(u8"vk"), entry(u8"zz_stub") };
 
-    const auto choice = vn::appfw::gui::chooseBackend(entries, u8"vsg");
+    const auto choice = vn::appfw::gui::chooseBackend(entries, u8"zz_stub");
     EXPECT_TRUE(choice.refusal.empty());
-    EXPECT_EQ(choice.name, u8"vsg");
+    EXPECT_EQ(choice.name, u8"zz_stub");
 }
 
 // Several registered and nobody named one: refused, and the refusal names every candidate. This is the case the old
@@ -53,11 +53,11 @@ TEST(BackendChoiceTest, SeveralRegisteredAndNoneNamedIsRefusedAndNamesThem)
 // it (this is what keeps a single-backend host from having to name its only backend).
 TEST(BackendChoiceTest, OneRegisteredWithoutANameIsTaken)
 {
-    const std::vector<RenderBackendRegistry::Entry> entries{ entry(u8"vsg") };
+    const std::vector<RenderBackendRegistry::Entry> entries{ entry(u8"zz_stub") };
 
     const auto choice = vn::appfw::gui::chooseBackend(entries, {});
     EXPECT_TRUE(choice.refusal.empty());
-    EXPECT_EQ(choice.name, u8"vsg");
+    EXPECT_EQ(choice.name, u8"zz_stub");
 }
 
 // Nothing registered and nothing named: the reason a host shows is the old sentence, word for word.

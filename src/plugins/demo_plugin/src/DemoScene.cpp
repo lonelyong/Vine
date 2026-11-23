@@ -601,8 +601,7 @@ void addGbufferVariety(vn::graphics::Group* root)
  * override or mis-light, because that pass replaces each drawable's program with its own geometry stage:
  *  - StateNode{ PolygonMode::Line } box          -> per-subtree polygon state
  *  - StateNode{ CullMode::Back } box             -> per-subtree culling state
- *  - Geometry::setProgram magenta box (runtime-compiled GLSL, official vsg
- *    "pc" projection/modelView contract)
+ *  - Geometry::setProgram magenta box (runtime-compiled GLSL, the engine's "pc" projection/modelView contract)
  *  - a Geometry whose primitive states Topology::Points + cyan user program point cloud
  *  - nested MatrixTransform (world-matrix chain)
  * That is why they are not part of the shared base: the base is what both paths can draw correctly.
@@ -981,14 +980,14 @@ void addDemoLighting(vn::appfw::gui::RenderControl* render_control)
  * When the environment variable VN_VSG_OFFSCREEN is set, registers:
  *   1. an order < 0 pass that renders the engine scene into an off-screen
  *      RGBA8 + depth RenderTarget each frame (publishing it as "SceneColor"),
- *      exercising the vsg render-to-texture path, and
+ *      exercising the backend's render-to-texture path, and
  *   2. an order > 0 FullscreenPass that samples "SceneColor" and composites it
  *      into a picture-in-picture sub-viewport of the window, so the off-screen
  *      result is actually visible (render-to-texture -> sample -> present).
  *
- * Run it to check for Vulkan validation errors and the log lines
- * "[VsgRenderer] EXPERIMENTAL off-screen target ... attached" and
- * "[VsgRenderer] EXPERIMENTAL screen PiP ... attached".
+ * Run it to check for Vulkan validation errors and for the PiP appearing in the
+ * window. (The variable keeps its historical VN_VSG_ prefix so existing scripts
+ * keep working.)
  *
  * @param render_control Render view whose engine receives the passes.
  */

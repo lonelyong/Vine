@@ -22,9 +22,9 @@ VN_BACKEND_VK_NS_BEGIN
  * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per draw packet, and the frame-level texture facts every call binds.
  *
  * @details
- * - THE SAME NAME AND SHAPE AS THE vsg BACKEND'S `FrameHead` (`G6`; ADR-2026-11-16-redesign-seam-and-vocabulary).
- *   The two types are deliberately NOT shared: a common `DrawPlan` could only erase them (`G7`), and what the two
- *   backends really agree on is the vocabulary - "the head resolves, the recording reads" - not the representation.
+ * - THE NAME IS THE SEAM'S VOCABULARY (`G6`; ADR-2026-11-16-redesign-seam-and-vocabulary): "the head resolves, the
+ *   recording reads" is how the contract phrases it, and the representation behind that phrase is this backend's own -
+ *   the SDK has no `DrawPlan` and must not grow one (`G7`).
  * - A HEAD IS A VALUE, AND IT OWNS WHAT IT NAMES (`G4` / `G10`). Everything here was true when the caches were asked
  *   (the buffers, the pipeline, the state, the slots); a release or a replacement that lands while the frame records
  *   cannot change what this frame already resolved, and the objects the values name are parked until the device's
@@ -33,13 +33,11 @@ VN_BACKEND_VK_NS_BEGIN
  *   of one frame, so they live HERE (resolved once at the head); the slots a call binds are its own, so they live in
  *   its `DrawPlan`. Recording reads the head and the plan, and asks no cache (`C3`).
  * - THE CONTAINERS ARE REUSED ACROSS FRAMES. `beginFrame` / `beginPass` clear the slots and keep their capacity, so a
- *   steady frame resolves without growing the vectors - the vsg head's fixed arrays make the same promise with
- *   another spelling (its file note states the rule for that side).
+ *   steady frame resolves without growing the vectors.
  * - WHAT IT IS NOT. It is not a cache (see `ContentCaches`), and it is not the frame's scratch (see `FrameScratch`):
  *   a head lives for one frame, belongs to one frame driver, and is discarded with it.
  *
- * @see `ContentCaches::planDraw` (what fills a plan), `ContentDraw` (the recorder that reads it), and the vsg
- *      backend's `FrameHead` (the other backend's spelling of the same concept).
+ * @see `ContentCaches::planDraw` (what fills a plan), `ContentDraw` (the recorder that reads it).
  */
 class FrameHead final {
   public:

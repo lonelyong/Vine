@@ -1,5 +1,5 @@
 #version 450
-// The backend sets this per drawable (vsg compile settings), and vsg delivers a define ONLY when the
+// The backend sets this per drawable by compiling one variant per define set, and a define is delivered ONLY when the
 // source asks for it on this line: a name missing here is silently dropped and the branch that tests
 // it stays dead. Keep the list in sync with the backend's variants - scripts/vn_shader_check.sh
 // compiles every combination of these names.
@@ -12,10 +12,9 @@ layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; }
 layout(location = 0) in vec3 vn_Vertex;
 // The reserved texcoord slot, in the width the data carries: three scalars is a direction for a cube
 // map (VN_TEXCOORD_CUBE), and the pair is everything else - VN_TEXCOORD_UV, and a build with NO
-// kind at all, which is a real state for this program: VsgPipelineFactory compiles a program's stages
-// once with no defines, before any drawable states its variant, and a sky has no map gate to hide that
-// compile behind (a sky always has its map). Both are "not a direction", which is why the pair
-// branch covers them (see skyboxProgram's contract).
+// kind at all, which is a real state for this program: a program's stages are compiled once with no defines, before any
+// drawable states its variant, and a sky has no map gate to hide that compile behind (a sky always has its map). Both are
+// "not a direction", which is why the pair branch covers them (see skyboxProgram's contract).
 #if defined(VN_TEXCOORD_CUBE)
 layout(location = 8) in vec3 vn_TexCoord0;
 #else

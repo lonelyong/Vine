@@ -15,7 +15,7 @@ namespace
  * NOT a plain prepend: GLSL requires the version directive to come first, so a `#define` put in
  * front of it is a parse error — and a parse error here is quiet, because the backend treats
  * "no compiled stage" as "this preset has no SDK program" and shades with its fallback instead.
- * That is exactly how the flat preset first came out unlit-but-bright (vsg's flat set draws the
+ * That is exactly how the flat preset first came out unlit-but-bright (the old flat set drew the
  * material colour): the define never took effect.
  *
  * @param source GLSL source whose first line is the version directive.

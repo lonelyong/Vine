@@ -10,7 +10,7 @@ VN_APPFW_NS_BEGIN
  *
  * Adds two demo triangles to the primary render view and drives a timer that
  * cycles node/drawable opacity & visibility, node transform, and material
- * colour — validating the real-time update path of the graphics + vsg backend.
+ * colour — validating the real-time update path of the graphics backend.
  */
 class TestRenderLiveCommand : public Command {
     VN_OBJECT_META_DECL;

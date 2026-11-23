@@ -15,8 +15,8 @@ VN_BACKEND_VK_NS_BEGIN
  * - A CAUSE IS A NAME, NOT A STRING. The planner used to pass the code literal at each of its refusal sites,
  *   so a new cause could ship with a typo, or with no code at all, and nothing failed to compile. Here the
  *   cause is an enumerator and `contentRefusalCode` is a switch WITHOUT a `default`: adding a cause to this
- *   enum is a compile error until its `vk.content.*` code is written down (D-22; the same shape the vsg
- *   backend's `HostReadbackRefusal` mapping has).
+ *   enum is a compile error until its `vk.content.*` code is written down (D-22; the same shape a readback
+ *   refusal's mapping has).
  * - The codes are the `vk.content.*` family in `scripts/diagnostic_codes.txt`; the gate keeps the registry
  *   and the sources in step.
  */
