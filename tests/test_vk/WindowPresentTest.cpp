@@ -424,8 +424,8 @@ TEST(VkWindowPresentTest, TwoWindowsOnOneDeviceKeepTheirOwnPictures)
 #if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
     GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
 #else
-    // ONE DEVICE, SEVERAL WINDOWS (review 8, K3). The reference backend had the tree's only case for this
-    // (VsgBackendTest.ADifferentWindowGetsItsOwnTarget), and it asserted target identity plus a counter; the
+    // ONE DEVICE, SEVERAL WINDOWS (review 8, K3). The retired reference backend's case asserted target identity
+    // plus a counter; the
     // capability the engine promises - a device is not a window, many windows are many engines on ONE device
     // (graphics-architecture.md 2.4, ADR-2026-11-13) - needs a stronger fact: two live swapchains, and each
     // window keeps the picture ITS OWN frame drew.

@@ -30,10 +30,11 @@ This gate is that split made executable:
      (`.ai/design/vk-backend.md` C10). They are not extracted into a library today because no consumer
      outside the plugin exists (G8) - and that option stays a move instead of an archaeology project only
      as long as one convenience include cannot quietly re-tie them to the seam.
-  5. V5 - the SDK face states the CONTRACT, not the survey. A public header's prose names no concrete backend:
-     a sentence that defines a rule by comparing implementations is the survey, and after the reference
-     retired it also points at a tree that no longer exists. The one exception is a diagnostic code's prefix
-     (`vk.<category>.<cause>`), which is an identity a host matches (`.ai/design/graphics-architecture.md` C4).
+  5. V5 - the SDK face states the CONTRACT, not the survey. A public header's prose names no concrete backend
+     (nor its plugin directory): a sentence that defines a rule by comparing implementations is the survey, and
+     after the reference retired it also points at a tree that no longer exists. The one exception is a
+     diagnostic code's prefix (`vk.<category>.<cause>`), which is an identity a host matches
+     (`.ai/design/graphics-architecture.md` C4).
 
 What this gate deliberately does NOT check (§6.2): `internal/` and `support/` may name Vulkan freely, and no
 rule here constrains them. There is no consumer to protect - those headers are included only by the plugin
@@ -89,10 +90,13 @@ VULKAN_INCLUDE_RE = re.compile(r"#\s*include\s*<(?:vulkan|volk|vsg)")
 # V4: a `Vk`-prefixed type token. `\b` keeps `myVkFormat` and `VK_NULL_HANDLE` out of the result.
 VK_TYPE_RE = re.compile(r"\bVk[A-Z]")
 # V5: a concrete backend's name in the SDK's prose. `vsg` is always a finding (the reference backend and the
-# library it was built on left the tree on 2026-11-23, and its codes are never reused), and so is a `Vsg`-prefixed
-# identifier. `vk` is allowed only as a diagnostic CODE's prefix (`vk.<category>.<cause>`, wildcards included),
-# because a code is an identity a host matches (graphics-architecture.md C4).
-BACKEND_NAME_RE = re.compile(r"\bvsg\b|\bVsg|\bvk\b(?!\.[a-z_]+\.[a-z_*]+)")
+# library it was built on left the tree on 2026-11-23, and its codes are never reused), and so are a `Vsg`-prefixed
+# identifier and a plugin-directory spelling (`gfx_backend_<name>` / `backend_<name>`). `vk` as a WORD is allowed
+# only as a diagnostic CODE's prefix (`vk.<category>.<cause>`, wildcards included), because a code is an identity a
+# host matches (graphics-architecture.md C4).
+BACKEND_NAME_RE = re.compile(
+    r"\bvsg\b|\bVsg|gfx_backend_(?:vk|vsg)|backend_(?:vk|vsg)\b|\bvk\b(?!\.[a-z_]+\.[a-z_*]+)"
+)
 # E1: the escape door, whether it is included with angle brackets or quotes.
 ESCAPE_DOOR_RE = re.compile(r'#\s*include\s*[<"][^>"]*support/Handles\.hpp')
 # E2: any include that reaches the render seam, whichever spelling (`vine/graphics/...` today).

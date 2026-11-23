@@ -89,8 +89,9 @@ removing an unregistered pass and removing an already removed pass are the same 
 | `DrawState` | Identity is what a pipeline is keyed by; a per-draw value never recompiles (`PipelineKey`, `RenderState.hpp`). |
 | `TargetPlan` | A resize does not recompile a pipeline, and a shape change does (`PrepareReport::pipelines`). |
 
-    The 17 headers and 16 `.cpp` files only vsg reads moved into `gfx_backend_vsg/internal/` in ADR-2026-11-16 §2, vsg's own types live in `vn::backend_vsg::core`
-    (`G13`). The price, honestly: the host can now include these mechanism headers and they are visible in the SDK's namespace (a residue of `G7`); what it buys is
+    The placement this table codifies was argued in ADR-2026-11-16 §2: a backend's own private types live in that plugin's
+    `core` / `internal` namespace, never in the SDK (`G13`) — the reference backend that first exercised it retired on
+    2026-11-23, and the rule is what remains. The price, honestly: the host can now include these mechanism headers and they are visible in the SDK's namespace (a residue of `G7`); what it buys is
     a rule that does not need syncing in four places. `DrawState` / `TargetPlan`'s device format codes are now the **opaque**
     `DeviceFormat` (0 = the device's UNDEFINED), the render-pass structure is carried by the backend-computed `RenderPassKey` — neither
     `VkFormat` values nor subpass are on the seam, so a third backend need not learn Vulkan's formats and

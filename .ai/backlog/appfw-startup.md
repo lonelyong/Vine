@@ -186,10 +186,6 @@ not a property of the current shape.
 
 Still to do: **the same probe on the Windows side** (HWND + client rect). The criterion: `attached to the host window
 0x…` and `surface Pending -> Attached` appear in the startup log (rather than `GetClientRect(..) failed` / `-> Failed`).
-- ~~`VSG_MAX_DEVICES=1` in the Release tree is a deliberate tripwire (nothing in the repository sets it) ⇒ both trees
-  have to run.~~
-  **Void as of 2026-09-27**: `gfx_backend_vsg/CMakeLists.txt` now sets it to 4 explicitly (one render surface per
-  document view), so that difference between the two trees is gone; the practice of "run the gate in both trees" stays.
 
 Deliverables:
 

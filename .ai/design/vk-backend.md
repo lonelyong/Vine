@@ -4,7 +4,7 @@
 > **Last verified**: 2026-11-23
 > **Scope**: the `gfx_backend_vk` plugin (registered as `"vk"`) — a **straight-to-Vulkan** implementation of `RenderBackend`: device and queues,
 > targets and windows, content drawing, the device memory pool, the pipeline cache, reports and diagnostics. It does **not** cover the SDK seam itself (see `graphics-*`)
-> or `gfx_backend_vsg` (see `vsg-backend.md`).
+> or the retired reference backend (record: `vsg-backend.md`).
 > **Sources**: `src/plugins/gfx_backend_vk/include/vine/backend_vk/**` (the contract), `tests/test_vk/**` (behaviour),
 > `scripts/check_vk_exposure.py` (the exposure boundary), `scripts/measure_graphics_claims.py` (re-derives the case / suite counts quoted here)
 > **Backlog**: `../backlog/graphics.md`

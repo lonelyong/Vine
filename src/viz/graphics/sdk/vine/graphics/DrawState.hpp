@@ -161,8 +161,8 @@ struct VN_GRAPHICS_API RenderPassKey {
  *   because the API's compatibility rule excludes them, which is what makes several variants of one
  *   attachment set share a single compiled pipeline. The variant KEY is not here either: what a load-op
  *   variant is belongs to the family that builds pass objects (Vulkan builds render passes, D3D12 builds
- *   PSOs, Metal builds neither), so each backend keys its own - see `gfx_backend_vsg/internal`'s
- *   `LoadOpVariantKey`. This layer only carries the half both families answer the same way.
+ *   PSOs, Metal builds neither), so each backend keys its own inside its `internal/` — the type is not
+ *   part of this seam. This layer only carries the half both families answer the same way.
  * - WHY THE DEVICE FORMATS ARE IN HERE ON TOP OF THE ENGINE'S SPELLING. The engine classifies
  *   attachments as RGBA8 / RGBA16F / RGBA32F, and that vocabulary is a PROJECTION: a window whose
  *   surface is an sRGB BGR8 format and an off-screen target built as a linear RGBA8 image are both

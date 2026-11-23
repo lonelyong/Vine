@@ -75,7 +75,7 @@ namespace
 TEST(VkOffscreenTest, ADeclaredTargetIsBuiltWithoutAFrame)
 {
     // CAP-86 / BC-09. `RenderDevice::setRenderTarget` says the device holds the target and builds its attachments,
-    // and now BOTH backends do exactly that (see VsgBackendTest.ADeclaredTargetIsBuiltWithoutAFrame). A target
+    // and the backend does exactly that. A target
     // announced before any frame answers about its images at once, and the first frame that names it builds nothing.
     //
     // The witness is the difference between two refusals: a target this device built can be asked about an attachment

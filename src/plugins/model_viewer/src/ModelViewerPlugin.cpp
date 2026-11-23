@@ -246,7 +246,7 @@ constexpr const char8_t* kPluginIcon =
     u8R"SVG(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#2a7ac9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6z"/><path d="M4 16.4 12 12l8 4.4"/><path d="M12 3.2V12"/></g></svg>)SVG";
 
 // 宏在**全局命名空间**展开（VN_DEFINE_MODULE_COMMAND_QUEUE() 在 vn::appfw::detail 里定义函数，要求展开位置必须
-// 包着那个命名空间），所以类名写成全限定名 —— 同 gfx_backend_vsg 与 demo_plugin。
+// 包着那个命名空间），所以类名写成全限定名 —— 同 gfx_backend_vk 与 demo_plugin。
 VN_DECLARE_PLUGIN(vn::model_viewer::ModelViewerPlugin,
                   u8"6d1f3b90-7c4e-4a2f-9d38-5e2b8a4c1f77",
                   u8"model_viewer",

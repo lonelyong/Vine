@@ -22,9 +22,9 @@ namespace vn::model_viewer
  *   - 把自己的面板挂到右侧 dock 上，并让它跟着当前文档走（面板自己听 `currentChanged`，见 ModelInfoPanel）。
  *
  * 文档只拿数据、不碰渲染（appfw-document-model.md 3.1.5）：这里没有渲染会话 —— 把模型画出来是视图层（3.1.5）的事，
- * 而一块视图自带一份资源（每个 3D 文档一个 `RenderControl` = 一个设备），本 build 的同时设备上限是 vsg 的
- * `VSG_MAX_DEVICES`（4）：开得比它多时那一次 attach 会**以理由失败**（拒绝在 `gfx_backend_vsg` 里，见
- * `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`），不是把异常丢进事件循环。
+ * 而一块视图自带一份资源（每个 3D 文档一个 `RenderControl` = 一个设备）；没有设备数量上限（旧的 4 设备天花板
+ * 随参考后端一起退役），服务不了的那一次 attach 仍**以理由失败**（`RenderControl` 进 `Failed` 并给出
+ * `failureReason()`），不是把异常丢进事件循环。
  *
  * 面板"谁该看见"今天是插件自己建自己挂（框架还没有面板注册表，§12）；有了之后这一段变成一条声明。
  */

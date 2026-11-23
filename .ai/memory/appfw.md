@@ -102,10 +102,9 @@
   one or zero documents the bar is hidden.
 - Each 3D document has its own `RenderControl` (its own surface / session / device / pipeline); only the
   DockPanel/Ribbon shell is shared at application level.
-- `VSG_MAX_DEVICES` = **4** (set explicitly in `gfx_backend_vsg/CMakeLists.txt`). A fifth block is refused
-  by the backend: the `vsg::Device` constructor throws, `deviceFailureMessage()` turns that into a reason
-  containing "at most 4 simultaneous render devices", and `RenderControl::init()` returns false and enters
-  `Failed`.
+- No device-count ceiling: the old `VSG_MAX_DEVICES` = 4 one retired with the reference backend (2026-11-23).
+  An attach the backend cannot serve still reports a reason (`deviceFailureMessage()` / `failureReason()`),
+  and `RenderControl::init()` returns false and enters `Failed`.
 - The multi-pane / shared-session machinery is gone: `RenderControl::present()`, a public
   `SceneView::removeWindowPass()` and the host "borrowing a page" no longer exist.
 - Input reaches a view through one channel only: `SceneView`'s manipulator. Picking lives in the SDK;
@@ -186,7 +185,7 @@
   model's "`Vfs` + virtual path" cannot read a model file today.
 - There is no panel registry ⇒ a panel can only be built and attached by the plugin itself; the view half
   has landed.
-- At most 4 3D documents at once; more requires patching vsg (this tree keeps vsg upstream + gates).
+- 3D documents are unlimited in count but each owns a device (memory + compilation); device sharing is S10b.
 
 ## Translation
 

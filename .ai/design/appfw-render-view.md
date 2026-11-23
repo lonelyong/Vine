@@ -25,7 +25,7 @@ Both sides need one clear division.
 - Multi-pane / split / PiP in the framework: the app computes the rectangles and hands the pass its sub-viewports.
 - One top-level window per document: one control is one area today.
 - Selection / highlight / rubber-band in the framework: picking is in the SDK and selection is business logic.
-- More than four simultaneous 3D documents: `VSG_MAX_DEVICES=4`, and more needs a patch to vsg.
+- More than four simultaneous 3D documents: not a limit - each document still owns its device, and the old four-device ceiling retired with the reference backend (2026-11-23).
 
 ### 1.4 One-paragraph conclusion
 
@@ -126,10 +126,10 @@ Picking is in the SDK (`Camera::screenToWorldRay` + `RayIntersection::intersectS
 ### 3.1.6 F6 Several 3D documents, each with its own device
 
 - **Behaviour**: each 3D document has its own `RenderControl` (its own surface / session / device / pipeline); only the DockPanel and ribbon shell are shared at application level.
-- **Constraints** (C6): `VSG_MAX_DEVICES=4`; the fifth is refused by a `vsg::Device` constructor throwing, and `deviceFailureMessage()` turns that into a reason.
-- **Requirements** (R6): the fifth failure must carry the reason "at most 4 simultaneous render devices" and must not escape to the event loop.
-- **Acceptance** (T6): `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`, `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`.
-- **Caveat** (N6): the fixed array branch for `<=4` does no bounds check, so the fifth must never be written into it.
+- **Constraints** (C6): an attach that cannot be served (no presenting device, unusable surface) is reported through `deviceFailureMessage()` / `failureReason()`, never as an exception; there is no device-count ceiling.
+- **Requirements** (R6): an attach failure must carry its reason and must not escape to the event loop.
+- **Acceptance** (T6): `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`.
+- **Caveat** (N6): every document still owns its device, so N documents cost N devices' worth of memory and compilation until `Device : Engine = 1 : N` lands (S10b, not built).
 
 ## 4. Public Interface
 
@@ -173,7 +173,7 @@ Picking is in the SDK (`Camera::screenToWorldRay` + `RayIntersection::intersectS
 | C3 | `effectivePath(desc)` is the only request→chain rule; `desc.path` is kept. |
 | C4 | One area has exactly one presentation; a host pass and the default chain never coexist. |
 | C5 | Input goes through the manipulator only; there is no second route. |
-| C6 | `VSG_MAX_DEVICES=4`; the backend must refuse the fifth with a reason. |
+| C6 | An attach that cannot be served is refused with a reason, never an exception; no device-count ceiling (the old four-device one retired with the reference backend). |
 
 ### 5.2 Requirements (R#)
 
@@ -245,7 +245,7 @@ Picking is in the SDK (`Camera::screenToWorldRay` + `RayIntersection::intersectS
 | T3 | a rebuild carries the run-time choices | `ARebuildCarriesTheLiveChainsRuntimeChoices` |
 | T4 | a host main pass takes over, releasing the view | `AHostPassTakesTheAreaAndTheViewerStandsDown`, `ReleasingTheViewTakesItOutOfTheArea` |
 | T5 | input reaches the view, a drag keeps steering | `TheViewReceivesInputAndADragKeepsSteeringIt` |
-| T6 | each document view has its own render area; the fifth gives a reason | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`, `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException` |
+| T6 | each document view has its own render area | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea` |
 | T7 | one view with two panes: the target carries the view and the view answers which pane counts | `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` |
 
 ## 9. Status and Evolution
@@ -257,7 +257,7 @@ F1–F6 are in place, and there is no multi-pane or shared-session mode.
 
 ### 9.2 Known gaps / backlog
 
-- More than four 3D documents needs a patch to vsg; this tree stays on the unpatched version plus the gate.
+- More than four 3D documents is no longer a ceiling; what remains is the cost (one device and one compiled pipeline set per document), tracked by S10b.
 - Multiple windows (one top-level window per document) are outside this design.
 - **A command finding its view**: dispatch resolves the target (`gui::resolveCommandTarget()`: the current document's view → its document) and carries it with the execution; there is no window-level `primaryRenderControl()` and no publish slot.
   A window shows one view at a time (tabs), and several 3D areas side by side are expressed by the view's panes.
