@@ -67,6 +67,9 @@ class FrameHead final {
     struct DrawPlan {
         VkPipeline                         pipeline{ VK_NULL_HANDLE };
         vn::graphics::ResolvedCommandState resolved{};
+        /// The colour attachment count this plan was resolved against: the length of the blend commands the recorder
+        /// issues, and the rule that a multi-attachment target never blends (see ContentDraw).
+        std::uint32_t color_attachments{ 0 };
 
         /// The content call's payload (empty for a full-screen packet).
         vn::graphics::MaterialDescriptionPtr material{}; ///< The material it is shaded with, or null (defaults).
@@ -85,6 +88,7 @@ class FrameHead final {
         {
             pipeline        = VK_NULL_HANDLE;
             resolved        = {};
+            color_attachments = 0;
             material        = {};
             variant         = {};
             vertex_count    = 0;

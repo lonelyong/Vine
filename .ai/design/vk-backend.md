@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **175 cases / 42 suites** (2026-11-23), and the comparison against vsg by
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **176 cases / 42 suites** (2026-11-23), and the comparison against vsg by
   `BackendParityTest` (15 cases, inside `test_vsg`).
 
 ### 1.2 Goals
@@ -402,13 +402,16 @@ and every cache has a witness a test can read.**
 ### 3.1.5 F5 Content drawing
 
 - **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key is the
-  SEAM's `vn::graphics::PipelineKey` (kind, program identity + revision, the vertex layout slots, render-pass
-  compatibility, variant, topology class) PLUS the raster state a Vulkan 1.2 device must bake (polygon / cull /
-  depth test / write / compare / blend - see `ContentPipelineKey`); one `DrawItem` = one `vkCmdDrawIndexed`.
-  Instance streams are cached by buffer address + revision.
-- **What is dynamic here**: viewport, scissor, line width and the depth-bias values (`vkCmdSet*` per draw, the
-  declaration names exactly those four). The five baked items are a fact about the 1.2 floor, not about the
-  model: the vsg backend's floor has `VK_EXT_extended_dynamic_state`/`_state3`, so it moves them off identity.
+  SEAM's `vn::graphics::PipelineKey` and NOTHING ELSE (kind, program identity + revision, the vertex layout slots,
+  render-pass compatibility, variant, topology class - see `ContentPipelineKey`); one `DrawItem` = one
+  `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision.
+- **EVERY state item is a command** (`T54`, `ADR-2026-11-23` D4): viewport, scissor, line width and the depth-bias
+  values always were; cull mode, polygon mode, depth test/write/compare and blend enable/factors joined them when the
+  floor rose to `VK_EXT_extended_dynamic_state` / `_state2` / `_state3` (REQUIRED - a device without them is refused
+  at `initialize` with `vk.init.dynamic_state_missing`). The commands live in ONE recorder helper
+  (`recordRasterState`), so a state change compiles nothing: `VkContentTargetTest` pins that a wireframe paints fewer
+  pixels than the filled frame and creates no pipeline, and `VkContentDrawTest.AStateChangeIsACommandNotAPipeline`
+  pins the same for blend - with the pixel as the proof the command ran.
 - **The declared vertex input is the vertex stage's own set**: the geometry contributes channels, but the pipeline declares only the locations the compiled vertex
   stage reads (read back from the module's `OpVariable`/`Location` interface, one location per matrix column, so the instance stream keeps 12-15). A geometry channel the
   stage does not read is neither declared nor fetched - it would otherwise be a validation warning ("attribute at location N not consumed by vertex shader") and a
@@ -756,8 +759,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - Audit items F1 / F2 / F4 / F7 / F8 / F12 are landed; F5 / F9 / F10 / F11 / F13 are kept as follow-up per §1.3. Several drivers are entirely landed, with the shape in
   §2.11 and `graphics-sessions.md`; **today's three TSan readings are in `graphics-threading.md` R18.**
-- `test_vk` **175 cases / 42 suites** (2026-11-23, Linux: 175/175; the Windows reading the same day was 174/174 with no skips, before the
-  two-window case landed); `test_vsg` **576**, `test_graphics` **639** (same build, `--gtest_list_tests`); `BackendParityTest` **15/15**. The target map, the shapes and the leases are one
+- `test_vk` **176 cases / 42 suites** (2026-11-23, Linux: 176/176; the Windows reading the same day was 174/174 with no skips,
+  before the two-window case and the `T54` witnesses landed); `test_vsg` **576**, `test_graphics` **639** (same build,
+  `--gtest_list_tests`); `BackendParityTest` **15/15**. The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** (an old `.so` makes `VsgBackendPluginTest` segfault).
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
@@ -785,14 +789,18 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **Backlog `T60`**: retiring `vsg` after this gate - trigger, rides and reasoning are in the item; the terms (mechanism
   ownership, the 24 `vsg.*` codes, the document collapse and the batch order `T54` → `T11` → `T58` → delete) are
   [ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md), and this backend is the one the
-  retirement leaves in place.
+  retirement leaves in place. **Step 1 (`T54`) landed 2026-11-23**: the floor is EDS1 + EDS3 and the pipeline key has
+  no state half; the remaining steps are dynamic rendering (`T11`), the alpha-to-coverage bit (`T58`) and the deletion.
 
 ### 9.3 Compatibility / migration
 
 - **SDK**: `DeviceDesc` gains `cache_directory` (it has a default, so the old two-argument aggregate initialisation is unchanged).
 - **Plugin ABI**: only `RenderBackend` / `RenderBackendFactory` face the host; the internal headers (`internal/`) promise no stability.
 - **Cache file**: format version `1`; a mismatched version is refused (no migration, no guessing).
-- **Device requirements**: Vulkan 1.2 (multisample depth resolve depends on 1.2's `vkCreateRenderPass2`); a 1.3 device mostly uses core creation feedback and needs no
+- **Device requirements**: the Vulkan 1.2 APIs this backend already used, PLUS `VK_EXT_extended_dynamic_state` /
+  `_state2` / `_state3` with the polygon-mode and colour-blend features (`T54`: cull / depth / polygon / blend are
+  dynamic state); a device without them is refused at `initialize` with `vk.init.dynamic_state_missing`. Multisample
+  depth resolve uses 1.2's `vkCreateRenderPass2`; a 1.3 device mostly uses core creation feedback and needs no
   extension.
 - **Platforms**: Linux/X11 and Win32 both have a `WindowSystem` implementation and both are measured with a pixel instrument; Wayland is implemented against the WSI
   contract only.

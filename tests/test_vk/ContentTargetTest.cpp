@@ -781,6 +781,8 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     const intrusive_ptr<RenderTarget>  target   = makeTarget(1);
     const intrusive_ptr<ShaderProgram> program  = makeProgram(kRedFragment);
     const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.0F);
+    auto* device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
 
     ClearPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
@@ -799,7 +801,16 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
 
     const std::size_t skipped_before = backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped);
 
-    // 1. WIREFRAME at a width the device's range covers (`fillModeNonSolid` builds the pipeline, `wideLines` makes the
+    // 0. A FILLED frame first: the polygon mode is DYNAMIC state (`T54`), so the same compiled pipeline has to serve the
+    //    filled and the wireframe picture - and the filled one covers far more pixels, which is what tells the two
+    //    apart ("painted something" alone would also pass if the wireframe drew filled).
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped);
+    const std::size_t   filled_painted   = paintedPixels();
+    const std::uint64_t pipelines_before = device->contentPipelines();
+    ASSERT_GT(filled_painted, std::size_t{ 0 }) << "the fixture's filled quad paints";
+
+    // 1. WIREFRAME at a width the device's range covers (`fillModeNonSolid` makes the mode legal, `wideLines` makes the
     //    width legal). Without them the pipeline is invalid, the draw is skipped and the model vanishes.
     PassRenderState wireframe;
     wireframe.polygonMode = vn::graphics::PolygonMode::Line;
@@ -811,7 +822,11 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     const auto wireframe_report = backend->frameReport();
     ASSERT_TRUE(wireframe_report.counters.has_value());
     EXPECT_EQ(wireframe_report.counters->draw_packets, 1U) << "the draw reached the queue";
-    EXPECT_GT(paintedPixels(), std::size_t{ 0 }) << "a wireframe paints its edges";
+    const std::size_t wireframe_painted = paintedPixels();
+    EXPECT_GT(wireframe_painted, std::size_t{ 0 }) << "a wireframe paints its edges";
+    EXPECT_LT(wireframe_painted, filled_painted) << "the polygon mode reached the command buffer: edges only";
+    EXPECT_EQ(device->contentPipelines(), pipelines_before)
+        << "a polygon-mode change is dynamic state: it must not compile a pipeline (T54)";
 
     // 2. A POINT VIEW of the same geometry: the topology override is the switch, the point size is what `largePoints`
     //    lets the vertex stage honour.

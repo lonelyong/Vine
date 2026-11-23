@@ -87,51 +87,15 @@ struct ContentCaches::Impl {
     };
 
     /**
-     * @brief The raster state a VULKAN 1.2 DEVICE MUST BAKE: cull, polygon mode, depth test/write/compare and blend.
-     *
-     * @details
-     * - WHY IT IS PART OF THE IDENTITY HERE. `DrawState.hpp` splits a draw into identity / dynamic state / data and
-     *   requires a backend to move every item its device CAN move off identity. This backend's floor is Vulkan 1.2,
-     *   where `vkCmdSetCullMode` / `vkCmdSetDepthTestEnable` / `vkCmdSetPolygonModeEXT`/
-     *   `vkCmdSetColorBlendEnableEXT` do not exist (they arrive with VK_EXT_extended_dynamic_state / _state3, which
-     *   the vsg backend requires). So these five are compiled in: a state change costs a new pipeline VARIANT - cached
-     *   per variant, but a compile the first time.
-     * - WHAT IS NOT HERE: viewport, scissor, line width and the depth-bias factors are DYNAMIC state (the pipeline
-     *   declares them and the recorder sets them per draw), so they never split an identity.
-     * - This is the ONE place the two backends differ in what an identity contains, and it is a fact about the
-     *   DEVICE, not about the model: see ContentPipelineKey, which is the portable key plus this.
-     */
-    struct RasterState {
-        VkPolygonMode   polygon_mode{ VK_POLYGON_MODE_FILL };
-        VkCullModeFlags cull_mode{ VK_CULL_MODE_NONE };
-        VkBool32        depth_test{ VK_FALSE };
-        VkBool32        depth_write{ VK_FALSE };
-        VkCompareOp     depth_compare{ VK_COMPARE_OP_ALWAYS };
-        VkBool32        blend_enable{ VK_FALSE };
-        VkBlendFactor   blend_src{ VK_BLEND_FACTOR_ONE };
-        VkBlendFactor   blend_dst{ VK_BLEND_FACTOR_ZERO };
-
-        /**
-         * @brief Compares two raster states (the pipeline cache compares whole keys).
-         *
-         * @param other State to compare against.
-         * @return true when every field agrees.
-         */
-        [[nodiscard]] bool operator==(const RasterState& other) const noexcept
-        {
-            return std::tie(polygon_mode, cull_mode, depth_test, depth_write, depth_compare, blend_enable, blend_src, blend_dst) ==
-                   std::tie(other.polygon_mode, other.cull_mode, other.depth_test, other.depth_write, other.depth_compare, other.blend_enable,
-                            other.blend_src, other.blend_dst);
-        }
-    };
-
-    /**
-     * @brief What one pipeline is built for: THE PORTABLE IDENTITY plus the state this device bakes.
+     * @brief What one pipeline is built for: THE PORTABLE IDENTITY, and no state at all.
      *
      * @details
      * - COMPOSITION IS THE POINT (`G1`). @ref identity is `vn::graphics::PipelineKey` - the same value the vsg
-     *   backend keys its variants by - so a field added to the shared key is part of this key automatically, and
-     *   the two backends cannot drift in anything except @ref raster (see RasterState for why that one exists).
+     *   backend keys its variants by - so a field added to the shared key is part of this key automatically.
+     * - NO STATE IS IN IT. Cull, polygon mode, depth test/write/compare and blend are DYNAMIC (`VK_EXT_extended_dynamic_state`
+     *   and `_state3`, which this backend now requires - see the device requirements in `Device::initialize`), so a
+     *   state change is a command on the recording path and never a compile. That is what `T54` bought and
+     *   `ADR-2026-11-23` D4 states: one pipeline serves a filled and a wireframe draw of the same program.
      * - THE FIELDS THIS BACKEND LEAVES AT ZERO are the ones its FIXED descriptor-set layouts do not depend on
      *   (`depth_sampleable`, `sampled_color_count`, `sampled_depth_count`): vsg builds a sampled set per count,
      *   vk builds one set layout for content and one for the full-screen ABI. A constant cannot split an identity.
@@ -140,17 +104,16 @@ struct ContentCaches::Impl {
      */
     struct ContentPipelineKey {
         vn::graphics::PipelineKey identity{};
-        RasterState               raster{};
 
         /**
          * @brief Compares two keys (the pipeline cache's identity).
          *
          * @param other Key to compare against.
-         * @return true when the portable half and the baked half both agree.
+         * @return true when the identities agree.
          */
         [[nodiscard]] bool operator==(const ContentPipelineKey& other) const noexcept
         {
-            return identity == other.identity && raster == other.raster;
+            return identity == other.identity;
         }
     };
 
@@ -160,23 +123,11 @@ struct ContentCaches::Impl {
          * @brief Hashes @p key.
          *
          * @param key The key to hash.
-         * @return A stable hash of the portable identity and the baked state.
+         * @return A stable hash of the portable identity.
          */
         [[nodiscard]] std::size_t operator()(const ContentPipelineKey& key) const noexcept
         {
-            std::size_t hash = vn::graphics::PipelineKeyHash{}(key.identity);
-            const auto  mix  = [&hash](std::uint64_t value) noexcept {
-                hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
-            };
-            mix(static_cast<std::uint64_t>(key.raster.polygon_mode));
-            mix(static_cast<std::uint64_t>(key.raster.cull_mode));
-            mix(key.raster.depth_test);
-            mix(key.raster.depth_write);
-            mix(static_cast<std::uint64_t>(key.raster.depth_compare));
-            mix(key.raster.blend_enable);
-            mix(static_cast<std::uint64_t>(key.raster.blend_src));
-            mix(static_cast<std::uint64_t>(key.raster.blend_dst));
-            return hash;
+            return vn::graphics::PipelineKeyHash{}(key.identity);
         }
     };
 
@@ -259,30 +210,6 @@ struct ContentCaches::Impl {
     bool          preload_refused_{ false };
     /// Whether a cache was handed to the driver at all (see pipelineCachePreloadHanded).
     bool          preload_handed_{ false };
-
-    /**
-     * @brief Resolves the raster state a pipeline BAKES from one command's resolved state.
-     *
-     * @param state             The state `resolveRenderState` produced (its state half).
-     * @param color_attachments How many colour attachments the pass writes (a multi-attachment target never blends).
-     * @return The state a pipeline is keyed by (see RasterState).
-     */
-    [[nodiscard]] RasterState pipelineStateOf(const vn::graphics::ResolvedRenderState& state,
-                                              std::uint32_t                             color_attachments) const noexcept
-    {
-        RasterState baked;
-        baked.polygon_mode  = StateMapping::polygonMode(state.polygonMode);
-        baked.cull_mode     = StateMapping::cullMode(state.cullMode);
-        baked.depth_test    = state.depth.test ? VK_TRUE : VK_FALSE;
-        baked.depth_write   = state.depth.write ? VK_TRUE : VK_FALSE;
-        baked.depth_compare = StateMapping::compareOp(state.depth.compare);
-        // A multi-attachment target never blends: its attachments hold data, not a surface (see BlendState).
-        baked.blend_enable  = color_attachments == 1U && state.blend.enabled;
-        baked.blend_src     = StateMapping::blendFactor(state.blend.src);
-        baked.blend_dst     = StateMapping::blendFactor(state.blend.dst);
-        return baked;
-    }
-
 
     [[nodiscard]] bool createHostBuffer(const VkDeviceSize size,
                                         const VkBufferUsageFlags usage,
@@ -801,12 +728,14 @@ struct ContentCaches::Impl {
         viewport.viewportCount = 1U;
         viewport.scissorCount  = 1U;
 
+        // EVERY RASTER ITEM IS DYNAMIC (see the dynamic list below): the static fields carry a valid neutral value the
+        // driver ignores. `depthBiasEnable` stays TRUE so `vkCmdSetDepthBias` is legal without re-enabling it per draw.
         VkPipelineRasterizationStateCreateInfo raster{};
         raster.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        raster.polygonMode             = key.raster.polygon_mode;
-        raster.cullMode                = key.raster.cull_mode;
+        raster.polygonMode             = VK_POLYGON_MODE_FILL;
+        raster.cullMode                = VK_CULL_MODE_NONE;
         raster.frontFace               = StateMapping::kFrontFace;
-        raster.depthBiasEnable         = VK_TRUE; // the bias VALUES are dynamic (vkCmdSetDepthBias)
+        raster.depthBiasEnable         = VK_TRUE;
         raster.depthBiasConstantFactor = 0.0F;
         raster.depthBiasSlopeFactor    = 0.0F;
         raster.lineWidth               = 1.0F;
@@ -819,22 +748,24 @@ struct ContentCaches::Impl {
         // single-sample and a multisampled target never share one compiled pipeline.
         multisample.rasterizationSamples = StateMapping::sampleCount(key.identity.compatibility.samples);
 
+        // The depth items are dynamic too (see the dynamic list): the static state is neutral and ignored.
         VkPipelineDepthStencilStateCreateInfo depth{};
         depth.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth.depthTestEnable  = key.raster.depth_test;
-        depth.depthWriteEnable = key.raster.depth_write;
-        depth.depthCompareOp   = key.raster.depth_compare;
+        depth.depthTestEnable  = VK_FALSE;
+        depth.depthWriteEnable = VK_FALSE;
+        depth.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
 
-        // EVERY COLOUR ATTACHMENT GETS THE SAME BLEND: one object's fragment writes them all, and an MRT target states
-        // blendEnable FALSE (its attachments hold data, not a surface - see BlendState).
+        // THE ATTACHMENT COUNT IS THE ONE STATIC FACT LEFT, because it is the blend state's array length (one entry per
+        // attachment the pass declares). Blend enable and the factors are DYNAMIC, so every entry carries the same
+        // neutral value; the count also reaches the recorder, which issues the per-attachment commands.
         std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_attachments);
         for (VkPipelineColorBlendAttachmentState& attachment : blend_attachments) {
-            attachment.blendEnable         = key.raster.blend_enable;
-            attachment.srcColorBlendFactor = key.raster.blend_src;
-            attachment.dstColorBlendFactor = key.raster.blend_dst;
+            attachment.blendEnable         = VK_FALSE;
+            attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
             attachment.colorBlendOp        = VK_BLEND_OP_ADD;
-            attachment.srcAlphaBlendFactor = key.raster.blend_src;
-            attachment.dstAlphaBlendFactor = key.raster.blend_dst;
+            attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
             attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
             attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         }
@@ -846,10 +777,23 @@ struct ContentCaches::Impl {
         // writes are discarded, which is what a shadow pass states by writing no colour).
         blend.pAttachments    = blend_attachments.empty() ? nullptr : blend_attachments.data();
 
-        const VkDynamicState dynamic_states[4]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS };
+        // THE ELEVEN DYNAMIC ITEMS, and the reason the key has no state: the four the recorder has always set
+        // (viewport, scissor, line width, depth bias) plus the five a Vulkan 1.2 device used to bake, which
+        // `VK_EXT_extended_dynamic_state` (`_state3` for polygon mode and blend) moves onto the command buffer.
+        const VkDynamicState dynamic_states[11]{ VK_DYNAMIC_STATE_VIEWPORT,
+                                                 VK_DYNAMIC_STATE_SCISSOR,
+                                                 VK_DYNAMIC_STATE_LINE_WIDTH,
+                                                 VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                                 VK_DYNAMIC_STATE_CULL_MODE_EXT,
+                                                 VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE_EXT,
+                                                 VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE_EXT,
+                                                 VK_DYNAMIC_STATE_DEPTH_COMPARE_OP_EXT,
+                                                 VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
+                                                 VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
+                                                 VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT };
         VkPipelineDynamicStateCreateInfo dynamic{};
         dynamic.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamic.dynamicStateCount = 4U;
+        dynamic.dynamicStateCount = 11U;
         dynamic.pDynamicStates    = dynamic_states;
 
         VkGraphicsPipelineCreateInfo info{};
@@ -907,7 +851,6 @@ struct ContentCaches::Impl {
      * @param compatibility     The target's pipeline compatibility (the key's shape half).
      * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
      * @param topology          The draw's effective topology (the SDK enum: the key carries it, the create-info maps it).
-     * @param raster            The state this device must bake (see RasterState).
      * @param color_attachments How many colour attachments the pass writes.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
@@ -919,7 +862,6 @@ struct ContentCaches::Impl {
                                                    const vn::graphics::RenderPassCompatibility& compatibility,
                                                    VkRenderPass                                          render_pass,
                                                    vn::graphics::Topology                                topology,
-                                                   const RasterState&                                    raster,
                                                    std::uint32_t                                         color_attachments,
                                                    vn::String&                                           why)
     {
@@ -934,7 +876,6 @@ struct ContentCaches::Impl {
         key.identity.variant       = variant.bits();
         key.identity.compatibility = compatibility;
         key.identity.topology      = topology;
-        key.raster                 = raster;
         for (const vn::graphics::GeometryChannel& channel : geometry.channels()) {
             if (channel.channel.empty()) {
                 continue;
@@ -1021,7 +962,6 @@ struct ContentCaches::Impl {
      * @param vertex            The compiled full-screen vertex stage (see `screen_vertex`).
      * @param compatibility     The destination's pipeline compatibility.
      * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
-     * @param raster            The state this device must bake (see RasterState).
      * @param color_attachments How many colour attachments the destination writes.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
@@ -1030,7 +970,6 @@ struct ContentCaches::Impl {
                                                   const ProgramEntry&                                   vertex,
                                                   const vn::graphics::RenderPassCompatibility& compatibility,
                                                   VkRenderPass                                          render_pass,
-                                                  const RasterState&                                    raster,
                                                   std::uint32_t                                         color_attachments,
                                                   vn::String&                                           why)
     {
@@ -1048,7 +987,6 @@ struct ContentCaches::Impl {
         key.identity.program       = vn::graphics::contentRefOf(fragment.description->id(), fragment.description->revision());
         key.identity.compatibility = compatibility;
         key.identity.topology      = vn::graphics::Topology::Triangles; // the canonical full-screen triangle
-        key.raster                 = raster;
 
         return buildPipeline(std::move(key),
                              vertex.vertex,
@@ -1153,11 +1091,12 @@ struct ContentCaches::Impl {
             }
         }
 
-        // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). The
-        // pipeline-relevant half selects the variant; the dynamic half is set when the draw is recorded.
+        // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). No item
+        // of it selects a pipeline any more: the recorder issues every one as a command (see ContentDraw).
         plan.resolved = vn::graphics::resolveRenderState(command.authored_state,
                                                          pass.state,
                                                          primitives[command.primitive_index].topology);
+        plan.color_attachments = color_attachments;
         vn::String pipeline_why;
         plan.pipeline = ensureContentPipeline(*compiled,
                                               *geometry,
@@ -1166,7 +1105,6 @@ struct ContentCaches::Impl {
                                               compatibility,
                                               render_pass,
                                               plan.resolved.topology,
-                                              pipelineStateOf(plan.resolved.state, color_attachments),
                                               color_attachments,
                                               pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
@@ -1248,12 +1186,12 @@ struct ContentCaches::Impl {
         vn::graphics::PassRenderState screen_state = pass.state;
         screen_state.depth                         = vn::graphics::DepthPolicy::Disabled;
         plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, screen_state, vn::graphics::Topology::Triangles);
+        plan.color_attachments = color_attachments;
         vn::String pipeline_why;
         plan.pipeline = ensureScreenPipeline(*fragment,
                                              *vertex,
                                              compatibility,
                                              render_pass,
-                                             pipelineStateOf(plan.resolved.state, color_attachments),
                                              color_attachments,
                                              pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {

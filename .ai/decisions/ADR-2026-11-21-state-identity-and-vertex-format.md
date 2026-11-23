@@ -91,3 +91,12 @@ backends do. Four statements were false or unenforceable:
   observable.
 - `ContentPipelineKey`/`RasterState` are backend-private types; no host-visible signature changed, and no
   `[[deprecated]]` alias is kept (the module promises no source stability, `graphics-frame-pipeline.md` 1.3).
+
+## Amendment 2026-11-23 - the `RasterState` half is superseded
+
+`T54` raised vk's floor to `VK_EXT_extended_dynamic_state` / `_state2` / `_state3` and deleted
+`ContentPipelineKey::RasterState`: the five items this record made part of vk's private key are dynamic state now, so a
+state change compiles nothing. What remains of the record is its other half - identity carries the FORMAT, and a
+backend states what it bakes; "a backend below the floor bakes" is no longer vk's case, and a device without those
+extensions is refused (`vk.init.dynamic_state_missing`). The current rule is `graphics-rendering.md` 2.10 (`BC-37`)
+and [ADR-2026-11-23](ADR-2026-11-23-retiring-the-reference-backend.md) D4.

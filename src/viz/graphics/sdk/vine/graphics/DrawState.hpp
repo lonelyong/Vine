@@ -30,11 +30,9 @@
  *     this is why a host's state change costs a command instead of a pipeline.
  *   - DATA (InstanceRecord): per-frame values written into a buffer, plus the material reference.
  * - WHICH ITEMS REACH IDENTITY IS THE DEVICE'S ANSWER, AND THE HEADER SAYS SO. `DynamicState` is the state
- *   the ENGINE can move off identity; whether an item really travels as a command depends on the API floor,
- *   because Vulkan 1.0/1.1 (and a 1.2 device without VK_EXT_extended_dynamic_state) can only BAKE cull,
- *   polygon mode, depth test/write/compare and blend. The contract is therefore: a backend MUST move every
- *   item its device can move off identity, and MUST state which ones it bakes. vsg (an EDS3 floor) moves all
- *   of them; vk (a 1.2 floor) bakes those five in its own key extension (`ContentPipelineKey`).
+ *   the ENGINE can move off identity; whether an item really travels as a command depends on the API floor of the
+ *   backend that serves the device. The contract is therefore: a backend MUST move every item its device can move off
+ *   identity, and MUST state which ones it bakes (a key extension that carries them is where it states it).
  * - Both historical failure families are the same mistake in two directions: a host state change that
  *   recompiled a pipeline (something dynamic had leaked into the identity key), and a resize that rebuilt
  *   every full-screen program slot (an extent had leaked into one). Splitting the layers is not tidiness; it

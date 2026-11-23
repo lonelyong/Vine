@@ -13,7 +13,7 @@
 
 | 后端 | 注册名 | 插件 | 定位 | 平台 | 设备下限 |
 | --- | --- | --- | --- | --- | --- |
-| 直连 Vulkan | `vk` | `gfx_backend_vk` | **生产后端、最终替代 vsg**（[ADR-2026-11-14](../../.ai/decisions/ADR-2026-11-14-vk-becomes-the-default-target.md)） | Linux/X11、Win32 | Vulkan 1.2（多采样深度 resolve 用 1.2 的 `vkCreateRenderPass2`） |
+| 直连 Vulkan | `vk` | `gfx_backend_vk` | **生产后端、最终替代 vsg**（[ADR-2026-11-14](../../.ai/decisions/ADR-2026-11-14-vk-becomes-the-default-target.md)） | Linux/X11、Win32 | Vulkan 1.2 接口 + `VK_EXT_extended_dynamic_state` / `_state2` / `_state3`（**必需**：cull / 深度 / 多边形 / 混合是动态状态，缺即拒绝初始化并报 `vk.init.dynamic_state_missing`） |
 | VulkanSceneGraph | `vsg` | `gfx_backend_vsg` | **参考实现 + 逐字节对拍的另一端**；能力齐全，但不作为切换目标 | Linux/X11、Win32 | Vulkan 1.4（`DeviceRequirements` 在会话建立时检查） |
 
 * 两个后端都实现 `vn::graphics::RenderBackend`，宿主经 `RenderBackendRegistry::create(name, desc)` 按名创建，

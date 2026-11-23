@@ -2603,6 +2603,9 @@ bool Device::initialize()
     //    so a 1.3 device needs no extension for it. A device with neither reports NO answer, never a zero.
     bool has_swapchain = false;
     bool has_creation_feedback = properties.apiVersion >= VK_API_VERSION_1_3;
+    bool has_extended_dynamic_state  = false;
+    bool has_extended_dynamic_state2 = false;
+    bool has_extended_dynamic_state3 = false;
     {
         std::uint32_t                      available = 0;
         std::vector<VkExtensionProperties> extensions;
@@ -2618,6 +2621,15 @@ bool Device::initialize()
             }
             if (std::strcmp(extension.extensionName, "VK_EXT_pipeline_creation_feedback") == 0) {
                 has_creation_feedback = true;
+            }
+            if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME) == 0) {
+                has_extended_dynamic_state = true;
+            }
+            if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME) == 0) {
+                has_extended_dynamic_state2 = true;
+            }
+            if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME) == 0) {
+                has_extended_dynamic_state3 = true;
             }
         }
     }
@@ -2638,6 +2650,49 @@ bool Device::initialize()
         device_extension_names.push_back("VK_EXT_pipeline_creation_feedback");
     }
     impl->creation_feedback = has_creation_feedback;
+
+    // THE RASTER FLOOR (`T54`, `ADR-2026-11-23` D4): cull, polygon mode, depth test/write/compare and blend are
+    // DYNAMIC state, so they are no longer part of a pipeline's identity and a state change costs commands instead of
+    // a compile. That is only possible on a driver that implements the three extensions, so they are REQUIRED: a
+    // device without them would have to bake silently (there is no second path any more) and the picture would be
+    // wrong in a way no test could name. The refusal names what was missing instead.
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT  dynamic_state_available{};
+    dynamic_state_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state3_available{};
+    dynamic_state3_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
+    VkPhysicalDeviceFeatures2 dynamic_state_query{};
+    dynamic_state_query.sType     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    dynamic_state_query.pNext     = &dynamic_state_available;
+    dynamic_state_available.pNext = &dynamic_state3_available;
+    vkGetPhysicalDeviceFeatures2(impl->physical, &dynamic_state_query);
+    const bool dynamic_raster_floor = has_extended_dynamic_state && has_extended_dynamic_state2 && has_extended_dynamic_state3 &&
+                                      dynamic_state_available.extendedDynamicState == VK_TRUE &&
+                                      dynamic_state3_available.extendedDynamicState3PolygonMode == VK_TRUE &&
+                                      dynamic_state3_available.extendedDynamicState3ColorBlendEnable == VK_TRUE &&
+                                      dynamic_state3_available.extendedDynamicState3ColorBlendEquation == VK_TRUE;
+    if (!dynamic_raster_floor) {
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.dynamic_state_missing",
+                                          u8"vk: this backend needs VK_EXT_extended_dynamic_state / _state2 / _state3 with polygon mode "
+                                          u8"and colour blend (cull / depth / polygon / blend are dynamic state), and this device does "
+                                          u8"not offer them"));
+        shutdown();
+        return false;
+    }
+    device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+    device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
+    device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT dynamic_state_enable{};
+    dynamic_state_enable.sType                = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    dynamic_state_enable.extendedDynamicState = VK_TRUE;
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state3_enable{};
+    dynamic_state3_enable.sType                                  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
+    dynamic_state3_enable.extendedDynamicState3PolygonMode       = VK_TRUE;
+    dynamic_state3_enable.extendedDynamicState3ColorBlendEnable  = VK_TRUE;
+    dynamic_state3_enable.extendedDynamicState3ColorBlendEquation = VK_TRUE;
+    dynamic_state_enable.pNext = &dynamic_state3_enable;
+    device_info.pNext          = &dynamic_state_enable;
     if (!device_extension_names.empty()) {
         device_info.enabledExtensionCount   = static_cast<std::uint32_t>(device_extension_names.size());
         device_info.ppEnabledExtensionNames = device_extension_names.data();

@@ -26,6 +26,7 @@ vk.init.instance_failed          — vkCreateInstance refused: the loader is the
 vk.init.no_device                — the machine lists no usable physical device (none at all, or the loader could not list them)
 vk.init.no_queue                 — a physical device exists but none serves a graphics queue (plus present, when a window was asked for)
 vk.init.device_failed            — vkCreateDevice refused: the driver would not serve this feature/extension set
+vk.init.dynamic_state_missing    — the device lacks VK_EXT_extended_dynamic_state / _state2 / _state3 (polygon mode, colour blend): this backend moves cull / depth / polygon / blend off the pipeline, so it cannot serve one
 vk.init.command_machinery_failed — the command pool or the frame fence could not be created: the session cannot drive frames
 vk.init.memory_pool_failed       — the device memory pool could not be opened (see the memory report beside it)
 vk.init.content_pool_failed      — the content layouts / descriptor pool could not be created: this device cannot draw

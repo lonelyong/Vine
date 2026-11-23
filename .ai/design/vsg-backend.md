@@ -300,7 +300,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 | N1 | The backend does not reorder passes, build its own dependency graph or report cycles. |
 | N2 | The physical boundary: the SDK's shared mechanisms do not include vsg. |
 | N3 | The platform facts (1.4, no dynamic rendering, Reverse-Z) are not negotiable. |
-| N4 | A frame's change detection compares only the (identity, revision) key and **never content bytes or values**; material values, stream bytes and dynamic state always travel on the DATA / DYNAMIC channels. A matrix, viewport, opacity, material value, cull, blend or extent appearing in a key is a defect (`DrawState.hpp`'s audit table + tests). **This is the vsg rule because this backend's floor has `VK_EXT_extended_dynamic_state`/`_state3`; vk (a 1.2 floor) bakes cull/polygon/depth/blend and says so in `ContentPipelineKey` - `DrawState.hpp` states the shared rule as "move off identity what the device can move".** |
+| N4 | A frame's change detection compares only the (identity, revision) key and **never content bytes or values**; material values, stream bytes and dynamic state always travel on the DATA / DYNAMIC channels. A matrix, viewport, opacity, material value, cull, blend or extent appearing in a key is a defect (`DrawState.hpp`'s audit table + tests). **Both backends move them (`T54`, 2026-11-23): vk's floor rose to `VK_EXT_extended_dynamic_state`/`_state3`, so the rule is the SHARED one with no exception - `DrawState.hpp` states it once: move off identity what the device can move.** |
 
 ## 6. Caveats and Traps
 

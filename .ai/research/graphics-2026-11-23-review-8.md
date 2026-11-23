@@ -491,6 +491,25 @@ Four batches; R0–R2 pay for themselves even if the retirement never happens, R
 - **Still open**: `P4` (shader source language), deferred by the owner on 2026-11-23 - the ADR states why it is
   separable; and R3, the deletion itself, whose trigger is unchanged.
 
+### 5.5 T54 landed 2026-11-23: the floor rose and the pipeline key lost its state half (R3 step 1)
+
+- `gfx_backend_vk` REQUIRES `VK_EXT_extended_dynamic_state` / `_state2` / `_state3` (with the polygon-mode and
+  colour-blend features) and refuses `initialize` with `vk.init.dynamic_state_missing` without them. `RasterState` and
+  `pipelineStateOf` are deleted; `ContentPipelineKey` is the seam's `PipelineKey` alone; the eleven dynamic states are
+  declared where the pipeline is built, and the nine commands are issued by one recorder helper
+  (`ContentDraw`'s `recordRasterState`, which also carries the "a multi-attachment target never blends" rule).
+- `FrameHead::DrawPlan` carries `color_attachments`, because the blend commands are per attachment and the recorder no
+  longer receives the pass' count.
+- Witnesses, mutation-proofed: `VkContentTargetTest` now records a filled frame first, then a wireframe one - fewer
+  painted pixels and NO new pipeline (removing `vkCmdSetPolygonModeEXT` made it 1024 vs 1024, red); the new
+  `VkContentDrawTest.AStateChangeIsACommandNotAPipeline` blends (127/128) and then replaces (0/255) with the pipeline
+  count unmoved (removing `vkCmdSetColorBlendEnableEXT` turned the mix into a replace, red).
+- Documents: `vk-backend.md` F5 / §9.1 / §9.2 / §9.3, `graphics-rendering.md`'s key paragraphs plus a `BC-37`
+  migration note, `vsg-backend.md`'s `N4`, the user page's floor row, `T54` deleted and `T60` restated, and dated
+  amendments appended to `ADR-2026-11-21` (its `RasterState` half is superseded) and `ADR-2026-11-23` (D4 step 1).
+- Counts: `test_vk` **176** / 42, `test_vsg` **576** / 83, `test_graphics` **639** / 81. Remaining in the batch:
+  `T11` (dynamic rendering), `T58` (alpha-to-coverage), the deletion itself.
+
 ## 6. Backlog candidates (listed for approval; not added)
 
 - **T61 - Stability before the deletion.** Golden-ize `BackendParityTest`'s assertions, add the capabilities

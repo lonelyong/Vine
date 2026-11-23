@@ -48,6 +48,7 @@
 #include <vine/math/Vector3.hpp>
 
 #include <vine/backend_vk/internal/ContentDraw.hpp>
+#include <vine/backend_vk/internal/Device.hpp>
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 
 #include "PlanTestSupport.hpp"
@@ -825,6 +826,90 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     EXPECT_EQ(centre[2], 0);
     // Alpha is blended with the SAME factors (BlendState states one pair): 0.5 * 0.5 + 1.0 * 0.5 = 0.75.
     EXPECT_LE(std::abs(centre[3] - 191), 2);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}
+
+TEST(VkContentDrawTest, AStateChangeIsACommandNotAPipeline)
+{
+    // `T54`: cull / polygon / depth / blend are DYNAMIC state, so ONE compiled pipeline serves both pictures and the
+    // second frame issues commands instead of compiling a variant. The pixel is what proves the command ran: with
+    // blend the second draw mixes over the first (127 / 128 / 191), without it the second draw REPLACES it
+    // (0 / 255 / 128, the fragment's own output).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kAlphaFragment);
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const intrusive_ptr<Material>      green    = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+    auto* device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const auto drawOnce = [&](bool blend) {
+        DrawItem first(geometry, nullptr, vn::math::Mat4d{});
+        first.program              = program;
+        first.program_description  = program->description();
+        first.material             = red;
+        first.material_description = red->description();
+
+        DrawItem second(geometry, nullptr, vn::math::Mat4d{});
+        second.program              = program;
+        second.program_description  = program->description();
+        second.material             = green;
+        second.material_description = green->description();
+        second.opacity              = 0.5F;
+        if (blend) {
+            RenderState authored;
+            authored.blend = vn::graphics::BlendState{ true, vn::graphics::BlendFactor::SrcAlpha, vn::graphics::BlendFactor::OneMinusSrcAlpha };
+            second.authored_state = authored;
+        }
+
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        commands->push_back(std::move(first));
+        commands->push_back(std::move(second));
+
+        DrawPacket draw;
+        draw.kind       = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands   = commands;
+
+        FrameDescription frame;
+        FrameDescription::Pass entry;
+        entry.pass  = vn::test::framePassForTest();
+        PassRenderState state;
+        state.depth = DepthPolicy::Disabled;
+        PassDraw pass;
+        pass.target       = target.get();
+        pass.clear        = ClearPolicy{};
+        pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.state        = state;
+        pass.packets.push_back(std::move(draw));
+        entry.draw = std::move(pass);
+        frame.passes.push_back(std::move(entry));
+        backend->executeFrame(frame);
+
+        std::vector<std::uint8_t> pixels;
+        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+        return pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
+    };
+
+    const std::array<int, 4> blended = drawOnce(true);
+    EXPECT_LE(std::abs(blended[0] - 127), 2) << "blend was not applied";
+    EXPECT_LE(std::abs(blended[1] - 128), 2) << "the blended draw's green did not reach the pixel";
+    const std::uint64_t pipelines_after_blend = device->contentPipelines();
+
+    const std::array<int, 4> replaced = drawOnce(false);
+    EXPECT_EQ(replaced[0], 0) << "blend stayed on: the second draw did not replace the first";
+    EXPECT_EQ(replaced[1], 255) << "the second draw's green did not replace the first";
+    EXPECT_EQ(device->contentPipelines(), pipelines_after_blend)
+        << "turning blend off is a command, not a pipeline variant (T54)";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);

@@ -238,3 +238,13 @@ Four obligations only an OUTSIDE owner exposes, and where each lands now:
 - **ABI surface**: `RenderDevice.hpp` - 19 virtual verbs, 5 pure.
 - **The T15 precedent** (one backend's internals are not the seam): `7b883904`, review 8 §5.3.
 - **The stale-plugin incident** (why `T65` exists): review 8 §2.2, `tests/test_vsg`'s plugin segfault of 2026-11-23.
+
+## Amendment 2026-11-23 - D4 step 1 landed
+
+`T54` is in: the floor is EDS1 + EDS3, `ContentPipelineKey::RasterState` is deleted, the five items are commands in
+`recordRasterState`, and a device without the three extensions is refused with `vk.init.dynamic_state_missing`.
+Witnesses that fail when the commands are removed: `VkContentTargetTest` (a wireframe paints fewer pixels than the
+filled frame AND creates no pipeline - dropping `vkCmdSetPolygonModeEXT` made both red at 1024 vs 1024) and
+`VkContentDrawTest.AStateChangeIsACommandNotAPipeline` (blend on/off, pixel-checked, no compile - dropping
+`vkCmdSetColorBlendEnableEXT` turned the mix into a replace). `test_vk` 176 cases / 42 suites, `test_vsg` 576,
+`test_graphics` 639. Steps 2-4 (`T11`, `T58`, the deletion) remain.

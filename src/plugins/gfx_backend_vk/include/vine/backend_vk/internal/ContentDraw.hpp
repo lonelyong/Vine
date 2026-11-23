@@ -114,9 +114,10 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - Must run INSIDE the render pass that names the target, because it records drawing commands. Everything it
      *   draws with arrives as the frame head's plans: this call creates nothing, uploads nothing and takes no lock.
      * - The viewport is the pass' rectangle, or the whole of the target when the pass states none.
-     * - The STATE was resolved per command (`resolveRenderState`) when the plan was made: topology, cull/front face,
-     *   polygon mode, depth test/write/compare (reverse-Z), blend and polygon offset selected the pipeline, while line
-     *   width, depth bias values and the viewport are dynamic; the point size travels in the draw block. A
+     * - The STATE was resolved per command (`resolveRenderState`) when the plan was made, and EVERY item of it is a
+     *   command here: cull/front face, polygon mode, depth test/write/compare (reverse-Z), blend enable and factors,
+     *   line width, depth bias values and the viewport. No item selects a pipeline any more, so a state change
+     *   compiles nothing (`T54`); the topology does select it, and the point size travels in the draw block. A
      *   multi-attachment target never blends (its attachments hold data, not a surface - see BlendState).
      * - Each command's material values are packed into the material block; the resolved slots bind their uploaded
      *   views, and an absent one binds the 1x1 white fallback with its slot bit clear. The draw's announced lights are
@@ -163,8 +164,8 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   ShadowSource) the REAL map and a block packed for this call are bound - a full-screen pass that shades is exactly
      *   where the sun's shadow has to arrive; with no map the white stand-in and the zeroed block are bound, which is
      *   the engine's own "no shadow reaches this pass".
-     * - The pass' state selects the pipeline the same way a content draw's does (reverse-Z, culling, blend); a
-     *   full-screen draw writes its rectangle, and a multi-attachment target never blends (the content rule).
+     * - The pass' state becomes commands exactly as a content draw's does (reverse-Z, culling, blend - all dynamic);
+     *   a full-screen draw writes its rectangle, and a multi-attachment target never blends (the content rule).
      * - The source's images must already be in `SHADER_READ_ONLY_OPTIMAL`: the device records that transition before
      *   the destination's render pass begins, where an image barrier is unambiguously allowed.
      *

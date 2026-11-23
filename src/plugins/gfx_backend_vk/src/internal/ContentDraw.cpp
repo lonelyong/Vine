@@ -39,6 +39,59 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 }
 
 /**
+ * @brief Records the dynamic state one draw's resolved state asks for (see ContentCaches' dynamic-state list).
+ *
+ * @details
+ * - ONE PLACE, TWO CALLERS: the content path and the full-screen path issue the same nine commands. `T54` is what
+ *   moved them here - on a Vulkan 1.2 device cull, polygon mode, depth test/write/compare and blend were baked into
+ *   the pipeline, so two passes with different states compiled twice; now they are commands, and a state change
+ *   neither compiles nor enters a cache (`G10`).
+ * - THE MULTI-ATTACHMENT RULE STAYS ONE RULE: blend is enabled only for a single colour attachment, because an MRT
+ *   target's attachments hold data, not a surface (see BlendState). It lives here now that blend is a command.
+ * - NOTHING IS ALLOCATED: the per-attachment arrays are fixed-size (the record path's allocation ceiling says so),
+ *   and a target wider than one chunk loops.
+ *
+ * @param table             The device table to record through.
+ * @param commands          The command buffer being recorded (inside the render pass).
+ * @param state             The state `resolveRenderState` produced for this draw.
+ * @param color_attachments How many colour attachments the pass writes (0 for a depth-only pass).
+ */
+void recordRasterState(const VolkDeviceTable&                   table,
+                       VkCommandBuffer                          commands,
+                       const vn::graphics::ResolvedRenderState& state,
+                       std::uint32_t                            color_attachments) noexcept
+{
+    table.vkCmdSetPolygonModeEXT(commands, StateMapping::polygonMode(state.polygonMode));
+    table.vkCmdSetCullModeEXT(commands, StateMapping::cullMode(state.cullMode));
+    table.vkCmdSetDepthTestEnableEXT(commands, state.depth.test ? VK_TRUE : VK_FALSE);
+    table.vkCmdSetDepthWriteEnableEXT(commands, state.depth.write ? VK_TRUE : VK_FALSE);
+    table.vkCmdSetDepthCompareOpEXT(commands, StateMapping::compareOp(state.depth.compare));
+    if (color_attachments == 0U) {
+        return; // a depth-only pass has no attachment to blend into
+    }
+    constexpr std::uint32_t kChunk = 8U;
+    VkColorBlendEquationEXT equations[kChunk]{};
+    for (VkColorBlendEquationEXT& equation : equations) {
+        equation.srcColorBlendFactor = StateMapping::blendFactor(state.blend.src);
+        equation.dstColorBlendFactor = StateMapping::blendFactor(state.blend.dst);
+        equation.colorBlendOp        = VK_BLEND_OP_ADD;
+        equation.srcAlphaBlendFactor = StateMapping::blendFactor(state.blend.src);
+        equation.dstAlphaBlendFactor = StateMapping::blendFactor(state.blend.dst);
+        equation.alphaBlendOp        = VK_BLEND_OP_ADD;
+    }
+    const VkBool32 blend_enabled = color_attachments == 1U && state.blend.enabled ? VK_TRUE : VK_FALSE;
+    for (std::uint32_t first = 0; first < color_attachments; first += kChunk) {
+        const std::uint32_t count = std::min(kChunk, color_attachments - first);
+        VkBool32            flags[kChunk]{};
+        for (std::uint32_t index = 0; index < count; ++index) {
+            flags[index] = blend_enabled;
+        }
+        table.vkCmdSetColorBlendEnableEXT(commands, first, count, flags);
+        table.vkCmdSetColorBlendEquationEXT(commands, first, count, equations);
+    }
+}
+
+/**
  * @brief Folds the SDK's clip space into the device's: y down, and z into the [0, 1] reverse-Z range.
  *
  * @details
@@ -334,6 +387,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         const vn::graphics::DynamicState dynamic = vn::graphics::resolveDynamicState(resolved);
         caches.table().vkCmdSetLineWidth(commands, std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit()));
         caches.table().vkCmdSetDepthBias(commands, dynamic.polygon_offset.units, 0.0F, dynamic.polygon_offset.factor);
+        // The rest of the resolved state: cull, polygon mode, depth test/write/compare and blend. These used to be
+        // pipeline VARIANT bits on a 1.2 device; they are commands now (T54), so a state change compiles nothing.
+        recordRasterState(caches.table(), commands, plan.resolved.state, plan.color_attachments);
         const VkDescriptorSet sets[2]{ content_set, draw_set };
         // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets: material (0), lights
         // (6) and the shadow block (8) of set 0, then the draw block (0) of set 1.
@@ -514,6 +570,8 @@ std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                     
     // command buffer the values too - zero is "no offset", whatever the pass' state says: this draw is the
     // canonical triangle at the far plane.
     caches.table().vkCmdSetDepthBias(commands, 0.0F, 0.0F, 0.0F);
+    // The same nine state commands the content path issues, from the plan's resolved state (T54).
+    recordRasterState(caches.table(), commands, plan.resolved.state, plan.color_attachments);
     // The screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
     const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + scratch.lightsOffset()),
                                      static_cast<std::uint32_t>(slice + scratch.shadowOffset()) };

@@ -170,6 +170,18 @@ family answers.
 - The rule that decided it is in `graphics-architecture.md` 2.15: a fact only one API family can answer stays off the
   public surface, and the other half of the rule is that a promise a host can observe keeps ONE implementation.
 
+**2026-11-23, `T54`: vk's floor rose, and the pipeline key lost its state half** (`BC-37`; `ADR-2026-11-23` D4).
+`gfx_backend_vk` now REQUIRES `VK_EXT_extended_dynamic_state` / `_state2` / `_state3` (polygon mode and colour blend
+included) and refuses `initialize` with `vk.init.dynamic_state_missing` without them; its private
+`ContentPipelineKey` is the seam's `PipelineKey` alone, and cull / polygon / depth test / write / compare / blend are
+commands issued by `recordRasterState`.
+
+- What a host must change: nothing on a driver that offers the three extensions. On a Vulkan 1.2 device without them
+  the backend now answers a diagnostic at `initialize` instead of drawing - the alternative was a silent wrong
+  picture, because there is no second (baking) path any more.
+- What a backend author must know: identity holds the PROGRAM and the pass SHAPE, never a state a `vkCmdSet*` can move.
+  The rule now has no exception, because `RasterState` was the only one.
+
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
 
@@ -181,16 +193,16 @@ family answers.
 - `DynamicState` is the maximum the ENGINE can move off identity (`graphics-rendering.md` 2.8 lists how it is
   delivered). `DrawState.hpp` states the rule the two layers follow: a backend must move every item its device CAN
   off identity and must say which ones it cannot.
-- **vk (a Vulkan 1.2 floor, the host's default)** cannot set cull / polygon mode / depth test / write / compare /
-  blend dynamically, so it bakes exactly those five: its key is
-  `ContentPipelineKey { vn::graphics::PipelineKey identity; RasterState raster; }` (composition, so a field added
-  to the shared key is in vk's identity by construction). **vsg (an EDS3 floor)** moves all of them, and its one
-  dynamic-state list lives next to its writer (`support/VsgDynamicState.*`).
+- **vk (the host's default)** moves every one of them too: its key is `ContentPipelineKey` and nothing else, and the
+  commands live in one recorder helper (`recordRasterState`). It got there on 2026-11-23 (`T54`): the floor rose to
+  `VK_EXT_extended_dynamic_state`/`_state3`, which is what makes a separate raster half disappear. **vsg (an EDS3
+  floor)** had moved them all along, with its one dynamic-state list next to its writer (`support/VsgDynamicState.*`).
 - The witness that "one list" has teeth is `../bugs/vsg-depth-bias-not-declared-dynamic.md`: a second copy of the
   list without `DEPTH_BIAS`, plus a pipeline without the `depthBiasEnable` switch, made `setPolygonOffset` a silent
   no-op (fixed 2026-11-21).
-- Revisit: when no consumer needs a 1.2-class device, vk can move to EDS1/EDS3 and `RasterState` disappears
-  (backlog `T54`).
+- The price of `T54`, stated: no in-tree backend exercises a Vulkan 1.2-class device any more, so the seam is proven on
+  devices that can move these states. The next cross-family reader (D3D12) replaces that reading, and a 1.2 device
+  without the extensions is refused rather than served a different picture (`BC-37`).
 
 ## 3. Features
 
