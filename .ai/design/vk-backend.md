@@ -62,7 +62,8 @@ and every cache has a witness a test can read.**
   the only door that hands `Vk*` out (to tests / tools).
 - **Why**: `G1` (each concept in its place) + `G2` (dependencies point one way: `internal` → SDK → `base`, and `shell` does not depend back on Vulkan types). It also makes
   "replace vk with another implementation" a plugin swap rather than an SDK change.
-- **Boundary**: `scripts/check_vk_exposure.py` is the gate (V2 the SDK's backend face, V4 the plugin shell, E1 the frame path, E2 the seam-free low-level units) and it
+- **Boundary**: `scripts/check_vk_exposure.py` is the gate (V2 the SDK's backend face, V4 the plugin shell, V5 the SDK's prose, V6 the
+  plugin-internal unit names, E1 the frame path, E2 the seam-free low-level units) and it
   runs with ctest.
 - **The low-level half**: `MemoryAllocator`, `PipelineCacheFile`, `WindowSystem`, `ReadbackStaging` and `Handles` **do not include `vine/graphics` at all**
   (~2.0k lines) — they are candidates for "a tool may use them without the seam", and E2 pins exactly that. No **external** consumer uses them today (`G8`), so they are
@@ -487,8 +488,13 @@ and every cache has a witness a test can read.**
 - **Behaviour**: `MemoryAllocator` creates `VkDeviceMemory` blocks per memory type, resources hold a `MemorySlice{memory, offset, size, block}` and bind by offset;
   `MemoryUsage` decides the type (host-visible forces coherent), `MemoryKind` carries `bufferImageGranularity`; a release merges with the adjacent free run; a wholly
   empty block is destroyed when another block of the same kind exists; a host-visible block is mapped once as a whole.
+- **The pool's byte account is the host's memory figure**: five numbers from `MemoryStats` (`used_bytes` / `reserved_bytes` / `peak_used_bytes` / `free_bytes` /
+  `largest_free_run`) travel in `FrameReport::memory` (`DeviceMemory`) whenever the device is up, gated by `Features::Feature::MemoryUsage`; they are the pool's own
+  bookkeeping - **not** the whole VRAM as the driver sees it, and **not** the frame's traffic (`FrameUploads`) - while the block / slice counters stay the snapshot's
+  witness in `Device::memoryStats()`. A device that is down leaves the part disengaged rather than answering zeros.
 - **Constraints**: `C6`, `N4`.
-- **Acceptance**: `VkMemoryPoolTest.*` (6 targets = 12 slices ≤ 2 blocks; a steady-state frame allocates nothing; a readback gives its bytes back; shutdown reaches zero),
+- **Acceptance**: `VkMemoryPoolTest.*` (6 targets = 12 slices ≤ 2 blocks; a steady-state frame allocates nothing; a readback gives its bytes back; shutdown reaches zero;
+  `ThePoolsByteFiguresReachTheHostsFrameReport` - the five figures cross into `FrameReport::memory` and agree with `memoryStats()` on every one),
   `VkMemoryAllocatorTest.*` (adjacent merging; linear / optimal do not share a page).
 - **Caveat**: `P7` (whether it can be mapped depends on the memory type; the pool opens before the first consumer of memory).
 
@@ -535,7 +541,8 @@ and every cache has a witness a test can read.**
 
 ### 3.1.14 F14 Reports and diagnostics
 
-- **Behaviour**: `frameReport()` gathers one frame's counters, progress, uploads and timings; `prepareFrame` answers a `PrepareReport`; driver messages and backend
+- **Behaviour**: `frameReport()` gathers one frame's counters, progress, uploads and timings, plus the pool's byte account (a now-fact, not a frame fact);
+  `prepareFrame` answers a `PrepareReport`; driver messages and backend
   refusals take the same diagnostic route; every condition has one `ReportOnce`.
 - **Constraints**: `R3`, `R4`.
 - **Acceptance**: `BackendTest`, `ContentDrawTest`'s diagnostic-count assertions.
@@ -565,7 +572,7 @@ and every cache has a witness a test can read.**
 | `capabilities()` | reports only what is actually enabled | §2.8 |
 | `handles()` | the escape hatch's value (inside the plugin) | F15 |
 | `contentPipelines()` / `contentCacheCounters()` | the cost model's witnesses (pipeline count, ring / set) | §2.4 |
-| `memoryStats()` / `pipelineCacheReport()` | the pool's and the cache's witnesses | F10 / F12 |
+| `memoryStats()` / `pipelineCacheReport()` | the pool's and the cache's witnesses; the pool's five byte figures also reach the host in `FrameReport::memory` | F10 / F12 |
 
 The full signatures and per-parameter contracts are in `include/vine/backend_vk/internal/Device.hpp`.
 
@@ -793,7 +800,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 |---|---|---|
 | T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 174 cases / 42 suites on 2026-11-23); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
-| T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / E1 / E2, `scripts/check_vk_exposure.py`) |
+| T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
 | T5 | validation is silent | in those runs `diagnosticCount(InitFailed)` and the layer count are 0 |
 | T6 | a real host | `VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=48 ./Vine --open demo`: median ≈ 8.2 ms, 11 passes / 10 draws, no `vk:` diagnostic |

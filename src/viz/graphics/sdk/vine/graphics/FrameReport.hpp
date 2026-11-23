@@ -165,14 +165,43 @@ struct VN_GRAPHICS_API FrameLocking {
 };
 
 /**
+ * @brief What the device's memory POOL holds, as the backend accounts it (see FrameReport::memory).
+ *
+ * @details
+ * - WHAT IT ANSWERS: "how much memory is this device holding for me" - the pool's own byte account, which is what a
+ *   HUD, a budget gate or a trim decision reads (see Features::MemoryUsage for the branch that comes first).
+ * - IT IS THE WHOLE-DEVICE FIGURE, and that is why it is not the ledger: `RetentionStats::residency` counts entries
+ *   per kind and totals no bytes (see `ResidencyLedger::live`), because no GPU API reports the memory a compiled
+ *   pipeline occupies - a per-kind byte total could never include `Programs` while looking complete.
+ * - WHAT IT IS NOT: not the whole VRAM as the driver sees it (another process may hold the rest, and Vulkan has no
+ *   universal budget query), and not this frame's traffic (that is FrameUploads).
+ * - `reserved_bytes` is what the pool ASKED THE DRIVER FOR (the blocks it allocated), `used_bytes` what live
+ *   resources hold of those blocks; the difference is the pool's slack - alignment rounding, the tail of a block
+ *   nobody has reached, blocks kept warm after a release.
+ * - `free_bytes` and `largest_free_run` are the room the pool still has, the pair an out-of-memory report needs to be
+ *   actionable: a refusal while both are non-zero means the room is too SHREDDED for the request, so releasing one
+ *   big resource helps and releasing small ones may not.
+ * - ABSENT IS NOT ZERO, like every part of FrameReport: a backend that keeps no account, and a device that is not up,
+ *   leave `FrameReport::memory` disengaged rather than answering zeros that would read as "nothing is resident".
+ */
+struct VN_GRAPHICS_API DeviceMemory {
+    std::uint64_t used_bytes{ 0 };       ///< Bytes live resources hold, NOW.
+    std::uint64_t reserved_bytes{ 0 };   ///< Bytes the pool holds NOW; never below @ref used_bytes.
+    std::uint64_t peak_used_bytes{ 0 };  ///< The high-water mark of @ref used_bytes since the device came up.
+    std::uint64_t free_bytes{ 0 };       ///< Every free range in the pool summed.
+    std::uint64_t largest_free_run{ 0 }; ///< The largest single free range; never above @ref free_bytes.
+};
+
+/**
  * @brief What a backend can say about its frames, as ONE answer (see RenderFrameExecutor::frameReport).
  *
  * @details
  * - ONE QUESTION, ONE VALUE. The three parts used to be three calls with three out-parameters and three bools, so a
  *   host asking "how is it going" made three calls and kept three "did it answer" flags beside them - and a caller
  *   that stopped after the second could not tell whether the third had been written. They are one value because they
- *   describe the same thing from three distances: the frame that just ENDED (FrameCounters), what is RETAINED and
- *   what it cost to let go (RetentionStats), and where the clock is (FrameProgress).
+ *   describe one backend from its own distances: the frame that just ENDED (FrameCounters, FrameUploads, FrameTiming,
+ *   FrameLocking), what is RETAINED and what it cost to let go (RetentionStats), where the clock is (FrameProgress),
+ *   and what the device's memory pool HOLDS (DeviceMemory).
  * - ABSENT IS NOT ZERO - that is why every part is optional. "This backend keeps no such number" and "it keeps it,
  *   and the number is 0" are different answers: an unmeasured frame must not read like an empty one, and a clock that
  *   is not kept must not read as "nothing in flight". Zeros would be a claim; a disengaged part is the silence, and
@@ -187,6 +216,7 @@ struct VN_GRAPHICS_API FrameReport {
     std::optional<FrameUploads>   uploads;   // What the frame that just ended added and dropped; disengaged when none is kept.
     std::optional<FrameTiming>    timing;    // What that frame cost ON THE DEVICE; disengaged when the clock is not kept.
     std::optional<FrameLocking>   locking;   // What it spent on the content lock; disengaged when that is not measured.
+    std::optional<DeviceMemory>   memory;    // What the device's pool holds; disengaged when no account is kept.
 };
 
 VN_GRAPHICS_NS_END

@@ -61,6 +61,7 @@
 | 设备内存池 | 自建 suballocator，按设备 `bufferImageGranularity` 切片，处理 `maxMemoryAllocationCount` | `vk-backend.md` F10 |
 | 管线缓存文件 | `DeviceDesc::cache_directory` → `PipelineCacheFile`，按设备键读写；拒绝即丢弃并报告 | F12 |
 | GPU 计时 | 设备能写时间戳时 `Features::GpuTimings` 为真；每 pass 时间来自时间戳，`FrameReport::timing` 是本后端**测到的**数 | F13 |
+| 内存数字 | `Features::MemoryUsage` 为真时，`FrameReport::memory`（`DeviceMemory`）报池的 used / reserved / peak / free / largest free run（字节）；**是本后端池的账**——不是整卡 VRAM，也不是本帧上传 | F10 |
 | 验证层 | validation + debug utils **可用即开**（只影响诊断量，不影响契约） | F14 |
 | 平台 | Linux/X11、Win32 | F3 |
 | 渲染通道 | **动态渲染**（Vulkan 1.3）：附件、载入/清除策略与 MRT/MSAA resolve 都是每个附件的字段，没有 `VkRenderPass` / `VkFramebuffer` 对象 | F4 |
@@ -113,7 +114,7 @@
   里的每个机制，两页都必须点名。
 * 门禁钉住的是**边界的方向**，不是接缝的清单：图形模块不得 include 任何渲染 API 或具体后端（`check_vk_exposure.py` V2）、
   公开头的散文不得点名后端（V5，只允许 `vk.<category>.<cause>` 这样的诊断代码前缀）、插件 `shell/` 零 `Vk*`（V4）、
-  帧路径不 include `support/`（E1）。
+  帧路径不 include `support/`（E1）、公开头也不得点名插件 `internal/` 的单元（V6，T30 的落位问题）。
 * **接缝的清单由 `scripts/check_include_hygiene.py` 按性质钉住**：`SEAM_HEADERS` 的八个机制头必须从在役后端
   能到达（`FrameTimeline` 经 `DeviceClock` 到达），而在役后端直接 include 的 SDK 头这一集合
   整体记在 `SEAM_SHARED_HEADERS` 里——一个头第一次被后端 include、或不再被 include，门禁都会变红，

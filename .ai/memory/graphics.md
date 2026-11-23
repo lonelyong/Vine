@@ -8,6 +8,9 @@
 
 - SDK: `src/viz/graphics/sdk/vine/graphics`; shipped backend: `src/plugins/gfx_backend_vk` (`include/vine/backend_vk/{internal,shell,support}` + `src/internal`).
 - `RenderEngine`: lifetime / `frame()` / device borrowing / size / capabilities and reports; the three facades are `PassRegistry`, `OutputRegistry`, `DiagnosticsRoute`.
+- **The host reads memory through two values (2026-11-23)**: `Features::MemoryUsage` says the device reports what its pool holds, and `FrameReport::memory`
+  (`DeviceMemory`: `used_bytes` / `reserved_bytes` / `peak_used_bytes` / `free_bytes` / `largest_free_run`) answers it; it is the pool's own account - not the
+  whole VRAM, not the frame's traffic (`FrameUploads`) - and the ledger's rows total no bytes (`ResidencyLedger::live`), so this is the public surface's only byte figure.
 - `frame()` returns `FrameCallOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
 - **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys); it is the last step of `selectRows`, so a caller receives a sorted `Selection`.
 - **A row is three parts** (`DrawListBake.hpp`): `RowLinks` (parent / subtree end / child count in walk order), `RowOwn` (`Fold`: placement, opacity, layers, draw order, view placement; `Body`: state, material, program, own bounds, geometry, draws) and `ResolvedRow` (the fold's one value, with `resolved_serial` moved only by `storeResolved`). `refreshRow` classifies an edit from the groups: `Body` equal → `RefoldSubtree`, otherwise `RebuildTable`; a chunk-share test compares `RowLinks` + `resolved_serial`.
@@ -340,7 +343,9 @@
   `check_api_style.py` (API style: no setters/callbacks in values, no `getXxx` accessors, `bool` + out-parameter may not coexist, an `XxxBuilder` must have `build()`;
   4 existing findings are registered in the script's `BASELINE` and are deleted as they are fixed),
   `check_vk_exposure.py` (also CTest `vk_exposure`: V2 no render-API include, V4 shell types, V5 **the SDK's prose
-  names no backend** - `\bvsg\b|\bVsg|\bvk\b` except a `vk.<category>.<cause>` code; `graphics-architecture.md` C4).
+  names no backend** - `\bvsg\b|\bVsg|\bvk\b` except a `vk.<category>.<cause>` code, V6 **the SDK names no
+  plugin-internal unit** (`ResidencyClaims`, `TargetTable`) - the set is derived from every plugin `internal/` stem;
+  `graphics-architecture.md` C4).
 - `scripts/asan_check.sh` / `VN_ASAN_*`; only `skipped == 0` counts as having run the device battery.
 - Measuring a backend's per-frame cost: `test_vk`'s measurement cases (`--gtest_filter='*Measure*'`) print µs/frame plus `builds` / `uploads` / `created`, and per-frame host allocations are counted in `../design/vk-backend.md` §9.1; the cost model is that page's §2.4 / §2.16.
 

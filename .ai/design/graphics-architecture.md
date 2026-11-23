@@ -201,7 +201,11 @@ removing an unregistered pass and removing an already removed pass are the same 
       (Vulkan has no query; D3D12's allocation info covers resources, not PSOs; Metal's `allocatedSize` likewise; WebGPU
       exposes neither), so a total would always have left `Programs` out while looking complete - and `unknown` existed
       only to explain that gap. Same rule as `Sets`: a promise no backend can keep does not stay on the public surface. The
-      device-wide memory figure is a capability plus a report part instead (`../backlog/graphics.md` T46).
+      device-wide memory figure is therefore a capability plus a report part - `Features::Feature::MemoryUsage` and
+      `FrameReport::memory` (`DeviceMemory`: used / reserved / peak / free / largest free run, every one a byte count the
+      pool itself accounted) - landed 2026-11-23 **ahead of** its consumer on an explicit go, because the shape was
+      already decided here and the reader the number serves (a HUD, a budget gate, a trim decision) reads it the same
+      way on every backend.
     Boundary: this decides what may be PUBLIC, not what a backend may HAVE. A mechanism both backends use is a fact about the
     backends, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a second CONSUMER is
     what moves a mechanism there, which is a different trigger from "a second backend exists".
@@ -315,7 +319,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | C1 | A device is not a window: `RenderDevice` owns the device/queues, window targets are issued by the device. |
 | C2 | Pass registration, named outputs, diagnostics and presentation each have one owner, no second list. |
 | C3 | Scheduling is in the engine only; the backend only materialises `FrameDescription.passes`. |
-| C4 | A public SDK header states the CONTRACT, not the survey: it names no concrete backend (`check_vk_exposure.py` V5). The one exception is a diagnostic code, whose prefix is an identity a host matches. |
+| C4 | A public SDK header states the CONTRACT, not the survey: it names no concrete backend (`check_vk_exposure.py` V5) and no unit a plugin keeps in its own `internal/` (V6) - the id's meaning is the contract, the table that answers it is that plugin's. The one exception is a diagnostic code, whose prefix is an identity a host matches. |
 
 ### 5.2 Requirements (R#)
 

@@ -689,6 +689,13 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     EXPECT_EQ(fresh.progress->submitted, 0U);
     EXPECT_EQ(fresh.progress->completed, 0U);
 
+    // THE MEMORY FIGURE IS MEASURED FROM THE FIRST MOMENT (see DeviceMemory): `initialize()` itself allocates (the
+    // uniform ring and the default program's pipeline), so the account is ENGAGED before any frame - unlike the
+    // uploads, which no frame has measured yet. That it is disengaged after `shutdown()` is asserted below.
+    ASSERT_TRUE(fresh.memory.has_value()) << "the feature says this device reports its pool";
+    EXPECT_GE(fresh.memory->reserved_bytes, fresh.memory->used_bytes);
+    EXPECT_GE(fresh.memory->peak_used_bytes, fresh.memory->used_bytes);
+
     // RESIDENCY IS ANSWERED AND EMPTY: EVERY kind the vocabulary names is reported, at zero - `Materials` is the
     // one this backend accounts for while retaining nothing across frames (see Device::noteResidency), which is a
     // measurement rather than an omission.
@@ -733,4 +740,5 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     EXPECT_EQ(prepared.outcome, PrepareReport::Outcome::NotReady);
     EXPECT_EQ(prepared.reason, EngineNotReadyReason::NotInitialized);
     EXPECT_FALSE(backend->frameReport().retention->residency.has_value()) << "a shut-down device accounts for nothing";
+    EXPECT_FALSE(backend->frameReport().memory.has_value()) << "a shut-down device holds no memory to account for";
 }

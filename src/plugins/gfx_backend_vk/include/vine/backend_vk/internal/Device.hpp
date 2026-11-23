@@ -470,6 +470,8 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   counting driver calls from outside.
      * - THE NUMBERS ARE THE SESSION'S: `blocks` and `allocations` are cumulative, while `blocks_live`, `reserved_bytes`
      *   and `used_bytes` describe NOW (zeros after `shutdown()`).
+     * - THE HOST-FACING COPY IS THE REPORT: the same byte figures travel in `FrameReport::memory` whenever the device is
+     *   up (see `Features::Feature::MemoryUsage`), while this accessor stays the witness a test reads directly.
      *
      * @return The pool's numbers (zeros when no session is up).
      */

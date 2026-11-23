@@ -3823,6 +3823,8 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
             report.progress.emplace();
             report.progress->submitted = 11;
             report.progress->completed = 9;
+            report.memory.emplace();
+            report.memory->used_bytes = 1024;
             return report;
         }
     };
@@ -3833,6 +3835,7 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
     EXPECT_FALSE(report.counters.has_value());
     EXPECT_FALSE(report.retention.has_value());
     EXPECT_FALSE(report.progress.has_value());
+    EXPECT_FALSE(report.memory.has_value());
     EXPECT_FALSE(engine.capabilities().render_targets);
 
     // 2. A backend that keeps none: the contract's default, and it SAYS so (disengaged, not zeros).
@@ -3842,6 +3845,7 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
     EXPECT_FALSE(report.counters.has_value()) << "the default is \"no counters\", not an empty frame";
     EXPECT_FALSE(report.retention.has_value());
     EXPECT_FALSE(report.progress.has_value()) << "the default is \"no clock\", not \"nothing in flight\"";
+    EXPECT_FALSE(report.memory.has_value()) << "the default is \"no account\", not zero bytes";
 
     // 3. A backend that keeps them: the whole report crosses the engine unchanged.
     const vn::intrusive_ptr<RenderBackend> reporting(new ReportingBackend());
@@ -3855,6 +3859,8 @@ TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbse
     EXPECT_EQ(report.progress->submitted, 11U);
     EXPECT_EQ(report.progress->completed, 9U);
     EXPECT_EQ(report.progress->inFlight(), 2U) << "in flight is the difference, computed once in the vocabulary";
+    ASSERT_TRUE(report.memory.has_value());
+    EXPECT_EQ(report.memory->used_bytes, 1024U);
 
     // 4. Capabilities cross the same way: the engine's answer IS the backend's value, whole.
     EXPECT_TRUE(engine.capabilities().render_targets);
@@ -3875,15 +3881,18 @@ TEST(CapabilitiesTest, OneFeatureIsOneBitAndAnUnansweredFeatureIsFalse)
     EXPECT_FALSE(nothing.features.supports(Features::Feature::GpuTimings));
     EXPECT_FALSE(nothing.features.supports(Features::Feature::Wireframe));
     EXPECT_FALSE(nothing.features.supports(Features::Feature::AnisotropicFiltering));
+    EXPECT_FALSE(nothing.features.supports(Features::Feature::MemoryUsage));
 
     Capabilities answered;
     answered.features.bits = Features::bit(Features::Feature::Wireframe);
     EXPECT_TRUE(answered.features.supports(Features::Feature::Wireframe));
     EXPECT_FALSE(answered.features.supports(Features::Feature::GpuTimings)) << "one bit per feature";
     EXPECT_FALSE(answered.features.supports(Features::Feature::AnisotropicFiltering)) << "one bit per feature";
+    EXPECT_FALSE(answered.features.supports(Features::Feature::MemoryUsage)) << "one bit per feature";
 
     EXPECT_NE(Features::bit(Features::Feature::GpuTimings), Features::bit(Features::Feature::Wireframe));
     EXPECT_NE(Features::bit(Features::Feature::Wireframe), Features::bit(Features::Feature::AnisotropicFiltering));
+    EXPECT_NE(Features::bit(Features::Feature::AnisotropicFiltering), Features::bit(Features::Feature::MemoryUsage));
 
     // The engine reports the backend's answer unchanged, feature bits included.
     auto backend                 = intrusive_ptr<MockBackend>(new MockBackend());

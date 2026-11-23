@@ -2161,6 +2161,19 @@ vn::graphics::FrameReport Device::FrameDriver::frameReport() const noexcept
         vn::graphics::ResidencyLedger ledger;
         owner.noteResidency(ledger);
         retention.residency = std::move(ledger);
+
+        // WHAT THE POOL HOLDS NOW (see DeviceMemory): the byte account the ledger deliberately does not total. It is
+        // the DEVICE's figure, not one driver's - a second driver reads the same pool - and the pool answers under its
+        // own lock, so this is safe while another session's frame runs. Only the five byte figures travel: the block
+        // and slice counters are the witness a test reads from `memoryStats()`, not a host fact.
+        const MemoryStats          pool = owner.allocator.stats();
+        vn::graphics::DeviceMemory memory;
+        memory.used_bytes       = pool.used_bytes;
+        memory.reserved_bytes   = pool.reserved_bytes;
+        memory.peak_used_bytes  = pool.peak_used_bytes;
+        memory.free_bytes       = pool.free_bytes;
+        memory.largest_free_run = pool.largest_free_run;
+        report.memory           = memory;
     }
     report.retention = std::move(retention);
     return report;
@@ -2761,6 +2774,10 @@ bool Device::initialize()
     if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
         impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::GpuTimings);
     }
+    // THE POOL ACCOUNTS FOR ITSELF (see Feature::MemoryUsage): every block it reserves and every slice it hands out is
+    // this backend's own bookkeeping, so "how much memory does this device hold for me" is a measurement rather than
+    // an estimate, and the numbers reach the host through `FrameReport::memory`.
+    impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::MemoryUsage);
     // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the set this
     // device offers is the INTERSECTION of the two (a device whose depth tops out lower is the binding side). That
     // intersection is a `VkSampleCountFlags` BIT SET, while `Capabilities::limits.max_samples` states the largest COUNT a

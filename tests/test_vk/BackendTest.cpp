@@ -106,6 +106,10 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     EXPECT_EQ(capabilities.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering), capabilities.limits.max_anisotropy > 1.0F);
     EXPECT_GE(capabilities.limits.max_anisotropy, 1.0F);
     EXPECT_GE(capabilities.limits.max_line_width, 1.0F);
+    // THE POOL TELLS ITS OWN STORY (see Feature::MemoryUsage): this backend allocates the device memory itself, so the
+    // figure a host reads is a measurement rather than an estimate.
+    EXPECT_TRUE(capabilities.features.supports(vn::graphics::Features::Feature::MemoryUsage))
+        << "the pool's bookkeeping is this backend's own";
     // THE DEVICE'S OWN COLOUR SLOT COUNT: Vulkan guarantees at least 4, and an MRT pass may use every one.
     EXPECT_GE(capabilities.limits.max_color_attachments, 4U);
 

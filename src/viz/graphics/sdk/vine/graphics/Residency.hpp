@@ -111,8 +111,8 @@ class VN_GRAPHICS_API ResidencyLedger {
      *   compiled pipeline occupies (Vulkan has no query; D3D12's allocation info covers resources, not PSOs;
      *   Metal's `allocatedSize` likewise; WebGPU exposes neither), so a byte total would have to leave `Programs`
      *   out and the number would look complete while being partial - the trap `ResidencyRow` warns about. A host
-     *   reads the rows it needs; the device-wide memory figure is a capability plus a report part, not this sum
-     *   (`.ai/backlog/graphics.md` T46).
+     *   reads the rows it needs; the device-wide memory figure is `Features::MemoryUsage` plus the report's
+     *   `memory` part (`DeviceMemory`), not this sum.
      *
      * @return The sum of every row's `live`.
      */

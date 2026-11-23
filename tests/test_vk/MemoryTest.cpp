@@ -27,6 +27,7 @@
 #include <vine/String.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
@@ -229,6 +230,52 @@ TEST(VkMemoryPoolTest, ManyTargetsShareThePoolBlocks)
     EXPECT_EQ(closed.used_bytes, 0U) << "shutdown left slices live";
     EXPECT_EQ(closed.blocks_live, 0U) << "shutdown left blocks allocated";
     EXPECT_EQ(closed.reserved_bytes, 0U);
+}
+
+TEST(VkMemoryPoolTest, ThePoolsByteFiguresReachTheHostsFrameReport)
+{
+    // THE NUMBER A HOST CAN SHOW. `memoryStats()` is the witness a test reads; the host-facing route is
+    // `FrameReport::memory`, gated by `Features::Feature::MemoryUsage` so a host branches before it plans a frame. The
+    // five figures must be the accessor's own numbers - one fact, two readers - and they satisfy the relations a HUD
+    // or a budget gate rests on (see DeviceMemory).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    EXPECT_TRUE(backend->capabilities().features.supports(vn::graphics::Features::Feature::MemoryUsage));
+
+    // ENGAGED FROM THE FIRST MOMENT: `initialize()` itself allocates (the uniform ring and the default program's
+    // pipeline), so the account is a measurement rather than a silence even before a frame runs - and it is the same
+    // fact the accessor answers, read through the host-facing route.
+    const vn::graphics::FrameReport empty = backend->frameReport();
+    ASSERT_TRUE(empty.memory.has_value()) << "this device measures the pool it allocated";
+    const vn::backend_vk::MemoryStats initial = device->memoryStats();
+    EXPECT_EQ(empty.memory->used_bytes, initial.used_bytes);
+    EXPECT_EQ(empty.memory->reserved_bytes, initial.reserved_bytes);
+    EXPECT_GT(empty.memory->reserved_bytes, 0U) << "initialize() asked the driver for no block at all?";
+
+    const intrusive_ptr<RenderTarget> target = makeTarget(u8"vk_memory_report");
+    (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
+
+    const vn::graphics::FrameReport report = backend->frameReport();
+    ASSERT_TRUE(report.memory.has_value());
+    const vn::backend_vk::MemoryStats pool = device->memoryStats();
+    EXPECT_EQ(report.memory->used_bytes, pool.used_bytes) << "the report and the accessor disagree about one fact";
+    EXPECT_EQ(report.memory->reserved_bytes, pool.reserved_bytes);
+    EXPECT_EQ(report.memory->peak_used_bytes, pool.peak_used_bytes);
+    EXPECT_EQ(report.memory->free_bytes, pool.free_bytes);
+    EXPECT_EQ(report.memory->largest_free_run, pool.largest_free_run);
+    EXPECT_GT(report.memory->used_bytes, 0U) << "a built target and the uniform ring hold no bytes?";
+    EXPECT_GE(report.memory->reserved_bytes, report.memory->used_bytes);
+    EXPECT_GE(report.memory->peak_used_bytes, report.memory->used_bytes);
+    EXPECT_GE(report.memory->free_bytes, report.memory->largest_free_run);
+
+    backend->shutdown();
+    EXPECT_FALSE(backend->frameReport().memory.has_value()) << "a shut-down device answered a figure it no longer has";
 }
 
 TEST(VkMemoryPoolTest, ASteadyFrameAllocatesNothing)

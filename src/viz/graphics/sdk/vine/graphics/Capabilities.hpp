@@ -23,6 +23,8 @@ VN_GRAPHICS_NS_BEGIN
  *   is that backend's own statement, and one that leaves the report part disengaged while the feature is true is
  *   answering honestly rather than failing. A host that shows GPU times therefore reads both - the feature before it
  *   plans a frame, the report part after one - and the two are never collapsed into one flag.
+ * - The same pair answers "how much memory": `MemoryUsage` says the device can state what its pool holds, and
+ *   `FrameReport::memory` carries the numbers (see DeviceMemory).
  */
 struct VN_GRAPHICS_API Features {
     /**
@@ -41,6 +43,8 @@ struct VN_GRAPHICS_API Features {
         Wireframe,
         /// Samplers may request anisotropic filtering above 1x, so the request is honoured rather than clamped.
         AnisotropicFiltering,
+        /// The device reports what its own memory pool holds, so a HUD or a budget gate can show memory use.
+        MemoryUsage,
     };
 
     /// The features this backend answers TRUE, one bit per Feature (see supports / bit).
