@@ -388,5 +388,5 @@ Old names/paths appear only in §7's rejected options or in git history; new cod
 ## 10. References
 
 `graphics-scene.md` · `graphics-geometry.md` · `graphics-rendering.md` ·
-`graphics-content-lifecycle.md` · `vsg-backend.md` · `../backlog/graphics.md` ·
+`graphics-content-lifecycle.md` · `vsg-backend.md` (the retired backend's record) · `../backlog/graphics.md` ·
 `../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` (the seam's promise rule and the retirement's terms)
