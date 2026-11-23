@@ -264,7 +264,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 | Layer | Current spelling | How it may change |
 |---|---|---|
 | identity | `PipelineKey`: kind, program + revision, vertex_layout (one slot per declared attribute, each with its COMPONENTS - the attribute format - in binding order), compatibility (attachment / depth formats, samples, the backend-computed render-pass key), depth_sampleable, sampled_color_count, sampled_depth_count, variant, topology (class) | a change = recompile the pipeline (the only place recompiling is allowed) |
-| the swapped half | `LoadOpVariantKey`: the colour / depth load and store and the initial / final layouts | one pipeline serves several compatible variants (a bootstrap variant is legitimate) |
+| the swapped half | `LoadOpVariantKey` (this backend's own, `internal/LoadOpVariantKey.hpp`): the colour / depth load and store and the initial / final layouts | one pipeline serves several compatible variants (a bootstrap variant is legitimate) |
 | dynamic | `DynamicState`: depth, cull, polygon, topology (within a class), blend | one `vkCmdSet*`; a recompile is never allowed |
 | data | the view block 288 B, the light block 112 B, `VineDrawBlock` 80 B, the material block 64 B, push ≤128 B | write bytes in place / re-point a descriptor |
 
@@ -281,7 +281,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 | C3 | Scheduling lives in the engine only; the backend materialises in `FrameDescription.passes` order. |
 | C4 | `RenderPassCompatibility` decides image / pass / pipeline compatibility; bootstrap clears every attachment. |
 | C5 | `StreamKey` = buffer + buffer revision + segment; zero re-upload in the steady state. |
-| C6 | No new Vulkan spelling enters the SDK's `graphics/`: `VkFormat` values and subpass are gone from the seam (the device format is `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`); `ImageLayout` is still Vulkan semantics, and the same move retires it when a third backend lands. New device-neutral spellings land in the plugin's `internal/` first. |
+| C6 | No new Vulkan spelling enters the SDK's `graphics/`: `VkFormat` values and subpass are gone from the seam (the device format is `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`), and as of 2026-11-23 `ImageLayout` / `LoadOpVariantKey` are gone too - each backend owns its own (`internal/LoadOpVariantKey.hpp` here), so the SDK carries the neutral vocabulary only. New device-neutral spellings land in the plugin's `internal/` first. |
 | C7 | Every report from this plugin carries a stable `vsg.<family>.<reason>` code (registered in `scripts/diagnostic_codes.txt`); readback's nine refusals are mapped by **one `switch` with no `default`** in `readbackRefusalDiagnostic`, so adding a `HostReadbackRefusal` makes naming its code a compile error — the vocabulary follows the enum instead of memory. Where the rule comes from is in `vk-backend.md` §2.13 / §2.14 (the same gate, the same value semantics). |
 
 ### 5.2 Requirements (R#)

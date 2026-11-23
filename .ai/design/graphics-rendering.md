@@ -154,6 +154,22 @@ unchanged.
   `sceneFromModel` too (it is a verb phrase and reads correctly); the meshio exporter's `ModelSceneWriter` (a different
   concept - it writes an Assimp scene and never touches this type).
 
+**The same day, T15 closed: the layout vocabulary left the SDK** (`BC-36`; review 8 §4.7/§4.8). `DrawState::ImageLayout`
+and `DrawState::LoadOpVariantKey` are DELETED from `DrawState.hpp`; the SDK keeps `LoadOp` / `StoreOp`, which every
+family answers.
+
+| Before | Now | Why |
+|---|---|---|
+| `vn::graphics::ImageLayout` | `vn::backend_vk::ImageLayout` (`gfx_backend_vk/internal/ImageLayout.hpp`) and `vn::backend_vsg::core::ImageLayout` (`gfx_backend_vsg/internal/LoadOpVariantKey.hpp`) | a layout is one family's spelling of "this image is being written as colour" - D3D12 states a resource state, Metal tracks hazards itself - so it belongs beside the table that consumes it, not on the seam |
+| `vn::graphics::LoadOpVariantKey` | `vn::backend_vsg::core::LoadOpVariantKey` (same header) | the key of a render-pass OBJECT: vsg was its only producer, vk builds its variants by hand, and the engine only compared it; a D3D12 backend keys PSOs, Metal has no pass object at all |
+
+- What a host must change: nothing - neither type was ever a parameter of a host call (the load/store DECISION reaches a
+  backend through `PassDesc`'s `ClearPolicy`).
+- What a backend must do: include its own header; `keyAuditTable()` now has six rows, because the variant key cannot
+  enter `PipelineKey` when it is not an SDK type (the seam test states that as the stronger fact).
+- The rule that decided it is in `graphics-architecture.md` 2.15: a fact only one API family can answer stays off the
+  public surface, and the other half of the rule is that a promise a host can observe keeps ONE implementation.
+
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
 

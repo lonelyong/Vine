@@ -2,7 +2,7 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
-using vn::graphics::ImageLayout;
+using vn::backend_vk::ImageLayout;
 using vn::graphics::LoadOp;
 using vn::graphics::StoreOp;
 

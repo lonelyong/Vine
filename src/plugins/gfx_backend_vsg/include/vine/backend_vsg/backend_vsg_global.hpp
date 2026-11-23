@@ -39,11 +39,13 @@ namespace backend_vsg
 // the standard says.
 // The real cost is that a NEW SDK name becomes visible unqualified here without a line changing in this
 // plugin. Measured 2026-11-18 (remove the directive, build `gfx_backend_vsg`, read the compiler's errors):
-// the surface it supplies is 31 names - DrawKind / LoadOp / StoreOp / DynamicState / ImageLayout /
-// LoadOpVariantKey / PipelineKey / PipelineKeyHash / RenderPassCompatibility / VertexLayoutKey / FrameToken /
+// the surface it supplies is 29 names - DrawKind / LoadOp / StoreOp / DynamicState /
+// PipelineKey / PipelineKeyHash / RenderPassCompatibility / VertexLayoutKey / FrameToken /
 // FrameTimeline / RetirementQueue / DeviceClock / DepthFacts / DepthPlan / TargetAction / TargetDecision /
 // TargetDesc / TargetInstance / depthPlan / planTarget / ReadbackAnswer / ReadbackFormat / ReadbackKind /
 // ReadbackRequest / colorReadbackOf / depthReadbackOf / decodeDepth / readbackOf / Diagnostics.
+// (`ImageLayout` and `LoadOpVariantKey` left this list on 2026-11-23: they are this backend's own types now,
+// in `internal/LoadOpVariantKey.hpp` - backlog T15, review 8 §4.7/§4.8.)
 // Closing the set to exactly these names would need them at PARSE time: a using-DECLARATION requires its
 // target to exist when it is written, so either five SDK headers would have to be included in this global
 // header, or a vocabulary header would have to be included by all 36 `core` files. Accepted as-is: `core`

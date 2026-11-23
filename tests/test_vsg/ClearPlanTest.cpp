@@ -27,7 +27,7 @@ using vn::backend_vsg::core::AttachmentClear;
 using vn::backend_vsg::core::ClearValues;
 using vn::backend_vsg::core::DepthClear;
 using vn::backend_vsg::core::depthFinalLayout;
-using vn::graphics::ImageLayout;
+using vn::backend_vsg::core::ImageLayout;
 using vn::backend_vsg::core::kReverseZFarDepth;
 using vn::graphics::LoadOp;
 using vn::backend_vsg::core::loadOpVariantOf;

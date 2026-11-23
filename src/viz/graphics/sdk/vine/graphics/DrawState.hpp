@@ -61,16 +61,6 @@ enum class StoreOp : std::uint8_t
     DontCare, // Nothing will read it back.
 };
 
-/** @brief Layout an attachment is in at a point in time (the thing a barrier changes). */
-enum class ImageLayout : std::uint8_t
-{
-    Undefined,       // No layout; an image being used for the first time.
-    ColorAttachment, // Being written as a colour attachment.
-    DepthAttachment, // Being written as a depth attachment.
-    ShaderReadOnly,  // Being sampled.
-    Present,         // Handed to the presentation engine.
-};
-
 /** @brief Identity of a vertex layout: the attributes a pipeline DECLARES, in binding order, each with its width. */
 struct VN_GRAPHICS_API VertexLayoutSlot {
     std::uint32_t location{ 0 };   // Shader location the pipeline declares this attribute at.
@@ -169,9 +159,12 @@ struct VN_GRAPHICS_API RenderPassKey {
  *
  * @details
  * - This is the whole of the "pipeline compatibility" question, and it is exactly what a pipeline key
- *   may contain about a target. The load/store operations and the layouts are NOT in here - they live
- *   in LoadOpVariantKey - because the API's compatibility rule excludes them, which is what makes
- *   several variants of one attachment set share a single compiled pipeline.
+ *   may contain about a target. The load/store operations and the initial/final layouts are NOT in here,
+ *   because the API's compatibility rule excludes them, which is what makes several variants of one
+ *   attachment set share a single compiled pipeline. The variant KEY is not here either: what a load-op
+ *   variant is belongs to the family that builds pass objects (Vulkan builds render passes, D3D12 builds
+ *   PSOs, Metal builds neither), so each backend keys its own - see `gfx_backend_vsg/internal`'s
+ *   `LoadOpVariantKey`. This layer only carries the half both families answer the same way.
  * - WHY THE DEVICE FORMATS ARE IN HERE ON TOP OF THE ENGINE'S SPELLING. The engine classifies
  *   attachments as RGBA8 / RGBA16F / RGBA32F, and that vocabulary is a PROJECTION: a window whose
  *   surface is an sRGB BGR8 format and an off-screen target built as a linear RGBA8 image are both
@@ -204,39 +197,6 @@ struct VN_GRAPHICS_API RenderPassCompatibility {
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const RenderPassCompatibility& other) const noexcept;
-};
-
-/**
- * @brief What a pass asks of its attachments before it draws: the swappable half of a pass' graph.
- *
- * @details
- * - Kept apart from RenderPassCompatibility because the two have different lifetimes: this one changes
- *   with a pass' clear policy (and is what a bootstrap swaps for one frame), while the compiled
- *   pipeline only depends on the compatibility half. Vulkan draws the line in the same place:
- *   load/store operations and layouts are NOT part of render pass compatibility, so several variants
- *   of one attachment set MAY share one compiled pipeline - which is what makes a target able to
- *   serve a clearing pass and a loading pass without recompiling anything (see TargetObjects,
- *   which keys its render pass objects by exactly this type).
- * - WHAT IT HAS TO CARRY is therefore every property of the render pass OBJECT a graph is built with:
- *   whether each attachment clears or keeps what is there, whether its result survives, and which
- *   layout it is in at the start and at the end of the pass. The colour attachments move together (a
- *   pass clears all of them or none - see planClearValues), so one entry describes the set; the DEPTH
- *   is independent, because a later pass may load the depth an earlier one wrote while the colour is
- *   cleared, and because a borrowed depth starts in the layout its lender left it in.
- */
-struct VN_GRAPHICS_API LoadOpVariantKey {
-    LoadOp      color_load{ LoadOp::Load };                  // Every colour attachment: keep what is there, or clear it.
-    StoreOp     color_store{ StoreOp::Store };               // Whether the colour survives the pass.
-    ImageLayout color_initial{ ImageLayout::Undefined };     // Layout the colour starts in.
-    ImageLayout color_final{ ImageLayout::ColorAttachment }; // Layout it is left in.
-    bool        has_depth{ false };                          // Whether the target has a depth attachment at all.
-    LoadOp      depth_load{ LoadOp::Load };                  // Keep the depth, or clear it.
-    StoreOp     depth_store{ StoreOp::Store };               // Whether the depth survives the pass.
-    ImageLayout depth_initial{ ImageLayout::Undefined };     // Layout the depth starts in.
-    ImageLayout depth_final{ ImageLayout::DepthAttachment }; // Layout it is left in.
-
-    /** @brief Compares the whole key. */
-    [[nodiscard]] bool operator==(const LoadOpVariantKey& other) const noexcept;
 };
 
 /**

@@ -6,6 +6,8 @@
 
 #include <vine/graphics/DrawState.hpp>
 
+#include "ImageLayout.hpp"
+
 VN_BACKEND_VK_NS_BEGIN
 
 /**
@@ -13,14 +15,15 @@ VN_BACKEND_VK_NS_BEGIN
  *        mask.
  *
  * @details
- * - WHY A TABLE. The SDK states what an image is FOR (`ImageLayout`: a colour attachment, a depth attachment, something
- *   sampled, something presented) and Vulkan wants three separate spellings for the same fact - the layout, the stages
- *   that must wait, and the access mask that must be visible. Writing those three inline wherever a barrier is needed
- *   is how a backend ends up with two answers for one pass; one function per direction keeps the answer single.
- * - IT IS THE SEAM'S VULKAN HALF, and deliberately no more: a second API family (D3D12 states, Metal stages) replaces
- *   THIS TABLE, not its input. That is why the input is the SDK enum and the output is Vulkan - and why nothing here
- *   invents a "generic barrier type" for the SDK (`.ai/design/vk-backend.md` 2.7; the same question one level up is
- *   backlog T15).
+ * - WHY A TABLE. This backend's `ImageLayout` states what an image is FOR (a colour attachment, a depth
+ *   attachment, something sampled, something presented) and Vulkan wants three separate spellings for the same
+ *   fact - the layout, the stages that must wait, and the access mask that must be visible. Writing those three
+ *   inline wherever a barrier is needed is how a backend ends up with two answers for one pass; one function per
+ *   direction keeps the answer single.
+ * - WHY THE INPUT IS THIS MODULE'S AND NOT THE SDK'S. The SDK states only what every family can answer
+ *   (`LoadOp` / `StoreOp`, and what a pass declares); a LAYOUT is one family's spelling of "this image is being
+ *   written as colour", so it lives here with the table that consumes it (backlog T15, review 8 §4.7/§4.8).
+ *   A second API family replaces THIS TABLE and this input, not the seam.
  * - LEGACY BARRIERS, NOT SYNCHRONIZATION2. The first render pass of this backend needs one transition and a clear; the
  *   Vulkan-1.0 form (`VkImageMemoryBarrier` + `vkCmdPipelineBarrier`) needs no device feature and no extension, so M1
  *   uses it and the table stays honest about what it emits.
@@ -44,10 +47,10 @@ struct ImageState {
  * - `Present` is the only value whose layout belongs to the platform rather than to a queue operation, so it is the
  *   only one that names an extension-provided layout.
  *
- * @param usage What the image is used for (see `vn::graphics::ImageLayout`).
+ * @param usage What the image is used for (see `ImageLayout`).
  * @return The layout, stages and access mask for @p usage.
  */
-[[nodiscard]] ImageState stateOf(vn::graphics::ImageLayout usage) noexcept;
+[[nodiscard]] ImageState stateOf(ImageLayout usage) noexcept;
 
 /**
  * @brief Answers whether a barrier is needed to go from @p from to @p to.
@@ -59,7 +62,7 @@ struct ImageState {
  * @param to   Usage the image is about to be in.
  * @return true when a barrier must be recorded; false when the two usages are identical.
  */
-[[nodiscard]] bool requiresTransition(vn::graphics::ImageLayout from, vn::graphics::ImageLayout to) noexcept;
+[[nodiscard]] bool requiresTransition(ImageLayout from, ImageLayout to) noexcept;
 
 /**
  * @brief Builds the barrier that moves @p image from one usage to another.
@@ -76,15 +79,15 @@ struct ImageState {
  * @return The barrier, ready to be recorded.
  */
 [[nodiscard]] VkImageMemoryBarrier barrierFor(VkImage           image,
-                                              vn::graphics::ImageLayout from,
-                                              vn::graphics::ImageLayout to,
+                                             ImageLayout from,
+                                             ImageLayout to,
                                               VkImageAspectFlags aspect) noexcept;
 
 /**
  * @brief Gets the state a copy READS from: `TRANSFER_SRC_OPTIMAL` with the transfer stage and read access.
  *
  * @details
- * - The SDK's `ImageLayout` states what a PASS uses an image for; a readback is a device verb, not a pass, so this end of
+ * - `ImageLayout` states what a PASS uses an image for; a readback is a device verb, not a pass, so this end of
  *   a barrier has no SDK spelling. It is kept here (next to the table) rather than in the SDK so the seam does not grow a
  *   Vulkan-shaped member for one backend's readback (C6).
  *

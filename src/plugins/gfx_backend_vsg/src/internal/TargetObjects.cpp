@@ -88,14 +88,14 @@ VkFormat toDepthFormat(vn::graphics::RenderTarget::DepthFormat format) noexcept
  * @param layout The core's layout.
  * @return The API's layout (UNDEFINED for a layout the core does not have).
  */
-VkImageLayout toVkLayout(vn::graphics::ImageLayout layout) noexcept
+VkImageLayout toVkLayout(core::ImageLayout layout) noexcept
 {
     switch (layout) {
-    case vn::graphics::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
-    case vn::graphics::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    case vn::graphics::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    case vn::graphics::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    case vn::graphics::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    case core::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+    case core::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    case core::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case core::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    case core::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
     return VK_IMAGE_LAYOUT_UNDEFINED;
 }
@@ -104,13 +104,13 @@ VkImageLayout toVkLayout(vn::graphics::ImageLayout layout) noexcept
                                                           const std::vector<vn::graphics::RenderTarget::ColorFormat>&   color_formats,
                                                           const std::optional<vn::graphics::RenderTarget::DepthFormat>& depth_format,
                                                           std::uint32_t                                                 samples,
-                                                          const vn::graphics::LoadOpVariantKey&                variant)
+                                                          const core::LoadOpVariantKey&                variant)
 {
     // One spelling for one conversion: the core's neutral spellings are the API's enums, bound here.
     const auto toLoadOp = [](vn::graphics::LoadOp load) noexcept {
         return load == vn::graphics::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     };
-    const auto toLayout = [](vn::graphics::ImageLayout layout) noexcept { return toVkLayout(layout); };
+    const auto toLayout = [](core::ImageLayout layout) noexcept { return toVkLayout(layout); };
 
     // The multisample rule this builder states once: a multisampled pass DRAWS into the multisampled images and
     // RESOLVES both colour and depth into single-sample images - the ones later passes sample, a borrower

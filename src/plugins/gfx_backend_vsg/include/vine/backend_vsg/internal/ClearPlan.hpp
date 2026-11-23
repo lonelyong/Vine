@@ -8,6 +8,7 @@
 #include <vine/graphics/TargetPlan.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
+#include <vine/backend_vsg/internal/LoadOpVariantKey.hpp>
 
 /**
  * @brief What each of a pass' attachments does at the start of the pass: load, clear, or nothing at all.

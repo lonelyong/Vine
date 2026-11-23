@@ -46,7 +46,6 @@ using vn::graphics::RenderTarget;
 using vn::graphics::DeviceClock;
 using vn::graphics::FrameGate;
 using vn::graphics::FrameTimeline;
-using vn::graphics::LoadOpVariantKey;
 using vn::graphics::PipelineKey;
 using vn::graphics::ReadbackRequest;
 using vn::graphics::ReadbackState;
@@ -309,21 +308,20 @@ TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
     b.compatibility.color_formats[0] = vn::graphics::RenderTarget::ColorFormat::RGBA16F;
     EXPECT_FALSE(a == b);
 
-    // A clear instead of a load is a different VARIANT of the same pipeline, not a different pipeline:
-    // the API's compatibility rule excludes load ops, which is why the bootstrap can swap one in.
-    LoadOpVariantKey loaded;
-    LoadOpVariantKey cleared;
-    cleared.color_load = vn::graphics::LoadOp::Clear;
-    EXPECT_FALSE(loaded == cleared);
+    // A clear instead of a load is a different VARIANT of the same pipeline, not a different pipeline: the
+    // API's compatibility rule excludes load ops, which is why the bootstrap can swap one in. That is now
+    // STRUCTURAL rather than a convention - the variant key is each backend's own type (vsg's
+    // `core::LoadOpVariantKey`, a D3D12 PSO key, nothing at all on Metal), so it cannot enter `PipelineKey`
+    // (backlog T15, review 8 §4.8).
 }
 
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 {
     const auto audit = vn::graphics::detail::keyAuditTable();
-    ASSERT_EQ(audit.size(), 7u);
+    ASSERT_EQ(audit.size(), 6u);
 
     const std::vector<std::string> expected_keys{
-        "VertexLayoutKey", "RenderPassCompatibility", "LoadOpVariantKey", "PipelineKey", "DynamicState", "InstanceRecord", "TargetDesc.shape",
+        "VertexLayoutKey", "RenderPassCompatibility", "PipelineKey", "DynamicState", "InstanceRecord", "TargetDesc.shape",
     };
     for (std::size_t i = 0; i < expected_keys.size(); ++i) {
         EXPECT_EQ(std::string(audit[i].key), expected_keys[i]) << "audit line " << i;

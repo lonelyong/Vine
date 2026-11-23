@@ -69,7 +69,10 @@ and every cache has a witness a test can read.**
 - **The low-level half**: `MemoryAllocator`, `PipelineCacheFile`, `WindowSystem`, `ReadbackStaging` and `Handles` **do not include `vine/graphics` at all**
   (~2.0k lines) — they are candidates for "a tool may use them without the seam", and E2 pins exactly that. No **external** consumer uses them today (`G8`), so they are
   **not pulled out into a library**: pulling them out would only move code, the boundary is already here; once a consumer that bypasses `graphics` exists, cutting them out
-  is a move rather than an excavation. `BarrierPlan` / `ShaderCompiler` each include one seam header (`ImageLayout` / `ShaderStage`), so they are not in this group.
+  is a move rather than an excavation. `BarrierPlan` / `ShaderCompiler` each include one seam header (`DrawState`
+  for `LoadOp` / `StoreOp` / `ShaderAbi` for `ShaderStage`), so they are not in this group - and `ImageLayout`,
+  the one Vulkan-flavoured input `BarrierPlan` used to take from the SDK, is **this module's own type** since
+  2026-11-23 (`internal/ImageLayout.hpp`, backlog T15 closed).
 
 ### 2.2 The device is session semantics, and loss is the first kind of failure
 
@@ -119,8 +122,8 @@ and every cache has a witness a test can read.**
 
 ### 2.7 Barriers are one table, not scattered calls
 
-- **What it is**: `BarrierPlan.hpp` (`stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf`) maps the SDK's
-  `ImageLayout` (as a "purpose") into Vulkan's layout + stage + access; every transition goes through `barrierBetween`.
+- **What it is**: `BarrierPlan.hpp` (`stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf`) maps this module's
+  `ImageLayout` (a "purpose") into Vulkan's layout + stage + access; every transition goes through `barrierBetween`.
 - **Why**: `G1` (one definition, one owner) + `G11` (a synchronisation mistake has exactly one place it can be made, and both the tests and validation point there).
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
   a new purpose is one more row, not one more inline barrier.

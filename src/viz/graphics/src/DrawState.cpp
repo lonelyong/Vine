@@ -46,13 +46,6 @@ bool RenderPassCompatibility::operator==(const RenderPassCompatibility& other) c
            device_depth_format == other.device_depth_format && samples == other.samples && render_pass_key == other.render_pass_key;
 }
 
-bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
-{
-    return color_load == other.color_load && color_store == other.color_store && color_initial == other.color_initial && color_final == other.color_final &&
-           has_depth == other.has_depth && depth_load == other.depth_load && depth_store == other.depth_store && depth_initial == other.depth_initial &&
-           depth_final == other.depth_final;
-}
-
 bool PipelineKey::operator==(const PipelineKey& other) const noexcept
 {
     return kind == other.kind && program == other.program && vertex_layout == other.vertex_layout &&
@@ -119,15 +112,12 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
 {
     // The audit, as data. Each line answers "what may enter this key?" - and the answer for anything
     // that can be delivered with a set command, or written into a buffer, is "nothing".
-    static constexpr std::array<KeyAuditEntry, 7> kAudit{
+    static constexpr std::array<KeyAuditEntry, 6> kAudit{
         {
          { "VertexLayoutKey", "one slot per declared attribute, IN BINDING ORDER: its location and its component count (the format) - \"which channels\" alone would share a pipeline across two widths" },
          { "RenderPassCompatibility",
             "colour formats + depth format (or none) + the same attachments as OPAQUE DEVICE format codes + samples "
             "+ the backend's render-pass key (the pass structure)" },
-         { "LoadOpVariantKey",
-            "load/store ops + initial/final layouts - one entry for the colour set and one for the depth - NOT "
-            "pipeline identity: compatibility excludes them" },
          { "PipelineKey",
             "program IDENTITY + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
             "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "

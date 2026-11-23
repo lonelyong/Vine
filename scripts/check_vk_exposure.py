@@ -8,9 +8,12 @@ This gate is that split made executable:
   1. V2 - the SDK BACKEND face names no backend. `sdk/vine/graphics/*.hpp` is installed as
      `VineGraphicsBackendSdk` and is included by every backend, including the ones that are not Vulkan, so
      one `#include <vulkan/...>` there turns Vulkan into a dependency of the whole backend seam and of the
-     install package (§2.3). The face may use Vulkan SEMANTICS - `ImageLayout` is still that vocabulary, and
-     a device format code is whatever the backend says it is (B8 made it the opaque `DeviceFormat`) - but it
-     may not spell the headers.
+     install package (§2.3). The face may use no Vulkan SEMANTICS either, as of 2026-11-23: `ImageLayout`
+     and `LoadOpVariantKey` left the SDK for the backends that build pass objects (backlog T15,
+     `.ai/research/graphics-2026-11-23-review-8.md` 4.7/4.8), a device format code is whatever the backend
+     says it is (B8 made it the opaque `DeviceFormat`), and the pass structure is the backend-computed
+     `RenderPassKey`. What the face carries is the neutral vocabulary only (`LoadOp` / `StoreOp`,
+     `DrawKind`, ...) - and it may not spell the headers.
   2. V4 - the plugin shells name no Vulkan type. `shell/` is the one part of a plugin a host is meant to
      see, and its shape is "a factory that returns `RenderBackend`, and nothing else". Today nobody outside
      the plugin includes it, so this is a SHAPE rule rather than a gate with a victim (§6.3); it is checked

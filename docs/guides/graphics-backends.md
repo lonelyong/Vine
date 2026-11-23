@@ -136,7 +136,7 @@
 | 门面与会话 | `VsgBackend` `VsgDriver` `WindowSession` `OffscreenSession` `GraphLifetime` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` `FrameHead` |
 | 内容层 | `ContentAssembly` `ContentPass` `CompiledPrograms` `BindingSets` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `PushRange` `ContentPipeline` `DrawNeeds` `MaterialImages` `MaterialSlotCheck` `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` |
 | 流、块、表 | `StreamUploads` `Streams` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` `FactResult` |
-| 可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，`vn::backend_vsg::core`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `FrameScratch` `ClearPlan` `StateRegistry` `MaterialArena` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `PinnedResources` |
+| 可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，`vn::backend_vsg::core`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `FrameScratch` `ClearPlan` `LoadOpVariantKey` `StateRegistry` `MaterialArena` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `PinnedResources` |
 | 目标与读回 | `TargetObjects` `TargetTable` `HostReadback` `WhiteImage` `OneShot` |
 | 支撑 | `VsgHostWindow` `VsgSceneRules` `VsgDynamicState` `VsgVulkanEntryPoints` `VsgBackendUtility` `VsgUtils` `VsgFwd` `VsgBufferView` `RenderStateMapper` |
 | 全局与测试视图 | `backend_vsg_global` `BackendContent` |

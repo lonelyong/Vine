@@ -392,7 +392,9 @@ The one code change the two premises agree on is `LoadOpVariantKey` / `ImageLayo
 retires or stays, and moving it now is the cheapest it will ever be. The four gaps above are R2's text plus one
 small SDK decision (3).
 
-## 5. Proposed orderFour batches; R0–R2 pay for themselves even if the retirement never happens, R3 is T60's batch.
+## 5. Proposed order
+
+Four batches; R0–R2 pay for themselves even if the retirement never happens, R3 is T60's batch.
 
 | # | Batch | Contents | Why now |
 |---|---|---|---|
@@ -442,6 +444,22 @@ small SDK decision (3).
   The sample-limit case is the one that retires with its successor named (`VkMsaaTest`).
 - Verification after R1: `test_vk` 175 cases / 42 suites, `test_vsg` 576 / 83, `test_graphics` 639 / 81; all green;
   the parity suite 15/15; `check_include_hygiene` and `check_api_style` at their baselines.
+
+### 5.3 P2 landed 2026-11-23: the SDK's last Vulkan-flavoured types left it
+
+- `ImageLayout` and `LoadOpVariantKey` are deleted from `DrawState.hpp` / `DrawState.cpp` (with the key's
+  equality and its `keyAuditTable()` row - six rows now). Each backend owns its own copy:
+  `gfx_backend_vk/internal/ImageLayout.hpp` (the barrier table's input) and
+  `gfx_backend_vsg/internal/LoadOpVariantKey.hpp` (`core`, inline `operator==`, used by `TargetObjects` /
+  `ClearPlan`). The SDK keeps `LoadOp` / `StoreOp` - the half every family answers.
+- `BackendSeamTest`'s key case now states the stronger fact: a load-op variant cannot enter `PipelineKey`
+  because the type is not an SDK type at all (structural, not a convention).
+- The vsg `core` using-directive's measured SDK surface fell from 31 to 29 names, and its comment records why.
+- Docs and gates follow: `graphics-architecture.md` 2.9/2.15, `vk-backend.md` 2.1/2.7, `vsg-backend.md` C6 and
+  the swapped-half row, `check_vk_exposure.py` V2's rationale ("no Vulkan SEMANTICS either"), and backlog
+  `T15` is **deleted** (its subject is done) with `T30` / `S4` repointed at the surviving trigger.
+- Verification: build clean; `test_graphics` 639 / 81, `test_vk` 175 / 42, `test_vsg` 576 / 83; the parity suite
+  15/15; doc, include-hygiene, api-style, export-annotation, vk-exposure and content-seam gates green.
 
 ## 6. Backlog candidates (listed for approval; not added)
 

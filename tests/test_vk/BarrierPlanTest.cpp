@@ -20,7 +20,7 @@ using vn::backend_vk::loadOpOf;
 using vn::backend_vk::requiresTransition;
 using vn::backend_vk::stateOf;
 using vn::backend_vk::storeOpOf;
-using vn::graphics::ImageLayout;
+using vn::backend_vk::ImageLayout;
 using vn::graphics::LoadOp;
 using vn::graphics::StoreOp;
 

@@ -76,8 +76,10 @@ removing an unregistered pass and removing an already removed pass are the same 
     a rule that does not need syncing in four places. `DrawState` / `TargetPlan`'s device format codes are now the **opaque**
     `DeviceFormat` (0 = the device's UNDEFINED), the render-pass structure is carried by the backend-computed `RenderPassKey` — neither
     `VkFormat` values nor subpass are on the seam, so a third backend need not learn Vulkan's formats and
-    subpass first; `ImageLayout` is still Vulkan semantics inside the SDK, C6's "no new spellings" still applies, and retiring it belongs to
-    the same gate's next step.
+    subpass first. As of 2026-11-23 the last one is gone too: `ImageLayout` and `LoadOpVariantKey` left the
+    SDK for the backends that build pass objects (each backend owns its own; T15 closed - review 8 §4.7/§4.8),
+    so the seam carries no Vulkan SEMANTICS at all, only the neutral vocabulary. C6's "no new spellings"
+    stays the rule and `check_vk_exposure.py` V2 is its gate.
     **The seam has no namespace of its own**
     ([ADR-2026-11-18](ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)): it is the property "both backends
     reach it", recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, and the two pages that state it (this point and
@@ -175,7 +177,8 @@ removing an unregistered pass and removing an already removed pass are the same 
       trimming, `FrameReport`, `PrepareReport`).
     * **Three exclusions.** A resource TYPE or handle - a host never names a GPU object, and the SDK's only `void*` members
       name content identities (`DrawState::material`, `Geometry::Facts::buffer`) or a window (`DeviceDesc::native_handle`);
-      a SEMANTIC only one API family has (`DrawState::ImageLayout`, which Metal and WebGPU would have to ignore - T15); an
+      a SEMANTIC only one API family has (`DrawState::ImageLayout` used to be this example: T15 moved it into
+      each backend on 2026-11-23, which is the exclusion APPLIED rather than an exception to it); an
       internal POLICY (a cache, a barrier, a table - T10).
     * **Three costs, all permanent.** A promoted fact is one more obligation on every future backend (`RenderDevice` carries
       19 virtuals today, 5 of them pure); a DEFAULTED one is a silent lie, because a backend that forgets to override reports

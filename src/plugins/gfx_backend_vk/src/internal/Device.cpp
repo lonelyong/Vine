@@ -68,7 +68,7 @@ using vn::graphics::RenderTarget;
 using vn::graphics::SurfaceTargetResult;
 using vn::graphics::decodeDepth;
 using vn::graphics::depthReadbackOf;
-using vn::graphics::ImageLayout;
+using vn::backend_vk::ImageLayout;
 using vn::graphics::planTarget;
 using vn::graphics::RepairReason;
 using vn::graphics::TargetAction;
