@@ -3,13 +3,14 @@
 > **状态**：现行 ｜ **最后核对**：2026-11-23
 
 graphics 模块是 Vine 的**场景图 + 渲染资源 + 渲染引擎**。它自己**不碰 GPU**：它驱动一个
-`RenderBackend`，具体后端是插件。今天有两个：`gfx_backend_vk`（名字 `"vk"`，直连 Vulkan，
-宿主默认跑的就是它）与 `gfx_backend_vsg`（名字 `"vsg"`，经 VulkanSceneGraph 落到 Vulkan，
-是参考实现与逐字节对拍的另一端）——见 [`graphics-backends.md`](graphics-backends.md)。
+`RenderBackend`，具体后端是插件。当前实现是 `gfx_backend_vk`（名字 `"vk"`，直连 Vulkan，
+宿主默认跑的就是它）——见 [`graphics-backends.md`](graphics-backends.md)。
+参考后端（`vsg`）已于 2026-11-23 退役，历史记录在 `.ai/design/vsg-backend.md`，最后一个能构建的树是
+tag `retained/vsg-final`。
 
 - 公开头：`src/viz/graphics/sdk/vine/graphics/`（target `vn::Graphics`）
 - 实现：`src/viz/graphics/src/`
-- 后端插件与它们自己的说明：`src/plugins/gfx_backend_vk/`、`src/plugins/gfx_backend_vsg/`
+- 后端插件与它自己的说明：`src/plugins/gfx_backend_vk/`
 
 本文写的是**今天的实际行为**；凡属占位（还没实现）的地方都已明确标注。
 
@@ -23,8 +24,8 @@ graph TB
     Scene["场景模型<br/>Node / Group / MatrixTransform / PositionAttitudeTransform / AutoTransform / StateNode / Geometry"]
     Builder["PassChain::build<br/>配方：forward · deferred · 离屏+PiP"]
     BackendIface["RenderBackend（聚合：设备 + 执行器，产出 WindowPresentTarget）"]
-    Plugin["后端插件（按名创建）<br/>gfx_backend_vk：Device · FrameDriver<br/>gfx_backend_vsg：VsgBackend · VsgExecutor"]
-    VSG["Vulkan（vk 直连；vsg 经 VulkanSceneGraph）"]
+    Plugin["后端插件（按名创建）<br/>gfx_backend_vk：Device · FrameDriver"]
+    VKAPI["Vulkan"]
 
     Host --> UI --> Engine
     Host --> Scene
@@ -33,7 +34,7 @@ graph TB
     Engine --> BackendIface
     BackendIface -. 按名字创建 .-> Registry["RenderBackendRegistry"]
     Plugin --> BackendIface
-    Plugin --> VSG
+    Plugin --> VKAPI
 ```
 
 `RenderEngine` 从不直接调用 Vulkan：它把这一帧**编译成一个值**（每条 pass 的目标、状态、绘制与解析好的接线），
@@ -41,7 +42,7 @@ graph TB
 后端**按名字**创建，因此宿主对后端及其第三方库没有编译期依赖：
 
 ```cpp
-auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vk");  // 或 u8"vsg"；需插件已加载
+auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vk");  // 需插件已加载
 engine.setDevice(backend);
 ```
 
@@ -210,14 +211,13 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 3. 然后把这个值**整帧交给后端**（`RenderFrameExecutor::executeFrame(frame, present_to)`，`present_to` = 本区那把目标）：后端拿到的就是全部 —— 每条 pass 的身份、
    order、解析好的输入，以及它发出的 target / viewport / 清屏 / 状态与每一条绘制调用。**没有 per-call 的平坦入口、
    也没有"没开 scope 时设置是惰性"这套顺序规则**：值的形状就是帧的形状，宣告不出岔子。
-   后端把每个 `DrawItem` 物化成后端对象。在 vsg 后端里就是每个 drawable 一条保留的
-   `MatrixTransform` → `StateGroup` → bind/draw 命令链，只在其输入（`geometry->revision()`、
-   material、texture、resolved state、program）变化时重建。
-4. 顶点数据是**别名，不是拷贝**：真的 `vsg::vec3Array` 等直接读 geometry 自己的 buffer，于是模型与
-   渲染侧每个通道只占一份分配（位置 / 法线 / UV / 作者颜色 / 自定义通道 / 索引都是）。完整来龙去脉
-   （包括让这件事成立的 vsg 约束和踩过的坑）见
-   [`docs/guides/graphics-backends.md`](graphics-backends.md)（契约与差异）与
-   [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)（设计、契约与坑）。
+   后端把每个 `DrawItem` 物化成自己的 GPU 对象：管线按 `PipelineKey`（kind、program 身份与 revision、顶点布局、
+   附件形状、变体、拓扑）缓存，描述符集按（视图集、阴影图）缓存，只在其输入（`geometry->revision()`、
+   material、texture、resolved state、program）变化时重建（`vk-backend.md` F5 / F9）。
+4. 顶点数据是**别名，不是拷贝**：后端直接读 geometry 自己的 buffer，于是模型与
+   渲染侧每个通道只占一份分配（位置 / 法线 / UV / 作者颜色 / 自定义通道 / 索引都是）。契约见
+   [`docs/guides/graphics-backends.md`](graphics-backends.md)；`vk` 侧的服务与拒绝见
+   [`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md)（F5 / F7）。
 
 ### 2.6 生命周期与变更契约
 
@@ -315,9 +315,9 @@ camera->setAspect(16.0 / 9.0);                               // 投影的**形�
 // ④ 引擎 + 后端 + 预设链。
 // 引擎是**引用计数**对象，链**强持**它（`PassChain::build` 的参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
 // "最后放手的那条管线"删掉 —— `delete` 的是别人的栈/成员内存，症状不在这一刻，而是**之后某次无关的 free 报堆损坏**。
-// 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
+// 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有。
 auto engine = vn::make_intrusive<RenderEngine>();
-engine->setDevice(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
+engine->setDevice(RenderBackendRegistry::instance().create(u8"vk"));  // 需插件已加载
 
 // 窗口与尺寸归**区**（一块表面的表）：窗口那一半由**设备**造（S10a），尺寸在这里报一次 —— 引擎不收裸句柄。
 // 区**只能由引擎造**（`RenderEngine::createArea`）：一个引擎一块区，关系有主；第二次 createArea() 答 null 并报一次。
@@ -661,7 +661,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | 词 | 是什么 | 谁决定 |
 | --- | --- | --- |
 | **通道 location** | 你在 Geometry 里填的编号，也就是 `Geometry::attributes_` 的键 | **你**：`setPositions` 0、`setNormals` 1、`setTexcoords2`/`setTexcoords3` 8（**同一个槽的两种宽度**）；自定义通道 `addBuffer(L, …)`，L ≥ 3 且 ≠ 8 |
-| **shader location** | shader 里的 `layout(location = N)` —— 下表比的就是它 | **写 shader 的人**：内建路径用 vsg 的编号，自定义 program 用模块契约 |
+| **shader location** | shader 里的 `layout(location = N)` —— 下表比的就是它 | **写 shader 的人**：内建与自定义 program 用同一套模块契约（0 / 1 / 2 / 8） |
 | **数组下标 = Vulkan binding** | 喂入列表里的位置（`VkVertexInputBindingDescription.binding`） | **后端**；你既不写、也看不到，GLSL 里没有这个概念 |
 
 **走哪条路径由 pass 决定，不由 geometry 决定** —— 同一个 geometry 可以在 A pass 走内建、在 B pass 走自定义：
@@ -669,21 +669,21 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | | 内建路径 | 自定义 program 路径 |
 | --- | --- | --- |
 | 触发条件 | 该 draw 的 program 为空 | `PassDesc::program_override` / `PassDesc::program` 给了 program |
-| ShaderSet 谁提供 | 内容的**默认 program**（`RenderEngine::setDefaultContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（键 = program + 布局） |
-| shader location 从哪来 | **vsg 自己的编号** | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
+| program 谁提供 | 内容的**默认 program**（`RenderEngine::setDefaultContentProgram`，默认 `forwardProgram()`） | 宿主自己写的 `ShaderProgram` |
+| shader location 从哪来 | **模块契约的编号**（0/1/2/8，见下表） | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
 | 顶点数据从哪取 | 固定 `buffer(0)` / `buffer(1)` / `buffer(2)` / `buffer(8)` + 自定义通道 | **完全相同**（两条路径取的是同一批数据） |
-| 换路径时重建 | 只重建 state wrapper，数据节点复用 | 同左（唯一例外见下面的边角表） |
-| 同一份 program、布局不同 | —— | **两个不同的 ShaderSet**（cache key = program + layout hash） |
+| 换路径时重建 | 按新的 `PipelineKey` 取/建管线；几何与缓冲不动 | 同左（唯一例外见下面的边角表） |
+| 同一份 program、布局不同 | —— | **两条不同的管线**（cache key = program + layout） |
 
-两条路径的 **shader location 是两套编号**，这是最容易踩的地方（逐通道对照；binding 那列是后端排的）：
+**shader location 只有一套编号**（逐通道对照；binding 那列是后端排的）：
 
-| 通道 | 通道 location（你在 Geometry 填的） | 内建路径 `layout(location=…)` | 自定义 program `layout(location=…)` | 数组下标/binding |
-| --- | --- | --- | --- | --- |
-| 位置 | 0 | **0** | **0** | 0 |
-| 法线 | 1 | **1** | **1** | 1 |
-| 颜色 | 2 | **6** | **2** | 3 |
-| texcoord | **8** | **2** | **8** | 2 |
-| 自定义 | L ≥ 3 且 ≠ 8 | ——（内建 set 不声明它，喂了也不被读） | **L** | 4+i |
+| 通道 | 通道 location（你在 Geometry 填的） | `layout(location=…)`（两条路径相同） | 数组下标/binding |
+| --- | --- | --- | --- |
+| 位置 | 0 | **0** | 0 |
+| 法线 | 1 | **1** | 1 |
+| 颜色 | 2 | **2** | 3 |
+| texcoord | **8** | **8** | 2 |
+| 自定义 | L ≥ 3 且 ≠ 8 | **L**（内建 set 不声明它，喂了也不被读） | 4+i |
 
 > texcoord 槽在 SDK 侧只陈述**宽度**，**用途属于采样器**（`Geometry` 从不下结论）：`setTexcoords2`（2 分量）、`setTexcoords3`（3 分量）、`texcoordComponents()` 查宽度。唯一的解释者是**引擎自己的 forward 程序**（`forwardProgram()`）：
 >
@@ -695,23 +695,24 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 > 所以"同一个 3 分量通道"配自定义 program 完全可以读成体积坐标（`sampler3D`）——引擎不拦；将来真加 volume，内建 forward 程序要改成**按纹理种类**选变体（宽度名照样成立）。
 
 > **一套编号（2026-09-13 起）**：引擎自己的 location 就是唯一的 location 契约（0 位置 / 1 法线 / 2 颜色 / 8 texcoord）。
-> 以前内建路径用的是 vsg 内建 set 的密集编号（texcoord 在 2、颜色在 **6**），所以按 vsg 习惯写的 shader 在自定义
-> program 路径上会**静默读错**——那条路已经删掉了：现在没有任何一条路径按 vsg 的编号绑定。
+> 以前内建路径用的是参考后端内建 set 的密集编号（texcoord 在 2、颜色在 **6**），所以按那套习惯写的 shader 在自定义
+> program 路径上会**静默读错**——那条路已经删掉了：现在没有任何一条路径按那套编号绑定。 <!-- drift-ok -->
 
-自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3 且 L ≠ 8`）—— 当初避开 vsg 那套 0..11 密集编号就是为了
-不撞号；即使现在只剩一套编号，这个保留规则也不变（`L == 8` 的通道不转发）。
+自定义通道**沿用自己的源 location**（转发范围 `L ≥ 3 且 L ≠ 8`）——保留规则来自早期那套 0..11 密集编号
+（避开才不撞号）；即使现在只剩一套编号，这个规则也不变（`L == 8` 的通道不转发）。
 
-> 另一个常见误记：`enableArray("vn_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，不是 `layout(location=)`。vsg 自己的这两套编号就是分开的。
+> 另一个常见误记：`enableArray("vn_TexCoord0", …, 8)` 里的 **8 是数组下标（喂入顺序里的位置，= Vulkan binding）**，
+> 不是 `layout(location=)`。数组下标与 shader location 是两套数字。
 
 **四个 canonical location 为什么是 0 / 1 / 2 / 8**：自定义路径下“通道 location = shader location”，而自定义通道的转发范围是
 `L ≥ 3 且 L ≠ 8` —— 所以 canonical 只有 `0/1/2` 三个位置能用，texcoord 必须去 `≥ 3` 区里占一个**保留号**：
 
 | 位置 | 给谁 | 为什么是这个号 |
 | --- | --- | --- |
-| 0 / 1 | 位置、法线 | 与 vsg 一致 ⇒ 只读位置/法线的 shader 两条路径通用 |
-| 2 | 颜色 | `< 3` 的最后一个空位（vsg 内建 set 里颜色在 **6**，2..6 被它自己的 `vsg_TexCoord0..3`(2..5) 与 `vsg_Color`(6) 占满；我们的 set 用 `vn_Color`(2) / `vn_TexCoord0`(8)，见 §3.8 的表） |
+| 0 / 1 | 位置、法线 | 最常见的顶点属性序号；只读位置/法线的 shader 最易复用 |
+| 2 | 颜色 | `< 3` 的最后一个空位（本模块的 set 用 `vn_Color`(2) 与 `vn_TexCoord0`(8)，见上面的表） |
 | 8 | texcoord | `≥ 3` 里由模块**显式保留**：通道 location == 8 的通道**不转发**，用户占不掉它（`Geometry::kTexCoordLocation`） |
-| 3..7、9.. | 自定义通道 | 全留给你（vsg 的 8 是 `vsg_Rotation`；两套 set 永不同时存在，撞号无害） |
+| 3..7、9.. | 自定义通道 | 全留给你 |
 
 **怎么写**（Geometry 侧只选 location，其余全自动）：
 
@@ -741,7 +742,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | location 覆盖 | shader 只能声明 geometry 真有数据的 location | 声明了没有的 ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断** |
 | 分量数 | geometry 的 3 分量 ↔ shader 的 `vec3` | 两边都能接受，只在绘制时表现为“属性读错/缺失” |
 | 反方向 | 数组喂了、但管线不声明那个名字 | 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`） |
-| 绑定顺序 | **不用管、也改不了**：后端按**几何自己的通道顺序**（location 升序）排 binding；你能控的只有 location | 机制与理由见后端设计页（[`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §3.4） |
+| 绑定顺序 | **不用管、也改不了**：后端按**几何自己的通道顺序**（location 升序）排 binding；你能控的只有 location | 机制与理由见后端设计页（[`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md) F5） |
 
 **边角**：
 
@@ -749,7 +750,6 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 唯一权威是后端文档：
 
 > [`.ai/design/graphics-shader-params.md`](../../.ai/design/graphics-shader-params.md)（L0/L1 块与打包）、
-> [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §3.5（文本即契约：绑定、变体、push 范围）、
 > [`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md) §3.1.5（vk 侧的服务与拒绝）。
 
 **内建 program 的 GLSL 从哪来**（自己写 shader 时想对照/改写它们）：
@@ -838,7 +838,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | 线性数据图声明成 `*Srgb` | 画面**偏暗** | 采样器把数据当颜色解码了一遍 |
 
 **这个声明不是注释，是真起作用的**：后端把 `Rgba8Srgb` 映射成 `VK_FORMAT_R8G8B8A8_SRGB` 上传
-（`vkFormatFor` 在 `tests/test_vsg/SceneRulesTest.cpp` 里有 pin），采样器因此会解码。引擎**没有**运行时兜底 ——
+（格式映射在 `gfx_backend_vk` 的 `internal/` 里），采样器因此会解码。引擎**没有**运行时兜底 ——
 它看不到文件名，只能看你给的格式。
 
 | 契约 | 写在哪 |
@@ -1553,8 +1553,7 @@ VN_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forward
 
 ```bash
 ./build/bin/test_graphics            # 设备无关的模块契约
-./build/bin/test_vsg                 # 后端契约（桥 / pass / 查表）
-./build/bin/test_vsg --gtest_filter=SdkPixelTest.*   # SDK 级**像素**判据（真设备；见下）
+./build/bin/test_vk                  # 后端契约 + 真设备像素判据（无 GPU 的用例 SKIP 并说明）
 ./build/bin/test_core                # buffer、math、io
 
 bash scripts/vn_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
@@ -1571,9 +1570,9 @@ ctest --test-dir build                # CTest 视角（见下面那段的口径�
 读像素在 `VkWindowPresentTest` / `VkHostWindowReadTest`，夹具是 `tests/test_vk/TestHostWindow.hpp`（X11 走
 `XGetImage`、Win32 走 `PrintWindow` 合成器读回），平台不提供窗口时据此 `SKIP` 并说出原因。
 
-**后端自检已退役**：`vsg_backend_selftest` 与 `scripts/vsg_selftest_evidence.sh` 随旧渲染器一起删除（它们是那个渲染器自己的
+**后端自检已退役**：`vsg_backend_selftest` 与 `scripts/vsg_selftest_evidence.sh` 随旧渲染器一起删除（它们是那个渲染器自己的 <!-- drift-ok -->
 相位门禁）。今天的端到端证据是 `test_vk` 与 `test_graphics` 两套设备/引擎套件加上 `scripts/` 的十道门禁；`vk_exposure` 作为 ctest 门禁
-钉住"插件外壳不出现 `Vk*`"。
+钉住“插件外壳不出现 `Vk*`”与“公开头不点名后端”（V5）。
 
 仓库有 **33 个 CTest 套件**（`ctest --test-dir build -N`；2026-11-23 计数）。判定看失败的是哪一条：
 `test_vk` 的宿主窗口用例在 WSLg 下对 500 ms 的 resize 期限敏感——**同一二进制**直接跑绿、`ctest` 偶发红，
@@ -1615,7 +1614,7 @@ ctest --test-dir build                # CTest 视角（见下面那段的口径�
 | 词 | 在这里是 | 不是 |
 | --- | --- | --- |
 | `RenderEngine` | 一扇窗口的帧循环 + 编译 | Filament / UE 的 `Engine`（那是设备所有者——在这里叫 `RenderDevice`） |
-| `RenderPass` | 引擎层的一个渲染**阶段**（OSG render stage / VSG view + target + clear policy 那一类；`RenderPass.hpp` 的类注就写了这句） | 不是 `VkRenderPass`；同一个 framebuffer 上的几条 pass 录进后端的**一个** render pass |
+| `RenderPass` | 引擎层的一个渲染**阶段**（render stage / view + target + clear policy 那一类；`RenderPass.hpp` 的类注就写了这句） | 不是 `VkRenderPass`；同一个 framebuffer 上的几条 pass 录进后端的**一个** render pass |
 | `RenderPassKey` / `RenderPassCompatibility` | 才是"Vulkan 形状"的那两个词：兼容性 = 管道 key 的 render-pass 那一半 | 不是引擎的 pass |
 | `DrawItem` | 场景里**一个可画的项**（一个 drawable） | 不是 command buffer，也不是"一次绘制调用" |
 | `DrawPacket` | **一个 pass 对一个视图的整包请求**（里面是 N 个 `DrawItem`） | 不是一条 GPU 命令，也不是一次绘制调用（那是 `DrawItem`）；真正把命令记下去的是后端的录制 |
@@ -1695,9 +1694,10 @@ ctest --test-dir build                # CTest 视角（见下面那段的口径�
 | 内容 | 位置 |
 | --- | --- |
 | 渲染视图模块说明（架构图 / 类关系图 / 简单 demo） | [`render-views.md`](render-views.md) |
-| 两个后端的契约、差异表、支持矩阵、构建与证据 | [`graphics-backends.md`](graphics-backends.md) |
-| 后端设计、契约、坑与实施记录 | [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)、[`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md)、[`.ai/design/vsg-pitfalls.md`](../../.ai/design/vsg-pitfalls.md) |
+| 后端契约、宿主可见事实、支持矩阵、构建与证据 | [`graphics-backends.md`](graphics-backends.md) |
+| vk 的设计、契约、坑与实施记录 | [`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md) |
+| vsg 的历史记录（已退休，不维护） | [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)、[`.ai/design/vsg-pitfalls.md`](../../.ai/design/vsg-pitfalls.md) |
 | 设计文档（渲染管线 / 状态 / 阴影 / 延迟 / overlay） | `.ai/design/*.md` |
 | 简明模块笔记（坑清单、实测结论、变异证据） | `.ai/memory/graphics.md` |
-| 可执行的契约 | `tests/test_graphics/`、`tests/test_vsg/` |
-| 后端自己的设备无关规则 | `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/support/VsgSceneRules.hpp` |
+| 可执行的契约 | `tests/test_graphics/`、`tests/test_vk/` |
+| 后端自己的设备无关低层单元 | `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/`（`vk-backend.md` C10） |

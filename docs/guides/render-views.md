@@ -52,7 +52,7 @@ graph TB
     end
 
     subgraph plugin["后端插件"]
-        VSG["gfx_backend_vsg<br/>Vulkan：会话 / 录制 / 提交"]
+        VK["gfx_backend_vk<br/>Vulkan：设备 / 帧驱动 / 提交"]
     end
 
     HOST --> RC
@@ -65,7 +65,7 @@ graph TB
     ENG --> AREA
     ENG --> DEV
     DEV --> EXE
-    DEV -.->|实现：一个对象同时是设备 + 执行器 + 目标| VSG
+    DEV -.->|实现：一个对象同时是设备 + 执行器 + 目标| VK
     AREA --> TGT
     TGT -.->|present 一帧| HOST
 ```
@@ -270,10 +270,8 @@ second->view()->setScene(control->view()->scene());   // 内容可以共享：�
 - **能不能用一个 `Viewer` 管两块窗口？不能，且刻意如此**：`Viewer` 构造时就绑死一个引擎 + 一块区，`view()` / `isActive()` 都是**按区**的读。
 - **同一份内容进两个窗口**：内容场景（`Scene`，以及它下面那些后端无关的 Node）**可以共享** —— 把它交给两个窗口各自的链即可；**相机是每个视图自带的**，要两个窗口看同一个角度，就在应用层同步两台相机的状态。
 - **代价（今天）**：GPU 副本与编译按**后端设备**算 —— 两个窗口 = 两份显存、两遍编译。
-- **上限是 4（本 build）**：同时存在的渲染设备数由 vsg 的 `VSG_MAX_DEVICES` 决定（见 `gfx_backend_vsg/CMakeLists.txt`），
-  而一块窗口渲染区 = 一个设备 ⇒ 第 5 块窗口会在 attach 时**以理由失败**（控件进 `Failed`，`failureReason()` 说明"本 build
-  至多 4 个同时设备、先关一个"），不是把异常丢进你的事件循环。被判据钉住的是
-  `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`。
+- **没有设备数量上限**：每个窗口仍是自己的一份设备（见上一条的代价），但旧的“至多 4 个同时设备”天花板随
+  参考后端一起退役（2026-11-23，[ADR-2026-11-23](../../.ai/decisions/ADR-2026-11-23-retiring-the-reference-backend.md)）。
 - **设备共享（以后）**：`Device : Engine = 1 : N` 落地（S10b：插件的会话提升成设备）后，两个窗口可以共享一个设备（一份显存、一次编译），但仍然是**两个区、两个引擎、两个 `Viewer`** —— `Viewer : 区 = 1 : 1` 不动。
 - **一帧跨多窗口**（同一场画面铺满两块屏）= S11，登记不做。
 

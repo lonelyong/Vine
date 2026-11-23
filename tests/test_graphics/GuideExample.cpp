@@ -145,7 +145,7 @@ bool guideHelloTriangle(void* window_handle, int width, int height, double dpr)
     auto camera = guideCamera();
 
     auto engine = vn::make_intrusive<RenderEngine>();
-    engine->setDevice(RenderBackendRegistry::instance().create(u8"vsg"));
+    engine->setDevice(RenderBackendRegistry::instance().create(u8"vk"));
 
     auto area = engine->createArea();
     if (area == nullptr) { return false; }
