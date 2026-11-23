@@ -341,6 +341,57 @@ No unit names were invented: those are the design (P2/P4), and an empty header w
 decision made by inertia. The directory's own `README.md` is the signpost; this page stays the one home for the
 argument.
 
+### 4.8 Second premise: `vsg` may STAY, and may be another developer's code
+
+The retirement (`T60`) is trigger-gated, so the honest design question is not only "what happens when vsg goes"
+but "what is the right home if vsg stays - and is maintained by someone else". An outside maintainer is a
+stronger test than a deletion: anything whose *contract* lives in one author's head, or whose *mechanism* is
+only reachable inside the SDK namespace, becomes somebody's problem the day they own the other implementation.
+Shader-related units are out of scope here by request.
+
+Placement, per concept, under each premise:
+
+| Concept | vsg retires | vsg stays, another owner | Recommendation now |
+|---|---|---|---|
+| `FrameGate` | SDK (the promise) | **more** reason to stay: 13 host verbs must answer the same way, and nobody re-derives that identically | SDK |
+| `DeviceClock` / `FrameTimeline` | SDK | must stay: two watermarks that disagree are two answers to a host | SDK (`CoreDeviceClockTest` / `CoreTimelineTest` already pin it) |
+| `RetirementQueue` | SDK (`device_waits`) | must stay: "one team idles the device, the other does not" is observable | SDK |
+| `Readback` (+ format table) | SDK | must stay: `Unsupported` is a host-visible answer, so the table is the contract | SDK |
+| `DiagnosticDraft` + `diagnostic_codes.txt` | SDK | must stay; each backend OWNS its prefix (`vk.*` / `vsg.*`), the file is the shared registry | SDK |
+| `DrawState`: `DeviceFormat`, `RenderPassKey`, `RenderPassCompatibility`, `PipelineKey` | SDK | must stay: both sides compile against these keys | SDK |
+| **`LoadOpVariantKey` + every `ImageLayout` field in the SDK** | leaves with vsg | **must leave the SDK either way** - it is *vsg's* render-pass key: vsg is its only producer (`TargetObjects.cpp:353`), vk builds its variants by hand, and the engine only compares it. In the SDK it is one backend's internal type on the public surface, and under another owner it is the SDK shipping THEIR internals | **move it into `gfx_backend_vsg/internal` now**, and keep `ImageLayout` as each backend's own transition vocabulary (vk already uses it in `BarrierPlan`) - this is T15 done, and it costs one backend's edit while one backend is present |
+| `TargetPlan` / `planTarget` | SDK | SDK: a pure decision both call, and two copies drift | SDK |
+| `PinnedResources` | vsg-internal | vsg-internal | already right |
+| `ResidencyClaims` | vk-internal today, SDK when dx12 lands | vk-internal | already right |
+
+Four gaps that only an OUTSIDE owner exposes - none is a defect today, each is a fact the tree has no home for:
+
+1. **The seam has a conformance suite but not an entry condition.** `tests/BackendSeamTest.cpp` is 25 cases,
+   written as "the seam's own" and compiled into every binary that links the seam (`CoreTargetPlanTest`,
+   `CoreRetirementQueueTest`, `CoreKeysTest`, `CoreReadbackTest`, `CoreDeviceClockTest`, `CoreTimelineTest`,
+   `FrameGateTest`). A second owner needs one sentence saying so: *a backend implements the seam when these
+   cases pass against it*. Cost: one paragraph in the file's doc and in `docs/guides/graphics-backends.md` §5.
+2. **The contract's surface has no ABI rule and no build identity.** `RenderDevice` carries 19 virtuals (5
+   pure); with one author a virtual is added and both backends fixed in one commit, and with two it is an ABI
+   break nobody sees until a plugin is loaded. Two rules follow: a NEW virtual is defaulted and documented
+   ("not answering keeps the default"), and a backend reports the SDK build it was compiled against so a stale
+   `.so` is a diagnostic - measured today, when a stale plugin `.so` segfaulted
+   `VsgBackendPluginTest.CreateBackendByName` and only a rebuild told it apart from a regression.
+3. **Registry identity must not depend on load order.** `RenderBackendRegistry::registerFactory` is
+   `d->factories[name] = factory`: the LAST registration wins and nothing is reported (`D-26`). With two teams
+   shipping plugins, a stale one silently replaces the live one - which the tree has already measured
+   (a plugin load replaced the statically built backend, and the stale copy segfaulted). Keep-first and report
+   the replacement, or report on replacement: a small SDK decision, not a refactor.
+4. **The cross-team documents need their obligations stated.** `docs/guides/graphics-backends.md` §3 is the
+   contract for *intentional* differences, so every row must say "the contract allows both answers" (most do); the code
+   registry is one file with two prefix owners, so "a diagnostic code is permanent" must be written down; and
+   `T62`'s rule (the public SDK does not name a backend) matters MORE under a second owner, because a public
+   header citing one backend reads as the SDK endorsing that team's implementation as the reference.
+
+The one code change the two premises agree on is `LoadOpVariantKey` / `ImageLayout`: it is misplaced whether vsg
+retires or stays, and moving it now is the cheapest it will ever be. The four gaps above are R2's text plus one
+small SDK decision (3).
+
 ## 5. Proposed orderFour batches; R0–R2 pay for themselves even if the retirement never happens, R3 is T60's batch.
 
 | # | Batch | Contents | Why now |
