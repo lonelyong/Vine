@@ -313,9 +313,28 @@ the cross-session pipeline cache (F12), the hand-written device memory pool with
 (`MemoryStats`), the five report parts, per-pass device timing, and device-loss classification with a named
 rebuild path. Folding them into `vk-backend.md` as features is C5's other half.
 
-## 5. Proposed order
+### 4.7 Premise set by the owner (2026-11-23): D3D12 and Metal are coming, not hypothetical
 
-Four batches; R0–R2 pay for themselves even if the retirement never happens, R3 is T60's batch.
+This is not a review finding but a decision the review has to design against, and it changes two of the answers
+above. The whole seam was validated by **two Vulkan implementations** (vk and vsg are the same family); a D3D12
+or Metal backend is the first *cross-family* reader, so the question stops being "does vsg prove the seam" and
+becomes "would a non-Vulkan family fit the seam".
+
+| # | Consequence | Evidence |
+|---|---|---|
+| P1 | **C1 resolves to (b), and honestly.** The mechanisms stay in the SDK: their second consumer is now committed, so this is not `G8` on credit. The `SEAM_HEADERS` list stops meaning "both plugins include it" and starts meaning "the family-neutral implementation of a public promise"; it keeps a falsifier because every listed header must also carry **no family spelling** - which `check_vk_exposure.py` (V2/E1) already enforces for Vulkan | C1's promise table |
+| P2 | **The SDK's last Vulkan-shaped type has exactly one producer, and it is the backend being retired.** `LoadOpVariantKey` (and with it every `ImageLayout` field in the SDK) is *constructed only by vsg* (`TargetObjects.cpp:353`); vk builds its three render-pass variants by hand and only the engine's `DrawState.cpp` compares the key. So it leaves with vsg, and `ImageLayout` becomes **vk's own barrier vocabulary** (`BarrierPlan`, uploads) inside `gfx_backend_vk/internal`. That is T15 completed, not deferred - and it costs one backend's edit now instead of three backends' later | `grep LoadOpVariantKey`: vsg constructs, vk does not |
+| P3 | **`RenderPassKey` / `DeviceFormat` were built for this day and need no change.** `RenderPassKey` is an opaque `uint64` the backend states and this layer never interprets (`kNotStated` = "this family has no such structure"); `RenderPassCompatibility`'s own doc states the rule ("what a pass structure is belongs to the device's API"). A Metal backend answers `kNotStated` and still shares pipelines correctly. They finally get the reader they were designed for | `DrawState.hpp:155-205` |
+| P4 | **The largest cost the commitment forces is one the tree does not answer: the shader source language.** `ShaderProgram.hpp` says the backend compiles GLSL to SPIR-V or consumes SPIR-V, and `BuiltinShaders` emits GLSL `#version 450` text. D3D12 wants DXIL, Metal wants MSL. The family-neutral design is: **GLSL stays the SDK's shader language, each backend owns the translation** (SPIRV-Cross → HLSL / MSL), and `BuiltinShaders`' text stays the one portable source. The alternative - one source text per family - multiplies the engine's built-ins by N. This is an ADR-level decision, not an implementation detail | `ShaderProgram.hpp:34`, `BuiltinShaders.cpp` |
+| P5 | **`ResidencyClaims` moves to the SDK mainline** (T30's rule, trigger now hit by decision: a second explicit-API backend needs "who may build this key"); `PinnedResources` leaves with vsg | T30 |
+| P6 | **The extension-point table understates "a backend".** 2.11 says about six kinds of file; a FAMILY additionally needs its exposure gate (a `check_<family>_exposure.py`, same shape as vk's) and its shader translator | `graphics-architecture.md` 2.11 |
+
+What stays per backend **by design**, in every family, and should be said that way in the ADR: the state → API
+mapping (`StateMapping.hpp`), barrier/state planning (`BarrierPlan`), the format tables, the shader translation,
+and the residency tables' storage. Those are exactly where the families differ; the seam is everything that
+must not.
+
+## 5. Proposed orderFour batches; R0–R2 pay for themselves even if the retirement never happens, R3 is T60's batch.
 
 | # | Batch | Contents | Why now |
 |---|---|---|---|
