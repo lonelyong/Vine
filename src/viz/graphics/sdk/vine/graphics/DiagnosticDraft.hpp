@@ -11,19 +11,19 @@
  *        category it belongs to, what it is about, the limit it hit and the sentence.
  *
  * @details
- * - WHY ONE SHAPE. Three spellings of one refusal grew in this tree (the SDK's `RenderDiagnostic`, the vk
- *   backend's `ContentRefusal`, the vsg backend's enum-plus-message pair). They mean the same thing and
- *   differ only in which fields they happen to carry, so every new backend had to pick one and every
- *   reader had to learn three. A draft is written where the cause IS KNOWN - deep in a planner that can
- *   see which stage refused - and handed on as a `RenderDiagnostic` at the report site; a fourth backend
- *   inherits the shape instead of inventing a fourth (G1 / G6).
+ * - WHY ONE SHAPE. Three spellings of one refusal once grew in this tree - a full report type, an
+ *   enum-plus-message pair, and a struct naming the cause - each carrying a different subset of the
+ *   same fields. A backend had to pick one and a reader had to learn three. A draft is written where
+ *   the cause IS KNOWN - deep in a planner that can see which stage refused - and handed on as a
+ *   `RenderDiagnostic` at the report site; a new backend inherits the shape instead of inventing a
+ *   fourth (G1 / G6).
  * - ONE WRITER, FIRST REASON WINS. `refuse()` is the only way to put anything in a draft, and a second
  *   refusal on the same draft does nothing: the first reason is the one that explains the call, and a
  *   later stage failing as a CONSEQUENCE must not replace the cause. Every planner used to spell that rule
  *   out with `if (why.empty())` by hand.
  * - A CODE IS THE REFUSAL. `refuse()` always states one, so "refused" and "has a code" are the same
  *   question - which is what keeps a caller from reporting a sentence with no matchable cause. The codes
- *   are the reporting module's own vocabulary (`vk.content.*`, `vsg.readback.*`, ...), registered in
+ *   are the reporting module's own vocabulary (a prefix per module, e.g. `vk.content.*`), registered in
  *   `scripts/diagnostic_codes.txt`.
  * - NOT A REPORT. This value is bookkeeping for one call; it holds no severity and no origin, because the
  *   party that hands it to the route knows both (see `diagnostic`).

@@ -113,8 +113,8 @@ enum class DiagnosticOrigin : std::uint8_t
  *     object rather than a log line;
  *   - @ref limit carries the two numbers when the report is about a device limit;
  *   - @ref message is the human sentence, and it is the only field whose wording may change.
- * - THE CODE IS A STRING, NOT AN ENUM, because the vocabulary belongs to the MODULE that reports (this SDK knows no
- *   `Vk*` and no `vsg::` - see `C3` in the graphics design docs): each backend and the engine name their own codes
+ * - THE CODE IS A STRING, NOT AN ENUM, because the vocabulary belongs to the MODULE that reports (this SDK names no
+ *   render API's types - `graphics-architecture.md` C4): each backend and the engine name their own codes
  *   under their own prefix, and `scripts/diagnostic_codes.txt` is the registry that keeps them from drifting
  *   (`check_diagnostic_formats.py` checks both directions).
  * - AN EMPTY CODE IS NOT A CODE. A report that names no finer cause than its category leaves @ref code empty; that is

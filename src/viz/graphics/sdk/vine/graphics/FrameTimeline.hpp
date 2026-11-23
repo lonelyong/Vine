@@ -17,14 +17,13 @@
  *   target that was still being read"). So they all read one counter.
  * - SUBMITTED IS NOT COMPLETED, and conflating them is the last silent failure available here. `submittedFrame()`
  *   counts frames handed to the queue; `completedFrame()` counts frames whose GPU work is provably done. The proof
- *   is the BACKEND's to obtain, and both current backends obtain it from a REUSE: the command-buffer slot that could
- *   still name an object is waited on before it is recorded again (vsg waits that slot's fence in
- *   `RecordAndSubmitTask::start()`, vk waits a frame's fence before reusing its slot), so "the slot that could still
- *   name this object has been reused" IS the completion evidence. An executor reports it by moving the watermark -
- *   `completeUpTo()` where one slot list exists, `DeviceClock::windowCompleted()` where a device serves several
- *   surfaces - and an executor that stops waiting on its slots' fences loses the evidence and must fall back to a
- *   counted device wait instead of assuming.
- * - THE SLOT COUNT BELONGS TO THE SURFACE, not to this type (`numBuffers` in vsg's viewer, `kFramesInFlight` in vk),
+ *   is the BACKEND's to obtain, and the evidence it obtains is a REUSE: the command-buffer slot that could still
+ *   name an object is waited on before it is recorded again (a slot's fence is waited before the slot is recorded
+ *   into), so "the slot that could still name this object has been reused" IS the completion evidence. An executor
+ *   reports it by moving the watermark - `completeUpTo()` where one slot list exists, `DeviceClock::windowCompleted()`
+ *   where a device serves several surfaces - and an executor that stops waiting on its slots' fences loses the
+ *   evidence and must fall back to a counted device wait instead of assuming.
+ * - THE SLOT COUNT BELONGS TO THE SURFACE, not to this type (the window's own buffer count),
  *   so it is probed once at session start and passed in here - `retirePoint()` is why the number is needed: a parked
  *   object must outlive the slot that recorded it, hence slots + 1.
  * - SEVERAL FRAMES MAY BE OPEN AT ONCE (one per driver). A device that hands out more than one frame driver opens one

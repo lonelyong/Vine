@@ -20,13 +20,12 @@ VN_GRAPHICS_NS_BEGIN
  *   place: any number of bodies may enter the SHARED side (two drivers' frames overlap - `graphics-threading.md` C21),
  *   and a host verb that reconfigures the device or reads a device-wide answer enters the EXCLUSIVE side, which waits
  *   for the bodies in flight.
- * - WHICH SIDE A CALLER TAKES IS THE CALLER'S STATEMENT, and the lease type it asks for is that statement. The
- *   direct-Vulkan backend gives each frame driver a gate of its own and takes it EXCLUSIVE for the whole frame (that
- *   driver's command pool, fence, ring and descriptor pool are its own, so two frames of one driver must not overlap),
- *   while the DEVICE's gate is taken SHARED by a frame that draws off-screen and EXCLUSIVE by one that presents (a
- *   swapchain, its signals and the window's report episodes are one device resource). The vsg backend has no
- *   per-driver gate: its frames take the device gate SHARED, because what excludes two of its frames is the window's
- *   own claim and the device's content lock, not the gate.
+ * - WHICH SIDE A CALLER TAKES IS THE CALLER'S STATEMENT, and the lease type it asks for is that statement. A backend
+ *   that gives each frame driver state of its own (a command pool, fence, ring and descriptor pool) takes a gate of
+ *   its own EXCLUSIVE for the whole frame, so two frames of one driver cannot overlap; a backend whose frames share
+ *   one window device resource takes the DEVICE's gate - SHARED for a frame that draws off-screen (two drivers'
+ *   frames may overlap) and EXCLUSIVE for one that presents (a swapchain, its signals and the window's report
+ *   episodes are one device resource).
  * - WHAT IT REFUSES. A caller asking for THIS gate from a thread that already holds it, in either side, gets an EMPTY
  *   lease at once: waiting there would be the caller waiting for itself, and a frame started from inside a frame (a
  *   `FrameUpdate::onFrame()` call or a diagnostic sink driving another engine) is a protocol error the backend reports rather

@@ -345,7 +345,9 @@
 - `scripts/vsg_rewrite_gate.sh`: the suite run twice with 0 VUID / 0 SYNC-HAZARD, closed phase lines, and the application picture percentage.
 - Static gates: `check_ai_docs.py`, `check_doc_symbols.py`, `check_include_hygiene.py`, `check_export_annotations.py`, `check_diagnostic_formats.py`, `check_public_docs.py`,
   `check_api_style.py` (API style: no setters/callbacks in values, no `getXxx` accessors, `bool` + out-parameter may not coexist, an `XxxBuilder` must have `build()`;
-  4 existing findings are registered in the script's `BASELINE` and are deleted as they are fixed).
+  4 existing findings are registered in the script's `BASELINE` and are deleted as they are fixed),
+  `check_vk_exposure.py` (also CTest `vk_exposure`: V2 no render-API include, V4 shell types, V5 **the SDK's prose
+  names no backend** - `\bvsg\b|\bVsg|\bvk\b` except a `vk.<category>.<cause>` code; `graphics-architecture.md` C4).
 - `scripts/asan_check.sh` / `VN_ASAN_*`; only `skipped == 0` counts as having run the device battery.
 - Measuring a backend's per-frame cost: `test_vsg --gtest_filter='*MeasureWhatEachKind*'` (prints µs/frame + `builds`/`uploads`/`created`; needs a real window and is skipped headless); the cost model and allocation caps are in `.ai/design/vsg-backend.md` §2.10 / N4 / T5.
 

@@ -17,7 +17,7 @@ VN_GRAPHICS_NS_BEGIN
  *   axis, no anisotropy, no LOD bias - which is also what a pass input that states nothing keeps using (the
  *   backend's own input sampler, so an existing declaration does not silently change).
  * - The fields are deliberately the ones a 3D renderer's sampler description carries (Filament's
- *   `SamplerParams`, three.js' texture filters/wrap modes, vsg's `vsg::Sampler`): `min_filter` / `mag_filter`,
+ *   `SamplerParams`, three.js' texture filters/wrap modes): `min_filter` / `mag_filter`,
  *   `mipmap_mode`, the three address modes, `anisotropy`, `lod_bias` and the LOD range. Compare samplers
  *   (hardware depth comparison) are not part of this slice: the pass depth path reads exact depths, and a
  *   compare sampler would need an ABI of its own (see `.ai/design/graphics-rendering.md`).

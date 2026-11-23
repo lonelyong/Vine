@@ -14,9 +14,8 @@ VN_GRAPHICS_NS_BEGIN
  *   CONTENT's own look), and a pass overrides it for everything it draws
  *   (RenderPass::setPolygonModeOverride - a VIEWING decision, which "wireframe" is).
  * - ADDING AN ENUMERATOR IS A BACKEND QUESTION, NOT ONLY AN SDK ONE: what a mode means to a device
- *   (VK_POLYGON_MODE_FILL / _LINE / _POINT) is derived in the vsg backend (detail::mapPolygonMode, plus
- *   the dynamic-state command that announces it), and a device that cannot draw lines reports it
- *   rather than serving a filled picture.
+ *   (a fill / line / point rasterisation mode, plus the dynamic-state command that announces it) is the
+ *   backend's mapping, and a device that cannot draw lines reports it rather than serving a filled picture.
  */
 enum class PolygonMode
 {

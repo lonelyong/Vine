@@ -31,8 +31,8 @@ enum class ShaderStageType
  *
  * @details
  * - A value type aggregating the authored source of a single stage. The SDK is backend-agnostic and never
- *   compiles; the render backend compiles the GLSL to SPIR-V at run time (vsg ShaderCompiler, glslang) or
- *   consumes pre-compiled SPIR-V supplied through the program.
+ *   compiles; the render backend compiles the GLSL to SPIR-V at run time (with a GLSL compiler such as
+ *   glslang) or consumes pre-compiled SPIR-V supplied through the program.
  */
 struct VN_GRAPHICS_API ShaderStage {
     ShaderStageType type = ShaderStageType::Vertex; // Stage kind.

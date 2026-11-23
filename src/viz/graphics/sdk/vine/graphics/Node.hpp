@@ -58,7 +58,7 @@ struct NodeCacheStats
  * @brief Base class of every scene-graph node.
  *
  * @details
- * - The OSG/vsg-style base of the scene hierarchy: Group aggregates children, MatrixTransform (matrix),
+ * - The conventional base of the scene hierarchy: Group aggregates children, MatrixTransform (matrix),
  *   PositionAttitudeTransform (position / attitude / scale) and AutoTransform (billboard) place a subtree,
  *   StateNode applies render state, Geometry carries vertex data. Node itself provides only the shared
  *   identity - name, subtree visibility / opacity, the parent link, world-matrix / bounds queries - and is

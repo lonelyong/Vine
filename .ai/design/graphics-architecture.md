@@ -73,9 +73,9 @@ removing an unregistered pass and removing an already removed pass are the same 
     (`check_export_annotations.py`'s file list). **The seam's membership rule is the PROMISE, not the reader count**
     ([ADR-2026-11-23](ADR-2026-11-23-retiring-the-reference-backend.md)): a mechanism belongs here when a sentence a host
     can read is true only because it is ONE implementation, and it moves into a plugin when its only justification is
-    "two backends happen to call it". "Both backends use it" was the EVIDENCE while two backends existed, and
-    `check_include_hygiene.py` keeps measuring it until the deletion re-pins the list to "reached by the shipped
-    backend" (`../backlog/graphics.md` T60); the rule itself survives the deletion and a second owner, because a promise
+    "two backends happen to call it". "Both backends use it" was the EVIDENCE while two backends existed; since the
+    reference backend retired the list is measured against the SHIPPED backend (`check_include_hygiene.py`'s
+    `SEAM_SHARED_HEADERS`, re-pinned 2026-11-23). The rule itself survives the deletion and a second owner, because a promise
     enforced twice is two answers to one host (`G6`).
 
 | Mechanism | The promise a host reads |
@@ -99,11 +99,11 @@ removing an unregistered pass and removing an already removed pass are the same 
     so the seam carries no Vulkan SEMANTICS at all, only the neutral vocabulary. C6's "no new spellings"
     stays the rule and `check_vk_exposure.py` V2 is its gate.
     **The seam has no namespace of its own**
-    ([ADR-2026-11-18](ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)): it is the property "both backends
-    reach it", recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, and the two pages that state it (this point and
+    ([ADR-2026-11-18](ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)): it is the property "the shipped
+    backend reaches it", recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, and the two pages that state it (this point and
     `docs/guides/graphics-backends.md` 5) are checked against that list, so a mechanism cannot join or leave it without them
     changing too. An alias group (`vn::graphics::backend`) was rejected: it gives one class two names, and the shared surface
-    is 25 headers, not the 8 mechanisms - a name covering 8 of 25 claims a boundary that is not there (`G1`, `G4`).
+    is 35 headers, not the 8 mechanisms - a name covering 8 of 35 claims a boundary that is not there (`G1`, `G4`).
 2.10 **The migration APIs are closed**: the `addPass` family is gone, `Plan` is the only shape of a pass declaration;
     `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
     plan), `frame()` answers only Ran / Submitted, `applyPlan` is three-state, `SessionBusy` is no longer a plan problem code.
@@ -118,7 +118,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | A **pass kind** (e.g. compute) | `DrawKind.hpp`'s `DrawKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `FullscreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend's frame compiler and recorder (switches over `DrawKind`) | 6–8 |
 | A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.cpp`'s `colorFormatOf` / `depthFormatOf`; vk `ContentImages.cpp`'s `formatOf` | 4 |
 | A **pass declaration field** | `PassDesc.hpp`; `Plan.cpp` (diff and validation); `FrameDescription.hpp`'s `PassDraw`; each backend's recorder | 4+ |
-| A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; vsg's binding | 4 |
+| A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; a new backend's own binding | 4 |
 | A **backend** (and, for a second API FAMILY such as D3D12 or Metal, also its `check_<family>_exposure` gate over the SDK's family spelling and its own shader translation - the SDK keeps ONE shader source language, review 8 `P4`) | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`), the two halves of `RenderBackend`, its own `test_*`, a `check_*_exposure` gate, `RenderBackendRegistry` self-registration | about 6 kinds of file, +2 for a new family |
 
 2.12 **`Content*` names only the content model and identity** (naming, `G12`): the `Content*` prefix belongs to **content objects themselves** — `ContentId` /
@@ -129,29 +129,8 @@ removing an unregistered pass and removing an already removed pass are the same 
     like a content object while it is actually the fill rule for push bytes. Boundary: the other `Content*` names (`ContentStore` / `ContentCaches` /
     `ContentDraw` / `ContentImages` / `ContentPipeline` / `ContentAssembly` / `ContentPass` / `ContentFacts` /
     `ContentSources`) **stay** — they at least say they handle content (renaming item by item is churn, `G8`); new names follow this rule.
-    Spelling deviation: the research document's `E-08` suggested `PushConstants`, not adopted — the same TUs already have `::vsg::PushConstants`
-    (the object actually recorded), and two identical names would create a "whose is this" question at every use site (`G1`); `PushRange` says the fact this unit owns
-    (one declared range and its named members).
-
-    The names of same-role types in the two backends (alignment is the rule, a deviation must state its reason):
-
-| Role | vk | vsg |
-|---|---|---|
-| Facade (= `RenderBackend`) | `Device` | `VsgBackend` |
-| Frame driver (one frame's machinery and scratch) | `Device::FrameDriver` (lent by `createFrameDriver`) | `VsgDriver` (lent by `createFrameDriver`) |
-| The value plan resolved at frame head | `FrameHead` | `FrameHead` |
-| The device's target table / target objects | `TargetTable` / `TargetObjects` | `TargetTable` / `TargetObjects` |
-| Window target | `WindowTarget` | `WindowTarget` |
-| Window / offscreen session | no separate type (the device's own frame machinery) | `WindowSession` / `OffscreenSession` |
-| Content facts and rows | `ContentCaches` (rows and command plans included) | `ContentStore` + `ContentFacts` |
-| Compiled half (per (program, rev, layout, variant)) | no separate type (`ContentCaches`'s `ContentPipelineKey`) | `CompiledPrograms` |
-| Declared descriptor sets | `ContentCaches`'s set cache | `BindingSets` |
-| Readback | `ReadbackStaging` | `HostReadback` |
-| Lights | SDK `LightSet` | SDK `LightSet` |
-
-    The `Content*` names that stay differ between the two sides (`ContentCaches` / `ContentStore` / `ContentFacts`) and that is not drift: they all belong to
-    "the content model and identity" (2.12's first sentence), and one backend keeps rows and command plans in one object while the other separates them —
-    the name says that.
+    Spelling note: the research document's `E-08` suggested `PushConstants`, not adopted — the name reads as a content object while the type is
+    the fill rule for one declared range (`G12`); `PushRange` says the fact this unit owns (one declared range and its named members).
 
 2.13 **`SceneView` is a per-window controller, not a `View` value** (naming, `G12`): the class owns one window's view state - camera, content scene,
     manipulator, input, the surface size it follows and the `PassChain` it ADOPTS - and answers "which pass draws me" for the area that presents it.
@@ -203,6 +182,9 @@ removing an unregistered pass and removing an already removed pass are the same 
       claim - a backend that leaves the report part disengaged while the feature is true is honest, not broken. The pair is
       never collapsed into one flag, because a fourth feature for it would move a backend fact onto the public surface,
       which (c) excludes.
+    * **The prose follows the same rule (`C4`)**: a header states what the contract requires, not which backend answers it
+      today. A rule defined by comparing two implementations is rewritten as the rule, and the only backend-shaped string a
+      header may quote is a diagnostic code's prefix, because a host matches on it.
     * **Three costs, all permanent.** A promoted fact is one more obligation on every future backend (`RenderDevice` carries
       19 virtuals today, 5 of them pure); a DEFAULTED one is a silent lie, because a backend that forgets to override reports
       the base default, which reads as an honest "no" while meaning "did not answer" - the distinction `ResidencyRow` states
@@ -332,6 +314,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | C1 | A device is not a window: `RenderDevice` owns the device/queues, window targets are issued by the device. |
 | C2 | Pass registration, named outputs, diagnostics and presentation each have one owner, no second list. |
 | C3 | Scheduling is in the engine only; the backend only materialises `FrameDescription.passes`. |
+| C4 | A public SDK header states the CONTRACT, not the survey: it names no concrete backend (`check_vk_exposure.py` V5). The one exception is a diagnostic code, whose prefix is an identity a host matches. |
 
 ### 5.2 Requirements (R#)
 

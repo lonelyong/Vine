@@ -137,10 +137,10 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   an engine whose device is not up reports it instead of driving frames into nothing.
  * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED. An executor call from a second thread WAITS for that
  *   executor's frame in flight and a re-entrant call is REFUSED - `FrameGate.hpp` is the shared
- *   implementation, and the two backends answer the same way. SEVERAL EXECUTORS MAY RUN AT THE SAME TIME: a backend
- *   that hands out drivers through `createFrameDriver()` may run their frame bodies concurrently (vk does), which is what
+ *   implementation, one answer for every backend. SEVERAL EXECUTORS MAY RUN AT THE SAME TIME: a backend
+ *   that hands out drivers through `createFrameDriver()` may run their frame bodies concurrently, which is what
  *   makes two engines cost two frames' worth of host time rather than two assets' worth. What a backend must state is
- *   which of its verbs may overlap: vk's frame bodies overlap each other, a frame that presents is serialised with
+ *   which of its verbs may overlap: frame bodies may overlap each other, a frame that presents is serialised with
  *   every other frame, and the HOST VERBS (`setRenderTarget`, `releaseContent`, the readbacks, ...) wait for the frames
  *   in flight - they are the DEVICE'S promise, not an impossible host duty. A device that runs frames concurrently
  *   must still keep the host's sink safe: it calls the sink from one thread at a time. A device must not assume its
@@ -302,8 +302,8 @@ class VN_GRAPHICS_API RenderDevice {
      *
      * @details
      * - WHAT THIS IS: the host (through RenderEngine::removePass) says "this pass will not exist again", so a
-     *   backend may drop whatever it retained UNDER THAT IDENTITY. The vk backend retains nothing by pass
-     *   identity and has nothing to forget; the vsg backend forgets the slot id it keyed by it.
+     *   backend may drop whatever it retained UNDER THAT IDENTITY. A backend that retains nothing by pass
+     *   identity has nothing to forget; one that keys a slot by it forgets that slot.
      * - WHAT THIS IS NOT: it does not free a target. A pass owns no target - what a pass draws into is either the
      *   host's (released by releaseRenderTarget) or the frame's transient (owned by the engine's resource table),
      *   and RenderEngine::removePass releases the explicit one in the same place. Nor does any backend keep a

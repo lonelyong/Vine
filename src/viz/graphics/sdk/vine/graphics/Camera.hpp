@@ -36,9 +36,9 @@ using vn::math::Vec3d;
  *
  * @note
  * - projectionMatrix() is the CPU-side matrix: a right-handed view looking down -Z with clip space z in
- *   [-1, 1] (the classic OpenGL range). A backend may render with another convention - the vsg backend
- *   renders Vulkan-style reverse-Z (near maps to 1, far to 0, Y flipped) - and that is expected: which clip
- *   space a GPU wants is a property of the API, not of the camera. So this matrix serves the engine's own
+ *   [-1, 1] (the classic OpenGL range). A backend may render under another convention - reverse-Z with
+ *   the near plane at 1, far at 0, and Y flipped is the usual one on Vulkan - and that is expected: which
+ *   clip space a GPU wants is a property of the API, not of the camera. So this matrix serves the engine's own
  *   uses (frustum culling, view-dependent size, CPU-side math) and does NOT predict the picture's clip
  *   space.
  */

@@ -44,7 +44,7 @@
  */
 VN_GRAPHICS_NS_BEGIN
 
-/** @brief Load operation of one attachment (backend-neutral: bound to the API's spelling in the vsg layer). */
+/** @brief Load operation of one attachment (backend-neutral: a backend binds it to its API's spelling). */
 enum class LoadOp : std::uint8_t
 {
     Load,     // Keep what the attachment holds.
@@ -109,7 +109,7 @@ struct VN_GRAPHICS_API VertexLayoutKeyHash {
  * @brief A device's own format code, opaque to this layer.
  *
  * @details
- * - The value means whatever the device layer says it means (the vk backend stores an API format
+ * - The value means whatever the device layer says it means (a backend stores an API format
  *   enum in it); this layer only compares and orders codes. Keeping it a distinct type is what lets
  *   the seam carry the device's answer without making its API's format vocabulary part of the seam.
  * - `kUndefined` (0) is the device's UNDEFINED code. In a field that describes one attachment per

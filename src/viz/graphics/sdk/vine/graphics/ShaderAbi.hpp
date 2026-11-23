@@ -12,7 +12,7 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @details
  * - This is the L1 (backend-neutral) half of the shader ABI: a backend maps a role to its own binding spelling — a
- *   vsg attribute-binding name, a D3D semantic, a GL attribute index — while the SHADER declares the attribute at the
+ *   binding name, a D3D semantic, a GL attribute index — while the SHADER declares the attribute at the
  *   location attributeLocation() returns. See .ai/design/graphics-rendering.md 4.3.
  * - A caller-provided attribute (a forwarded custom channel) is not in this enum: it keeps its SOURCE location as its
  *   shader location (>= 3, never the reserved texcoord slot 8 and never the four instance-matrix columns 12-15), which
@@ -24,8 +24,8 @@ enum class VertexAttribute
 {
     Position,      // Object-space position (the only required attribute).
     Normal,        // Shading normal (derived when the geometry authors none).
-    Color,         // Optional per-vertex colour (define-gated on the vsg set).
-    TexCoord0,     // Optional texture coordinate (define-gated on the vsg set).
+    Color,         // Optional per-vertex colour (only when the shader's defines ask for it).
+    TexCoord0,     // Optional texture coordinate (only when the shader's defines ask for it).
     InstanceModel, // One instance's local model matrix (four consecutive locations).
 };
 
@@ -102,8 +102,8 @@ constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
  * @brief Per-view data block the built-in shading reads (L1 shape).
  *
  * @details
- * - The engine owns this SHAPE; a backend owns where it lives — a uniform / constant buffer, or (as the vsg forward
- *   path does today) the proj/model subset inside the 128-byte push range.
+ * - The engine owns this SHAPE; a backend owns where it lives — a uniform / constant buffer, or the
+ *   proj/model subset inside the 128-byte push range.
  * - Every member is a mat4/vec4 and the struct is 16-byte aligned, so std140, D3D cbuffer packing and root constants
  *   all agree (see .ai/design/graphics-rendering.md 4.3): a `vec3` followed by a `float` is the one packing trap
  *   this rule avoids.

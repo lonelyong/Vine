@@ -29,12 +29,12 @@ enum class CompareOp
  * - WHICH FACE IS FRONT IS THE SDK'S RULE, NOT THE GPU'S: a triangle is front-facing when its vertices
  *   appear counter-clockwise to the camera in a right-handed world (the SDK's view looks down -Z, see
  *   Camera), so a host authors geometry against one convention and gets the same picture on every backend.
- * - A backend rendering under another clip convention (the vsg backend flips Y for Vulkan, where the front
- *   face is defined in framebuffer coordinates) maps this rule onto its own front face.
+ * - A backend rendering under another clip convention (Y flipped, where the front face is defined in
+ *   framebuffer coordinates) maps this rule onto its own front face.
  *
  * @note
  * - A backend that got the mapping wrong culls the faces it was asked to keep: the object disappears with
- *   no diagnostic (recorded as UB-14 in the vsg backend's notes).
+ *   no diagnostic.
  */
 enum class CullMode
 {

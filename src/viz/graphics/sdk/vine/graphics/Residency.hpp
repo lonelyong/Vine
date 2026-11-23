@@ -72,7 +72,7 @@ struct ResidencyRow
  *   each backend. Which facts may be public at all is `.ai/design/graphics-architecture.md` 2.15, and it is why a
  *   resource type never appears here.
  * - STEADY STATE IS FREE. A ledger reserves one row per kind when it is built, so `note()` never grows the
- *   storage: a backend may rebuild it every frame (and `VsgBackend` does, when a host asks for a report).
+ *   storage: a backend may rebuild it every frame (the shipped backend does, when a host asks for a report).
  * - ONE ROW PER KIND. `note()` replaces the row of the same kind, so filling the same kind twice is a mistake
  *   in the caller's arithmetic rather than a second row nobody reads.
  */

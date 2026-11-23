@@ -57,7 +57,7 @@ VN_GRAPHICS_API String renderApiToString(RenderApi api);
  *   RenderBackendInfo.
  */
 struct VN_GRAPHICS_API RenderBackendInfo {
-    String    name;                        // Unique backend name (identifier), e.g. "vsg", "opengl3".
+    String    name;                        // Unique backend name (identifier) - the key create() matches.
     String    display_name;                // Human-friendly name shown in UI; falls back to name when empty.
     String    description;                 // Human-readable description.
     String    version;                     // Backend version, e.g. "1.0.0".
@@ -69,7 +69,7 @@ struct VN_GRAPHICS_API RenderBackendInfo {
  * @brief Factory creating a concrete render backend.
  *
  * @details
- * - Concrete backends (vsg, hand-written Vulkan, OpenGL, ...) implement this interface and self-register into
+ * - A concrete backend implements this interface and self-registers into
  *   RenderBackendRegistry, so the application can create a backend by name without a compile-time dependency on the
  *   backend module or its third-party libraries.
  * - A single backend plugin can register several factories, one per implementation.
@@ -143,7 +143,7 @@ class VN_GRAPHICS_API RenderBackendRegistry {
 
     /** @brief Creates a backend by name, told how its device presents.
      *
-     * @param name Backend name, e.g. "vsg".
+     * @param name Backend name - the key a factory registered under (see RenderBackendInfo::name).
      * @param desc How the device reaches the display (see DeviceDesc).
      * @return New backend, or null when no factory with that name is registered.
      */

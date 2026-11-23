@@ -140,10 +140,9 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
  *   kind from becoming an unbindable descriptor. The returned program therefore names BOTH kinds in
  *   its import pragma (VN_TEXCOORD_UV / VN_TEXCOORD_CUBE) and samples the pair when neither is
  *   set — which is the shape its PROGRAM-LEVEL compile gets (a stage set is built once with no
- *   defines, see VsgPipelineFactory) and the shape a mis-widthed channel takes. A backend that hands
- *   the sampler kind to the texcoord width (which is what the vsg backend's rule does) keeps it
- *   honest by setting exactly one of the two, and one that sets neither still gets a program whose
- *   sampler matches the coordinates its data carries.
+ *   defines) and the shape a mis-widthed channel takes. A backend that binds the sampler kind to
+ *   the texcoord width keeps it honest by setting exactly one of the two, and one that sets neither
+ *   still gets a program whose sampler matches the coordinates its data carries.
  *
  * @return The vertex + fragment program (fresh per call).
  */

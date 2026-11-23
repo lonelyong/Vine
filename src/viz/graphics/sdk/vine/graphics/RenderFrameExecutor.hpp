@@ -62,7 +62,7 @@ VN_GRAPHICS_NS_BEGIN
  *   thread WAITS for THIS executor's frame in flight, and a call made from the thread that is already driving one is
  *   REFUSED (`PresentOutcome::Refused`, `PrepareReport::Outcome::Refused`) with one diagnostic - waiting there would
  *   be the caller waiting for itself. A device that hands out drivers through `RenderDevice::createFrameDriver()` may run
- *   their frame bodies CONCURRENTLY (vk does; `.ai/design/graphics-sessions.md` S1–S7): two engines then cost two
+ *   their frame bodies CONCURRENTLY (`.ai/design/graphics-sessions.md` S1–S7): two engines then cost two
  *   frames' worth of host time rather than two assets' worth, and what they share - content caches, allocator, targets,
  *   the diagnostic sink - is the DEVICE's to keep safe. An executor may therefore keep its per-frame state
  *   unsynchronised, but must not assume it stays on the same thread across an initialize()/shutdown() pair (see
@@ -87,7 +87,7 @@ class VN_GRAPHICS_API RenderFrameExecutor {
      *   An entry with a null pass is nothing to run; an entry whose description is empty is a pass that ran and issued
      *   nothing - the executor keys per-pass retained state by its identity, so that is a fact it must not confuse
      *   with "the pass was not in the frame". Then make the frame's content reach the target each pass names. How is
-     *   the executor's business: the vsg backend walks the value into its own collection stage and its session, a
+     *   the executor's business: an immediate-mode backend walks the value into its own command stream, a
      *   retained renderer builds a graph from it, an offline renderer traverses it - the value says what ran, never
      *   how.
      * - The value is valid for the duration of this call (see the class contract), and an executor that keeps any of

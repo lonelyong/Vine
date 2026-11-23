@@ -27,8 +27,8 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  *   (collectRenderState) with defaults applied (resolveRenderState), and it participates in the backend's
  *   pipeline-variant key.
  * - State deliberately lives on nodes rather than per drawable, so a batch of geometry sharing one StateNode
- *   also shares one pipeline variant; the model mirrors vsg::StateGroup / the GL state stack and stays
- *   backend-agnostic.
+ *   also shares one pipeline variant; the model follows the long-standing scene-graph state group / GL state
+ *   stack and stays backend-agnostic.
  * - The TYPES this node uses live in two narrower headers, so a consumer that only needs the vocabulary or
  *   the priority table (a pass, a backend's pipeline key) does not include the scene graph: RenderState.hpp
  *   holds what content may say, StateResolution.hpp holds what a resolved state is and how it is computed.
