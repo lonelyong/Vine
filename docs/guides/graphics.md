@@ -1,6 +1,6 @@
 # Vine graphics 模块：架构与使用
 
-> **状态**：现行 ｜ **最后核对**：2026-11-18
+> **状态**：现行 ｜ **最后核对**：2026-11-23
 
 graphics 模块是 Vine 的**场景图 + 渲染资源 + 渲染引擎**。它自己**不碰 GPU**：它驱动一个
 `RenderBackend`，具体后端是插件。今天有两个：`gfx_backend_vk`（名字 `"vk"`，直连 Vulkan，
@@ -1580,13 +1580,14 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 `SKIP` 并说出原因（不假装通过）；不靠 `getenv("DISPLAY")` 判"有没有窗口系统"——那在 Windows 上是"没有"，而那里
 离屏像素照常可读。这一份探测是**共享入口**（`SdkPixelFixture::available()`，一次进程内只答一次）：套件里其余那些
 只需要设备的用例也问它（`BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest`），
-只有真正需要 X11 宿主窗口的用例才另外自己 `xcb_connect` 一次并据此 `SKIP`。
+只有真正需要宿主窗口的用例才用 `tests/test_vsg/TestHostWindow.hpp`（X11 走 `XGetImage`、Win32 走 `PrintWindow`
+合成器读回，两个平台同一份夹具），平台不提供窗口时据此 `SKIP`。
 
 **后端自检已退役**：`vsg_backend_selftest` 与 `scripts/vsg_selftest_evidence.sh` 随旧渲染器一起删除（它们是那个渲染器自己的
 相位门禁）。今天的端到端证据是 `scripts/vsg_rewrite_gate.sh`：在 lavapipe + validation 层上跑 demo，resize 前后各取一张图，
 出现任何未知 VUID 即失败（见 `src/plugins/gfx_backend_vsg/CMakeLists.txt` 里那段注释）。
 
-仓库有 **32 个 CTest 套件**（`ctest --test-dir build`；2026-11-17 计数）。判定看失败的是哪一条：
+仓库有 **33 个 CTest 套件**（`ctest --test-dir build -N`；2026-11-23 计数）。判定看失败的是哪一条：
 `test_vsg` 的宿主窗口用例在 WSLg 下对 500 ms 的 resize 期限敏感——**同一二进制**直接跑绿、`ctest` 偶发红，
 用 `--repeat until-pass:3` 复验（backlog T36 同族）。早先在这里登记为"既有失败"的 `test_cppstd`（5）/
 `test_runtime`（28）/ `test_system`（12 + 1 skip）现在都是绿的。

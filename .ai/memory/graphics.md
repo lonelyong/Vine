@@ -2070,3 +2070,31 @@
   three times (`rowsStillMatchTheGraph`, `refreshBoxes`, `refreshValues`) before `makeSceneSnapshot` copies the one
   dirty chunk. The chunk copy is NOT the cost (`shared == 62/63`); the three walks are the candidates, and the
   250 µs figure predates the four-named-steps refactor (`17ab42eb`) that made them explicit.
+
+## 2026-11-23 — vk on Windows: the platform branch runs, and the pixel instrument landed the same day
+
+- **Measured**: `build\bin\RelWithDebInfo\test_vk.exe --gtest_brief=1` on this Windows box (MSVC 19.52, hardware
+  Vulkan - `vulkaninfo --summary` lists an RTX 3050 and an Intel UHD 770; the run reports `max_samples = 8`,
+  validation on): **174 tests from 42 suites, 174 passed, 0 skipped, ~11 s**. The plugin module builds here too
+  (`build/bin/RelWithDebInfo/plugins/vine/gfx_backend_vk.dll`).
+- **What that proves**: `WindowSystem.cpp`'s `#if defined(_WIN32)` half RUNS, not merely compiles -
+  `VkProbeTest.AProbeDeviceBringsUpItsOwnWindowAndPresents` creates a window with `CreateWindowExW`, creates the
+  surface through `vkCreateWin32SurfaceKHR`, presents into it, and destroys window and surface with the session.
+- **The pixel half landed the same day** (this closed the gate's last platform item): `WindowPresentTest` no longer
+  has its own XCB window; both cases take `tests/test_vsg/TestHostWindow.hpp` - T12's fixture, one instrument for
+  XGetImage (X11) and `PrintWindow` + `PW_RENDERFULLCONTENT` after `DwmFlush` (Win32) - and assert the presented
+  picture on both platforms. The suite read **172 passed + 2 skipped** before the port (the two window cases had no
+  instrument on Windows) and **174/174 with no skips** after it.
+- **The mutation is the evidence**: with the window pass' clear changed to black, the corner assertion fails with
+  `rgb = 0, 0, 0`; with it magenta it passes. So the case reads the composited picture, not the window's own
+  background - a pixel case that passes for both colours would have been an instrument check in disguise.
+- **Trap (write assertions against a CHANNEL, not an order)**: a Win32 read hands back the surface's own order
+  (blue-green-red for a GDI window, the swapchain's for a Vulkan one) and X11 hands back the server's. Pure colours
+  whose red and blue bytes are EQUAL survive both: green and magenta for the picture, white for the instrument
+  paint. That is also why the frame's clear moved from red to magenta.
+- **Consequence for T35's gate**: the platform item is closed; open are a measured Wayland fallback (T13) and a
+  performance reading the gate accepts.
+- **Three homes held one stale fact**: the user guide, `vk-backend.md` 1.3 / 9.2 / 9.3 and this plugin's
+  `CMakeLists.txt` all still said "Win32 待实现 / only Linux/X11 ships". A platform claim is a MEASURED fact, so it
+  moves only with a run to quote - this one came with the numbers above. Deleting `vsg` is a separate criterion
+  (backlog T60), not part of the switch gate.

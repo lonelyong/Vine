@@ -1,12 +1,12 @@
 # the vk backend: a render backend straight onto Vulkan
 
 > **Status**: current
-> **Last verified**: 2026-11-17
+> **Last verified**: 2026-11-23
 > **Scope**: the `gfx_backend_vk` plugin (registered as `"vk"`) — a **straight-to-Vulkan** implementation of `RenderBackend`: device and queues,
 > targets and windows, content drawing, the device memory pool, the pipeline cache, reports and diagnostics. It does **not** cover the SDK seam itself (see `graphics-*`)
 > or `gfx_backend_vsg` (see `vsg-backend.md`).
 > **Sources**: `src/plugins/gfx_backend_vk/include/vine/backend_vk/**` (the contract), `tests/test_vk/**` (behaviour),
-> `scripts/check_vk_exposure.py` (the exposure boundary)
+> `scripts/check_vk_exposure.py` (the exposure boundary), `scripts/measure_graphics_claims.py` (re-derives the case / suite counts quoted here)
 > **Backlog**: `../backlog/graphics.md`
 >
 > **Numbering**: this page's `F#` / `C#` / `R#` / `N#` / `P#` / `D#` / `T#` are **this module's** stable ids; an audit finding is written
@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **169 cases / 41 suites**, and the comparison against vsg by
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **174 cases / 42 suites** (2026-11-23), and the comparison against vsg by
   `BackendParityTest` (13 cases, inside `test_vsg`).
 
 ### 1.2 Goals
@@ -43,10 +43,13 @@
   definition covered by synchronisation validation. That is modernisation, not a defect.
 - **A dedicated transfer queue / queue-family ownership transfer** (audit F11): the gain under the synchronous submission model is tiny (`G8`).
 - **`VMA`**: no third-party dependency; the hand-written pool already covers today's consumers (§2.4, `MemoryAllocator`).
-- **Real-hardware evidence for Win32 / Wayland** (backlog T12 / T13): `WindowSystem` reserves that layer, and only Linux/X11 ships today.
-- **Becoming the default backend**: the gate is in `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`. **This backend is what the host runs by default
-  today** — the host falls back to the first name in the registry, which is not a verdict from the switch gate; that gate is not all green yet (Win32 hardware, the
-  Wayland fallback), so Windows does not ship (backlog T35 tracks it).
+- **Real-hardware evidence for Wayland** (backlog T13): both platform branches are implemented and both are measured on hardware - X11 through `XGetImage` and
+  Win32 through a `PrintWindow` compositor read, one shared instrument for `WindowPresentTest` (2026-11-23). Wayland is implemented against the WSI contract only.
+- **Becoming the default backend**: the gate is in `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`. **This backend is the one the application names
+  today** — `app_shell`'s `chooseRenderBackend()` states `"vk"` (`VN_RENDER_BACKEND` overrides it) — and that is a host decision, not a verdict from the switch gate:
+  the registry has **no** default to switch (an unknown name answers null, and several registered with none stated is a refusal that lists them —
+  `appfw-render-surface.md` 2.4 and its `D7`). What the gate still wants is a measured Wayland fallback and a performance reading it
+  accepts (backlog T35), so Windows does not ship before them. Retiring `vsg` is a separate trigger-gated item (backlog T60), not this gate.
 
 ### 1.4 One-paragraph conclusion
 
@@ -582,8 +585,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **R3** One report per episode: every "cannot" has one `ReportOnce`, and when the condition ends `rearm` happens where it ended.
 - **R4** The witnesses are readable numbers: every conclusion about the cost model and the caches has a number on `Device`, and a test reads it instead of counting
   driver calls.
-- **R5** Every gate green: `check_ai_docs --strict`, `check_design_docs`, `check_doc_symbols`, `check_include_hygiene`, `check_api_style`, `check_public_docs`,
-  `check_export_annotations`, `check_vk_exposure`, `check_diagnostic_formats`.
+- **R5** Every gate green: `check_ai_docs --strict`, `check_design_docs`, `check_cross_refs`, `check_doc_symbols`, `check_include_hygiene`, `check_api_style`,
+  `check_public_docs`, `check_export_annotations`, `check_vk_exposure`, `check_diagnostic_formats`.
 - **R6** Mutations are load-bearing: every guard has a record that "remove it and the matching case goes red".
 
 ### 5.3 Invariants (N#)
@@ -728,7 +731,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (169 cases / 41 suites); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 174 cases / 42 suites on 2026-11-23); `ctest -R test_vk` |
 | T2 | byte for byte identical with vsg | `test_vsg`'s `BackendParityTest` (13 cases) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
@@ -744,9 +747,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - Audit items F1 / F2 / F4 / F7 / F8 / F12 are landed; F5 / F9 / F10 / F11 / F13 are kept as follow-up per §1.3. Several drivers are entirely landed, with the shape in
   §2.11 and `graphics-sessions.md`; **today's three TSan readings are in `graphics-threading.md` R18.**
-- `test_vk` **169 cases / 41 suites** (Debug all green, the ASan gate reports 0 in the vk scope); `test_vsg` **572**, `test_graphics` **617**; `BackendParityTest`
-  **13/13**. The target map, the shapes and the leases are one `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one
-  copy per pass.
+- `test_vk` **174 cases / 42 suites** (2026-11-23, Windows RelWithDebInfo: 174/174, no skips; the ASan gate reports 0 in the vk
+  scope); `test_vsg` **577**, `test_graphics` **639** (same build, `--gtest_list_tests`); `BackendParityTest` **13/13**. The target map, the shapes and the leases are one
+  `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** (an old `.so` makes `VsgBackendPluginTest` segfault).
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
   8.16–8.30 ms).
@@ -767,9 +770,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **Audit F9 / F10**: `vkCmdPipelineBarrier2` and dynamic rendering, waiting for the API 1.3 target.
 - **Backlog `T35` (becoming the default backend)**'s gate (`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`): `releaseRenderTarget` really frees the
   attachments, `readDepthBuffer` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
-  `docs/guides/graphics-backends.md`; **still missing** are Win32 hardware evidence (Windows does not ship before it), a measured Wayland fallback, and a
-  performance reading the gate accepts.
+  `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
+  174/174, no skips, the window cases reading the compositor); **still missing** are a measured Wayland fallback and a performance reading the gate accepts.
 - **Backlog `T12` / `T13`**: reading pixels from a Windows window, and the Wayland fallback.
+- **Backlog `T60`**: retiring `vsg` after this gate - trigger, rides and reasoning are in the item.
 
 ### 9.3 Compatibility / migration
 
@@ -778,7 +782,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **Cache file**: format version `1`; a mismatched version is refused (no migration, no guessing).
 - **Device requirements**: Vulkan 1.2 (multisample depth resolve depends on 1.2's `vkCreateRenderPass2`); a 1.3 device mostly uses core creation feedback and needs no
   extension.
-- **Platforms**: Linux/X11 is the only window path delivered today.
+- **Platforms**: Linux/X11 and Win32 both have a `WindowSystem` implementation and both are measured with a pixel instrument; Wayland is implemented against the WSI
+  contract only.
 
 ## 10. References
 

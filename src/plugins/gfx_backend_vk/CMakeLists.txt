@@ -3,11 +3,11 @@
 # WHAT IT IS FOR. The backend that REPLACES VulkanSceneGraph: it creates its own VkInstance / VkDevice / pipelines
 # instead of driving VulkanSceneGraph, so the SDK's backend seam gets a second implementation to be judged against.
 # The name says that path: "vsg" goes through VulkanSceneGraph, "vk" calls Vulkan itself. It is NOT the default yet -
-# the switch is gated (see ADR-2026-11-14-vk-becomes-the-default-target): releaseRenderTarget, readDepthBuffer or a
-# stated difference, device-loss reporting, and platform evidence come first.
+# the switch is gated (see ADR-2026-11-14-vk-becomes-the-default-target): the Windows window-pixel assertion, a
+# measured Wayland fallback and a performance reading the gate accepts come first.
 #
-# PLATFORMS. Linux/X11 is the first supported target; Win32 is next and joins through WindowSystem (one
-# implementation file, no change to Device). A platform this build does not serve answers UnsupportedSurface.
+# PLATFORMS. Linux/X11 and Win32 both have a WindowSystem implementation (one file each, selected in WindowSystem.cpp,
+# no change to Device). A platform this build does not serve answers UnsupportedSurface.
 #
 # WHAT IT CONSUMES. The graphics SDK (vine/graphics/): its shell headers expose no Vulkan type (the
 # factory and the plugin entry only name RenderBackend); everything Vulkan-shaped lives under src/internal.

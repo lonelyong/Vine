@@ -18,8 +18,9 @@ WHAT IT MEASURES
                 that include it.
   sdk           SDK header count (top-level vs. including `backend/`) and `bool name(`
                 occurrences in the same two scopes.
-  tests         `--gtest_list_tests` case counts and `ctest -N` suite count, when the
-                binaries/build tree are present.
+  tests         `--gtest_list_tests` case and suite counts (`test_graphics`, `test_vsg`,
+                `test_vk`) and the `ctest -N` suite count, when the binaries/build tree
+                are present; a single-config and a multi-config tree are both searched.
 
 Usage:
     python3 scripts/measure_graphics_claims.py
@@ -132,9 +133,19 @@ def sdk_counts() -> tuple[int, int, int, int]:
     return len(top), len(all_headers), bools(top), bools(all_headers)
 
 
-def gtest_count(binary: Path) -> int | None:
-    """Returns the number of gtest cases, or None when the binary is absent/unusable."""
-    if not binary.exists():
+def test_binary(name: str) -> Path | None:
+    """Returns the NEWEST test binary across a single-config and a multi-config build tree."""
+    bin_dir = ROOT / "build" / "bin"
+    candidates = [bin_dir / name, bin_dir / f"{name}.exe"]
+    for config in ("Debug", "RelWithDebInfo", "Release", "MinSizeRel"):
+        candidates += [bin_dir / config / name, bin_dir / config / f"{name}.exe"]
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    return max(existing, key=lambda path: path.stat().st_mtime) if existing else None
+
+
+def gtest_counts(binary: Path | None) -> tuple[int, int] | None:
+    """Returns (cases, suites) from `--gtest_list_tests`, or None when the binary is absent/unusable."""
+    if binary is None:
         return None
     try:
         listed = subprocess.run(
@@ -146,7 +157,19 @@ def gtest_count(binary: Path) -> int | None:
         )
     except OSError:
         return None
-    return sum(1 for line in listed.stdout.splitlines() if line.startswith("  "))
+    cases = 0
+    suites = 0
+    for line in listed.stdout.splitlines():
+        if line.startswith("  ") and line.strip():
+            cases += 1
+        elif line.strip() and not line.startswith(("Running main", "Note:", "[", "WARNING")):
+            suites += 1
+    return cases, suites
+
+
+def suite_line(raw: tuple[int, int] | None) -> str:
+    """Renders a count pair the way the documents quote it."""
+    return f"{raw[0]} cases / {raw[1]} suites" if raw is not None else "n/a"
 
 
 def ctest_count() -> int | None:
@@ -174,8 +197,6 @@ def main() -> int:
     store_lines, lifetime, lifetime_parked = content_store_counts()
     engine_lines, engine_public, engine_includes = engine_counts()
     top_headers, all_headers, top_bools, all_bools = sdk_counts()
-    graphics_tests = gtest_count(ROOT / "build" / "bin" / "test_graphics")
-    vsg_tests = gtest_count(ROOT / "build" / "bin" / "test_vsg")
     suites = ctest_count()
 
     print("graphics claims (scope is part of the number)")
@@ -185,12 +206,15 @@ def main() -> int:
     print(f"RenderEngine.hpp:  {engine_lines} lines; public signatures {engine_public}; included by {engine_includes} files")
     print(f"SDK headers:       {top_headers} top-level; {all_headers} including backend/")
     print(f"SDK bool returns:  {top_bools} top-level; {all_bools} including backend/")
-    print(f"test_graphics:     {graphics_tests if graphics_tests is not None else 'n/a'}")
-    print(f"test_vsg:          {vsg_tests if vsg_tests is not None else 'n/a'}")
-    print(f"ctest suites:      {suites if suites is not None else 'n/a'}")
+    print()
+    print("test suites (the newest binary per target - a count belongs to its build)")
+    for name in ("test_graphics", "test_vsg", "test_vk"):
+        binary = test_binary(name)
+        print(f"  {name + ':':<15} {suite_line(gtest_counts(binary)):<24} {binary if binary is not None else ''}")
+    print(f"  {'ctest suites:':<15} {suites if suites is not None else 'n/a'}")
     print()
     print("collection cost (run where the number matters):")
-    print("  ./build/bin/test_graphics --gtest_filter='*MeasureWhatOneCollectionCosts*'")
+    print(f"  {test_binary('test_graphics') or './build/bin/test_graphics'} --gtest_filter='*MeasureWhatOneCollectionCosts*'")
     return 0
 
 

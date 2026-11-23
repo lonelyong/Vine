@@ -68,9 +68,18 @@ target_compile_definitions(${TEST_NAME} PRIVATE VN_BACKEND_VK_LIB)
 
 target_link_libraries(${TEST_NAME} PRIVATE vn::Appfw vn::Graphics tp::volk glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
 
-# THE WINDOW TEST creates a real X11 window with xcb when the development package is present. The PLUGIN never links
-# xcb (it resolves xcb_connect/xcb_disconnect with dlopen); this is the TEST's own measuring instrument, and a machine
-# without xcb simply runs the other cases (the test is compiled out).
+# THE WINDOW INSTRUMENT. WindowPresentTest reads a presented window back through tests/test_vsg/TestHostWindow.hpp,
+# the fixture T12 gave both halves: an XGetImage through xcb on X11 and a PrintWindow compositor read on Win32. The
+# Win32 half waits for a composition pass, so it needs dwmapi (the same link test_vsg makes). On Linux the xcb block
+# below is what makes the fixture compilable at all; without it the window cases compile out and skip.
+if(WIN32)
+    target_link_libraries(${TEST_NAME} PRIVATE dwmapi)
+endif()
+
+# THE WINDOW TEST creates a real X11 window with xcb when the development package is present (the shared
+# TestHostWindow fixture includes <xcb/xcb.h> on that platform). The PLUGIN never links xcb (it resolves
+# xcb_connect/xcb_disconnect with dlopen); this is the TEST's own measuring instrument, and a machine without xcb
+# simply runs the other cases (the window cases compile out).
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(VK_TEST_XCB QUIET IMPORTED_TARGET xcb)

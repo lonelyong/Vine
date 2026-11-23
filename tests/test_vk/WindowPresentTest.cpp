@@ -6,11 +6,15 @@
  *     `initialize()` (a Vulkan surface is a creation input), and `capabilities().presentation` says so;
  *   - `executeFrame(frame, target)` draws a pass whose `target` is null into the acquired swapchain image and returns
  *     `Presented`; a later frame after `resize()` presents again (the swapchain follows the surface);
- *   - the WINDOW's pixels are what the frame drew: after the present, the test reads the window with XCB (its own
- *     measuring instrument, never the backend's) and compares the centre with the triangle's colour.
+ *   - the WINDOW's pixels are what the frame drew: after the present, the test reads the window back through the
+ *     SAME instrument the vsg window cases use - `tests/test_vsg/TestHostWindow.hpp`: an `XGetImage` on X11 and a
+ *     `PrintWindow` / `PW_RENDERFULLCONTENT` compositor read on Win32, with that file's platform traps (P87-P89)
+ *     in one home - and compares the centre with the triangle's colour. The vk backend never sees the instrument.
  *
- * The cases skip when there is no Vulkan device, no X display, or the test was built without xcb. The plugin itself
- * never links xcb: it opens `libxcb.so.1` with dlopen for the surface connection.
+ * The cases skip when there is no Vulkan device, no desktop to create a window on, or no window instrument (a Linux
+ * build without the xcb development package; the backend itself opens `libxcb.so.1` with dlopen and never links it).
+ * Both platforms run the same assertions: the colours below are chosen so each one survives the window's own byte
+ * order.
  */
 
 #include <gtest/gtest.h>
@@ -40,8 +44,13 @@
 
 #include "PlanTestSupport.hpp"
 
-#if defined(VN_TEST_HAVE_XCB)
-#    include <xcb/xcb.h>
+// THE MEASURING INSTRUMENT, in one home. The host-window fixture is header-only and already carries the platform
+// facts: an `XGetImage` through the xcb connection on X11, and on Win32 a `PrintWindow` `PW_RENDERFULLCONTENT`
+// compositor read that pumps the thread's messages and waits for a composition pass (DwmFlush). It needs the xcb
+// development package on Linux, so a build without it has no instrument and the window cases skip.
+#if defined(_WIN32) || defined(VN_TEST_HAVE_XCB)
+#    define VN_TEST_HAVE_WINDOW_INSTRUMENT 1
+#    include "../test_vsg/TestHostWindow.hpp"
 #endif
 
 using vn::Colorf;
@@ -71,94 +80,51 @@ using vn::intrusive_ptr;
 namespace
 {
 
-#if defined(VN_TEST_HAVE_XCB)
+#if defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
 
 constexpr int kWindowWidth  = 128;
 constexpr int kWindowHeight = 96;
 
-/// @brief A test-owned X11 window: the measuring instrument the backend must not know about.
-struct TestWindow {
-    xcb_connection_t* connection{ nullptr };
-    xcb_window_t      window{ 0 };
-    xcb_screen_t*     screen{ nullptr };
-
-    TestWindow() = default;
-    TestWindow(const TestWindow&) = delete;
-    TestWindow& operator=(const TestWindow&) = delete;
-
-    ~TestWindow()
-    {
-        if (connection != nullptr) {
-            if (window != 0) {
-                xcb_destroy_window(connection, window);
-            }
-            xcb_disconnect(connection);
-        }
+/// @brief Paints the whole window white WITHOUT the backend: the instrument check that runs before a frame.
+///
+/// @details
+/// - X11 fills a rectangle through a GC on the test's own connection; Win32 fills through GDI, the same call the
+///   fixture's own case makes.
+/// - WHITE is one of the three colours this file uses, and it is deliberately one whose red and blue bytes are
+///   equal: a Win32 read hands back the surface's own order (blue-green-red for a GDI window, the swapchain's for
+///   a Vulkan one), so a symmetric colour reads the same either way.
+/// - A desktop that cannot show the test this fill cannot show it a presented frame either, which is what makes
+///   the result a SKIP condition rather than a failure.
+void paintInstrument(TestDisplay& display, TestHostWindow& window)
+{
+#if defined(_WIN32)
+    (void)display;
+    const HWND painted = static_cast<HWND>(window.handle());
+    const HDC  dc      = GetDC(painted);
+    if (dc == nullptr) {
+        return;
     }
-
-    [[nodiscard]] bool create()
-    {
-        connection = xcb_connect(nullptr, nullptr);
-        if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
-            return false;
-        }
-        xcb_screen_iterator_t iterator = xcb_setup_roots_iterator(xcb_get_setup(connection));
-        screen                         = iterator.data;
-        if (screen == nullptr) {
-            return false;
-        }
-        window = xcb_generate_id(connection);
-        const std::uint32_t mask   = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-        const std::uint32_t values[]{ screen->black_pixel, XCB_EVENT_MASK_EXPOSURE };
-        xcb_create_window(connection,
-                          XCB_COPY_FROM_PARENT,
-                          window,
-                          screen->root,
-                          0,
-                          0,
-                          kWindowWidth,
-                          kWindowHeight,
-                          0,
-                          XCB_WINDOW_CLASS_INPUT_OUTPUT,
-                          screen->root_visual,
-                          mask,
-                          values);
-        xcb_map_window(connection, window);
-        xcb_flush(connection);
-        return true;
-    }
-
-    /** @brief The window handle as the SDK carries it (`xcb_window_t` widened to a `void*`). */
-    [[nodiscard]] void* handle() const noexcept
-    {
-        return reinterpret_cast<void*>(static_cast<std::uintptr_t>(window));
-    }
-
-    /** @brief Reads one pixel as (r, g, b) from the window, or false when the read is refused. */
-    [[nodiscard]] bool pixel(int x, int y, std::array<int, 3>& out)
-    {
-        const xcb_get_image_cookie_t cookie = xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, window, x, y, 1U, 1U, ~0U);
-        xcb_get_image_reply_t*      reply  = xcb_get_image_reply(connection, cookie, nullptr);
-        if (reply == nullptr) {
-            return false;
-        }
-        const std::uint8_t* data = xcb_get_image_data(reply);
-        const int           bpp  = xcb_get_image_data_length(reply) / 1; // one pixel
-        if (bpp >= 4) {
-            // 24/32-bit TrueColor: B, G, R, X
-            out = { data[2], data[1], data[0] };
-        }
-        else if (bpp >= 3) {
-            out = { data[0], data[1], data[2] };
-        }
-        else {
-            free(reply);
-            return false;
-        }
-        free(reply);
-        return true;
-    }
-};
+    const HBRUSH  brush    = CreateSolidBrush(RGB(255, 255, 255));
+    const HGDIOBJ previous = SelectObject(dc, brush);
+    RECT          client{};
+    GetClientRect(painted, &client);
+    FillRect(dc, &client, brush);
+    SelectObject(dc, previous);
+    DeleteObject(brush);
+    ReleaseDC(painted, dc);
+    GdiFlush();
+#else
+    const auto           painted  = static_cast<xcb_window_t>(reinterpret_cast<std::uintptr_t>(window.handle()));
+    const xcb_gcontext_t gc       = xcb_generate_id(display.connection());
+    const std::uint32_t  mask     = XCB_GC_FOREGROUND;
+    const std::uint32_t  values[] = { 0x00FFFFFFU };
+    xcb_create_gc(display.connection(), gc, painted, mask, values);
+    const xcb_rectangle_t rectangle{ 0, 0, static_cast<std::uint16_t>(kWindowWidth), static_cast<std::uint16_t>(kWindowHeight) };
+    xcb_poly_fill_rectangle(display.connection(), painted, gc, 1, &rectangle);
+    xcb_free_gc(display.connection(), gc);
+    xcb_flush(display.connection());
+#endif
+}
 
 /// @brief The M4/M5 content ABI: camera push, draw block, and a fragment writing one colour.
 constexpr const char8_t* kVertexStage = u8R"(
@@ -224,7 +190,14 @@ void main()
     return camera;
 }
 
-/// @brief A frame with ONE window pass (target null) that clears black and draws the triangle.
+/// @brief A frame with ONE window pass (target null) that clears MAGENTA and draws the green triangle.
+///
+/// @details
+/// - The clear is magenta rather than the old red for one reason: it has to be told apart from the triangle's green
+///   on a Win32 read that hands the surface's own byte order back, and magenta (red and blue loud, green quiet) is
+///   the same under either order while red is not.
+/// - It is also not the colour a window shows on its own (black on X11, the class background on Win32), so a corner
+///   that reads magenta is the PASS' clear and not an untouched window.
 [[nodiscard]] FrameDescription windowFrame()
 {
     const intrusive_ptr<ShaderProgram> program  = makeProgram();
@@ -248,7 +221,7 @@ void main()
     PassDraw pass;
     pass.target       = nullptr; // the window
     pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(1.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear->color = Colorf(1.0F, 0.0F, 1.0F, 1.0F);
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
@@ -270,32 +243,36 @@ void main()
     return outcome;
 }
 
-#endif // VN_TEST_HAVE_XCB
+#endif // VN_TEST_HAVE_WINDOW_INSTRUMENT
 
 } // namespace
 
 TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 {
-#if !defined(VN_TEST_HAVE_XCB)
-    GTEST_SKIP() << "this build has no xcb development package, so the window test has no measuring instrument";
+#if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
+    GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
 #else
-    TestWindow window;
-    if (!window.create()) {
-        GTEST_SKIP() << "no X display is reachable through xcb";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
     }
+    TestHostWindow window(display, kWindowWidth, kWindowHeight);
+    if (window.handle() == nullptr) {
+        GTEST_SKIP() << "a host window could not be created on this desktop";
+    }
+    ASSERT_TRUE(window.wasViewableAtCreation()) << "the fixture waits for a viewable window before a case presents anything";
 
-    // INSTRUMENT CHECK: paint the window red with plain XCB and read it back. A black answer here means the window
-    // system (not the backend) is what the test cannot see, so the pixel half is skipped rather than mislabelled.
-    const xcb_gcontext_t gc       = xcb_generate_id(window.connection);
-    const std::uint32_t  gc_mask  = XCB_GC_FOREGROUND;
-    const std::uint32_t  gc_value = 0x00FF0000U;
-    xcb_create_gc(window.connection, gc, window.window, gc_mask, &gc_value);
-    const xcb_rectangle_t rectangle{ 0, 0, kWindowWidth, kWindowHeight };
-    xcb_poly_fill_rectangle(window.connection, window.window, gc, 1U, &rectangle);
-    xcb_flush(window.connection);
-    std::array<int, 3> instrument{};
-    const bool         instrument_ok = window.pixel(kWindowWidth / 2, kWindowHeight / 2, instrument);
-    const bool         can_read_pixels = instrument_ok && instrument[0] > 200;
+    // INSTRUMENT CHECK: paint the window white with plain GDI / X and read it back. A desktop that cannot show the
+    // test this fill cannot show it a presented frame either, so that answer makes the pixel half UNMEASURED rather
+    // than failed - the present outcome, the device-loss flag and validation still judge the frame.
+    paintInstrument(display, window);
+    const std::array<std::uint8_t, 3> instrument = window.waitForPixel(
+        kWindowWidth / 2,
+        kWindowHeight / 2,
+        [](const std::array<std::uint8_t, 3>& pixel) { return pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200; },
+        std::chrono::milliseconds{ 1000 });
+    const bool can_read_pixels =
+        window.readError() == 0 && instrument[0] > 200 && instrument[1] > 200 && instrument[2] > 200;
 
     const DeviceDesc desc{ DevicePresentation::Handle, window.handle() };
     auto             backend = RenderBackendRegistry::instance().create(u8"vk", desc);
@@ -324,35 +301,27 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
     EXPECT_FALSE(window_target->deviceLost());
     EXPECT_TRUE(backend->initialized()) << "a frame that presented must leave the session up";
 
-    // THE WINDOW'S PIXELS, read by the TEST: the triangle covers the centre and the corner keeps the clear. A window
-    // system that cannot hand back its own painted pixels (the instrument check above) makes this half UNMEASURED,
-    // not failed: the present outcome and validation still judge the frame.
+    // THE WINDOW'S PIXELS, read by the TEST: the triangle covers the centre and the corner keeps the clear. Both are
+    // asked for as PURE colours whose red and blue bytes are equal (see windowFrame), so the assertion holds under
+    // either byte order a platform hands back. A window system that cannot show its own painted pixels (the
+    // instrument check above) makes this half UNMEASURED, not failed.
     if (!can_read_pixels) {
         std::fprintf(stderr,
-                     "[window test] the X instrument reads black for a plain XCB fill (rgb=%d,%d,%d); the pixel half is skipped\n",
-                     instrument[0],
-                     instrument[1],
-                     instrument[2]);
+                     "[window test] the window instrument reads rgb=%u,%u,%u for a plain white fill; the pixel half is skipped\n",
+                     static_cast<unsigned>(instrument[0]),
+                     static_cast<unsigned>(instrument[1]),
+                     static_cast<unsigned>(instrument[2]));
     }
     else {
-        std::array<int, 3> centre{};
-        std::array<int, 3> corner{};
-        bool               have_centre = false;
-        bool               have_corner = false;
-        for (int attempt = 0; attempt < 40 && !(have_centre && have_corner); ++attempt) {
-            have_centre = window.pixel(kWindowWidth / 2, kWindowHeight / 2, centre);
-            have_corner = window.pixel(2, 2, corner);
-            if (have_centre && have_corner && centre[1] > 200 && corner[0] > 200) {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
-        }
-        ASSERT_TRUE(have_centre && have_corner) << "the window could not be read back";
-        // The CLEAR is red everywhere the triangle is not, and the FRAGMENT green inside it: that separates "the
+        const auto magenta = [](const std::array<std::uint8_t, 3>& pixel) { return pixel[0] > 200 && pixel[1] < 40 && pixel[2] > 200; };
+        const auto green   = [](const std::array<std::uint8_t, 3>& pixel) { return pixel[0] < 40 && pixel[1] > 200 && pixel[2] < 40; };
+        const std::array<std::uint8_t, 3> centre =
+            window.waitForPixel(kWindowWidth / 2, kWindowHeight / 2, green, std::chrono::milliseconds{ 1000 });
+        const std::array<std::uint8_t, 3> corner = window.waitForPixel(2, 2, magenta, std::chrono::milliseconds{ 1000 });
+        // The CLEAR is magenta everywhere the triangle is not, and the FRAGMENT green inside it: that separates "the
         // present is readable" from "the draw is missing" with one picture.
-        EXPECT_GT(centre[1], 200) << "the triangle's green did not reach the window's centre pixel (rgb = " << centre[0] << ", " << centre[1] << ", " << centre[2] << ")";
-        EXPECT_LT(centre[0], 40);
-        EXPECT_GT(corner[0], 200) << "the window's corner is not the pass' clear (rgb = " << corner[0] << ", " << corner[1] << ", " << corner[2] << ")";
+        EXPECT_TRUE(green(centre)) << "the triangle's green did not reach the window's centre pixel (rgb = " << static_cast<unsigned>(centre[0]) << ", " << static_cast<unsigned>(centre[1]) << ", " << static_cast<unsigned>(centre[2]) << ")";
+        EXPECT_TRUE(magenta(corner)) << "the window's corner is not the pass' clear (rgb = " << static_cast<unsigned>(corner[0]) << ", " << static_cast<unsigned>(corner[1]) << ", " << static_cast<unsigned>(corner[2]) << ")";
     }
 
     // PREPARING A WINDOW FRAME touches neither the swapchain nor the queue: it is counted, it builds what the frame
@@ -380,16 +349,20 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 
 TEST(VkWindowPresentTest, AWindowHandleMovesWithoutRebuildingTheDevice)
 {
-#if !defined(VN_TEST_HAVE_XCB)
-    GTEST_SKIP() << "this build has no xcb development package, so the window test has no measuring instrument";
+#if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
+    GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
 #else
     // CAP-45: a platform may destroy and recreate a host window under the application, and the SDK's answer is one
     // announcement ON THE TARGET (WindowPresentTarget::setWindowHandle) - not a new target, not a new device. This is
     // the fact the vk side never had a named case for (the reference backend has SessionMoveTest).
-    TestWindow first;
-    TestWindow second;
-    if (!first.create() || !second.create()) {
-        GTEST_SKIP() << "no X display is reachable through xcb";
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
+    }
+    TestHostWindow first(display, kWindowWidth, kWindowHeight);
+    TestHostWindow second(display, kWindowWidth, kWindowHeight);
+    if (first.handle() == nullptr || second.handle() == nullptr) {
+        GTEST_SKIP() << "host windows could not be created on this desktop";
     }
 
     const DeviceDesc desc{ DevicePresentation::Handle, first.handle() };

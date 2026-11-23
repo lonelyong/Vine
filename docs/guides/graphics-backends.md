@@ -1,6 +1,6 @@
 # 图形后端：契约与差异表
 
-> **状态**：现行 ｜ **最后核对**：2026-11-17
+> **状态**：现行 ｜ **最后核对**：2026-11-23
 > **范围**：宿主与引擎看到的**后端契约**（两个后端必须答一样的那部分）、两个后端的**有意差异**、
 > **支持矩阵**、接缝与文件入口、构建与证据。
 > **本文只写用户/维护者需要的事实**；每个后端的契约、设计决定与坑在
@@ -13,7 +13,7 @@
 
 | 后端 | 注册名 | 插件 | 定位 | 平台 | 设备下限 |
 | --- | --- | --- | --- | --- | --- |
-| 直连 Vulkan | `vk` | `gfx_backend_vk` | **生产后端、最终替代 vsg**（[ADR-2026-11-14](../../.ai/decisions/ADR-2026-11-14-vk-becomes-the-default-target.md)） | Linux/X11 | Vulkan 1.2（多采样深度 resolve 用 1.2 的 `vkCreateRenderPass2`） |
+| 直连 Vulkan | `vk` | `gfx_backend_vk` | **生产后端、最终替代 vsg**（[ADR-2026-11-14](../../.ai/decisions/ADR-2026-11-14-vk-becomes-the-default-target.md)） | Linux/X11、Win32 | Vulkan 1.2（多采样深度 resolve 用 1.2 的 `vkCreateRenderPass2`） |
 | VulkanSceneGraph | `vsg` | `gfx_backend_vsg` | **参考实现 + 逐字节对拍的另一端**；能力齐全，但不作为切换目标 | Linux/X11、Win32 | Vulkan 1.4（`DeviceRequirements` 在会话建立时检查） |
 
 * 两个后端都实现 `vn::graphics::RenderBackend`，宿主经 `RenderBackendRegistry::create(name, desc)` 按名创建，
@@ -23,7 +23,10 @@
   多个已注册又没点名，attach 直接失败并在理由里列出全部注册名——**绝不按名字序取第一个**（那是名字的偶然，不是决定）。
   这是回退行为，不是切换门的结论（切不切见下一条）；两个后端都随包安装，按名创建可显式选 `vsg`。
 * **切换门**（ADR-2026-11-14）：`releaseRenderTarget` / `readDepthBuffer` / 设备丢失报告 / `releasePass` 契约都已落地，
-  `docs/guides` 的后端页也就是本页；**仍缺** Win32 实机证据与 Wayland 回退实测——在那之前 Windows 不上线。
+  `docs/guides` 的后端页也就是本页；Win32 分支也已实现且**窗口像素已断言**——`WindowPresentTest` 的两条用例在两个平台上
+  走同一件仪器（`tests/test_vsg/TestHostWindow.hpp`：X11 走 `XGetImage`，Win32 走 `PrintWindow` 合成器读回），Windows 上
+  `test_vk` 174 例全绿、无 SKIP。**仍缺** Wayland 回退实测与一份切换门接受的性能读数——在那之前 Windows 不上线。
+  删 vsg 不是这一步：它是另一件要捆绑的事（backlog T60）。
 * 注册表**后注册者胜且不报告**：加载一个同名插件会把内建条目换成插件自己的工厂。必须验证"编进本二进制的实现"
   的代码（对拍）直接构造后端，不经注册表（契约写在 `RenderBackendRegistry::registerFactory` 的头注释里）。
 
@@ -61,7 +64,7 @@
 | 管线缓存文件 | **有**：`DeviceDesc::cache_directory` → `PipelineCacheFile`，按设备键读写、拒绝即丢弃并报告 | **无**（vsg 1.1.16 没有 cache 管理，backlog T10） | 只有 vk 用这个字段；空目录 = 不用 |
 | GPU 计时 | 按设备能力报 `Feature::GpuTimings`；每 pass 时间来自时间戳 | 同一条 `Feature`，来自设备时间戳 | "设备能写时间戳"不等于"本后端在报告"，读数看 `frameReport()` / 帧表 |
 | 验证层 | validation + debug utils **可用即开** | vsg 自己的验证开关 | 只影响诊断量，不影响契约 |
-| 平台 | Linux/X11（Win32 待实现） | Linux/X11 + Win32 | 切换门的一项 |
+| 平台 | Linux/X11、Win32 | Linux/X11 + Win32 | 切换门的一项 |
 | 渲染通道 | 自建 `VkRenderPass` 变体（全 CLEAR / 深度 LOAD / 全 LOAD）+ MRT/MSAA resolve | vsg 的 render pass 机制 | 同一种 `RenderPassCompatibility` 进入两边管线键 |
 | 窗口 | `createSurfaceTarget` 一格一次（第二次答 `WindowOccupied` 并**报一次**具名诊断），`nullptr` 请求设备自己的窗口 | 同一契约；窗口尺寸与格式的答案问平台 | 窗口目标由设备发放，设备/引擎不是任何一块窗口 |
 | 深度读回 | 纯深度格式（D16/D32/D32F，MSAA 读 resolve 图）；D24 与借用深度答 `Unsupported` | 同分类 | 格式表在 SDK（`core::depthReadbackOf`），两边共用 |
@@ -81,10 +84,10 @@
 | 延迟链、全屏调用、push 范围 | ✅ | ✅ | `VkDeferredTest`、对拍 |
 | 自定义程序（声明式 ABI + 变体 + 实例流） | ✅ | ✅ | `VkBuiltinProgramTest` / `VkVariantTest`、`ProgramAbiTest` |
 | 读回（颜色 RGBA8、纯深度浮点） | ✅ | ✅ | 各自的读回用例 |
-| 窗口（采纳宿主表面、跟随 resize、丢帧自愈） | ✅ | ✅ | `VkWindowPresentTest`、`VsgBackendTest` |
+| 窗口（采纳宿主表面、跟随 resize、丢帧自愈） | ✅ | ✅ | `VkWindowPresentTest`（Win32 上读的是合成器）、`VsgBackendTest` |
 | 线框 / 点视图、线宽、各向异性 | 按设备 | 按设备 | `Feature::Wireframe` / `AnisotropicFiltering` + `Limits` |
 | 设备内存池 / 管线缓存文件 | ✅ | — | 见 §3（有意不同） |
-| Win32 窗口 | — | ✅ | vk 的 Win32 分支待实现 |
+| Win32 窗口 | ✅ | ✅ | `VkWindowPresentTest`（像素断言）+ `VkProbeTest`（设备自建窗口的呈现/销毁） |
 | 点光（cube）阴影 | — | — | backlog `S6`（两个后端都没有，触发再做） |
 
 ## 5. 接缝：两个后端共享的东西
@@ -147,7 +150,7 @@
 
 ```bash
 cmake --build build --target gfx_backend_vk gfx_backend_vsg test_vk test_vsg
-./build/bin/test_vk        # 直连 Vulkan：设备用例要 lavapipe + X11，否则 SKIP
+./build/bin/test_vk        # 直连 Vulkan：Windows 上整跑（174 例，无 SKIP）；Linux 上要 X11 + xcb 开发包 + 一个 Vulkan 设备
 ./build/bin/test_vsg       # VSG 套件（含 BackendParityTest）
 ./build/bin/test_vsg --gtest_filter='BackendParityTest.*'   # 两个后端逐字节对拍
 ctest --test-dir build -R 'content_seam|vk_exposure'        # 两条边界门禁
