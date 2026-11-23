@@ -105,6 +105,45 @@ Two honest notes:
 - This is a *decision*, not a cleanup: it changes where `VN_GRAPHICS_API` exports live, what the SDK installs,
   and what the seam gate asserts. It belongs in T60's ADR (§5 R2), not in a refactor.
 
+**What a future backend actually reuses (measured).** None of the five carries a Vulkan spelling - `Vk[A-Z]`
+/ `VK_` over the five headers is **0 hits** (the only seam header with any is `DrawState.hpp`, i.e. the
+`ImageLayout` leftover of T15), and `DeviceClock` / `FrameTimeline` are phrased in device / frame / window
+terms ("slots in flight", "all work I submitted up to frame F is done"), which is the same question every
+explicit API asks. So they were family-neutral **by construction** - that was the seam's point:
+
+| Mechanism | D3D12 / Metal / WebGPU | GL |
+|---|---|---|
+| `FrameGate` | reuse as-is (one frame per executor, re-entrancy refused) | reuse, trivially held (no in-flight model) |
+| `DeviceClock` / `FrameTimeline` | reuse (fences / timestamps, N frames in flight) | barely (no fence watermark; timer queries differ) |
+| `RetirementQueue` | reuse (command lists in flight) | barely (nothing to defer) |
+| `TargetPlan` | reuse the Rebuild / ResizeInPlace / Repair decision; `RenderPassKey` has a D3D12 analogue (PSO compatibility) and no GL one | partly (shape yes, render-pass compatibility no) |
+
+Two things follow, and they point in opposite directions, which is why this is the ADR's question:
+
+- **Reuse is real, so the bet is not on a fantasy.** But `T30` states the repo's rule verbatim: "a SECOND
+  backend needs `PinnedResources` or `ResidencyClaims` - **then** that one moves to the SDK mainline; *not* 'a
+  third backend exists', and not a second API family on its own". Moving IN later is a header move plus one
+  gate update; moving OUT later is the include churn above. Asymmetry, not taste.
+- **Not all five are the same kind of thing.** `FrameGate` is not a mechanism the backends happen to share; it
+  is the *enforcement of an SDK contract* ("one frame at a time per executor; a host verb called from inside a
+  frame is refused instead of deadlocking", 13 verbs). A new backend that re-derives that logic can get the
+  re-entrancy answer wrong, which is the defect the gate exists to prevent. `DeviceClock` is the mechanism the
+  contract needs the day `F5` (more than one frame in flight) flips. `RetirementQueue` is different again: vk
+  waits each frame, so its own device needs no queue - today's consumer is the *wording* of `releaseContent`,
+  not a need. `TargetPlan` is a pure decision function.
+
+So the ADR picks one of three dispositions, and the page does not:
+
+| # | Disposition | Cost |
+|---|---|---|
+| a | Move the five into `gfx_backend_vk/internal` in the retirement batch | the rule as written; a future backend copies five headers back |
+| b | Keep them in the SDK and **re-justify** the list as "the mechanisms a backend needs" (2.9 and `SEAM_DOCS` stop claiming "both backends") | `G8` paid on credit; the gate can no longer be falsified by deleting a reader |
+| c | Keep them and let the second backend's arrival move them (T30's rule applied to mechanisms) | the retirement batch is then not where this is decided, and the seam doc keeps an untestable sentence until then |
+
+The review's own preference is **(a) for `TargetPlan` and `RetirementQueue`, (b) for `FrameGate` and
+`DeviceClock`/`FrameTimeline`** - i.e. split by the question above (contract enforcement vs mechanism) rather
+than moving all five or none - but that split is exactly what the ADR has to argue, not what a review decides.
+
 ### C2 `BackendParityTest` is the only cross-implementation oracle, and it is hosted in the suite being deleted
 
 `tests/test_vsg/BackendParityTest.cpp` compares two live devices on the same `FrameDescription` - clear,
