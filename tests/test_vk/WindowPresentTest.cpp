@@ -198,7 +198,10 @@ void main()
 ///   the same under either order while red is not.
 /// - It is also not the colour a window shows on its own (black on X11, the class background on Win32), so a corner
 ///   that reads magenta is the PASS' clear and not an untouched window.
-[[nodiscard]] FrameDescription windowFrame()
+///
+/// @param clear The pass' clear colour; magenta by default, and a two-window case passes its own so the windows
+///              carry pictures that cannot be confused (see TwoWindowsOnOneDeviceKeepTheirOwnPictures).
+[[nodiscard]] FrameDescription windowFrame(Colorf clear = Colorf(1.0F, 0.0F, 1.0F, 1.0F))
 {
     const intrusive_ptr<ShaderProgram> program  = makeProgram();
     const intrusive_ptr<Geometry>      geometry = makeTriangle();
@@ -221,7 +224,7 @@ void main()
     PassDraw pass;
     pass.target       = nullptr; // the window
     pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(1.0F, 0.0F, 1.0F, 1.0F);
+    pass.clear->color = clear;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
@@ -402,6 +405,123 @@ TEST(VkWindowPresentTest, AWindowHandleMovesWithoutRebuildingTheDevice)
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
         << "validation reported something on the move path";
+
+    backend->shutdown();
+#endif
+}
+
+TEST(VkWindowPresentTest, TwoWindowsOnOneDeviceKeepTheirOwnPictures)
+{
+#if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
+    GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
+#else
+    // ONE DEVICE, SEVERAL WINDOWS (review 8, K3). The reference backend had the tree's only case for this
+    // (VsgBackendTest.ADifferentWindowGetsItsOwnTarget), and it asserted target identity plus a counter; the
+    // capability the engine promises - a device is not a window, many windows are many engines on ONE device
+    // (graphics-architecture.md 2.4, ADR-2026-11-13) - needs a stronger fact: two live swapchains, and each
+    // window keeps the picture ITS OWN frame drew.
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
+    }
+    TestHostWindow first(display, kWindowWidth, kWindowHeight);
+    TestHostWindow second(display, kWindowWidth, kWindowHeight);
+    if (first.handle() == nullptr || second.handle() == nullptr) {
+        GTEST_SKIP() << "two host windows could not be created on this desktop";
+    }
+    ASSERT_TRUE(first.wasViewableAtCreation() && second.wasViewableAtCreation())
+        << "the fixture waits for a viewable window before a case presents anything";
+
+    // The instrument check on BOTH windows: a desktop that cannot read one of them leaves the pixel half
+    // unmeasured rather than failed (see AWindowFrameIsDrawnAndPresented).
+    paintInstrument(display, first);
+    paintInstrument(display, second);
+    const auto white = [](const std::array<std::uint8_t, 3>& pixel) {
+        return pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200;
+    };
+    const std::array<std::uint8_t, 3> first_instrument =
+        first.waitForPixel(kWindowWidth / 2, kWindowHeight / 2, white, std::chrono::milliseconds{ 1000 });
+    const std::array<std::uint8_t, 3> second_instrument =
+        second.waitForPixel(kWindowWidth / 2, kWindowHeight / 2, white, std::chrono::milliseconds{ 1000 });
+    const bool can_read_pixels =
+        first.readError() == 0 && second.readError() == 0 && white(first_instrument) && white(second_instrument);
+
+    const DeviceDesc desc{ DevicePresentation::Handle, first.handle() };
+    auto             backend = RenderBackendRegistry::instance().create(u8"vk", desc);
+    ASSERT_NE(backend, nullptr) << "the factory did not answer the vk backend";
+
+    // TWO TARGETS, each on its own handle, both asked for BEFORE initialize() (a surface is a creation input).
+    SurfaceTargetResult result = SurfaceTargetResult::NoPresentation;
+    const vn::raw_ptr<vn::graphics::WindowPresentTarget> first_target =
+        backend->createSurfaceTarget(first.handle(), &result);
+    ASSERT_NE(first_target, nullptr) << "createSurfaceTarget answered " << static_cast<int>(result);
+    EXPECT_EQ(result, SurfaceTargetResult::Ok);
+    const vn::raw_ptr<vn::graphics::WindowPresentTarget> second_target =
+        backend->createSurfaceTarget(second.handle(), &result);
+    ASSERT_NE(second_target, nullptr) << "the second window was refused: " << static_cast<int>(result);
+    EXPECT_EQ(result, SurfaceTargetResult::Ok);
+    EXPECT_NE(first_target, second_target) << "two windows are two targets, not one target twice";
+    EXPECT_EQ(first_target->nativeHandle(), first.handle());
+    EXPECT_EQ(second_target->nativeHandle(), second.handle());
+
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    ASSERT_TRUE(backend->capabilities().presentation) << "a Handle device that came up must present";
+
+    // A CARRIES MAGENTA, B CARRIES GREEN (the triangle is green on both, so only the clear tells them apart).
+    EXPECT_EQ(presentUntilReady(*backend, windowFrame(Colorf(1.0F, 0.0F, 1.0F, 1.0F)), first_target, 40),
+              PresentOutcome::Presented);
+    EXPECT_EQ(presentUntilReady(*backend, windowFrame(Colorf(0.0F, 1.0F, 0.0F, 1.0F)), second_target, 40),
+              PresentOutcome::Presented);
+
+    // THE ORDER IS THE POINT: the first window is read AFTER the second presented. One swapchain shared by both
+    // windows would show the second window's picture on the first - green in the corner, where the first
+    // window's own pass cleared magenta.
+    if (!can_read_pixels) {
+        std::fprintf(stderr,
+                     "[window test] the instruments read rgb=%u,%u,%u / %u,%u,%u for a plain white fill; the pixel "
+                     "half is skipped\n",
+                     static_cast<unsigned>(first_instrument[0]),
+                     static_cast<unsigned>(first_instrument[1]),
+                     static_cast<unsigned>(first_instrument[2]),
+                     static_cast<unsigned>(second_instrument[0]),
+                     static_cast<unsigned>(second_instrument[1]),
+                     static_cast<unsigned>(second_instrument[2]));
+    }
+    else {
+        const auto magenta = [](const std::array<std::uint8_t, 3>& pixel) {
+            return pixel[0] > 200 && pixel[1] < 40 && pixel[2] > 200;
+        };
+        const auto green = [](const std::array<std::uint8_t, 3>& pixel) {
+            return pixel[0] < 40 && pixel[1] > 200 && pixel[2] < 40;
+        };
+        const std::array<std::uint8_t, 3> first_centre =
+            first.waitForPixel(kWindowWidth / 2, kWindowHeight / 2, green, std::chrono::milliseconds{ 1000 });
+        const std::array<std::uint8_t, 3> first_corner =
+            first.waitForPixel(2, 2, magenta, std::chrono::milliseconds{ 1000 });
+        const std::array<std::uint8_t, 3> second_corner =
+            second.waitForPixel(2, 2, green, std::chrono::milliseconds{ 1000 });
+        EXPECT_TRUE(green(first_centre)) << "the first window's triangle did not reach its centre";
+        EXPECT_TRUE(magenta(first_corner))
+            << "the first window no longer shows its OWN pass' clear after the second presented (rgb = "
+            << static_cast<unsigned>(first_corner[0]) << ", " << static_cast<unsigned>(first_corner[1]) << ", "
+            << static_cast<unsigned>(first_corner[2]) << ")";
+        EXPECT_TRUE(green(second_corner)) << "the second window is not its own pass' clear (rgb = "
+                                          << static_cast<unsigned>(second_corner[0]) << ", "
+                                          << static_cast<unsigned>(second_corner[1]) << ", "
+                                          << static_cast<unsigned>(second_corner[2]) << ")";
+    }
+
+    // ONE LIVE SWAPCHAIN PER WINDOW: both handles stay occupied, and the second ask is refused for each.
+    EXPECT_EQ(backend->createSurfaceTarget(first.handle(), &result), nullptr);
+    EXPECT_EQ(result, SurfaceTargetResult::WindowOccupied);
+    EXPECT_EQ(backend->createSurfaceTarget(second.handle(), &result), nullptr);
+    EXPECT_EQ(result, SurfaceTargetResult::WindowOccupied);
+    EXPECT_TRUE(backend->initialized()) << "serving a second window is not a device stop";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "validation reported something on the two-window path";
 
     backend->shutdown();
 #endif

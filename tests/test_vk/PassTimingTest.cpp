@@ -15,6 +15,7 @@
 
 #include <vine/Colorf.hpp>
 #include <vine/String.hpp>
+#include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -101,10 +102,18 @@ TEST(VkPassTimingTest, TheReportAttributesTheFrameToThePassesThatSpentIt)
     // lets this case read the clock without driving thirty frames first.
     (void)backend->executeFrame(twoPassFrame(first_pass, first_target.get(), second_pass, second_target.get()), nullptr);
 
+    // THE ADVERTISED FEATURE AND THE REPORT MUST AGREE. This backend answers `GpuTimings` from the device, so a
+    // session that answers it true has to fill `FrameTiming` - otherwise a host that branched on the feature shows a
+    // clock that never moves (`Capabilities.hpp`: a feature says whether, the report part says whether this backend
+    // measures). Skipping on the OBSERVATION (no timing) would quietly hide exactly that regression, so the skip is
+    // tied to the feature instead, and the presence of the report part is asserted.
+    const bool timed = backend->capabilities().features.supports(vn::graphics::Features::Feature::GpuTimings);
     const vn::graphics::FrameReport report = backend->executor().frameReport();
-    if (!report.timing.has_value()) {
-        GTEST_SKIP() << "this device keeps no clock (see FrameTiming): nothing to attribute";
+    if (!timed) {
+        GTEST_SKIP() << "this device cannot write timestamps, so its report has no clock to attribute";
     }
+    ASSERT_TRUE(report.timing.has_value())
+        << "the backend advertises GpuTimings but the frame report carries no FrameTiming";
 
     ASSERT_EQ(report.timing->passes.size(), 2U) << "two passes ran and the report attributed neither";
     EXPECT_TRUE(report.timing->passes[0].pass.std_u8str_view() == u8"vk_timing_first_pass")
