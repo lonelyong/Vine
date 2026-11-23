@@ -201,7 +201,7 @@ A module below `graphics` cannot meaningfully talk about a GPU texture.
 | T1 | PixelFormat queries / Unknown | `test_imaging` |
 | T2 | Image construction / zero-init / illegal arguments | `test_imaging` |
 | T3 | mip layout / offsets / clamping | `test_imaging` |
-| T4 | the Texture / Material migration has no regression | `test_graphics` (200), `test_vsg` |
+| T4 | the Texture / Material migration has no regression | `test_graphics` (642), `test_vk` (186) |
 
 ## 9. Status and Evolution
 

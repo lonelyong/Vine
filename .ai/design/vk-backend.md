@@ -16,19 +16,19 @@
 
 ### 1.1 Problem and background
 
-- The SDK's shared mechanisms (`vine/graphics/`) need a **second implementation** to be judged: with one backend alone, "the seam requires this" and
-  "vsg happens to do this" cannot be told apart. This plugin is that second implementation, and its path is **straight onto Vulkan** (its own `VkInstance` /
-  `VkDevice` / pipelines), without VulkanSceneGraph.
+- The SDK's shared mechanisms (`vine/graphics/`) are written for an implementation that does not share the engine's machinery: this plugin's path is **straight onto
+  Vulkan** (its own `VkInstance` / `VkDevice` / pipelines), with no scene graph between it and the driver. That path is what the seam's neutrality is judged against
+  (`graphics-architecture.md` 2.9, `check_vk_exposure.py`); the second **family** (D3D12) is the next reader and is a plan with a directory, not a wish.
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **178 cases / 42 suites** (2026-11-23), and the comparison against vsg by
-  `BackendParityTest` (15 cases, inside `test_vsg`).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **186 cases / 45 suites** (2026-11-23).
 
 ### 1.2 Goals
 
 1. **Specification compliance**: the validation layer is silent (0 VUIDs); every Vulkan call's failure shape is classified, not "it does not draw".
-2. **Comparable**: the same frame renders **byte for byte identically** on vk and vsg — the evidence that the seam is implemented rather than a coincidence.
+2. **Comparable**: a frame's rendered region is read back and compared exactly (`Probe` cases in `test_vk`), so "the seam is implemented" is a measurement rather than a
+   coincidence.
 3. **Diagnosable**: capabilities report only what is actually enabled; every refusal is "one report per episode" (`ReportOnce`); a missing report field is **not 0**.
 4. **Industrial resource and cost model**: a device memory pool (one session, one block, one pool), a descriptor-set cache, a constant ring (dynamic offsets),
    a per-session and a cross-session pipeline cache, and a device clock.
@@ -47,7 +47,7 @@
   today** — `app_shell`'s `chooseRenderBackend()` states `"vk"` (`VN_RENDER_BACKEND` overrides it) — and that is a host decision, not a verdict from the switch gate:
   the registry has **no** default to switch (an unknown name answers null, and several registered with none stated is a refusal that lists them —
   `appfw-render-surface.md` 2.4 and its `D7`). What the gate still wants is a measured Wayland fallback and a performance reading it
-  accepts (backlog T35), so Windows does not ship before them. Retiring `vsg` is a separate trigger-gated item (backlog T60), not this gate.
+  accepts (backlog T35), so Windows does not ship before them.
 
 ### 1.4 One-paragraph conclusion
 
@@ -162,8 +162,8 @@ and every cache has a witness a test can read.**
 
 ### 2.10 The test is half the contract
 
-- **What it is**: `test_vk` compiles the plugin's sources and drives the device with no window; `BackendParityTest` (inside `test_vsg`) hands the same frame to both
-  backends and compares the rendered region **byte for byte**; key guards are proven load-bearing by **mutation batteries** (turn it off and the matching case must go red).
+- **What it is**: `test_vk` compiles the plugin's sources and drives the device with no window; `tests/BackendSeamTest.cpp` is the conformance suite every backend's
+  build carries; and key guards are proven load-bearing by **mutation batteries** (turn it off and the matching case must go red).
 - **Why**: `G11` (the module is testable on its own and a failure can be located). A windowless test puts CI and the desktop on the same path.
 - **Boundary**: `test_vk`'s device cases **skip** on a machine without a Vulkan device instead of failing (the environment is not the contract).
 
@@ -248,7 +248,7 @@ and every cache has a witness a test can read.**
 - **What it is**: a refusal on the content path (why this draw did not come out) is produced by **the recorder** — only it knows which level refused (program, stream,
   instance stream, pipeline, ring buffer, descriptor set). It fills one `ContentRefusal` — **it is an alias of the seam's `graphics::DiagnosticDraft`** (`category` +
   **code** + subject + limit + sentence, with `refuse()` as the only writer and first-writer-wins); `executeFrame` / `prepareFrame` only **forward** it as a
-  `RenderDiagnostic`. vsg's readback refusals (the `HostReadbackRefusal` enum) produce the same type: a refusal has one shape only (ADR-2026-11-16 §4).
+  `RenderDiagnostic`. A readback refusal produces the same type: a refusal has one shape only (`ADR-2026-11-16` §4).
 - **Why**: this path used to be two out-parameters, `(vn::String* why, DiagnosticCategory* category)` — fill one and forget the other, and of the seven reasons for
   "skip one draw" only one `ContentSkipped` reached the host. Putting the code on **the side that knows the reason** is what first lets the host and the cases say "this
   draw has no program" rather than "some draw was skipped" (`R28`'s landing point).
@@ -256,8 +256,8 @@ and every cache has a witness a test can read.**
   used to be repeated three times as `if (why.empty())` at the call sites. An empty sentence with a code is still a refusal: whether a sentence exists was never the
   criterion. `ContentRefusal` is an **internal header** (`internal/ContentRefusal.hpp`) and does not enter the SDK; the shape itself lives in the SDK's backend half.
 - **The reason is an enum and the code is one `switch` with no `default`** (`ContentRefusalCause` / `contentRefusalCode`): `refuse`'s call sites used to write string
-  literals directly, so a new cause could compile without a code (D-22). Now adding an enum value fails to compile without its `case` (copying vsg's
-  `HostReadbackRefusal` mapping); `VkContentRefusalTest.EveryCauseNamesAStableCode…` additionally checks that every value has a code and that no two share one.
+  literals directly, so a new cause could compile without a code (D-22). Now adding an enum value fails to compile without its `case` (the same shape a readback
+  refusal's mapping uses); `VkContentRefusalTest.EveryCauseNamesAStableCode…` additionally checks that every value has a code and that no two share one.
 - **The two halves of the gate**: a report call that **constructs** a diagnostic (≥3 arguments) must write a code; one that **forwards** a `RenderDiagnostic`
   (`reportDiagnostic(diagnostic)`) does not count — the code travels inside the value and a sink cannot drop it. `check_diagnostic_formats.py` checks the registry both
   ways at once: what is used must be registered, and what is registered must be used by some builder / code table / report.
@@ -268,8 +268,8 @@ and every cache has a witness a test can read.**
   while the Vulkan object behind it goes to `graphics/RetirementQueue.hpp` and is destroyed only once the device's completion watermark has passed that frame. The
   completion evidence comes from `graphics/DeviceClock.hpp`: this backend registers **one** clock window (one frame in flight, `slots = 1`).
 - **Why**: release has to say two things — "is this content still wanted" and "may this object be destroyed now" — and putting them together is what forces the host
-  to keep the ordering "release only between frames". Split apart, the mechanism vsg already uses carries two implementations (`G6`), and it is the premise of several
-  sessions (`.ai/design/graphics-sessions.md` §2.6).
+  to keep the ordering "release only between frames". Split apart, each answer has one mechanism (`G6`), and the split is the premise of several sessions
+  (`.ai/design/graphics-sessions.md` §2.6).
 - **Cost (written here rather than hidden)**: a released object lives to `submitted + slots + 1`, i.e. is destroyed **at most two frames later** (the conservative price of the
   evidence "the slot has been reclaimed"). Two frames of memory latency is cheap against one device stall, and the waiting becomes a background event timed in frames.
 - **Boundary**: **teardown does not park**. `shutdown()` calls `vkDeviceWaitIdle` first, then clears the seam and calls `releaseAll()` (it is the verb for "arbitration has
@@ -306,8 +306,7 @@ and every cache has a witness a test can read.**
   `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls` compares the same number with 1 vs 6 commands; putting per-draw locks back on the recording path turns it red
   (measured 6 → 10).
 - **Observation point (the other half)**: `Device::contentCacheCounters()` is assembled from two halves — the ring / set numbers come from the device's **own driver**'s
-  `FrameScratch`, the rest from `caches.numbers()`. The single-session semantics are value for value what they were before the split (`test_vk` green, `BackendParityTest`
-  12/12).
+  `FrameScratch`, the rest from `caches.numbers()`. The single-session semantics are value for value what they were before the split (`test_vk` green).
 - **Frame-head storage reuse and its witness (I-02)**: `FrameHead`'s pass / call slots are `clear()`ed rather than rebuilt (`storageGrows()` increases only when capacity is
   short); `Device::frameHeadStorageGrows()` exposes it to tests, and `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage` pins it with "3 warm-up frames, then 5
   unchanged". **It proves the head's storage reuse only**, not a whole frame allocating nothing (pipeline keys and content caches have their own allocations, which this page
@@ -325,9 +324,9 @@ and every cache has a witness a test can read.**
 - **Why a token rather than "whoever built it publishes"**: tokens are monotonic and never reused, so three real orderings can be answered honestly: `forget`
   (`releaseContent`) happening mid-fill, the claim already withdrawn, and the key taken by a new claim after a release — an old token's `publish` always fails and counts in
   `Numbers::stale` ("the caller believed it owned it").
-- **Boundary**: the table **destroys nothing** and **retires nothing**: `forget` only forgets the key, and the Vulkan object still goes to `RetirementQueue` (§2.15). It is not
-  vsg's `PinnedResources` either (`vn::backend_vsg::core`) — that table answers "may this resident value be released now" (single-threaded, retired by pin), this one answers "who may build this key"
-  (two drivers, up to publication only).
+- **Boundary**: the table **destroys nothing** and **retires nothing**: `forget` only forgets the key, and the Vulkan object still goes to `RetirementQueue` (§2.15).
+  The table answers one question only — "who may build this key" (two drivers, up to publication only) — and never "may this value be released now"; that is
+  `RetirementQueue`'s sentence (§2.15).
 - **Wiring**: `ContentCaches::ensureGeometry` asks the table first (`Use` / `Build` / `Copy`), the frame-scoped `ContentCaches::FrameBuilds` `publishAll()`s after the frame
   fence was waited on (skipping failed fills), and `releaseGeometry` also `forget`s the key; a competitor takes `Copy`, builds a **detached** temporary entry and destroys it
   when the frame ends.
@@ -417,7 +416,7 @@ and every cache has a witness a test can read.**
   announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
 - **Constraints**: `C5`, `C8`, `N2`.
 - **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`, and
-  `BackendParityTest.ADepthOnlyClearKeepsThePictureOnBothBackends` (a depth-only clear keeps the picture on both backends) plus
+  `VkFrameRecordTest.ADepthOnlyClearKeepsTheDrawnPicture` (a depth-only clear keeps the picture) plus
   `VkWindowPresentTest.AWindowFrameIsDrawnAndPresented`'s frame loop, which forces a presented image to be acquired again and is
   therefore the witness for the per-image layout record.
 - **Caveat**: `P4`, `P15` (dynamic rendering inserts no dependency between two passes into one attachment).
@@ -627,7 +626,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 ### 5.2 Requirements (R#)
 
 - **R1** The validation layer is silent: neither `test_vk` nor a real host produces a VUID.
-- **R2** Comparable with vsg: the same frame's rendered region is byte for byte identical (`BackendParityTest`).
+- **R2** The rendered region is read back and compared exactly: a frame's pixels are the ones the recorded commands promise (`Probe` cases), not "something was drawn".
 - **R3** One report per episode: every "cannot" has one `ReportOnce`, and when the condition ends `rearm` happens where it ended.
 - **R4** The witnesses are readable numbers: every conclusion about the cost model and the caches has a number on `Device`, and a test reads it instead of counting
   driver calls.
@@ -782,7 +781,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 |---|---|---|---|
 | D1 | using `VMA` for memory | `G8`: today's consumers (targets, textures, streams, the ring, staging) are covered by the hand-written pool; a new dependency has to be paid for by someone | — |
 | D2 | one `vkAllocateMemory` per resource | `G10`: allocations grow with the scene, and `maxMemoryAllocationCount`'s failure shape is "it looks like out of video memory" | — (changed, see F10) |
-| D3 | compiling SPIR-V with vsg's `ShaderCompiler` | `G2`: that would point a dependency at another backend plugin; glslang is supplied centrally by `cmake/VineGlslang.cmake` | — |
+| D3 | compiling SPIR-V inside the plugin (a backend-local `ShaderCompiler`) | `G2`: that would point a dependency at a plugin that is not the compiler's owner; glslang is supplied centrally by `cmake/VineGlslang.cmake` | — |
 | D4 | synchronization2 / dynamic rendering "later" | `G8` said the target was API 1.2; the 1.3 floor and the retirement's ordered batch made both the floor move and the legacy path go - D4 is LANDED as steps 1/1b/`T11` (2026-11-23) | `../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` |
 | D5 | putting the cache file format into the SDK | `G1`: the SDK does not know Vulkan; the right seam is "the host gives the location, the backend the format" (§2.9) | — |
 | D6 | implementing several frames in flight directly | `G4`: changing the "read when drawn" contract needs a decision document first; the measured ceiling is about 10% (the device is 90%) | `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` |
@@ -793,7 +792,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | # | Criterion | Case / command |
 |---|---|---|
 | T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 174 cases / 42 suites on 2026-11-23); `ctest -R test_vk` |
-| T2 | byte for byte identical with vsg | `test_vsg`'s `BackendParityTest` (13 cases) |
+| T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
 | T5 | validation is silent | in those runs `diagnosticCount(InitFailed)` and the layer count are 0 |
@@ -809,11 +808,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **176 cases / 42 suites** (2026-11-23, Linux: 176/176; the Windows reading the same day was 174/174 with no skips,
-  before the two-window case and the `T54` witnesses landed); `test_vsg` **576**, `test_graphics` **639** (same build,
-  `--gtest_list_tests`); `BackendParityTest` **15/15**. The target map, the shapes and the leases are one
+- `test_vk` **186 cases / 45 suites**, `test_graphics` **642** (2026-11-23, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
-- **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** (an old `.so` makes `VsgBackendPluginTest` segfault).
+- **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
+  and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
   8.16–8.30 ms).
 - **Host allocations, measured once and kept apart** (2026-11-18, Debug + lavapipe, `operator new` counted for one measurement): the backend's
@@ -823,8 +821,6 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   ≈2.6 MB per frame** (`VN_BENCH_FRAMES` 8 vs 120 on one build, 2026-11-18). The two numbers answer different questions and are not interchangeable: the smaller one is
   the backend's own recording window, the larger one is what a host's frame costs. GPU-side builds and uploads are **0** in steady state (`VkResidencyTest`), so none
   of this is device memory.
-- `test_vsg` (Release) still shows `T36`'s `EachAttachmentClearsToItsOwnColour` occasionally under WSLg (window / device creation, see the backlog); the three
-  "released before submission completed" defects are fixed, evidence in `../bugs/vsg-teardown-frees-in-flight-resources.md`.
 
 ### 9.2 Known gaps / backlog
 
@@ -838,14 +834,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
   174/174, no skips, the window cases reading the compositor); **still missing** are a measured Wayland fallback and a performance reading the gate accepts.
 - **Backlog `T12` / `T13`**: reading pixels from a Windows window, and the Wayland fallback.
-- **Backlog `T60`**: retiring `vsg` after this gate - trigger, rides and reasoning are in the item; the terms (mechanism
-  ownership, the 24 `vsg.*` codes, the document collapse and the batch order `T54` → `T11` → `T58` → delete) are
-  [ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md), and this backend is the one the
-  retirement leaves in place. **Steps 1 (`T54`), 1b (`BC-38`) and 2 (`T11`, `BC-39`) landed 2026-11-23**: the floor is
-  Vulkan 1.3 with `synchronization2` + `dynamicRendering`, the pipeline key has no state half, and the backend has no
-  render-pass or framebuffer object left; the remaining step is the deletion, and `T58` landed as a recorded decision
-  (there is no shader mask in the tree to delete, and the mechanism is one dynamic-state bit plus a shader branch and a
-  seam fact - `ADR-2026-11-23` D4's amendment).
+- **`T60` (the retirement) landed 2026-11-23**: this backend is the one the retirement leaves in place. The floor is Vulkan 1.3 with `synchronization2` +
+  `dynamicRendering`, the pipeline key has no state half, and the backend has no render-pass or framebuffer object left; the retired plugin's codes and the comparison
+  documents went with it ([ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md)).
 
 ### 9.3 Compatibility / migration
 

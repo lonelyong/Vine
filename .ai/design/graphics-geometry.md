@@ -397,10 +397,10 @@ This file defines the current design of graphics geometry: channels, primitives,
 
 | # | Criterion |
 |---|---|
-| T1 | `GeometryTest` / `PrimitiveTest` / `PrimitiveInstancingTest`. |
-| T2 | `StreamRevisionTest`: editing one channel retransmits only that stream; a geometry edit rebuilds the fact row. |
-| T3 | `GeometryFactsTest` / `PrimitiveDrawTest`. |
-| T4 | The device-level `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`. |
+| T1 | `PrimitiveInstancingTest` / `GeometryTest`. |
+| T2 | A revision is part of the residency key: `ResidencyTableTest.ARevisionIsPartOfTheKey` / `GeometryTest.BumpRevisionMovesForwardFromWhereverItIs` / `BufferTest.SetRevisionStaysForBytesWrittenOutsideTheBuffer`; an unchanged revision uploads nothing (`VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing`). |
+| T3 | `MeshShapeTest` / `PrimitiveInstancingTest` / `VkVertexInputTest`. |
+| T4 | The device-level `PrimitiveInstancingTest.AnInstancedPrimitiveDrawsEveryPlacement` (the stream is declared once per primitive: `EachPrimitiveOwnsItsInstanceStream`) + `VkBuiltinProgramTest.EveryInstanceIsDrawnWhereItsMatrixPlacesIt`. |
 | T5 | `MeshShapeTest` verifies mesh storage and runtime types, including one positions buffer shared by two `Geometry`s. |
 | T6 | Both indexed and sequential triangle-mesh vertices verify whole triangles; `MeshShapeTest`. |
 | T7 | A Quad is split into two triangles along a fixed diagonal; `MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates`. |

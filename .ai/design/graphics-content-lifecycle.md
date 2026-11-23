@@ -36,9 +36,9 @@ This file defines the current design of graphics content lifecycle: release and 
 2.4 **Never idle the device**: release is one word from the host (a mark), rows are reclaimed per epoch (2.10); only the destruction path uses a counted device idle.
 2.5 **Streams are shared by buffer identity, and lifetime is "who still declares these bytes"**: `StreamKey` = buffer + revision + segment; the steady state retransmits nothing.
     An entry holds the `Buffer` its key names, so the address lives as long as the entry. Residency lifetime **does not look at time**; two O(1) facts decide it:
-    the declaration index published by the content layer (`ContentFacts::declarations`, an
-    address→declaration count `ContentStore` maintains synchronously on row changes) says "is there still live content declaring this buffer"; the entry's own handle says "is the revision still the one it uploaded".
-    An entry with no declaration, or whose revision has moved on, parks and leaves (`vine/backend_vsg/internal/PinnedResources.hpp`). The per-frame cost is O(#resident entries),
+    the residency key's revision (`StreamKey` = buffer + revision + segment, held in `ContentCaches`) says "is the revision still the one it uploaded", and
+    a host's release is the only thing that forgets a key — a frame that draws nothing asks nothing.
+    An entry whose revision has moved on, or whose key a host released, is forgotten and its object parks (`ContentCaches::releaseGeometry` → the device's park queue). The per-frame cost is O(#resident entries),
     not a function of content size (culling does not delete rows, so scanning rows would turn the frame that draws nothing into the most expensive frame).
 2.6 **Tables keyed by identity, and an entry must live while its key lives; only uploads are still keyed by address**: the geometry / material / program fact rows are keyed by the content handle
     `(id, revision)` (`ContentId.hpp`), and the compiled halves and descriptor sets are keyed by the same `ContentRef` (plus layout / variant /
@@ -143,9 +143,9 @@ The cost: the backend must keep a batch's staging alive until that batch's submi
 |---|---|---|
 | F16 | Not retained | The staging buffer of one upload is released once the copy completes: the batch's staging is destroyed when its command buffer has completed (`ContentImages::releaseUploadStaging`), and the next upload allocates again. |
 | F17 | The evidence is that batch's own completion | The upload batch's submitted command buffer having completed means "the copy that read it is done". No timeline window, no retirement queue, no `deviceWaitIdle` (see N8). |
-| F18 | The trigger is the frame boundary | `VsgBackend::executeFrame()` runs `releaseFinishedUploadStaging()` once at its very start, asking each session about its own upload tasks. The host does not call it and does not need to know (F18 used to require the host to call it at a lifecycle point — withdrawn, see ADR-2026-11-10-upload-staging-is-not-retained). |
+| F18 | The trigger is the frame boundary | the frame tail that recorded the uploads calls `ContentCaches::endFrame(batch)` → `ContentImages::releaseFrame(batch)`, destroying that batch's staging and the images its revisions replaced; the warm-up's own batch (0) is released by `releaseUploadStaging(0)` after its fence. The host does not call it and does not need to know (an explicit host verb was withdrawn, see `ADR-2026-11-10-upload-staging-is-not-retained`). |
 | F19 | The frame boundary must not block | A block whose fence has not completed is left to the next frame; a block that still has data to copy in `DataToCopy` is skipped too (the next upload reallocates anyway, so clearing early only wastes one allocation). |
-| F20 | Per block, independently | `TransferTask` has `2 × numBuffers` blocks (early/late × 3) and uploads rotate by `frameIndex`, so both blocks can hold one model (measured: a 704 MB body → `SharedUsage` 1,228 MB = `2 × 614 MB`); clearing is per block too. |
+| F20 | Per batch, independently | a batch is one frame driver (`ContentImages::BatchId` = `clock_window + 1`; 0 is the warm-up's), so releasing one batch never waits for a frame still recording under another — the reason a second driver does not inherit the first one's staging. |
 | F21 | Deliberately not exposed | No SDK API reports upload-staging occupancy: the steady state is 0 bytes beyond the in-flight batch, and a counter nobody branches on would be a capability with no consumer (`G8`). |
 | F22 | Answered by the batch | "Do I hold a staging" is the upload batch's own bookkeeping (`ContentImages::BatchId`): the staging of one batch is released when that batch's command buffer completes. No device-level upload count answers it (that is the device's metering, not the asked session's). |
 
@@ -172,9 +172,7 @@ revision, so a hidden / culled material does not lose its textures, and only onc
 | `RenderDevice::releaseContent(raw_ptr<const Object>)` | Releases GPU residency |
 | `RenderEngine::releaseContent(...)` | The engine forwards it |
 
-Upload staging **has no entry point**: it reclaims itself at the frame boundary (F16–F19); the backend-side surface is `VsgBackend::uploadStagingBytes()` and
-the per-frame observation `FrameReport::uploads` (`FrameUploads`).
-`api::OffscreenSession::stagedBytes()` (read-only observation).
+Upload staging **has no entry point**: it reclaims itself at the frame boundary (F16–F19). The observation is the per-frame `FrameReport::uploads` (`FrameUploads`); the device-level numbers are `contentCacheCounters()` (streams / images) and `retirementNumbers()` (what the park queue holds), and none of them reports staging occupancy (F21).
 
 ### 4.2 Caching and storage
 
@@ -245,16 +243,15 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 - How it fails (D): using the device-level "how many uploads happened" in place of "does this session still hold staging". One session succeeding masks the other's answer.
 - How it fails (E): adding a cheap "this DataToCopy still has data to copy, so do not clear it yet" check to the sweep. Such a table can stay non-empty for a long time with nothing pending
   (`_transferData()` returns early and does not clear it), so the sweep skips forever and the whole staging becomes resident again.
-- How to detect it: `VsgBackend::uploadStagingBytes()` / `stagedBytes()` is not 0 after things go quiet; `RetentionStats::device_waits`
-  rises on this line.
+- How to detect it: `FrameReport::uploads` does not fall back to 0 after things go quiet, or `RetentionStats::device_waits` rises on this line.
 - How to prevent it: only recognise that block's own `fence->status()` (F17), sweep once at the frame boundary (F18), and **add no extra condition** (E).
 
 ### 6.4 Hidden / culled content does **not** lose its uploads (only leaving the tree does)
 
 - How it fails: treating "not drawn this frame" as "the object is gone", and so either adding a release to the leave-the-tree path (culling churn ⇒ retransmit every frame),
   or, conversely, believing hidden content forgets its uploads and adding a time window to it.
-- How to detect it: `VsgBackend::releasedStreams()` only grows **after the row disappears**; for the same piece of geometry, "invisible → visible again" leaves
-  `StreamUploads::uploads()` **unchanged**. The row count (`ContentStore`'s live objects) is unchanged too.
+- How to detect it: `ContentCaches::Progress::stream_releases` only grows **after the row disappears**; for the same piece of geometry, "invisible → visible again" leaves
+  `stream_builds` **unchanged**, and so does `streams_live`.
 - How to prevent it: lifetime asks one question only — "is there still a live geometry row declaring these bytes?" (pin = buffer address + its current revision,
   enumerated from the geometry rows published by `ContentStore::tablesFor`). To give residency back early, use explicit `releaseContent()`;
   do not add a time window / capacity cap (`G8`: that guesses on the host's behalf).
@@ -297,25 +294,25 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 
 | # | Criterion |
 |---|---|
-| T1 | `ContentStoreTest.*Release*` / `MaterialImagesTest.Release*`. |
-| T2 | `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`. |
+| T1 | `ContentRegistryTest.ARepeatedReleaseDoesNotMoveTheGenerationTwice`, `ResidencyTableTest.ARevisionIsPartOfTheKey` / `ATouchExtendsTheLifetime`, `VkResidencyTest.ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain` / `ReleasingATextureLowersTheImageResidency`. |
+| T2 | `VkResidencyTest.ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain`. |
 | T3 | `HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice`. |
-| T4 | `BlockStorageTest.*` / `MaterialArenaTest.*` / `StreamUploadsTest.*`. |
-| T5 | `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`: frames after an upload do not raise idle; the upload's staging is reclaimed by later frames with **nobody calling** (every live block is a multiple of the reusable size; a one-off block larger than the minimum is given back); redrawing the same content uploads nothing; a new stream uploads again and falls back to the minimum again. |
+| T4 | `VkUniformRingTest.*` / `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` / `VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing`. |
+| T5 | `VkMemoryPoolTest.ASteadyFrameAllocatesNothing`: the first frame's staging buffers are back by the steady frame with **nobody calling** (the frame tail releases its own batch); redrawing the same content uploads nothing (`VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing`), a release makes the next frame upload again (`ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain`), and one driver's batch never frees another's (`VkMultiSessionTest.TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`). |
 | T6 | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` / `ASecondPrepareSubmitsNothing`: the upload happens in the preparation batch, the frame that follows uploads nothing, and a second preparation submits nothing. |
 | T7 | `VkResidencyTest.ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain`: after the residency is released and wanted again, the next frame uploads it again — the first upload's staging is gone, the data is not. |
 | T8 | `HeadlessBackendTest`: the device side no longer has a staging entry point (the verb is gone from the SDK, and `RenderDevice` has one virtual function fewer). |
-| T9 | The six "no longer drawn" situations (§2.9 / F23–F28): `ContentStoreTest.*Release*` (leaving the tree and explicit release), `ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames` (cull 100 frames, zero retransmission), `ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped` (`live()` drops within `slots + 1` frames of leaving the tree), `StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave` (the pins of a shared buffer merge), `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt` (rebuild after release), and `VsgBackendTest`'s pass-identity case (`releasePass` only forgets the id). Hidden / culled "the row is unchanged and the upload stays too" is pinned half by `StreamUploadsTest` and half by `ContentStoreTest`, not merged into one — those are two different facts. |
-| T10 | The instance stream is a **declaration** too (§2.5 / §6.5): `ContentStoreTest.AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision` — the row carries the primitive's instance handle and declares it from that; after the slice is swapped but no new description is **not** reported, only the old stream is declared; after `bumpRevision()` the live row declares the new stream while the parked old row still declares the old one; once the old row leaves only the new stream remains. |
-| T11 | Per-frame uploads/releases are an **increment** in the report (T25/T29): `FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` — no answer before the frame; the first frame has `stream_uploads`/`stream_bytes` > 0; the steady state is all 0; `Buffer::bumpRevision()` uploads once more; swapping content reports `stream_releases` > 0. |
+| T9 | The six "no longer drawn" situations (§2.9 / F23–F28): leaving the tree and explicit release (`VkResidencyTest.ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain`, `VkResidenceWireTest.AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`), one buffer of a shared set (`VkResidencyTest.ReleasingOneBufferLowersOnlyTheStreamsThatReadIt`), a program (`ReleasingAProgramLowersTheCompiledHalvesAndKeepsTheStreams`), a texture (`ReleasingATextureLowersTheImageResidency`), a target (`ReleasingATargetFreesItsAttachmentsAndTheNextFrameBuildsThemAgain`), and the park (`AReleaseIsHandedOverParkedAndDestroyedAfterTheFramesThatCouldNameIt`). Hidden / culled content is engine-side: it is absent from the frame, so no residency question is asked (`SceneTest.CollectCommandsCullsOutOfView`). |
+| T10 | The instance stream is a **declaration** too (§2.5 / §6.5): `PrimitiveInstancingTest.EachPrimitiveOwnsItsInstanceStream` (the primitive owns the slice) and `ResidencyTableTest.ARevisionIsPartOfTheKey` (a revision is part of the key, so a row declares the bytes of the revision it names). |
+| T11 | Per-frame uploads/releases are an **increment** in the report (T25/T29): `VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing` (the first frame reports `stream_uploads == 2` with bytes > 0; the second reports 0) and `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (no frame has run ⇒ no numbers; the prepared frame's uploads are reused). |
 
 ## 9. Status and Evolution
 
 ### 9.1 Current status
 
-Current design; features and interfaces are as the tables above. F16–F22 (upload staging) have landed: `gfx_backend_vsg` sweeps
-"fence completed" blocks at every frame boundary and releases their `staging` (zero waiting, zero idle), the SDK side has **no** corresponding verb, and the model viewer needs to call nothing either
-(the `release_render_memory` command was deleted with it).
+Current design; features and interfaces are as the tables above. F16–F22 (upload staging) have landed: the shipped backend's frame tail releases that batch's
+staging once its command buffer has completed (`ContentCaches::endFrame` → `ContentImages::releaseFrame`; zero waiting, zero idle), the SDK side has **no**
+corresponding verb, and the model viewer needs to call nothing either (the `release_render_memory` command was deleted with it).
 
 ### 9.2 Known gaps / backlog
 

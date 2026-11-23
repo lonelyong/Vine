@@ -386,10 +386,10 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 
 | # | Criterion |
 |---|---|
-| T1 | `RenderTargetTest` / `MsaaTargetTest` / `SdkPixelTest` / `VsgBackendTest`. |
+| T1 | `RenderTargetTest` / `VkMsaaTest` / `VkContentDrawTest` / `VkContentTargetTest`. |
 | T2 | A 1-sample triangle edge has 0 blended pixels; 4 samples > 0; the interior is still a solid colour. |
 | T3 | A 4-sample depth is readable and has no intermediate values; after resolve it matches the 1-sample one point by point. |
-| T4 | `FullscreenDrawTest` / `ImageSourceTest` / `SamplerTest` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
+| T4 | `VkContentDrawTest.AFullscreenCopySamplesTheSourceTarget` / `AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays` / `ABaseColorTextureIsUploadedAndSampled` / `ACubeMapIsUploadedWithEveryFaceAndSampled` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
 | T5 | Shadows: the ground darkens with a casting light; without one the evidence is byte-identical. |
 | T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (witness: `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
 

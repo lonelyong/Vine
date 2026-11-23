@@ -1,12 +1,12 @@
-# graphics / vsg backend — current-state notes
+# graphics — current-state notes
 
-> **Current state only**: mechanisms, criteria and traps, plus “why it was decided that way”. Per-slice history and the generation before the rewrite are in git;
-> the design docs are in `.ai/design/`, and **the only to-do list** is `.ai/backlog/graphics.md`.
-> The finer backend contract is `.ai/design/vsg-backend.md`; the trap table is `.ai/design/vsg-pitfalls.md`.
+> **Working notes** (§1–§6): mechanisms, criteria, traps and evidence, plus “why it was decided that way” — some of them measured against the retired backend, whose own record is
+> `.ai/design/vsg-backend.md`; the dated sections below them are the build record. The design docs are in `.ai/design/`, and **the only to-do list** is `.ai/backlog/graphics.md`.
+> The shipped backend's contract is `.ai/design/vk-backend.md`; the retired backend's record is `.ai/design/vsg-backend.md` with its trap catalogue in `vsg-pitfalls.md`.
 
 ## 1. Layering and one frame
 
-- SDK: `src/viz/graphics/sdk/vine/graphics`; vsg backend: `src/plugins/gfx_backend_vsg` (`core/` pure policy + `api/` vsg adaptation + `support/`).
+- SDK: `src/viz/graphics/sdk/vine/graphics`; shipped backend: `src/plugins/gfx_backend_vk` (`include/vine/backend_vk/{internal,shell,support}` + `src/internal`).
 - `RenderEngine`: lifetime / `frame()` / device borrowing / size / capabilities and reports; the three facades are `PassRegistry`, `OutputRegistry`, `DiagnosticsRoute`.
 - `frame()` returns `FrameCallOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
 - **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys); it is the last step of `selectRows`, so a caller receives a sorted `Selection`.
@@ -14,7 +14,7 @@
 - **Chunk sharing and the publication cache are the publisher's**: `ScenePublisher::publication_cache_` holds the last snapshot; `SceneBake` is only the row table (+ `nodes` / `node_epochs` / `next_serial`).
 - **A layout step is a creator callback** (`SceneView::addSurfaceLayout`): the view runs one only while it is alive and only from a geometry event (a resize, the adoption of a chain, presentation on a sized area). Dropping a chain applies nothing and `~SceneView` runs none - a view is destroyed inside its creator's teardown, so a step that named that creator would be called on a half-destroyed object (`.ai/bugs/graphics-layout-step-runs-in-view-destruction.md`).
 - **The frame result is a value**: `RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`, written once when the frame is answered (`frame_result_mutex_`); `query.view` is a `View` value (camera snapshot + device pixel area + layer mask), and `presentedCamera()` is its camera half. The `poses` half waits for F10.
-- Type tests on the `Object`-derived nodes / passes / geometry use `obj_cast<T>` (core's meta-type chain), never `dynamic_cast`; `CameraManipulator` and third-party vsg types are the exceptions.
+- Type tests on the `Object`-derived nodes / passes / geometry use `obj_cast<T>` (core's meta-type chain), never `dynamic_cast`; `CameraManipulator` and other non-`Object` types are the exceptions.
 - `PassChain`: one picture's recipe + registration ownership. `PassChain::build(engine, ChainDesc)` builds the chain and registers the passes; the destructor hands its passes back to the engine; `SceneView::setChain` adopts it.
 - **One mesh-append vocabulary (private)**: `detail::appendTriangulation` / `detail::appendBox` (`src/MeshAppend.hpp`) copy a `vn::geom::spatial::Triangulationf` into authoring arrays, re-basing the indices and applying a rotation plus offset; `FpsOverlay` (bars) and the axes marker (arrows) therefore read geom's one definition of each solid.
 - **A box, quad or triangle needs no hand-written vertex**: `geometryFromShape()` takes `models::Box` / `QuadMesh` / `TriangleMesh`, tessellates, and states the indexed draw itself; the raw `packAttribute` path is for a custom channel (e.g. a vec3 cube-map texcoord) or an in-place rewrite only.
@@ -25,9 +25,8 @@
   same thing. The chain declares the gizmo `clear_enabled = false, clear_depth = true, depth_policy = TestAndWrite`: the
   arrows occlude each other like the solids they are and the scene underneath is never touched (declaring only
   `depth_policy` would test them against the SCENE's depth, which has nothing to do with their own). What a target can
-  honour: an off-screen target every combination (four render-pass variants); the WINDOW's first pass both, a LATER
-  window pass depth only (vsg records a scissored `vkCmdClearAttachments` at that pass' viewport, vk picks its
-  load-colour/CLEAR-depth pass), and a later COLOUR clear is reported as `UnsupportedRequest` rather than dropped.
+  honour: an off-screen target every combination (the attachment info states each attachment's load op); the WINDOW's first pass both, a LATER
+  window pass depth only, and a later COLOUR clear is reported as `UnsupportedRequest` rather than dropped.
 - One frame: `beginFrame` → every pass (`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`) → `endFrame` → present.
 - Scheduling happens only in the engine (`detail::FrameScheduler`: iterative Tarjan + a heap ready queue, zero allocation in steady state); the backend materialises the `FrameDescription.passes` it is handed and never reorders or reports a cycle.
 - Backend contract: `RenderBackend.hpp` + `ShaderAbi.hpp` (four zero-dependency L1 blocks) + `LightAbi.hpp` (the light block and packing); the types of the `backend/` half live in `core/`, `api/`.
@@ -49,8 +48,7 @@
   (hiding the area would stop the repair frame). Device verbs (`createSurfaceTarget` / `setWindowHandle` / `initialize`) are **between-frame** operations; `RenderEngine::setDevice` waits for the frame in flight itself (2026-11-19).
 - **One frame at a time is a “checked fact”, not a comment (2026-11-15, T47)**: `backend/FrameGate.hpp` — `executeFrame` /
   `prepareFrame` takes a **lease** on entry: another thread **waits**, the same thread re-entering is **refused** (`PresentOutcome::Refused` /
-  `PrepareReport::Outcome::Refused`, one `*.session.frame_reentry` diagnostic). Both backends share one implementation, so the host's same
-  mistake gets the same answer on either side. Why a lease rather than `enter/leave`: a frame has several early returns, and forgetting `leave` wedges the next frame,
+  `PrepareReport::Outcome::Refused`, one `*.session.frame_reentry` diagnostic). The SDK ships one implementation, so the answer cannot differ per backend. Why a lease rather than `enter/leave`: a frame has several early returns, and forgetting `leave` wedges the next frame,
   while a lease makes “forgetting” inexpressible. It guards only the **frame machine** (command pool / fence / ring / descriptor pool); host verbs (`setRenderTarget` /
   `releaseContent`) are still between-frame calls.
 - Collection memo: `detail::DrawListMemo` is shared by `Scene` and `RenderWorldSource` (key = view projection / eye point / viewport / layer mask, state =
@@ -78,10 +76,9 @@
 
 - `RenderTarget` is a **description**; the backend creates images from it. `RenderTarget::setSamples` is the only MSAA entry, and the sample count goes into `RenderPassCompatibility` ⇒ pipeline key ⇒ attachment/image. Colour and depth each resolve to one single-sample image (depth `sample0`, no averaging).
 - **A pass's target and its publication are each a value** (B14): `PassDesc::target` = `Target{Kind::Window|Explicit|Transient, target, name, extent, shape}` (`Target.hpp`), `PassDesc::output` = `Output{name, whole_target, image}` (`Output.hpp`); the six `writes*` / `output_*` fields are deleted. `Target::isValid` / `Output::isValid` are checked by `validatePlan` (`InvalidTarget` / `InvalidOutput`); a transient resolved by compile goes into `RenderPass::setResolvedTarget` and **does not** rewrite the declaration.
-- **The seam no longer spells Vulkan formats and subpasses** (B8, 2026-11-17): the attachment formats in `RenderPassCompatibility` are `DeviceFormat` (an opaque code, 0 = `kUndefined` = “no such attachment / not learned”), and the render-pass structure is a backend-computed `RenderPassKey` (0 = `kNotStated`; both backends emit `kSingleSubpassRenderPass` today). Both ends only compare, never decode; `RenderPassKey` is the **structure half** and takes part in equality **beside** format/depth/sample count, not as their hash. `ImageLayout` is still the SDK's Vulkan semantics and has not been folded in yet.
+- **The seam no longer spells Vulkan formats and subpasses** (B8, 2026-11-17): the attachment formats in `RenderPassCompatibility` are `DeviceFormat` (an opaque code, 0 = `kUndefined` = “no such attachment / not learned”), and the render-pass structure is a backend-computed `RenderPassKey` (0 = `kNotStated`; both backends emitted `kSingleSubpassRenderPass` then). Both ends only compare, never decode; `RenderPassKey` is the **structure half** and takes part in equality **beside** format/depth/sample count, not as their hash. `ImageLayout` was still the SDK's Vulkan semantics then (it left in `T15`, see the bullet below).
 - **T15 closed (2026-11-23)**: `ImageLayout` and `LoadOpVariantKey` LEFT the SDK. Each backend owns its own
-  (`gfx_backend_vk/internal/ImageLayout.hpp`, `gfx_backend_vsg/internal/LoadOpVariantKey.hpp`); the key's only producer
-  was vsg all along and the engine only compared it. The seam now carries the neutral vocabulary (`LoadOp` / `StoreOp`,
+  (`gfx_backend_vk/internal/ImageLayout.hpp`; the load-op variant key left the tree with its only producer, the retired backend). The seam now carries the neutral vocabulary (`LoadOp` / `StoreOp`,
   `DrawKind`, ...) and no Vulkan SEMANTICS at all; `check_vk_exposure.py` V2 says so. The B8 sentence above is the
   state before this move, kept as history; `keyAuditTable()` has six rows (the variant key cannot enter `PipelineKey`
   because it is no longer an SDK type). Review: `.ai/research/graphics-2026-11-23-review-8.md` 4.7/4.8.
@@ -89,32 +86,28 @@
 - Colour: `Colorf` is linear light, `Color` is sRGB-encoded bytes; `toLinear()` / `toColor()` are the pair of conversions; clear colour and pass colour use linear values.
 - Image sources: `ImageInput` / `ImageSource`; produced (`ImageRef`: target + attachment) and imported (`Texture`) lifetimes are not merged. `MaterialImages` uploads by key `(Texture*, revision)`, and samplers are cached by value.
 
-## 4. vsg platform facts (hard constraints)
+## 4. Platform facts (hard constraints)
 
-- Vulkan 1.4 floor; EDS2 / EDS3 + 3 fn-pointer entries; **no dynamic rendering** ⇒ render pass + load-op variants.
-- vsg compiles pipelines per viewID ⇒ every pass's state registry must be private.
-- push constant 128 B; reverse-Z (far = 0); world CCW vs framebuffer CW ⇒ `frontFace = CLOCKWISE`.
-- X11 / Win32; **no Wayland**.
-- The in-flight slot count is vsg `Viewer`'s hard-coded 3: learned frame by frame during startup (`probeSlotCount` / `SlotTracker`), and nothing is parked before it is learned.
+- Vulkan 1.3 floor with `synchronization2` + `dynamicRendering` + EDS1 / EDS3; a device without EDS3 is refused (`vk.init.dynamic_state_missing`).
+- Pipelines are keyed by the attachment SHAPE (formats + sample count) and state no extent: a resize recompiles nothing.
+- push constant 128 B; reverse-Z (far = 0); world CCW vs framebuffer CW ⇒ `frontFace = CLOCKWISE` (`StateMapping::kFrontFace`).
+- X11 / Win32 are measured on hardware; Wayland is implemented against the WSI contract only (backlog T13).
+- One frame in flight per driver (`Impl::kFramesInFlight = 1`), and a driver registers one `DeviceClock` window with that slot count.
 - Retirement window = `slots + 1`; `RetirementQueue::setSlots()` updates in place — do not assign a new queue (that zeroes the counters).
 
 ## 5. Traps (do not step in again)
 
+> Entries that name the retired backend are its record (`../design/vsg-pitfalls.md` has the catalogue); a rule that still binds is written against the shipped backend.
+
 - `vn::String` wraps `std::u8string`; write literals as `u8"..."`, and printf/gtest use `reinterpret_cast<const char*>(s.data()), s.size()`.
 - `PassDesc::camera` is an **owning** `intrusive_ptr<Camera>`; passing a stack camera's address double-frees.
-- `vsg::Viewer` has no `device` member; stop the device with `viewer->deviceWaitIdle()`.
-- `vsg::Instance::create` **throws** (it does not return null); a version-fallback loop must catch.
-- `vsg::RenderGraph`'s default `renderArea` is zero-sized; it must be set explicitly, or the pass records but clears nothing.
-- `vsg::DescriptorBuffer::create` takes its arguments as `(bufferInfoList, DESTINATION BINDING, array element, type)`.
-- The dynamic-state block slot must be `detail::kDynamicStateSlot` (15), or it replaces the pipeline bind.
-- `VkSubpassDependency`'s stage/access masks are part of render-pass compatibility; when borrowing depth the dependency must be a superset of the shape.
+- Under dynamic rendering the implicit `initialLayout` a render pass used to give is the RECORDER's job: an attachment that is not transitioned into the layout
+  its `VkRenderingAttachmentInfo` states fails `VUID-vkCmdBeginRendering-pRenderingInfo-09592` (seventeen `test_vk` cases cite it).
+- A borrowed depth is always LOADed, never cleared (`TargetObjects::beginPass`): another target's image may not be wiped by its borrower.
 - Device extensions must be truly enabled (EDS3's polygon mode / color blend); setting the feature bit alone is not enough, and only the validation layer sees it.
 - Vulkan NDC z is the depth (there is no OpenGL `z*0.5+0.5`); reverse-Z far = 0.0, so a depth clear must not clear to 1.0.
 - Dynamic `vkCmdSetPrimitiveTopology` may only stay inside the pipeline's topology class; `Topology` goes into `PipelineKey`.
 - `POINT_LIST` requires the vertex stage to write `gl_PointSize` statically; the built-in programs write 1.0.
-- **A variant define reaches a vsg-compiled stage only when that stage's own `#pragma import_defines` lists it**: passed but
-  not imported, it is dropped silently - no compile error, the "variant" simply compiles to the other one. `ProgramAbiTest`
-  pins the forward program's import list, so adding a variant define is a two-file change.
 - **MSBuild's incremental build is not trustworthy after a large tree move**: after the 2026-11-23 fast-forward over 403
   commits, objects built against the old headers survived and this suite's binary mixed two vtables
   (`0xc0000005` at 0 ms in a case that passes alone). Delete `build/src`, `build/tests`, `build/tools` objects and rebuild,
@@ -151,15 +144,14 @@
 - Transparency: magnitude = drawable opacity × material alpha × base-map alpha, meaning = the material's AlphaMode (`graphics-material.md` 2.7); blend is per-draw dynamic state (baked false, EDS3 enable), not a pipeline constant.
 - Device readback pixels are in BGR byte order; assert a single channel with `isRed()` and friends, never by reading `pixel[0]`.
 - Changing a public signature or a name requires a full build; an old plugin `.so` reports `undefined symbol`.
-- **A hidden / culled upload is not dropped — leaving the tree drops it**: the lifetime is two O(1) facts — the declaration index published by the content layer
-  (`ContentFacts::declarations`, an address → declaration count maintained in step with the `ContentStore`'s geometry-row changes) says “is a live row
-  still declaring this buffer”; the entry's own handle says “is the revision still the one it uploaded”. So culling for 100 frames re-uploads nothing,
-  and an `edit()` generation change leaves on its own; when the object leaves the tree ⇒ the row is deleted `slots + 1` frames later ⇒ the declaration disappears ⇒ the upload leaves with it.
+- **A hidden / culled upload is not dropped — leaving the tree or a release drops it**: residency is asked by the frame's identities (each draw's buffer + revision + segment), so a
+  hidden or culled object is simply absent from the frame and asks nothing; an unchanged revision uploads nothing (`VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing`).
+  The upload leaves when the host releases the buffer / content (`releaseContent` forgets the key and the object parks) — no time window and no row scan.
   Each frame walks only the resident entries, never the content rows (walking rows makes a “nothing drawn” frame the most expensive one). See `.ai/design/graphics-content-lifecycle.md` §2.5 / §2.9.
 - **Two build traps in non-Debug configurations (measured 2026-11-10)**:
   - vcpkg's glslang exports only the `DEBUG` / `RELEASE` configurations; RelWithDebInfo / MinSizeRel have no exact match, so CMake falls back to the **first** (DEBUG)
     ⇒ the plugin links the `/MDd` glslang targets into the `/MD` DLL: `LNK2038` (`_ITERATOR_DEBUG_LEVEL`, `RuntimeLibrary`) + unresolved `__imp__CrtDbgReport`.
-    `gfx_backend_vsg/CMakeLists.txt` sets `MAP_IMPORTED_CONFIG_RELWITHDEBINFO|MINSIZEREL = RELEASE` on `glslang::glslang` / `::SPIRV` / `::glslang-default-resource-limits`;
+    `cmake/VineGlslang.cmake` sets `MAP_IMPORTED_CONFIG_RELWITHDEBINFO|MINSIZEREL = RELEASE` on `glslang::glslang` / `::SPIRV` / `::glslang-default-resource-limits`;
     a future vcpkg package that ships only two configurations needs the same mapping on the consumer side.
   - `tests/test_graphics/GraphicsTest.cpp` is about 650 KB, and in optimised configurations its section count exceeds 65535 (`C1128`) ⇒ the MSVC options in `tests/CMakeLists.txt` all carry `/bigobj`.
 
@@ -199,13 +191,13 @@
   mutation (adding the body gate back to `releaseContent`) ⇒ a 2 s timeout goes red. Lesson: **an R6 case must be written with “another thread + a deadline”** — a direct call would wedge the whole suite on a regression,
   while a timeout turns the regression into one red assertion; the failure path must also unlock first and then join both threads.
 - **An environment fact (re-confirmed 2026-11-16)**: `HostWindowReadTest.AReadOfWhatTheWindowShowsComesBackAndReportsNoError` fails in the **full**
-  `test_vsg` (the server does not report viewable for 10 s, `readError=8 BadMatch`) and **passes in 1 ms when run alone**; an A/B with `git stash` on the previous commit
+  `test_vk` (the server does not report viewable for 10 s, `readError=8 BadMatch`) and **passes in 1 ms when run alone**; an A/B with `git stash` on the previous commit
   **fails the same way** ⇒ unrelated to this change, it is X-server timing/environment (the same class was recorded earlier in this file). Do not change code for it; run it alone + A/B first.
 - **S6c-2a landed (2026-11-16, frame bodies truly parallel)**: the device's big lock became a `std::shared_mutex body_gate` — **frame bodies SHARED** (two drivers
   recording/submitting at once), **a frame leaving the window and host verbs EXCLUSIVE** (may wait for frames, does not compete), and `shutdown` EXCLUSIVE too. To make that work: `FrameTimeline`
   **opens frames multiply** (`begin()` mints a new number each time, `submitted`/`abandoned` close by token — the old single slot let the second driver take the first one's token,
   collapsing two frames into one in the watermark comparison); `DeviceClock`/`RetirementQueue` are serialised by the device's `clock_mutex` (**the lock lives on the device, not on the SDK value types**:
-  vsg is single-threaded and has no consumer, `G8`; but both must still state "the caller serialises"); the allocator / target map / report sink / per-session default program /
+  a single-session device supplies none, `G8`; both must still state "the caller serialises"); the allocator / target map / report sink / per-session default program /
   surface list each got a small lock; sampled targets (screen sources, pass inputs) also take a lease; texture staging and replaced images are owned per driver by `ContentImages::BatchId`,
   and a **replaced image is parked to the watermark** (another driver's in-flight frame may still hold the old view). Deterministic evidence:
   `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` — a diagnostic sink stops one frame body, and another driver's frame must complete as a whole;
@@ -329,27 +321,28 @@
   (`pending` / `released` / `device_waits`, the last of which must be constantly 0). `shutdown()` idles first, then clears the seam and calls `releaseAll()`
   (the teardown verb added to the SDK) — skip it and parked objects leak with the session (verified by mutation).
   **Still not done**: the replacement path (the old buffer on re-upload, ring rebuilds) still destroys immediately; S6 must park it too.
-- **T48's implementation design is in `.ai/design/graphics-sessions.md` (status: in progress, S1–S3 landed, 2026-11-15)**: a session = a **frame driver** (not a window); the frame-head snapshot makes the record path lock-free; residency is three-state “publish or withdraw”;
-  a target claim conflict skips only that pass; retirement **reuses** `DeviceClock` + `RetirementQueue` (vsg already uses them).
-  One correction: vsg's `api::Session` is a **window session**, and the collection/compile scratch (`recorder` / `compiler` / `arena` /
-  `facts` / `packets` / `frame` / `driving`) is still a **device-level singleton** in `VsgBackend::Data` — the ADR's “vsg is closer” was only half right.
+- **T48's implementation design is in `.ai/design/graphics-sessions.md` (landed; the shape and the lock table are §2–§4 there)**: a session = a **frame driver** (not a window); the frame-head snapshot makes the record path lock-free; residency is three-state “publish or withdraw”;
+  a target claim conflict skips only that pass; retirement **reuses** `DeviceClock` + `RetirementQueue`.
+  The correction that decided the division of work: the retired backend's `api::Session` was a **window session**, and its collection / compile scratch was a **device-level singleton**
+  — so “a session is closer to a window” was only half right, and what moves into a session is the frame scratch, not the swap chain.
 - **Diagnostics carry a stable code (2026-11-15, audit A3)**: `RenderDiagnostic`'s `code` (`vk.<class>.<cause>`) is what the host and the tests
   match on; `message` may be reworded, the code may not; `subject` says “which target this report is about”, and `limit` is the
   `requested` / `supported` pair. The vocabulary is registered in `scripts/diagnostic_codes.txt` (checked both ways: what is used must be registered,
   what is registered must be used), and `check_diagnostic_formats.py` uses `scripts/diagnostic_code_baseline.txt` to set a **cap** on call sites not yet converted
   — a newly written report without a code goes red. **Criterion**: **constructing** a diagnostic (≥3 arguments) must write a code; **forwarding** a `RenderDiagnostic` (`reportDiagnostic(diagnostic)`) does not count — the value already carries the code.
-  On 2026-11-15 there were **61 codes in seven vk families + 22 in four vsg families + 13 engine codes = 96**, and both backends are fully converted; the remaining 22 are the engine's own reports (`RenderEngine` 13 / `RenderArea` 5 / four small files with 1 each).
-  **The reason is named at the layer that knows it**: vk's content refusal is `ContentRefusal` (category + code + sentence, first one wins) and the device only forwards it; vsg's readback refusal is mapped by `readbackRefusalDiagnostic`, a switch with no `default`, so a new enum value must name a code.
+  The registry holds **125 codes** (2026-11-23): `vk.*` for the shipped backend and `engine.*` for the engine's own reports; the retired backend's `vsg.*` family left with it.
+  **The reason is named at the layer that knows it**: the content refusal is `ContentRefusal` (category + code + sentence, first one wins) and the device only forwards it; a readback refusal
+  is one `ReadbackResult`, mapped in the device where the wait's outcome is known.
 
-- `test_graphics` (model-independent), `test_vsg` (the backend, including real-device cases), `test_gui`, `test_core`.
-- `scripts/vsg_rewrite_gate.sh`: the suite run twice with 0 VUID / 0 SYNC-HAZARD, closed phase lines, and the application picture percentage.
+- `test_graphics` (model-independent), `test_vk` (the backend, including real-device cases), `test_gui`, `test_core`.
+- A backend run is clean when the validation layer reports 0 VUID / 0 SYNC-HAZARD (`VkMsaaTest` / `VkWindowPresentTest` assert the count) and the demo's picture percentage is unchanged.
 - Static gates: `check_ai_docs.py`, `check_doc_symbols.py`, `check_include_hygiene.py`, `check_export_annotations.py`, `check_diagnostic_formats.py`, `check_public_docs.py`,
   `check_api_style.py` (API style: no setters/callbacks in values, no `getXxx` accessors, `bool` + out-parameter may not coexist, an `XxxBuilder` must have `build()`;
   4 existing findings are registered in the script's `BASELINE` and are deleted as they are fixed),
   `check_vk_exposure.py` (also CTest `vk_exposure`: V2 no render-API include, V4 shell types, V5 **the SDK's prose
   names no backend** - `\bvsg\b|\bVsg|\bvk\b` except a `vk.<category>.<cause>` code; `graphics-architecture.md` C4).
 - `scripts/asan_check.sh` / `VN_ASAN_*`; only `skipped == 0` counts as having run the device battery.
-- Measuring a backend's per-frame cost: `test_vsg --gtest_filter='*MeasureWhatEachKind*'` (prints µs/frame + `builds`/`uploads`/`created`; needs a real window and is skipped headless); the cost model and allocation caps are in `.ai/design/vsg-backend.md` §2.10 / N4 / T5.
+- Measuring a backend's per-frame cost: `test_vk`'s measurement cases (`--gtest_filter='*Measure*'`) print µs/frame plus `builds` / `uploads` / `created`, and per-frame host allocations are counted in `../design/vk-backend.md` §9.1; the cost model is that page's §2.4 / §2.16.
 
 ## 2026-11-11 — graphics-next proposal set (not adopted; continue here next time)
 

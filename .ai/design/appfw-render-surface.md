@@ -237,7 +237,7 @@ The backend is the one the application names (`RenderControl::setDefaultBackendN
 
 ### 9.2 Known gaps / backlog
 
-- Windows: whether `VsgHostWindow` gets a valid HWND while the main window is unshown; see `../backlog/appfw-startup.md`.
+- Windows: whether the host's window gets a valid HWND while the main window is unshown; see `../backlog/appfw-startup.md`.
 - The session init still runs on the application thread (~184 ms); moving it to a pool needs the concurrency of attach and content assembly redesigned, which is not being done now.
 
 ### 9.3 Compatibility / migration

@@ -195,7 +195,7 @@ foreground `ProgressHost` of its own, so startup progress is naturally shared by
 
 ### 6.3 Windows is unverified
 
-- How it fails: with the main window not shown, `VsgHostWindow` cannot get a valid HWND and attach fails.
+- How it fails: with the main window not shown, the host window cannot get a valid HWND and attach fails.
 - How to detect it: the log says `GetClientRect(..) failed` / `surface -> Failed`.
 - How to prevent it: fall back to "show the main window early and let the door wait for both windows" and record "not adopted on Windows"; the criteria are in the backlog.
 

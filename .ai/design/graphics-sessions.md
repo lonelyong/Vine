@@ -1,14 +1,14 @@
 # the device is a pool and sessions own frames: types, ownership and concurrency rules
 
-> **Status**: current — the shape below is landed in both backends (§9.1).
-> **Last verified**: 2026-11-17
+> **Status**: current — the shape below is landed in the shipped backend (§9.1).
+> **Last verified**: 2026-11-23
 > **Scope**: the **implementation shape** of what is shared, who owns a frame, how frames run concurrently and how retirement works when one `RenderDevice` is borrowed by
 > several engines; the contract's **why** and its landing record are in the ADR, and the threading model's **present** is in `graphics-threading.md`.
 > **Sources**: `RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp` (the contract),
 > `graphics/FrameGate.hpp` / `graphics/DeviceClock.hpp` / `graphics/RetirementQueue.hpp` (the mechanisms),
 > `src/plugins/gfx_backend_vk/src/internal/Device.cpp` and `ContentDraw.cpp` (the device-level frame machinery)
-> carry every session rule this page states; the retired reference backend's half was the comparison that made them
-> a fact rather than an assumption (`ADR-2026-11-23` D4, tag `retained/vsg-final`).
+> carry every session rule this page states; the retired reference backend's half is a record, not a comparison
+> (`vsg-backend.md`, tag `retained/vsg-final`).
 > **Backlog**: no session migration step is unlanded; trigger-gated work is in §9.2 and `../backlog/graphics.md`
 
 ## 1. Overview
@@ -28,8 +28,7 @@ it does not repeat `graphics-threading.md`'s `C21` either.
 2. **The recording path takes no lock**: a steady-state frame takes no device-level lock (`G10`'s account, see §2.3).
 3. **Every failure has one owner**: device loss, allocation failure, target conflict, upload race, release overlapping a frame in flight — each of the five has one
    sentence of contract, one state and one report, and the host does not have to guess the ordering (`G4` / `G11`).
-4. **Migration is acceptable stage by stage**: at the end of each stage the existing `test_graphics` / `test_vk` / `test_vsg` are green, and the invariants that stage adds have
-   **a case that can go red** (§8).
+4. **Every rule has a case that can go red**: `test_graphics` / `test_vk` are green, and each invariant this page states names its case or its counter (§8).
 
 ### 1.3 Non-goals
 
@@ -54,10 +53,9 @@ resolves those caches into session-local tables once at the frame head** — so 
 - **What it is**: `FrameDriver` = who drives frames: the command pool, command buffers, fence, constant ring, descriptor pool, the frame books, and the target it claims.
   The type name stays `RenderFrameExecutor` (a public contract, the vocabulary of `ADR-2026-11-16`); a driver presents to **at most** one window (the window is its target,
   not its identity).
-- **Why it needs a name**: the shape is **one window, one device, one swap chain** - the reference backend proved it could be built (archived at tag `retained/vsg-final`), while the
-  **collection / compilation / execution** frame pipeline is a **device-level singleton** in `VsgBackend::Data` (`recorder` / `compiler` / `arena` / `facts` / `packets` /
-  `frame` / `driving`, see `VsgBackend.cpp:444`–`534`). That is: **vsg's "session" is a window session, not a frame driver** — the ADR's "vsg is closer" was only half right.
-  That correction decides the division of work: what vsg has to move is the **collection scratch**, not the swap chain.
+- **Why it needs a name**: the shape is **one window, one device, one swap chain** - a window is a target, and a device may also drive frames that present to nothing - while a
+  frame's **resolution / recording / submission** is state one frame owns: the scratch (arena, recorder, packets) and the values the frame head resolved. So a session is a
+  **frame driver**, not a window session: what belongs to it is the **frame scratch**, and the swap chain stays the window's (`D4`).
 - **Boundary**: a window is still "one live swap chain per platform surface"; a session may have no window (offscreen), in which case it presents to nothing.
 
 ### 2.2 Shareable = immutable; not shareable = has a layout or is written inside a frame (`G1` / `G4`)
@@ -90,12 +88,6 @@ Everything not shareable is **one copy per session**, so it needs no lock: owner
   (`FrameHead`: one `FrameHead::DrawPlan` per draw packet, with the frame-level texture / sampler facts hanging off the head); texture uploads are recorded into the frame's
   command buffer at the frame head as well; `record` / `recordFullscreen` read only those values. A whole frame's acquisition count is a constant **4** (1 at the frame head +
   1 each for the frame head's and the frame tail's bookkeeping + 1 in `endFrame`) and **does not grow with the draw count** (`VkFrameHeadTest`).
-- **vsg's shape**: the same principle lands on vsg's two halves. The **frame head** (`openFrameHead`) resolves, under one content lock, the pass numbering / targets /
-  sampled targets / content tracking / target fact tables / storage growth and records the upload baseline; **collection and plan compilation** read only the session scratch
-  and take no device lock; the **content phase** is split again: **resolution** (`resolveContent`, one content lock) writes halves / declared sets / stream bind / material
-  slot / texture view / block offset / pipeline identity as the driver `FrameHead`'s **values**, **recording** (`FrameHead::record`) only reads those values and takes no
-  device lock, and **submission** (`executor.record` + sweep + session submit) takes the lock once more. What remains of the difference from vk is shape (vsg's "values" are a
-  group of vsg nodes + offsets, vk's are a group of `FrameHead::DrawPlan`s), and `C3` holds for vsg (see §3.1.9).
 - **Recording is owned per driver too**: texture-upload staging and replaced images are grouped by `ContentImages::BatchId` (= `clock_window + 1`), and the frame tail
   releases **only its own** batch; a replaced image is parked to the watermark, because another driver's in-flight frame may still hold the old view.
 - **Pipelines are the exception, and they were always on a miss**: a pipeline key includes state (topology / blend / depth), state is resolved per command, and the frame head
@@ -147,17 +139,17 @@ recording path); what the wiring decides is "who may build and who copies".
 
 - **What it is**: vk today waits inside `executeFrame`, so "everything before the next frame can be destroyed at once" and `releaseContent` may only be called between
   frames. With two sessions "between frames" is no longer one instant, and a **device watermark** is needed.
-- **What is reused**: `backend/DeviceClock.hpp` is already "each window reports its own completion evidence, and the device watermark is the **minimum**", and
-  `backend/RetirementQueue.hpp` is already "park + release when due"; **vsg already uses both** (`d->clock` / `d->retirement`, borrowed per session). vk adopting them means the
-  two backends share one completion evidence (`G6`) instead of vk growing a second counter (`G7`).
+- **What is reused**: `backend/DeviceClock.hpp` is "each window reports its own completion evidence, and the device watermark is the **minimum**", and
+  `backend/RetirementQueue.hpp` is "park + release when due". The device adopts both, so a session's completion has one evidence type (`G6`) instead of a second counter grown
+  beside them (`G7`).
 - **Who is who**: **a frame driver is a clock window** (what `DeviceClock` issues is a `graphics::FrameDriverId`, a u32; an offscreen session registers one too). The three
   spellings are unified on it: `DeviceClock::WindowId` is deleted (`BC-32`), so `FrameDriverId` is the only spelling.
 - **What release means**: `releaseContent` / `releaseRenderTarget` record **each session's `submitted`** at the time of the call, and the object is destroyed only once the
   device watermark passes it; so those two verbs **may be called while another session is framing**. The contract text at `RenderDevice.hpp:302`–`308` already says exactly
   this ("a device that retires asynchronously parks the free until every session is past it") — this page only makes vk such a device.
 - **Threads**: `DeviceClock` and `RetirementQueue` are contracted as "the caller serialises; a multi-threaded device supplies its own lock" (`P4`). The lock lives on the
-  **device** (`Impl::clock_mutex`), not inside the two SDK value types: the reference backend (vsg) is single-threaded, and a lock there would be a mechanism with no consumer
-  (`G8`). Every place that takes a `clock.timeline()` reference is inside the lock, and the reference does not leave the critical section.
+  **device** (`Impl::clock_mutex`), not inside the two SDK value types: a single-session device supplies none, and a lock inside the values would be a mechanism with no
+  consumer (`G8`). Every place that takes a `clock.timeline()` reference is inside the lock, and the reference does not leave the critical section.
 - **Several open frames**: `FrameTimeline` is "one per driver", not "one open frame slot": `begin()` mints a new number each time and `submitted` / `abandoned` close it by token.
   Otherwise the second driver would get the first one's token and the two frames would collapse into one in the watermark comparison.
 - **Release is two things**: the cache table **forgets the entry at once** (the residency account's `progress().streams_live` drops immediately and the next frame uploads
@@ -170,8 +162,7 @@ recording path); what the wiring decides is "who may build and who copies".
 - **The problem**: readback today borrows the frame's `command_pool` + `completion` fence (the ADR's "the fact that blocks" item 2). Once sessions exist it may borrow no
   session's — that would make readback and that session's frame wait for each other.
 - **What is done**: readback has **its own** pool and fence (device-level, one lock guarding "one readback at a time") and **waits for the device watermark** (every session's
-  `submitted` completed) before copying. This is exactly what vsg does today (`waitDeviceIdle` for **every window** inside `readColorBuffer`, counted in `deviceWaits()`), and vk
-  takes the same path (`G6`).
+  `submitted` completed) before copying, and the wait is counted in `deviceWaits()`. One wait, one counter, for every session (`G6`).
 - **Why it is honest**: readback reads "what has already completed", not "what some session just submitted"; waiting for the watermark turns that sentence into a mechanism
   instead of making "a frame in flight" an implicit premise.
 
@@ -185,31 +176,31 @@ virtual void                 releaseFrameDriver(RenderFrameExecutor& session);  
 virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program);  // default: no-op
 ```
 
-- **The default implementation is "today"**: `createFrameDriver()` returns `&executor()` by default, so **existing backends and every case change not one line**; only vk and vsg
-  override it. That makes "concurrent sessions" a **seam** rather than a repository-wide rewrite (`G9`), and does not force a shape a third backend does not need today (`G8`).
+- **The default implementation is "one session"**: `createFrameDriver()` returns `&executor()` by default, so **a backend and every case change not one line**; only a backend
+  that hands out several sessions overrides it. That makes "concurrent sessions" a **seam** rather than a repository-wide rewrite (`G9`), and does not force a shape a backend
+  does not need today (`G8`).
 - **Ownership**: **the device owns the session**; `createFrameDriver()` lends a reference, contracted as "until `releaseFrameDriver` or the device's `shutdown()`". An engine creates one
   in `setDevice` and releases it when the device changes or it is destroyed. An engine that frames after `shutdown()` asks `initialized()` first (as it already does) and
   reports "the device is not up", **without dereferencing** the reference — `RenderDevice`'s existing "the creator guarantees no frame in flight" is the same ordering
   guarantee (`P5`).
-- **The default content program belongs to the session, and its declaration moves** from `RenderDevice` to `RenderFrameExecutor`. The program is the engine's
-  (`RenderEngine::forwardProgram()`), it shades a **frame**, and resolution happens at record time — so it is a session setting. vsg has modelled it that way for a while
-  (`FrameRecorder::setDefaultContentProgram` belongs to the **recorder**, and the device-level field is only what feeds it). **The second reason to move the declaration is
+- **The default content program belongs to the session, and its declaration sits on** `RenderFrameExecutor`. The program is the engine's
+  (`RenderEngine::forwardProgram()`), it shades a **frame**, and resolution happens at record time — so it is a session setting. **The second reason for that placement is
   the implementation**: `RenderBackend` inherits both `RenderDevice` and `RenderFrameExecutor`, and two virtuals with the same name and signature would make
   `backend->setDefaultContentProgram(...)` ambiguous (`G4`: an interface must not require the caller to write a qualified name). `Device` overrides it and forwards to **its
   own session**, so a caller driving the device directly (`test_vk`) behaves unchanged; `RenderEngine` declares it on **its own session** inside `setDevice`.
 - **Windows**: `createSurfaceTarget` stays on the device (a platform surface is not a session's property); the **first** session to claim it becomes its owner, and a second
   session gets the existing "foreign target" refusal. No new parameter is needed.
 
-### 2.9 How the two backends differ in shape (`G5` / `G10`)
+### 2.9 A backend's whole multi-session cost is one session type (`G5` / `G9`)
 
-| | vk (`gfx_backend_vk`) | vsg (`gfx_backend_vsg`) |
-|---|---|---|
-| where the frame machinery is | the session's `FrameDriver`: `command_pool` / `completion` / timestamp pool / `Books` / `FrameGate` | the command graph and submission per window (`api::WindowSession` holds the `vsg::Viewer`); the collection scratch on the session's `FrameScratch` (arena / recorder / compiler / facts / input tables / packets / frame), one copy per window and offscreen session |
-| where the frame scratch is | `ContentCaches` (the device) holds programs / geometries / pipelines / layouts / images; `FrameScratch` (the session) holds the ring / descriptor pool / set tables / `frame_index`; `ContentDraw` is only the recorder that turns one draw into commands | `BlockStorage` (a slab rotation per frame) + `ContentAssembly::beginFrame`'s sweep (device cache, read-only after the frame-head snapshot); the device gate split into two sides, `FrameDrive`, `FrameHead` (the values, one per driver) + the three phases (resolution takes the lock / recording takes none / submission takes it) |
-| completion evidence | `DeviceClock` + `RetirementQueue` (the same pair vsg uses) | `d->clock` / `d->retirement`, borrowed per session |
-
-**Both backends walk the same path**: each session holds its own frame machinery and frame scratch, the device holds the content caches and the targets, and the frame head
-resolves them into session-local values; the only difference is where the completion evidence comes from (vk adopts `DeviceClock`, vsg always used it).
+- **What a backend supplies**: one `RenderFrameExecutor` implementation, owned by the device, holding the frame machinery (command pool / completion fence / timestamp pool /
+  frame books), the frame scratch (ring / descriptor pools / set tables / `FrameSnapshot`) and its own default content program; it overrides `createFrameDriver()` /
+  `releaseFrameDriver()` and nothing else.
+- **What it inherits unchanged**: the device owns the content caches, the targets and the body gate, the frame head resolves the caches into the driver's values, completion is
+  `DeviceClock` + `RetirementQueue`, and a release parks to the watermark. None of that is per-backend code, so a second implementation cannot re-derive a different answer to a
+  promise a host reads (`G5` / `G6`).
+- **Boundary**: a backend that drives one session overrides neither method and keeps `&executor()` (§2.8); window duties (swap chain, presentation, `createSurfaceTarget`) are
+  not part of a session's cost (`C9`). This is the session half of `graphics-architecture.md` 2.11's "a backend" row.
 
 ## 3. Features
 
@@ -225,13 +216,13 @@ resolves them into session-local values; the only difference is where the comple
 | F6 | Cross-session retirement | vk adopts `DeviceClock` + `RetirementQueue`; a release may be called while another session frames | landed: the clock / the park queue / the watermark / the open-frame rule are all in the tree; release does not wait for a frame (R6) |
 | F7 | Device-level readback | its own pool and fence, waits for the device watermark before copying, counted in `deviceWaits()` | landed: `ReadbackStaging` carries its own command pool and fence; the wait is the body gate's "between frames", and each readback counts one `deviceWaits()`; a call from inside a frame body answers `Failed` (see §3.1.7) |
 | F8 | The default content program belongs to the session | settable on a session; the device level serves direct callers only; single-session backends behave unchanged | landed: the declaration is on `RenderFrameExecutor`; each of vk's `FrameDriver`s holds its own, and two drivers each draw with their own (the T8 case) |
-| F9 | vsg's corresponding shape | the collection scratch moves into the session; the caches get a lock and a snapshot; the completion evidence is already there | landed: the collection scratch is on the session (`FrameScratch`); the executor's frame state belongs to the driver (`VsgDriver` + a per-driver default program); frame-head snapshot + content lock + the device gate split into two sides; the recording path takes no lock (`FrameHead`) |
+| F9 | A backend's session type and the device's lock table | the session owns the frame machinery, the scratch and its default program; the device owns the caches, the targets and the body gate; the frame head resolves, recording takes no device lock, submission takes the queue lock | landed: `Device::FrameDriver` (vk) is the shipped instance; §3.1.9 states every lock, when it is taken and by whom |
 | F10 | Closing out the contract and the docs | `C21` / `N18` rewritten, three headers' text, the ADR's status, the audit rows | landed: `C21` / `R18` / `N18` say "frames are concurrent per session"; the threading sections of `RenderDevice` / `RenderFrameExecutor` / vk's `Device` agree |
 
 ### 3.1.1 F1 Session type and creation
 
-- **Behaviour**: `RenderDevice::createFrameDriver()` returns `&executor()` by default; vk / vsg override it to "build a session". `releaseFrameDriver(RenderFrameExecutor&)` is a no-op by
-  default. `RenderEngine` holds a `RenderFrameExecutor*`, creates it in `setDevice` and releases it on a device change or destruction.
+- **Behaviour**: `RenderDevice::createFrameDriver()` returns `&executor()` by default; a backend that hands out several sessions overrides it to "build one". `releaseFrameDriver` is
+  a no-op by default. `RenderEngine` holds a `RenderFrameExecutor*`, creates it in `setDevice` and releases it on a device change or destruction.
 - **Constraints** (C1): the **device** owns a session; an engine only borrows it.
 - **Requirements** (R1): `createFrameDriver()` may be called before `initialize()` (the creator initializes the device and the engine attaches first).
 - **Acceptance** (T1): a single-session backend (the default implementation) runs `test_graphics` with no behaviour change.
@@ -243,7 +234,7 @@ resolves them into session-local values; the only difference is where the comple
   becomes "forward to the target session".
 - **Constraints** (C2): the frame machinery exists **only** in a session; the device has no second `command_pool`.
 - **Requirements** (R2): `executor()` stays, with its meaning narrowed to "the device's own session" (`G6`, the same shape as `setDiagnosticsRoute`).
-- **Acceptance** (T2): `test_vk`'s 102 cases are green on a tree with "one session only" (a pure move, zero behaviour change).
+- **Acceptance** (T2): `test_vk` (186 cases / 45 suites) is green; the device's own driver answers the same frames it did before the session split.
 - **Caveat** (N2): `PrepareReport` / `FrameReport` are a session's answers; the device-level one answers for its own session.
 
 ### 3.1.3 F3 Device caches + frame-head snapshot
@@ -316,7 +307,7 @@ when the frame or preparation finishes without a conflict. A window target is no
 - **Its own machinery**: `ReadbackStaging` owns **its own command pool and fence** (one set per copy; creating and destroying them is noise against a GPU round trip, `G10`),
   and the readback path never touches `FrameDriver`'s command pool or fence (C7 holds structurally).
 - **The wait is the device's "between frames"**: it is expressed as the body gate's EXCLUSIVE side — on the wall it still waits for the **in-flight frame** (that is the
-  completion evidence), but it is not some session's machinery; **each readback counts one** `deviceWaits()`, the same reading as the reference backend's `waitDeviceIdle` (`G6`).
+  completion evidence), but it is not some session's machinery; **each readback counts one** `deviceWaits()`, the reading a device-wide wait gives (`G6`).
 - **A refusal does not stop the device**: refusals that can be answered before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format, borrowed depth)
   are answered in phase one; phase two **re-resolves** inside the gate, because a frame may have rebuilt or replaced the target while waiting.
 - **A call from inside a frame body**: when a diagnostic sink / hook calls back into this device from inside a frame body, the read answers `Failed` instead of waiting for
@@ -329,103 +320,37 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 
 ### 3.1.8 F8 The default content program belongs to the session
 
-- **Behaviour**: the `setDefaultContentProgram` declaration moves from `RenderDevice` to `RenderFrameExecutor` (default no-op; `Device` overrides it and forwards to the
+- **Behaviour**: the `setDefaultContentProgram` declaration sits on `RenderFrameExecutor` (default no-op; `Device` overrides it and forwards to the
   device's own session), and the engine declares it on **its own session** in `setDevice`; the device-level one serves only a caller that drives the device directly.
 - **Constraints** (C8): when two engines declare different default programs, **each draws with its own** (no more "the last declaration wins").
 - **Requirements** (R8): a single-session backend behaves byte for byte as today.
 - **Acceptance** (T8): two sessions declaring different default programs ⇒ each frame's pixels come from its own program; a mutation (sharing one device-level slot) ⇒ red.
 - **Caveat** (N3): this replaces `graphics-threading.md`'s `N18` (one device-level slot), see F10.
 
-### 3.1.9 F9 vsg's corresponding shape
+### 3.1.9 F9 A backend's session type and the device's lock table
 
-- **Behaviour**: `recorder` / `compiler` / `arena` / `facts` / `light_scratch` / `input_*` / `packets` / `frame` / `driving` move from `VsgBackend::Data` into the
-  session; the device caches (`store` / `halves` / `images` / `uploads` / `targets` / `passes` / `pool` / `storage`) get a lock + snapshot per F3.
-- **Constraints** (C9): `api::WindowSession`'s **window** duties do not move (the swap chain, the `Viewer` and `WindowTarget` are already per window).
-- **Requirements** (R9): `BackendParityTest`'s byte-for-byte comparison still holds with two sessions.
-- **Acceptance** (T9): `test_vsg` green + the two-session cases; the comparison unchanged.
-- **Caveat** (P8): `d->driving` is the **only** record of "which picture belongs to which session"; once it moves there may be no second copy.
+- **Behaviour**: the session is a type the device owns. In the shipped backend it is `Device::FrameDriver` (nested in `Device`, so it reaches the device's private state
+  without a friend declaration, `P9`): it owns the frame machinery and the scratch, it implements the three executor verbs, and the device's own driver is the `executor()` a
+  direct caller is handed.
+- **Constraints** (C9): window duties (swap chain, presentation, `createSurfaceTarget`) do not move because of sessions.
+- **Requirements** (R9): the SDK carries exactly two session methods (`createFrameDriver` / `releaseFrameDriver`) and no session type; a backend adds one type and no SDK change.
+- **Acceptance** (T9): a backend that overrides neither method builds and its frames are unchanged (`test_graphics`), and the shipped one hands out a real second driver
+  (`VkSessionShapeTest.TheDeviceHandsOutANewDriverAndKeepsItsOwn`).
+- **Caveat** (P8): the driving session must exist in exactly one place — the device may not keep a second copy of "which picture belongs to which session".
 
-**vsg's collection scratch**:
+**The lock table** — every device-level lock, the verb that takes it, and what it protects:
 
-- **`FrameScratch`** (`internal/FrameScratch.hpp`): arena / recorder / compiler / `facts` / `light_scratch` / `input_*` / `packets` / `frame` collected into one type; it
-  borrows the device's `Diagnostics` and `Observe` (both outlive any session).
-- **Ownership**: `api::WindowSession` (a window) and `api::OffscreenSession` each hold one, created in `initialize()` and destroyed with the session;
-  `WindowSessionOptions` / `OffscreenSessionOptions`' `observe` (null = the session brings its own, so a test that builds a session on its own still works).
-- **The device lends one handle only**: `Data::scratch` points at the driving session's copy while a frame is open, and `ScratchCloser` clears it **at every exit**;
-  `commitFrameThrough` takes the same copy back from the session parameter — no copy of the collection scratch lives on the device.
-- **A device-level setting covers every session**: `setDefaultContentProgram` and `releaseRenderTarget` apply to every session's scratch; opening a frame tops up the default
-  program once more (for sessions that started after the setting), which is one pointer copy.
+| Lock | Taken by | When | What it protects |
+|---|---|---|---|
+| the caches' `ContentCaches::Lock` | the frame head (`planDraw` / `resolveTextures`) | once per frame, once more per miss | the cache tables and the residency table; recording reads only the values in the plans (`C3`) |
+| `graphics::FrameGate body_gate` | every frame body — **shared** for an offscreen frame, **exclusive** for a window frame; every host verb — **exclusive** | the whole frame body / the whole host verb | that a window frame is alone on the device while offscreen frames of different drivers overlap; a host verb called from a frame-body thread gets an empty lease and is refused (`vk.device.reentry`, readback `InsideFrame`) instead of waiting for itself |
+| `queue_submit` | `endFrame` and every `vkDeviceWaitIdle` | the driver call only | Vulkan's external synchronisation on the queue: two drivers may submit from two threads |
+| `clock_mutex` | the `DeviceClock` / `RetirementQueue` calls at the frame head and tail | one call | the watermark and the park queue (`P4`) |
+| `program_mutex` | `setDefaultContentProgram` and the frame head's read of the default program | a pointer swap | a program announced while another driver frames (`VkMultiSessionTest.TheDefaultProgramMayChangeWhileAnotherDriverFrames`) |
 
-**vsg's driver**:
-
-- **`TargetTable`**: the target table and identity resolution are one — the device's single table (one row per identity: description, object, the owner's tag, and the
-  executor's "not applied" episode); each driver's executor borrows it, so two drivers resolve against the same identity table (`P8`: there is no second copy). A
-  separately constructed executor (a test) brings its own, and `adopt` registers an object someone else built (non-owning).
-- **`VsgDriver`** (`internal/VsgDriver.hpp`): the frame driver `createFrameDriver()` hands out, and the `RenderFrameExecutor` implementation; it owns a `VsgExecutor`
-  (`window_` / `window_recorded_` / `recorded_` / `profile_entries_` / `skipped_`) and its own default content program; the device owns it, `releaseFrameDriver` destroys it, and
-  `shutdown` takes it away.
-- **The device itself uses one path too**: `VsgBackend::executeFrame` / `prepareFrame` are two lines of forwarding, and the truth is in
-  `executeFrameFor(executor, ...)` / `prepareFrameFor(executor, ...)`; `Data::driving_executor` is set when a frame opens and cleared at every exit, like `Data::scratch`, and
-  `presentWindow` takes this frame's driver back from it.
-- **The default program belongs to the driver (C8)**: `VsgExecutor` holds the object and the text; the device-level `setDefaultContentProgram` sets the device's own driver
-  only, and each frame hands **the driver's own** text to the driving session's recorder when it opens; the program is still registered in the device store (the content tables
-  are the device's).
-- **Cases**: `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` — two drivers' default programs do not overwrite each other and the device's own driver is not polluted;
-  on one offscreen target A draws red and B draws green; after A is released B still draws its own green.
-
-**vsg's frame-head snapshot and content lock**
-
-- **The device gate**: vsg's device gate is **`graphics::FrameGate`** (the same type vk uses, one instance per device) — a frame body takes the **shared** side (two drivers'
-  frame bodies may be inside at once) and a host verb takes the **exclusive** side (initialize / shutdown / readback / `frameReport` / window sets / resize). A host verb called
-  from a frame-body thread gets an **empty lease** and answers refused (readback answers `InsideFrame`; a content verb answers false / does nothing and reports one
-  `vsg.device.reentry`), and never waits for itself. Diagnostic routing and the episode locks are **recursive**, because a sink may itself call back.
-- **Frame state belongs to the driver**: `VsgExecutor::FrameDrive` (scratch / this frame's window index / the upload baseline / the previous frame's delta) is the only home
-  of frame state; the device's `Data::last_uploads` keeps a copy of "the last frame" for `frameReport()` only. `presentWindow` gets this frame's driver back through the
-  **thread-local in-flight frame** (`FrameInFlight`) — a window target's `present()` has no frame parameter, and a single device-level copy would hand one frame's plan to
-  another driver's present.
-- **The frame-head snapshot (vsg's shape)**: `openFrameHead` resolves, under **one** content lock, every **device fact** this frame will read — each pass' number
-  (`PassRegistry::adopt` writes `FrameScratch::pass_ids`), every host target it draws (`adoptHostTarget`), every target it samples (`TargetTable::observe`), the content its
-  commands name (`ContentStore::track`), a copy of the target fact tables (`FrameScratch::facts`), the staging sweep and the block storage's growth. **Collection**
-  (`collectFrame`) and **plan compilation** (`closeFrameBooks`) then read only the session's own scratch, so the reports inside them (the plan compiler's "this input / target
-  cannot be resolved") reach the sink **holding no device lock**.
-- **The content phase is the device's only serial section**: `commitFrameThrough` does `applyTargetPlans` / material arena growth / `recordContent` (assembly opens the frame and
-  records) / `executor.record` / the sweep / the session submission under **one** content lock, and publishes this frame's upload delta and counters at every exit
-  (`Data::last_uploads` / `last_counters`).
-- **One frame claim per session**: a window slot and an offscreen session each have a `frame` mutex, held by the frame body until it ends — two frames of the same window /
-  offscreen session **wait** (the same semantics as the old device gate: two engines both drawing offscreen is a supported shape and cannot be refused), while **different
-  windows never wait for each other**.
-- **Counters belong to the session** (`WindowSessionOptions::observe` no longer borrows the device's `Observe`): the recorder **resets** the counters when a frame opens
-  (`FrameRecorder::beginFrame`), and a shared copy would let two drivers overwrite each other; `frameReport()` refers to the copy of the frame that ended **last**
-  (`Data::last_counters`), while retention stays the device's.
-- **A lazily built device piece takes the same lock as the frame head**: `ensureOffscreenSession`'s lazy creation happens under the content lock — otherwise, when two drivers
-  run an offscreen frame for the **first** time concurrently, the loser would overwrite a half-built viewer (a segfault).
-- **`ContentStore`'s rows and tables are serialised by the content lock, and recording never touches them**: recording reads only the values resolved at the frame head
-  (`FrameHead`), so `C3` holds.
-- **Cases**: `ACompilingFrameDoesNotWaitForAnotherDriversFrame` (with one frame stopped by a sink inside **compilation**, another driver's whole frame completes),
-  `TwoDriversOnTwoThreadsEachKeepTheirOwnPicture` (two threads, 3 frames each, each drawing with its own default program, and each readback is its own colour),
-  `AReadbackFromInsideAFrameBodyAnswersInsideFrame` (a read inside a sink answers `Failed`, one `vsg.readback.in_frame`).
-
-**vsg's lock-free recording path**
-
-- **The content phase is split into three**: `commitFrameThrough` is **resolution** (one content lock: `applyTargetPlans`, material arena growth, `resolveContent`),
-  **recording** (no device lock: `FrameHead::record` turns values into vsg nodes), and **submission** (the content lock again: `executor.record`, the sweep, the session
-  submission, the upload delta and the counter publication). Recording reads no device table, so `C3` holds for vsg.
-- **`internal/FrameHead`: one frame's resolved values**. One `DrawPlan` per draw packet: the recorder of the half it hit (`ContentDraw*`), the resolved `ContentDraw::Draw` /
-  `FullscreenDraw` (identity + pipeline + variant id + dynamic state + geometry span count), the block bindings, the push blocks, the vertex / index bindings; one slot per pass,
-  carrying its own `core::StateRegistry` (the state memory that spans the resolution and recording phases). It is the vsg counterpart of vk's `FrameHead::DrawPlan`:
-  **a value that owns the objects it names** (all `ref_ptr`s), with one extra lifetime pin: `CompiledPrograms::pin()` lends the halves' producers to the plan, so another
-  driver's frame-head sweep cannot release a recorder this frame still needs (the retirement park knows nothing about "an unsubmitted frame has not handed it over yet").
-- **Two APIs, resolution half and recording half**: `ContentDraw::plan(key)` (resolution, taking the layer and the variant pool, under the content lock) and
-  `ContentDraw::record` / `recordFullscreen` (recording, binding only the resolved pipeline, touching neither the layer nor the pool); `core::StateRegistry` therefore gained a
-  `resolve(variant, …)` overload — recording uses a value instead of looking the pool up again, which is also the precondition for two drivers' recordings to really run at
-  the same time. `ContentPass::resolve` is the side-effect-free resolution half; `record` is just the "resolve + record" convenience entry (tests and
-  `ContentAssembly::record` use it).
-- **Blocks are written at the frame head too**: the offsets of the view / lights / shadow / draw / material blocks are written into this frame's slab during resolution
-  (`BlockStorage`'s rotation is a frame-head matter anyway), and recording carries only offsets — so another driver's frame head rotating the ring, sweeping halves or growing
-  the arena mid-frame does not disturb this frame's plan.
-- **The seam and the case**: `BackendContentAccess::setRecordSeam` (a test seam at the start of recording, holding no content lock);
-  `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent` — with one frame stopped inside **recording**, another driver's whole frame (frame head + recording +
-  submission) completes, and the stopped frame's readback pixels are still its own (the plan's values stay valid across another frame's frame head).
+**The phase order a frame body walks** (C3's mechanism): `scratch.beginFrame()` and `frame_head.beginFrame(...)` **resolve** (one cache lock) → recording turns the plans into
+commands (**no device lock**) → `endFrame` **submits** (`queue_submit`, then the clock). A head is a value and owns what it names: an object a release or a replacement removes
+while the frame records is parked to the device watermark (§2.6), so another driver's frame head cannot invalidate this frame's plan.
 
 ### 3.1.10 F10 Closing out the contract and the docs
 
@@ -478,7 +403,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 | C6 | Destruction may only happen after the **device watermark**; device idleness must not be traded for correctness. |
 | C7 | Readback borrows no session's frame machinery; it waits for the watermark and counts the wait. |
 | C8 | The default content program belongs to the session; when two engines declare different programs each draws with its own. |
-| C9 | vsg's window duties (swap chain / `Viewer` / `WindowTarget`) do not move because of sessions. |
+| C9 | Window duties (swap chain / presentation / `createSurfaceTarget`) do not move because of sessions; a window belongs to the session that claimed it first. |
 | C10 | The contract text must match what the code actually guarantees; if it cannot, write "serial" first. |
 
 ### 5.2 Requirements (R#)
@@ -493,7 +418,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 | R6 | A release may be called while another session frames, and does not block until that frame ends (the wait's upper bound is one cache operation; T6) |
 | R7 | Readback reads the "latest completed" frame. |
 | R8 | A single-session backend behaves byte for byte as today. |
-| R9 | `BackendParityTest`'s byte-for-byte comparison still holds with two sessions. |
+| R9 | The SDK carries exactly two session methods (`createFrameDriver` / `releaseFrameDriver`) and no session type; a backend adds one type and no SDK change. |
 | R10 | The documentation gates report 0 findings. |
 
 ### 5.3 Invariants (N#)
@@ -558,11 +483,13 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 - How to prevent it: readback stays off the frame path (the SDK documentation already says "readback is a host action"); a case asserts that a steady-state frame with two
   sessions does not raise `deviceWaits()`.
 
-### 6.8 P8 A second copy of `d->driving`
+### 6.8 P8 A second copy of the driving session
 
-- How it fails: after vsg's `driving` moves into the session, the device still keeps a "last driver", and the two disagree.
-- How to detect it: a frame's pass uses another session's window target.
-- How to prevent it: `driving` exists **only** in the session; the device's present path looks the session up from `PresentTarget` (the facade already forwards by index).
+- How it fails: the device also keeps a "last driver" beside the driver's own frame state (this frame's scratch, its window, its upload baseline), and the two disagree — a
+  frame's pass then uses another session's window target, or presents another session's picture.
+- How to detect it: a frame presents a picture another driver recorded, or a pass draws into a target that driver never claimed.
+- How to prevent it: the frame's state exists **only** in the driver; the device keeps the body gate and, for `frameReport()`, a copy of the frame that ended last. A frame
+  presents from the driver that ran it (the frame's own tail), never from a device-level "current session".
 
 ### 6.9 P9 A nested class cannot reach its base class' `protected` members
 
@@ -581,7 +508,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 | D1 | a global device lock around every verb | `G7`: the complexity is not absorbed but turned into "every call may block"; `G1`: the lock's granularity has nothing to do with the resource | ADR option E |
 | D2 | one `shared_mutex` per entry | `G10`: what is read is an immutable record, and a per-entry lock only pays an atomic on the 2000-draw path; `G8`: there is no writer to coordinate | ADR option F |
 | D3 | waiting instead of copying on a race | `G4`: it can deadlock (`P2`); a bounded copy is cheaper | ADR §3 |
-| D4 | a session = a window (keeping vsg's shape) | `G1`: an offscreen session is not a window; `G5`: tying one concept to another makes both grow crooked | this page §2.1 |
+| D4 | a session = a window | `G1`: an offscreen session is not a window; `G5`: tying one concept to another makes both grow crooked | this page §2.1 |
 | D5 | the engine allocating the session object itself | `G1`: the GPU objects' owner must be the device; `G10`: the engine should not be responsible for a command pool's lifetime | this page §2.8 |
 | D6 | readback borrowing some session's frame machinery | `G4`: readback reads "what has completed", unrelated to "who just submitted"; borrowing either one makes them wait for each other | this page §2.7 |
 | D7 | renaming `DeviceClock::WindowId` to `SessionId` now | `G8`: no consumer needs that spelling; a type alias first (`SessionId = WindowId`), the rename left for when a second API family exists (**superseded by `ADR-2026-11-16-redesign-seam-and-vocabulary`**: the three spellings are unified as `FrameDriverId`, and `WindowId` was deleted by `BC-32`) | this page §2.6 |
@@ -591,29 +518,29 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | a single-session backend changes no behaviour | `build/bin/test_graphics`, `test_vsg` (the default `createFrameDriver`) |
-| T2 | `test_vk` is green on a tree with "one session only" | `build/bin/test_vk` |
+| T1 | a single-session backend changes no behaviour | `build/bin/test_graphics` (the default `createFrameDriver`) |
+| T2 | the shipped backend's own driver answers every frame the device runs | `build/bin/test_vk` (186 cases / 45 suites) |
 | T3 | the recording path's cache locks are 0; the whole frame's count **does not grow with the draw count** (measured 4: 1 at the frame head + 2 for the books + 1 at the frame tail) | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls` (1 vs 6 commands; the mutation 6 → 10 goes red) |
 | T4 | two sessions first-drawing the same geometry at once: no crash, both pictures right, uploads ≤ 2 | `test_vk` `VkResidenceWireTest.TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMostOneCopy` (really two sessions on two threads: claims 1 / published 1 / copies ≤ 1 / both pictures red / the next frame uploads nothing), `AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDiscarded` (a fake lease: a copy, exactly two streams, `used_bytes` back in place), `ARefusedBuildIsWithdrawnInsteadOfPublished`, `AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`; mutations 3/3 red (not asking the table / publishing a failed fill / not forgetting on release) |
-| T5 | two sessions drawing one target: one pass skipped + one report | a new `test_vk` case |
+| T5 | two sessions drawing one target: one pass skipped + one report | `test_vk` `TargetClaimFrameTest.AFrameThatLostItsTargetSkipsThatPassAndSaysSoOncePerEpisode`, `TargetTableTest.ASecondDriverIsRefusedAndSkipsOnlyItsOwnPass` |
 | T6 | a release overlapping an in-flight frame: the release does not wait for the frame to end, the frame still completes with the handles it resolved, the object parks to the watermark, and `deviceWaits()` does not rise |
   `VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses` (mutation: the release takes the body gate again ⇒ red) |
-| T7 | alternately drawing different targets + interleaved readbacks: each reads its own latest completed frame | a new `test_vk` case |
-| T8 | two sessions with different default programs: each draws its own | a new `test_vk` case + a mutation (sharing one slot ⇒ red) |
-| T9 | with two sessions `BackendParityTest`'s byte-for-byte comparison is unchanged | `test_vsg` |
+| T7 | alternately drawing different targets + interleaved readbacks: each reads its own latest completed frame | `test_vk` `VkMultiSessionTest.EachDriversTargetReadsBackItsOwnLastCompletedFrame`, `AReadbackWaitsForTheFrameInFlightAndCountsTheWait` |
+| T8 | two sessions with different default programs: each draws its own | `test_vk` `VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram`; the mutation (sharing one slot) goes red |
+| T9 | the seam is additive: two SDK methods, no session type, and a backend that overrides neither keeps its behaviour | `test_graphics` (the default `createFrameDriver`), `test_vk` `VkSessionShapeTest.TheDeviceHandsOutANewDriverAndKeepsItsOwn` |
 | T10 | two sessions, one thread each, N frames each: both pictures are right and reentry is refused; **the frame bodies really overlap in time** (with one frame stopped by a sink another whole frame completes) | `VkMultiSessionTest.TwoDriversOnTwoThreadsEachKeepTheirOwnPicture` (each with its own texture),
   `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` (mutation back to an exclusive gate ⇒ red); the "same-thread reentry is refused" assertion is kept |
-| T11 | the data race has tool evidence (run, 2026-11-16: three suites, 0 reports) | `scripts/tsan_check.sh` (`test_vk` / `test_graphics` / `test_vsg` subsets) |
+| T11 | the data race has tool evidence (run, 2026-11-16: three suites, 0 reports) | `scripts/tsan_check.sh` (`test_vk` / `test_graphics` subsets) |
 | T12 | the documentation matches the code | `python3 scripts/check_ai_docs.py --strict`, `python3 scripts/check_design_docs.py` |
-| T13 | vsg: with one frame stopped by a sink inside **compilation** another driver's whole frame completes; with one frame stopped inside **recording** another driver's whole frame (frame head + recording + submission) completes and the stopped frame's pixels are still right; two threads each with their own target draw their own; a read inside a frame body answers `InsideFrame` | `test_vsg` `VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame` (mutation: the device gate back to exclusive ⇒ a 5 s timeout, red), `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent` (mutation: the three phases back to one lock ⇒ a 5 s timeout, red), `TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`, `AReadbackFromInsideAFrameBodyAnswersInsideFrame` |
+| T13 | the lock table's two sides: two drivers' frame bodies overlap, a host verb waits instead of racing, a host verb called from a frame body is refused, and a program may change while another driver frames | `test_vk` `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` (mutation: the gate back to exclusive ⇒ red), `AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt`, `AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt`, `TheDefaultProgramMayChangeWhileAnotherDriverFrames` |
 
 ## 9. Status and Evolution
 
 ### 9.1 Current status
 
-The shape this page describes is entirely landed in both backends, which share one contract. How it landed, the cases and mutation evidence for each step, and that day's
-TSan reading are history and live in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`'s "implementation status" and in git; this page keeps only what
-still binds today's code: §2's design points, §3's features, §4's interfaces and §5's constraints.
+The shape this page describes is landed in the shipped backend. How it landed, the cases and mutation evidence for each step, and that day's TSan reading are history and live
+in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`'s "implementation status" and in git; this page keeps only what still binds today's code: §2's design
+points, §3's features, §4's interfaces and §5's constraints.
 
 ### 9.2 Known gaps / backlog
 
@@ -636,8 +563,6 @@ on the design side: release is two things (§2.6), and readback waits for the de
 - the mechanisms: `src/viz/graphics/sdk/vine/graphics/FrameGate.hpp`, `DeviceClock.hpp`, `RetirementQueue.hpp`, `FrameTimeline.hpp`
 - vk's present shape: `src/plugins/gfx_backend_vk/src/internal/Device.cpp` (`FrameDriver`'s frame machinery),
   `src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp` (the recorder and the cache wiring)
-- the present shape this page was written against is the reference backend's, archived at `retained/vsg-final` (`VsgBackend.cpp`'s frame-scratch singleton, <!-- drift-ok -->
-  `WindowSession.cpp` / `OffscreenSession.cpp` - one window, one device, one swap chain, <!-- drift-ok -->
 - the engine side: `src/viz/graphics/src/RenderEngine.cpp` (`setDevice` / `frame`), `src/viz/graphics/src/RenderPass.cpp` (the single-pass driver)
 
 ### 10.2 Documents and ADRs
@@ -646,12 +571,11 @@ on the design side: release is two things (§2.6), and readback waits for the de
 - `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` (the shared retirement mechanism)
 - `ADR-2026-11-13-one-engine-one-surface.md` (one engine, one surface — this design's premise)
 - `graphics-threading.md` `C21` / `R18` / `N18` / `D13` (the contract in use)
-- `vk-backend.md` §2.11 (one `Device` object = one session pool), `vsg-backend.md` §2.9 (the backend architecture)
+- `vk-backend.md` §2.11 (one `Device` object = one session pool) and §4.3 (the units this page names)
 - `graphics-frame-pipeline.md` (frames are values, four layers, one-way edges)
 
 ### 10.3 External material
 
 - the Vulkan specification: the external-synchronisation requirements per object (queues / command pools / descriptor pools / pipeline caches / fences) — the ADR's
   "hard constraints" table
-- VSG 1.1.16: the device-level `MemoryBufferPools` (`mutable std::mutex`) plus per-task frame state — the ADR's cross-check
 - O3DE RHI / wgpu: a thread-safe device and one command list per thread (external material, not verified in this repository)

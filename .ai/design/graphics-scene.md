@@ -252,7 +252,7 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 |---|---|
 | T1 | `SceneTest` / `NodeTest` / `GroupTest` / `StateNodeTest` / `RayIntersectionTest`. |
 | T2 | `SceneContentCacheTest`: editing one scene does not lose another scene's memo. |
-| T3 | `SceneLayersTest` / `AutoTransformTest` / `PositionAttitudeTransformTest`. |
+| T3 | `ContentLayersTest.VisibilityAndLayersAreTwoQuestions` / `APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce` / `AutoTransformTest` / `PositionAttitudeTransformTest`. |
 | T4 | Moving a subtree into the frustum is not hidden by a stale box; a layer conflict is reported once. |
 | T5 | `SceneTest.SettingAParentedNodeAsRootDetachesIt` / `SceneTest.ARootAttachedElsewhereTakesTheSceneOutOfThePicture`. |
 | T6 | Transparent order: two transparent objects whose local coordinates are far from the origin have a command order consistent with their bounding boxes' distance (the current gap is `../bugs/graphics-transparent-sort-uses-origin.md`). |

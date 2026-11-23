@@ -198,7 +198,7 @@
 | F4 | The engine table keeps residency by `(id, revision)` | the fact tables get a row per ref; an old frame reads the old version | landed |
 | F5 | Row-level epoch reclamation | a row is reclaimed at "the last frame a plan hit it"; an entry leaves when "the host does not want it ∧ no row names it" | landed |
 | F6 | A plan is a value | a by-name difference at a frame boundary + plan validation with stable codes | landed: `Plan` + `validatePlan` + `applyPlan` (session and scope forms, `PlanResult` three states) + `plan()` / `planFor(owner)`; `Target` is still an explicit `RenderTarget` handle |
-| F7 | Preparation entry point | `prepare()` answers what is needed; after it, recording's `builds` delta is 0 | landed: `drawNeeds` is the only key builder; `RenderEngine::prepare()` → `prepareFrame(value)` pre-builds halves / sets / uploads / pipeline identity from the same answer |
+| F7 | Preparation entry point | `prepare()` answers what is needed; after it, recording's `builds` delta is 0 | landed: one planner (`ContentCaches::planDraw`) answers preparation and the frame head; `RenderEngine::prepare()` → `prepareFrame(value)` pre-builds halves / sets / uploads / pipeline identity from the same answer |
 | F9 | `publish` returns a result | an explicit "not published" inside a batch, no null | landed: the public `Scene::publish()` has three states (`Posted`/`Unchanged`/`InsideBatch`); the old four-state `PublishOutcome` is gone |
 | F10 | Prototypes and instances | `Instance` references a prototype; fold once; acyclicity and the row budget | not done |
 | F11 | Total-order sort key | a documented total-order value (layer included), two transparent segments | landed: `detail::SortKey` (drawOrder → layer → opaque/transparent segment → quantised camera depth → row/primitive index); the representative point is the world box centre |
@@ -301,18 +301,14 @@
 - **Caveat** (`P8` / `P11`): preparation is a **query**, not "compile everything"; and it **cannot** be implemented as "run a frame without submitting" (see `P11`).
   The transfer batch is not a variant of that rejected shape: it must be "the copies the frame would have recorded before its first render pass",
   and no copies means no submission (preparing the same frame a second time submits nothing).
-  **The seam**: `drawNeeds(compiled pass, draw)` is the only key builder — `prepare` builds with it and `ContentPass::record` looks up with it, so the two cannot drift (`G1`).
-  **Where it lives**: `src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
-  (`drawNeeds`' two overloads + `DrawNeeds::keyFor`); `CompiledPrograms::halvesFor`, `ContentPass::recordCommand` /
-  `recordFullscreenDraw` and `describeMissingContentHalf` read it and nothing else, so the recording path no longer assembles its own key.
-  **Where it lives**: `sdk/vine/graphics/PrepareReport.hpp`, `RenderFrameExecutor::prepareFrame`,
-  `RenderEngine::prepare()`, `VsgBackend::prepareFrame`. The backend reuses the frame's own two halves — `collectFrame` (value → collection) and
-  `recordContent(..., /*prepare_only*/)` (collection → halves / sets / sampled input sets / uploads) — and the two verbs have one branch point inside `ContentPass`
-  (`Mode::Prepare` stops at "identity ensured": it builds no command graph and writes no block). **Preparation writes no block and opens no frame ring**:
-  `FrameRing`'s slab rotation belongs to frames, and letting preparation take one extra slot would make the next frame write into the slab the oldest in-flight frame still reads
-  (that extra slot in `core::FrameRing` exists for exactly this) — `T33` pins this with `BlockStorage::writes()` / `frames()`.
-  It does not call `Session::beginFrame()` (a window would acquire an image); it reads the shape from `WindowTarget::facts()` instead.
-  `growBlockStorageIfNeeded` / `growMaterialArenaIfNeeded` run inside preparation, so the first frame does not have to swap storage and repoint every set it just built.
+  **The seam**: one planner answers both verbs — `ContentCaches::planDraw` resolves a draw into a `FrameHead::DrawPlan` at the frame head, and `prepareFrame` asks the same
+  planner; the recorder (`ContentDraw::record` / `recordFullscreen`) only reads the plan it was handed, so "what preparation built" and "what the frame looks up" cannot drift (`G1`).
+  **Where it lives**: `sdk/vine/graphics/PrepareReport.hpp`, `RenderFrameExecutor::prepareFrame`, `RenderEngine::prepare()`, and the shipped backend's
+  `Device::FrameDriver::prepareFrame` (its cold paths are `internal/ContentCaches.cpp` / `internal/ContentImages.cpp`). The backend walks the same frame head the frame will walk,
+  stops at "identity ensured" and records only its own transfer work: it builds no command graph for a pass and writes no per-frame block.
+  **Preparation takes no frame slot**: the frame scratch's ring and descriptor pool belong to frames (`FrameScratch::beginFrame` hands slices from the beginning again), so
+  preparation resolves identities without opening a frame — `T33` pins "no frame slot was opened" with the frame report's numbers.
+  It does not acquire a swap-chain image (`P11`): an acquire happens in `executeFrame`, and preparation reads a target's shape from the target.
 
 ### 3.8 Several windows: one engine drives one surface
 
@@ -562,9 +558,9 @@
   never an image to acquire again (the next frame starves), and with a submission it is no longer preparation. And a pass that draws into a window can only draw into
   that image, so "record once and throw it away" does not even cover it — preparation would leave an acquire starvation behind under pixel cases that look green.
 - How to detect it: the `builds` delta assertion does not hold, or the second frame's `beginFrame()` answers an empty token / an acquire-timeout VUID appears.
-- How to prevent it: preparation does the **value** side only (halves / sets / uploads) and the keys come from `drawNeeds`; the window target's format is answered by
-  `WindowTarget::facts()` (const, no acquire needed). The implementation lives in `VsgBackend::prepareFrame`: it goes through `collectFrame` + `recordContent`, and
-  **never** calls `Session::beginFrame()` / `PresentTarget::present()`, so the frame progress watermark (`submitted` / `presented`) does not move — which is exactly what `T33` asserts.
+- How to prevent it: preparation does the **value** side only (halves / sets / uploads) through the same planner the frame head uses, and reads a target's shape from the target,
+  not from an acquired image. The implementation is the executor's `prepareFrame` (the shipped backend's `Device::FrameDriver::prepareFrame`): it records only its own
+  transfer batch and **never** acquires or presents, so the frame progress watermark (`submitted` / `presented`) does not move — which is exactly what `T33` asserts.
 - **Boundary** (ADR-2026-11-14): `P11` is about a **frame** — `beginFrame`'s acquire, submission, drawing into the swap-chain image, present. Preparation's own
   **transfer-only** batch does not follow that rule: it has no frame, no swap-chain image and no present, and the frame progress does not move; its difference from
   "run a frame without submitting" is observable (`T35`'s `submitted` / `presented` assertions).
@@ -605,7 +601,7 @@
 | T12 | replay | `ReplayTest.ARecordedFrameReplaysToTheSameCommands` | not done |
 | T13 | concurrency | `scripts/tsan_check.sh` | run at the end of every step |
 | T14 | existing behaviour unchanged | `ctest` (30 suites) | 30/30 |
-| T15 | documentation gates | the eight `scripts/check_*.py` + `check_vsg_content_seam.cmake` | all clear |
+| T15 | documentation gates | the twelve `scripts/check_*.py` | all clear |
 | T16 | quantify "pass / fail" | the measurements in `../memory/graphics.md` | recorded step by step |
 | T17 | an old frame reads the old revision | change material / geometry / program with two frames in flight and diff item by item | implemented (`SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`) |
 | T18 | picking several instances | two instances of one prototype | not done |
@@ -619,10 +615,10 @@
 | T26 | pose subtree propagation | a parent joint poses | not done |
 | T27 | pose picking | pick a child after a pose | not done |
 | T28 | pose culling | part of a posed subtree leaves the view | not done |
-| T30 | plan validation | `PlanTest.*IsRefusedWithItsCode` (the four kinds) + `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | implemented |
+| T30 | plan validation | `PlanTest.*IsRefusedWithItsCode` (the four kinds) + `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AFieldTheKindDoesNotReadIsRefused` | implemented |
 | T31 | publish inside a batch | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` (`Posted` → `Unchanged` → `InsideBatch` → `Posted`) + `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | implemented |
-| T32 | preparation's answer = the frame's builds | `CompiledProgramsTest.TheReportedNeedsAreWhatTheFrameBuilds` (the key sets are equal, device independent) + the key-set assertion in `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` (the recording side) | implemented |
-| T33 | after preparation the recording's `builds` delta is 0, and preparation neither submits nor presents | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` (`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` all 0, `progress->submitted` does not move, and the pixels are still drawn) + `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing` (the engine side: the same value, nothing executed, no frame number taken) | implemented |
+| T32 | preparation's answer = the frame's builds | `VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing`: the report names the shape asked for (1 pass / 1 packet) and the identities built (2 uploads / 1 half / pipelines > 0), a second prepare builds nothing, and the frame that follows creates no pipeline and uploads no stream | implemented |
+| T33 | after preparation the recording's `builds` delta is 0, and preparation neither submits nor presents | `VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing` (`progress->submitted == 0` after prepare; the frame then reuses the pipeline and reports `stream_uploads == 0`) + `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` + `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing` (the engine side: the same value, nothing executed, no frame number taken) | implemented |
 | T34 | the snapshot source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` (600 frames, transform / opacity / material / placement edits, diffed item by item) + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` (the frame-level seam after binding) | implemented |
 | T36 | the frame result is that frame's value | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered` (snapshot / camera / counts / diagnostics / present; a publication landing between frames does not change the answered frame) | implemented |
 | T35 | preparation's upload batch is a real upload and is not a frame | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (preparation reports 2 streams + 1 texture; the following `executeFrame`'s `stream_uploads` / `texture_uploads` are both 0 and the pixel is the texture's colour) + `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` (`uploads == 0`, `progress->submitted` / `presented` do not move) | implemented |
@@ -647,8 +643,8 @@ A step that breaks its own `K` ⇒ that step is rolled back and the conclusion i
 
 **`K4`'s counting procedure** (5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c each apply it on their own):
 
-- **The denominator**: the union of the cases `--gtest_list_tests` lists for `test_graphics` + `test_vsg` when the substep starts; `DISABLED_` is not counted, a runtime
-  SKIP is; the `TEST` macros in the sources are not counted (`test_vsg` has 544 source macros and 542 in the executable).
+- **The denominator**: the cases `--gtest_list_tests` lists for `test_graphics` when the substep starts; `DISABLED_` is not counted, a runtime
+  SKIP is; the `TEST` macros in the sources are not counted.
 - **The numerator**: cases that only pass after an expected value / observable behaviour is changed; renames, aliases, mechanical signature / type migrations and file moves do not count.
 - A case that only pinned a deleted mechanism and has no successor semantics is deleted with the mechanism, but each must name the new case carrying the same observable
   behaviour; one that cannot name a successor counts as 1.
@@ -663,8 +659,8 @@ A step that breaks its own `K` ⇒ that step is rolled back and the conclusion i
 - **Landed**: F1 (snapshot publication), F2 (pure derivation), F3 (identity), F4 (the engine table by ref), F5 (row-level epoch reclamation),
   F6 (a plan is a value), F7 (the preparation entry point: the answer + the pre-build), F9 (publication's three-state answer + the snapshot handle), F11 (the total-order sort key).
   `SnapshotSource` answers every draw of Published mode, and `Scene::collectDrawItems` is Direct mode's direct path;
-  the plan lives in `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp` (`applyPlan`); preparation lives in `DrawNeeds.*` and
-  `RenderEngine::prepare()` → `RenderFrameExecutor::prepareFrame` → `VsgBackend::prepareFrame`.
+  the plan lives in `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp` (`applyPlan`); preparation lives in the executor's `prepareFrame`:
+  `RenderEngine::prepare()` → `RenderFrameExecutor::prepareFrame` → the shipped backend's `Device::FrameDriver::prepareFrame`.
 - **The plan's value shapes**: `PassDesc::target` is a `Target` value (`Window | Explicit | Transient`, §2.8) and `PassDesc::output`
   is an `Output` value (name + whole_target + image); a value whose formats disagree is refused by `validatePlan` (`InvalidTarget` /
   `InvalidOutput`). `View` and `RenderArea` are values as well.

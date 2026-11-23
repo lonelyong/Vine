@@ -267,12 +267,12 @@ An instance copies neither textures nor bytes beyond the block.
 | # | Criterion | Case / command |
 |---|---|---|
 | T1 | Instance resolution: overridden and inherited items combine correctly | `MaterialInstanceTest.*` |
-| T2 | Samplers shared by value, a texture uploaded once | `MaterialImagesTest.SamplerByValue*` |
-| T3 | forward and deferred agree at the same pixel | `ContentPassTest.TheMaterialShadesTheSameValueOnBothPaths` |
-| T4 | Mask discard and Blend sorting | `SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends` |
-| T5 | Import matches field by field | `SceneBuildTest.PbrMaterialIsNotApproximated` |
-| T6 | Variant matrix and binding counts in step | `EmbeddedShadersTest` / `ProgramAbiTest` |
-| T7 | The slot contract's decisions and reporting rhythm | `MaterialSlotCheckTest.*` / `ContentStoreTest.AWrongMaterialSlotIsReportedOncePerEpisode` |
+| T2 | Samplers shared by value, a texture uploaded once | `VkContentDrawTest.ABaseColorTextureIsUploadedAndSampled` / `ACubeMapIsUploadedWithEveryFaceAndSampled` |
+| T3 | The two paths shade one block (each path's pixels are checked; the same-pixel comparison itself has no case) | `ShaderAbiTest.TheMaterialBlockIsThePbrRowsAndEqualityCoversThem` + `VkContentDrawTest.ATriangleIsDrawnIntoTheTargetAndProbed` (forward) and `VkDeferredTest.TheDeferredFrameLightsTheGbuffer` (deferred) |
+| T4 | Mask discard and Blend sorting | `ShaderAbiTest.TheAlphaModeDecidesWhatTheMaterialsAlphaMeans` (the ABI) + `VkContentDrawTest.ABlendedDrawFollowsTheEngineOrder` (blend, pixel-checked) |
+| T5 | Import matches field by field | `SceneBuildTest.TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomesLeafOpacity` |
+| T6 | Variant matrix and binding counts in step | `EmbeddedShadersTest` / `ShaderAbiTest` |
+| T7 | The slot contract's decisions and reporting rhythm | `MaterialSlotCheckTest.*` / `ReportOnceTest.OnlyTheFirstCallOfAnEpisodeReports` |
 
 ## 9. Status and Evolution
 

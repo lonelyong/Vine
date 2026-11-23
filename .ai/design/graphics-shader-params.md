@@ -146,7 +146,9 @@ pulling them into the shape header is a back edge (G2), and every consumer that 
 `ShaderAbi.hpp` <- `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp` <- backends. The shadow block is the exception: its input
 facts live in the backend (D1 not open); each backend packs its own shadow values, but slot derivation must call
 `packedSlotOf`.
-The fragment and the structs are still two hand-written copies, guarded by adjacent review and `ProgramAbiTest`'s binding-count/block-size assertions.
+The fragment and the structs are still two hand-written copies, guarded by adjacent review and `ShaderAbiTest`'s block-size assertions
+(`ViewBlockIsFourMatricesAndTwoVec4` / `DrawBlockIsOneMatrixPlusTheParameterSlot` / `ShadowBlockIsTheViewToLightMatrixPlusItsParameters` /
+`TheMaterialBlockIsThePbrRowsAndEqualityCoversThem`).
 
 Before embedding, `cmake/VineEmbedShaders.cmake` expands the fragment into each shader's string: no include parsing at runtime, nothing on disk,
 the packaged form unchanged. The fragment file must be declared in `cmake/VineShaders.cmake`'s `INCLUDES`, otherwise changing the fragment does not rerun generation (P7).
@@ -186,7 +188,7 @@ reserved set/binding range; a user-defined block may only land outside the reser
 
 - The embedded copy matches the source file: `vn_shader_check.sh`'s SHA check already covers it;
 - Unknown `vn_` names: added as needed (optional, not a P0 precondition);
-- Equivalence: P0 changes no byte and no interface, `BlockStorageTest` / `StateNodeTest` unchanged.
+- Equivalence: P0 changes no byte and no interface, `DrawBlockTest` / `StateNodeTest` unchanged.
 
 ## 4. Public Interface
 
@@ -256,12 +258,12 @@ Built-in and user shaders share the same fragment: a typo → undeclared identif
 | P1 | Loose uniforms are illegal in Vulkan | `glslangValidator -V` reports `non-opaque uniforms outside a block` outright; do not wrap it "to look like osg" |
 | P2 | A `vec3` followed by a `float` crosses a 16-byte boundary | Use only mat4/vec4/scalar combinations; the struct's `static_assert` pins the offsets |
 | P3 | The GLSL declaration copied a second time | Only half the picture reads the wrong bytes, the hardest to find; the criterion is T2's search, the fix is deleting the copy and using the fragment |
-| P4 | The fragment and the C++ struct drift | Only this pair is left; guarded by adjacent review, `ProgramAbiTest`'s block-size assertion pins the byte total |
+| P4 | The fragment and the C++ struct drift | Only this pair is left; guarded by adjacent review, `ShaderAbiTest`'s block-size assertions pin the byte totals |
 | P5 | The fragment never made it into the embedded string | Only an `#include` starting at the beginning of a line is expanded; an indented one stays as written and glslang reports "include needs an extension" at runtime — visible, not silent |
 | P6 | A user declares a block with the same name | Redefinition → compile failure; this is a feature, not a limitation |
 | P7 | The fragment changed but embedding did not rerun | The fragment must be in `VineShaders.cmake`'s `INCLUDES`: otherwise the generation rule does not depend on it and the embedded copy silently goes stale; T3's expanded hash is the fallback |
-| P8 | A wrong guard (a block declared twice or not at all) | Declared twice → the program gains a binding that must be filled; not declared → undeclared identifier. Both surface in `ProgramAbiTest`'s binding-count assertion or at compile time |
-| P9 | Treating the point size (or any value the vertex stage reads) as pipeline state | In Vulkan the point size is the `gl_PointSize` output, not raster state; putting it into `PipelineKey` = one pipeline per size, and changing it would need a rebuild. Its destination is the draw block's `params.y` (floor 1.0, `largePoints` is a device requirement), `PrimitiveDrawTest` pins the whole path by pixel count |
+| P8 | A wrong guard (a block declared twice or not at all) | Declared twice → the program gains a binding that must be filled; not declared → undeclared identifier. Both surface in `ShaderAbiTest` (one entry per block, with the declared binding count) or at compile time |
+| P9 | Treating the point size (or any value the vertex stage reads) as pipeline state | In Vulkan the point size is the `gl_PointSize` output, not raster state; putting it into `PipelineKey` = one pipeline per size, and changing it would need a rebuild. Its destination is the draw block's `params.y` (floor 1.0, `largePoints` is a device requirement); `DrawBlockTest.ThePointSizeTravelsBesideTheOpacityWithoutTouchingIt` / `EmbeddedShadersTest.TheContentVertexStagesSizeTheirPointsFromTheDrawBlock` / `SceneViewViewportTest.ThePassLevelPointSizeOverridesTheContentAndNeverReachesZero` pin the whole path |
 
 ## 7. Rejected Options
 
@@ -277,12 +279,12 @@ Built-in and user shaders share the same fragment: a typo → undeclared identif
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | Bytes and interfaces unchanged | `test_graphics` / `test_vsg` all green, `vsg_rewrite_gate.sh` 0 VUID |
+| T1 | Bytes and interfaces unchanged | `test_graphics` / `test_vk` all green, no VUID from the validation layer (`VkMsaaTest` / `VkContentDrawTest` run it) |
 | T2 | Each block has one declaration | `grep -rn 'uniform Vine\w*Block' src/`: hits only `shaders/vine_params.glsl` and `shadowBindings()` in `BuiltinShaders.cpp` |
 | T3 | The embedded copy agrees with the expanded source | `scripts/vn_shader_check.sh` (expanded hash and byte count) |
 | T4 | Unknown names are refused (P1) | `Material::set("Nope", 1.0F)` returns an error |
 | T5 | The fragment really made it into the program text | Delete the declaration → undeclared identifier, the build-time gate fails (the same command as T3) |
-| T6 | Each program declares only its own blocks | `ProgramAbiTest`: forward 5 bindings, gbuffer 1 |
+| T6 | Each program declares only its own blocks | `ShaderAbiTest` (one entry per block) + `EmbeddedShadersTest`: forward declares 5 bindings, gbuffer 1 |
 
 ## 9. Status and Evolution
 

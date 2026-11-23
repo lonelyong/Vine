@@ -93,7 +93,8 @@ There is exactly one answer to "when does this copy expire": the publication val
 ### 2.4 Byte content: the counters are atomic, the bytes still do not take the value channel
 
 - **What it is**: a geometry's **shape** (channel set, slices, primitives) goes through the published description value; a geometry's/texture's **bytes** do not — bytes are written on the writer's own
-  thread (a loading worker, a streaming write), and a residency entry asks "is the revision I uploaded still the one it uploaded" (`StreamUploads`' live criterion).
+  thread (a loading worker, a streaming write), and a residency entry asks "is the revision I uploaded still the one it uploaded" (`ContentCaches::Progress`' `streams_live` and the revision in the
+  residency key).
 - **Where the synchronisation is**: `Buffer::revision` and `Texture::revision` are `std::atomic<std::uint64_t>` — the writer (the `Edit` scope
   ending / `setRevision` / one fill) releases, the reader (`revision()`) acquires, so "observing the new revision" means "seeing the bytes written before
   the revision". `Geometry` / `ShaderProgram` / `Material` revisions need not be atomic: the frame side reads the published
@@ -101,8 +102,9 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **Why keep polling**: turning every `Buffer::edit()` into a publication would couple "edit" and "frame" tightly, and a publication would have to carry thousands per frame.
 - **Boundary**: the atomic covers only "the counter + the bytes before it"; a host that keeps writing the same bytes **after** announcing (without a new revision) is still outside the contract —
   the frame reads what was written. The frame payload's **content** (shape, material values, program text, lights) does not use this channel; it is all §2.14's values.
-  **Regression case**: `StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` — it must be green in a normal build and
-  under TSan (before the atomics, TSan reported the `bumpRevision()` vs `revision()` pair).
+  **Regression case**: a threaded engine answers the same picture and says when it landed (`RenderEngineTest.AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded`), and a host verb
+  racing another driver's frame waits instead of racing (`VkMultiSessionTest.AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt`); both must be green in a normal build and under TSan
+  (before the atomics, TSan reported the `bumpRevision()` vs `revision()` pair).
 
 ### 2.5 A publication is a pointer swap, not a transaction
 
