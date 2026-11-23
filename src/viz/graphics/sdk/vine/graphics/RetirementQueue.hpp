@@ -12,15 +12,16 @@
  * @brief Deferred destruction: "release this when the timeline says the GPU is past it".
  *
  * @details
- * - WHAT THIS IS NOT. It is not ownership. The ResourceManager owns every resource; this queue owns only the DECISION
+ * - WHAT THIS IS NOT. It is not ownership. The BACKEND owns every resource (its own target and content tables);
+ *   this queue owns only the DECISION
  *   to destroy one, and only for the window in which the GPU may still be reading it. That split is deliberate: a
  *   dependency graph (who names whose view) and a destruction schedule (how long the GPU may still hold a reference)
  *   are two different questions with two different lifetimes - the graph lives inside a frame, the schedule spans
  *   frames - and a single type answering both becomes the object nobody dares change.
  * - THE TWO WAYS A RESOURCE DIES, and why only one of them is here:
  *   - destructive teardown (a session replaced, a target released): the object may be named by a command buffer that
- *     is in flight right now, so the device is idled and that idle is COUNTED. That path is the ResourceManager's,
- *     and the count is what keeps it honest - see deviceWaits().
+ *     is in flight right now, so the device is idled and that idle is COUNTED. That path belongs to the owner's own
+ *     tables, and the count is what keeps it honest - see deviceWaits().
  *   - replacement (a resize re-points a descriptor, a variant swaps a render pass): nothing is really gone, so idling
  *     the device would be pure loss. The object is parked here instead, and released once the timeline says the slot
  *     that recorded it has been recycled.

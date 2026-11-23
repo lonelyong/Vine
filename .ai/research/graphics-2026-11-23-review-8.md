@@ -128,9 +128,11 @@ Two things follow, and they point in opposite directions, which is why this is t
   is the *enforcement of an SDK contract* ("one frame at a time per executor; a host verb called from inside a
   frame is refused instead of deadlocking", 13 verbs). A new backend that re-derives that logic can get the
   re-entrancy answer wrong, which is the defect the gate exists to prevent. `DeviceClock` is the mechanism the
-  contract needs the day `F5` (more than one frame in flight) flips. `RetirementQueue` is different again: vk
-  waits each frame, so its own device needs no queue - today's consumer is the *wording* of `releaseContent`,
-  not a need. `TargetPlan` is a pure decision function.
+ *   contract needs the day `F5` (more than one frame in flight) flips. `RetirementQueue` is the mechanism behind
+ *   `releaseContent`'s documented "a release is SCHEDULED, not synchronous", whose effect a host reads as
+ *   `device_waits` - vk's device keeps that number at 0 because it waits each frame, but the promise is the one a
+ *   future explicit-API backend also has to keep. `TargetPlan` is the only one of the five that is a pure decision
+ *   function with no host-visible consequence of its own (see the rule below).
 
 So the ADR picks one of three dispositions, and the page does not:
 
@@ -140,9 +142,33 @@ So the ADR picks one of three dispositions, and the page does not:
 | b | Keep them in the SDK and **re-justify** the list as "the mechanisms a backend needs" (2.9 and `SEAM_DOCS` stop claiming "both backends") | `G8` paid on credit; the gate can no longer be falsified by deleting a reader |
 | c | Keep them and let the second backend's arrival move them (T30's rule applied to mechanisms) | the retirement batch is then not where this is decided, and the seam doc keeps an untestable sentence until then |
 
-The review's own preference is **(a) for `TargetPlan` and `RetirementQueue`, (b) for `FrameGate` and
-`DeviceClock`/`FrameTimeline`** - i.e. split by the question above (contract enforcement vs mechanism) rather
-than moving all five or none - but that split is exactly what the ADR has to argue, not what a review decides.
+The review's own preference, once the promises below are read closely, is **(b) for `FrameGate`,
+`DeviceClock`/`FrameTimeline` and `RetirementQueue`, and (a) or duplicated for `TargetPlan` alone** - but that
+split is what the ADR has to argue, not what a review decides.
+
+**The rule all of this reduces to** (and the one the ADR should adopt): share a mechanism when a HOST can observe
+the behaviour it produces, duplicate it when the behaviour is internal. "Graphics must not know a backend" is a
+Layering rule about the DIRECTION of the dependency, and it is already true here - none of the five carries a
+Vulkan spelling, so none of them makes the SDK know an implementation. What the question is really about is who
+enforces a PUBLIC PROMISE, and the public headers make four of the five promises a host can read:
+
+| Promise in a public header today | Where | Observable as |
+|---|---|---|
+| one frame at a time per executor; a host verb called from a frame body is REFUSED, not deadlocked | `RenderDevice.hpp` (threading section), 13 verbs | a value, not a hang |
+| SUBMITTED is not COMPLETED; a watermark never goes backwards | `FrameReport.hpp` (`FrameProgress`) | the two numbers |
+| a release is SCHEDULED, not synchronous | `RenderDevice::releaseContent` | `RetentionStats::device_waits` |
+| a resize does not recompile a pipeline | `vk-backend.md` / `graphics-threading.md`, `contentPipelines()` | the pipeline count |
+| shape and extent are two concepts (`Rebuild` / `ResizeInPlace` / `Repair`) | `TargetPlan.hpp` is the table, not the promise | nothing a host reads; the promise is `TargetPlan`'s callers' |
+
+So the first four are the *implementation of a documented behaviour*: two copies could each be self-consistent and
+still disagree, which is a defect a host would find and no test could name (`G4`, `G6`, `G11`). `TargetPlan` is
+the one whose table is internal - its consequences are witnessed elsewhere (`contentPipelines()`, the ResizeInPlace
+case) - so it is the one that can move into the vk plugin or be copied by a future backend without a promise moving.
+That inverts an earlier reading of this round: `RetirementQueue` looked like "only the wording of `releaseContent`",
+but `device_waits` is a number a host can read, so the behaviour is observable and two copies could disagree about
+it. On this rule the split is **(b) for `FrameGate`, `DeviceClock`/`FrameTimeline` and `RetirementQueue`, and (a)
+or copy for `TargetPlan` alone** - which is also the split that survives the deletion: the four keep a justification
+that a test can falsify, and the one that moves was never a promise.
 
 ### C2 `BackendParityTest` is the only cross-implementation oracle, and it is hosted in the suite being deleted
 
