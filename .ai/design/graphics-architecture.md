@@ -1,7 +1,7 @@
 # graphics architecture: device, engine, chain, one frame
 
 > **Status**: current
-> **Last verified**: 2026-11-16
+> **Last verified**: 2026-11-23
 > **Scope**: the layering of device/window/area/view/engine, and one frame's compilation and scheduling.
 > **Sources**: `RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsHandle.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`.
@@ -62,16 +62,34 @@ removing an unregistered pass and removing an already removed pass are the same 
     and needs none: **one engine drives one surface** ([ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)), `Session` only names the execution side of one engine as a design
     term. Documentation and new interfaces no longer refer to a type that does not exist.
 
-2.9 **Shared mechanisms live in the same directory and namespace as the host SDK**: in `sdk/vine/graphics/` besides the host types there are 8 mechanisms "both backends use"
-    — `FrameGate`, `DeviceClock`, `FrameTimeline`, `RetirementQueue`, `Readback`, `DrawState` (formerly `Keys`),
+2.9 **Shared mechanisms live in the same directory and namespace as the host SDK**: in `sdk/vine/graphics/` besides the host types there are 8 mechanisms, each the family-neutral implementation of a promise a host can observe ([ADR-2026-11-23](ADR-2026-11-23-retiring-the-reference-backend.md)):
+    `FrameGate`, `DeviceClock`, `FrameTimeline`, `RetirementQueue`, `Readback`, `DrawState` (formerly `Keys`),
     `TargetPlan`, `DiagnosticDraft`. They once had their own directory, turned "the host includes it" into a compile error through an include guard, and were installed as
     a separate component; that whole "backend half" has been deleted (
     [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md)). Reason: the directory, the guard, the install component and the gate maintained the same boundary in four places, at a cost
     above the errors it prevented; and the property worth keeping is the **dependency direction**, not a path.
     Boundary: two things the gates still pin are — the graphics module (`sdk/vine/graphics` and `src/`) must not include a render API or any concrete backend
     (`check_include_hygiene.py`, `check_vk_exposure.py` V2), and a shared mechanism's exported symbols must carry `VN_GRAPHICS_API`
-    (`check_export_annotations.py`'s file list). **The seam's definition is still "both backends use it"**: the 17 headers and 16
-    `.cpp` files only vsg reads moved into `gfx_backend_vsg/internal/` in ADR-2026-11-16 §2, vsg's own types live in `vn::backend_vsg::core`
+    (`check_export_annotations.py`'s file list). **The seam's membership rule is the PROMISE, not the reader count**
+    ([ADR-2026-11-23](ADR-2026-11-23-retiring-the-reference-backend.md)): a mechanism belongs here when a sentence a host
+    can read is true only because it is ONE implementation, and it moves into a plugin when its only justification is
+    "two backends happen to call it". "Both backends use it" was the EVIDENCE while two backends existed, and
+    `check_include_hygiene.py` keeps measuring it until the deletion re-pins the list to "reached by the shipped
+    backend" (`../backlog/graphics.md` T60); the rule itself survives the deletion and a second owner, because a promise
+    enforced twice is two answers to one host (`G6`).
+
+| Mechanism | The promise a host reads |
+|---|---|
+| `FrameGate` | One frame at a time per executor; a re-entrant host verb is REFUSED, not deadlocked (`RenderDevice.hpp`). |
+| `DeviceClock` | A frame reported complete is provably complete, and its slot is safe to record into again (`FrameProgress`). |
+| `FrameTimeline` | The same watermark, N frames wide, never going backwards (`FrameProgress`). |
+| `RetirementQueue` | A release is SCHEDULED, not synchronous, and the frame path does not idle the device (`RetentionStats::device_waits`). |
+| `Readback` | A refusal is classified before any wait: `Unsupported` ("never") versus `NotReady` ("not yet"). |
+| `DiagnosticDraft` | One refusal shape and one stable code identity per module (`RenderDiagnostic`). |
+| `DrawState` | Identity is what a pipeline is keyed by; a per-draw value never recompiles (`PipelineKey`, `RenderState.hpp`). |
+| `TargetPlan` | A resize does not recompile a pipeline, and a shape change does (`PrepareReport::pipelines`). |
+
+    The 17 headers and 16 `.cpp` files only vsg reads moved into `gfx_backend_vsg/internal/` in ADR-2026-11-16 §2, vsg's own types live in `vn::backend_vsg::core`
     (`G13`). The price, honestly: the host can now include these mechanism headers and they are visible in the SDK's namespace (a residue of `G7`); what it buys is
     a rule that does not need syncing in four places. `DrawState` / `TargetPlan`'s device format codes are now the **opaque**
     `DeviceFormat` (0 = the device's UNDEFINED), the render-pass structure is carried by the backend-computed `RenderPassKey` — neither
@@ -101,7 +119,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.cpp`'s `colorFormatOf` / `depthFormatOf`; vk `ContentImages.cpp`'s `formatOf`; vsg `VsgSceneRules.cpp`'s format mapping | 4 |
 | A **pass declaration field** | `PassDesc.hpp`; `Plan.cpp` (diff and validation); `FrameDescription.hpp`'s `PassDraw`; each backend's recorder | 4+ |
 | A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; vsg's binding | 4 |
-| A **backend** | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`), the two halves of `RenderBackend`, its own `test_*`, a `check_*_exposure` gate, `RenderBackendRegistry` self-registration | about 6 kinds of file |
+| A **backend** (and, for a second API FAMILY such as D3D12 or Metal, also its `check_<family>_exposure` gate over the SDK's family spelling and its own shader translation - the SDK keeps ONE shader source language, review 8 `P4`) | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`), the two halves of `RenderBackend`, its own `test_*`, a `check_*_exposure` gate, `RenderBackendRegistry` self-registration | about 6 kinds of file, +2 for a new family |
 
 2.12 **`Content*` names only the content model and identity** (naming, `G12`): the `Content*` prefix belongs to **content objects themselves** — `ContentId` /
     `ContentRef` / `ContentRegistry` / `ContentDeclarations` / `ContentStore` (the device's "identity + row" table). GPU objects compiled or cached from content are named by **what they are**, without the `Content` prefix: `CompiledPrograms` (the compiled half of each
@@ -180,6 +198,11 @@ removing an unregistered pass and removing an already removed pass are the same 
       a SEMANTIC only one API family has (`DrawState::ImageLayout` used to be this example: T15 moved it into
       each backend on 2026-11-23, which is the exclusion APPLIED rather than an exception to it); an
       internal POLICY (a cache, a barrier, a table - T10).
+    * **A feature is the DEVICE's answer; a report part is the BACKEND's** (`K1`, `ADR-2026-11-23`): `Features::GpuTimings`
+      says the device can write timestamps, `FrameReport::timing` says this backend measured them, and the two are not one
+      claim - a backend that leaves the report part disengaged while the feature is true is honest, not broken. The pair is
+      never collapsed into one flag, because a fourth feature for it would move a backend fact onto the public surface,
+      which (c) excludes.
     * **Three costs, all permanent.** A promoted fact is one more obligation on every future backend (`RenderDevice` carries
       19 virtuals today, 5 of them pure); a DEFAULTED one is a silent lie, because a backend that forgets to override reports
       the base default, which reads as an honest "no" while meaning "did not answer" - the distinction `ResidencyRow` states
@@ -381,4 +404,5 @@ Old names/paths appear only in §7's rejected options or in git history; new cod
 ## 10. References
 
 `graphics-scene.md` · `graphics-geometry.md` · `graphics-rendering.md` ·
-`graphics-content-lifecycle.md` · `vsg-backend.md` · `../backlog/graphics.md`
+`graphics-content-lifecycle.md` · `vsg-backend.md` · `../backlog/graphics.md` ·
+`../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` (the seam's promise rule and the retirement's terms)

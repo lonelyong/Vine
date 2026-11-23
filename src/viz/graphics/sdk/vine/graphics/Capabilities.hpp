@@ -18,10 +18,11 @@ VN_GRAPHICS_NS_BEGIN
  *   is honoured rather than clamped.
  * - A backend that cannot answer yet (no device up) reports NO for every feature, which is the honest answer:
  *   nothing renders without a device, so nothing is known either.
- * - WHAT EACH BACKEND ANSWERS TODAY: `Wireframe` and `AnisotropicFiltering` are required by both backends' device
- *   floor, so a live session reports them true; `GpuTimings` is the device's own answer (a device that cannot write
- *   timestamps reports false, and the backend's frame report then leaves its GPU half disengaged) - it is not a
- *   backend difference.
+ * - A FEATURE IS THE DEVICE'S ANSWER, THE FRAME REPORT IS THE BACKEND'S. `GpuTimings` says this DEVICE can write
+ *   timestamps, so per-pass GPU times are measurable at all; whether a backend actually ENGAGES `FrameReport::timing`
+ *   is that backend's own statement, and one that leaves the report part disengaged while the feature is true is
+ *   answering honestly rather than failing. A host that shows GPU times therefore reads both - the feature before it
+ *   plans a frame, the report part after one - and the two are never collapsed into one flag.
  */
 struct VN_GRAPHICS_API Features {
     /**
@@ -80,8 +81,8 @@ struct VN_GRAPHICS_API Features {
  * - Nothing here is enforced by the engine on the host's behalf: a request above a limit is REFUSED by the backend
  *   that would have to honour it (reported once), never silently lowered. A host reads these before it authors a
  *   pipeline, because only the host can decide what to do when the device cannot serve the shape it wants.
- * - WHICH BACKEND ANSWERS WHAT: all four are device answers in both backends (vk from `VkPhysicalDeviceProperties`,
- *   vsg from the same physical-device limits); a device without a feature reports the neutral value (1 sample,
+ * - ALL FOUR ARE DEVICE ANSWERS: they come from the physical-device limits the session was opened on, so they describe
+ *   the machine rather than a backend's choice; a device without the capability reports the neutral value (1 sample,
  *   1 attachment, 1.0 width/anisotropy), which is a true answer rather than a missing one.
  */
 struct VN_GRAPHICS_API Limits {

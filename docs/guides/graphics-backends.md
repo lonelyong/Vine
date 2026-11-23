@@ -26,7 +26,8 @@
   `docs/guides` 的后端页也就是本页；Win32 分支也已实现且**窗口像素已断言**——`WindowPresentTest` 的两条用例在两个平台上
   走同一件仪器（`tests/test_vsg/TestHostWindow.hpp`：X11 走 `XGetImage`，Win32 走 `PrintWindow` 合成器读回），Windows 上
   `test_vk` 174 例全绿、无 SKIP。**仍缺** Wayland 回退实测与一份切换门接受的性能读数——在那之前 Windows 不上线。
-  删 vsg 不是这一步：它是另一件要捆绑的事（backlog T60）。
+  删 vsg 不是这一步：它是另一件要捆绑的事（backlog T60；条款见
+  [ADR-2026-11-23](../../.ai/decisions/ADR-2026-11-23-retiring-the-reference-backend.md)）。
 * 注册表**后注册者胜且不报告**：加载一个同名插件会把内建条目换成插件自己的工厂。必须验证"编进本二进制的实现"
   的代码（对拍）直接构造后端，不经注册表（契约写在 `RenderBackendRegistry::registerFactory` 的头注释里）。
 
@@ -58,6 +59,8 @@
 
 ## 3. 能力差异表（有意不同）
 
+这张表列的是**契约允许的差异**：每一行的两种答案都满足 §2 的承诺；不满足承诺的差异是缺陷，不是差异。
+
 | 能力 | `vk` | `vsg` | 说明 |
 | --- | --- | --- | --- |
 | 设备内存池 | **有**：自建 suballocator，按设备 `bufferImageGranularity` 切片，处理 `maxMemoryAllocationCount` | 交给 vsg 的分配器 | 两套账各自成立；宿主看不到差异 |
@@ -67,7 +70,7 @@
 | 平台 | Linux/X11、Win32 | Linux/X11 + Win32 | 切换门的一项 |
 | 渲染通道 | 自建 `VkRenderPass` 变体（全 CLEAR / 深度 LOAD / 全 LOAD）+ MRT/MSAA resolve | vsg 的 render pass 机制 | 同一种 `RenderPassCompatibility` 进入两边管线键 |
 | 窗口 | `createSurfaceTarget` 一格一次（第二次答 `WindowOccupied` 并**报一次**具名诊断），`nullptr` 请求设备自己的窗口 | 同一契约；窗口尺寸与格式的答案问平台 | 窗口目标由设备发放，设备/引擎不是任何一块窗口 |
-| 深度读回 | 纯深度格式（D16/D32/D32F，MSAA 读 resolve 图）；D24 与借用深度答 `Unsupported` | 同分类 | 格式表在 SDK（`core::depthReadbackOf`），两边共用 |
+| 深度读回 | 纯深度格式（D16/D32/D32F，MSAA 读 resolve 图）；D24 与借用深度答 `Unsupported` | 同分类 | 格式表在 SDK（`vn::graphics::depthReadbackOf`），两边共用 |
 | 顶点输入声明 | 只声明**顶点段真正读的** location（从编译出的 SPIR-V 读回；矩阵段按列算，实例流 12–15 全保留） | 声明几何的全部通道：未读的通道不会被取数，驱动也不报错 | 只是声明面，不影响取数；vk 这样声明是为了 pipeline 说真话（否则验证层报 "attribute at location N not consumed"） |
 | 目标拒绝的精度 | 构建时给出 `vk.target.size_unknown` / `vk.target.borrow_extent_mismatch` | 同一条件在构建时只答 `vsg.target.build_failed`；尺寸不匹配到 resize 阶段才拒绝 | 契约只要求"拒绝 + 一个 code"，粒度不是契约；要统一就给 vsg 补两条 code |
 
@@ -99,7 +102,13 @@
 | 键 | `DrawState` |
 | 拒绝形状 | `DiagnosticDraft`（两个后端的拒绝都产它） |
 
-* 接缝的定义是**"两个后端都用"**；只有某一个后端读的类型住在该插件的
+* 接缝的准入规则是**它兑现的公共承诺**，不是读者的个数
+  （[ADR-2026-11-23](../../.ai/decisions/ADR-2026-11-23-retiring-the-reference-backend.md)）：一个机制进 SDK，是因为某条宿主
+  能读到的话只有“它只有一份实现”才成立；当它唯一的理由是“两个后端碰巧都在用”时，它留在插件里。现阶段的证据仍是
+  “两个后端都用”（`SEAM_HEADERS` 按此测量），删除 vsg 后门禁改测“在役后端能到达”；每个机制对应的承诺见
+  [`graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §2.9 的表。
+* **一个后端“实现了接缝”的判据**：`tests/BackendSeamTest.cpp` 对它是全绿的——这份用例编进每个链接接缝的二进制，
+  第二个开发者据此自测，不必猜。只有某一个后端读的类型住在该插件的
   `include/vine/backend_vsg/internal/`（`vn::backend_vsg::core`）与 vk 的 `internal/` 里。
 * **接缝没有自己的命名空间**：它是一条性质（"两个后端都用到"）加一份被门禁钉住的清单（`scripts/check_include_hygiene.py`
   的 `SEAM_HEADERS`），而不是 `vn::graphics::backend` 这类别名组——别名会让一个类有两个名字，而两边都直接 include 的 SDK 头有

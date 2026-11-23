@@ -1,11 +1,15 @@
 /**
  * @brief The SDK backend seam's device-free facts, compiled into EVERY test binary that links the seam.
  *
- * The seam's mechanisms live in `vine/graphics/` beside the host types: they are what a backend consumes and
- * the engine links, their types are pure values,
- * they need no device, and BOTH backends answer from them - so a case that pins one belongs in a binary that
- * carries both, not in the one backend's suite. The suites here are the seam's own (`Core*` after the layer they
- * pin, `FrameGateTest` after the type), and each of them used to live in `test_vsg`/`test_vk` alone:
+ * THE ENTRY CONDITION OF A BACKEND: implementing the seam means these cases pass against it. They carry no device,
+ * so a backend - same family or not - can run them before it draws anything
+ * (`.ai/decisions/ADR-2026-11-23-retiring-the-reference-backend.md`).
+ *
+ * The seam's mechanisms live in `vine/graphics/` beside the host types because each is the family-neutral
+ * implementation of a promise a host can observe (`graphics-architecture.md` 2.9) - not because two backends happen
+ * to call it. Their types are pure values, they need no device, and each case below pins one promise. The suites are
+ * the seam's own (`Core*` after the layer they pin, `FrameGateTest` after the type), and each used to live in
+ * `test_vsg`/`test_vk` alone:
  *
  *   * `CoreTargetPlanTest` - a target's GPU objects are a decision function, and extent is not identity;
  *   * `CoreRetirementQueueTest` - deferred destruction is ordered by one timeline, and completion is evidence;

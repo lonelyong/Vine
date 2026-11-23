@@ -22,8 +22,8 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **174 cases / 42 suites** (2026-11-23), and the comparison against vsg by
-  `BackendParityTest` (13 cases, inside `test_vsg`).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **175 cases / 42 suites** (2026-11-23), and the comparison against vsg by
+  `BackendParityTest` (15 cases, inside `test_vsg`).
 
 ### 1.2 Goals
 
@@ -390,6 +390,9 @@ and every cache has a witness a test can read.**
   same four variants (`WindowTarget::renderPass(load_color, load_depth)`), so a later window pass loads the picture and resets only the depth its content tests against.
   An MSAA target resolves colour into the single-sample image; depth resolves through `vkCreateRenderPass2`'s
   `pDepthStencilResolveAttachment` (`sample0`); a depth-only target is a shadow map; a `shareDepth` target borrows another target's depth view.
+- **A target it cannot build is named at BUILD time**: a target with no usable extent answers `vk.target.size_unknown` and a borrowed
+  depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
+  announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
 - **Constraints**: `C5`, `C8`, `N2`.
 - **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`, and
   `BackendParityTest.ADepthOnlyClearKeepsThePictureOnBothBackends` (the four render-pass variants agree with the vsg backend
@@ -466,6 +469,9 @@ and every cache has a witness a test can read.**
   `bool` + out-parameter shim forwards to it, BC-16). Readback takes the body gate EXCLUSIVE (the device's "between frames")
   and **counts one** `deviceWaits()`; a refusal answerable before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format, borrowed depth) does
   not stop the device; a read called back from inside a frame body answers `Failed` (`FrameBodyDepth`, never waiting for itself).
+- **Which formats can be read is a classification, not a surprise**: pure depth formats (D16 / D32 / D32F, MSAA resolving its
+  resolve image) are read, and D24 or a borrowed depth answers `Unsupported` through the SDK's `depthReadbackOf` (`Readback.hpp`) -
+  "this device never will", the answer a host gates its feature on (review 8 `K6`).
 - **Constraints**: `C1`, `R3`, `R28`.
 - **Phase one reads values, not records** (A3-01): a refusal answerable before waiting takes a snapshot through `TargetTable::peek` under the map lock (`built` / `fresh` /
   the engine shape); the record itself is rebuilt in place by `ensure` and handed to the park by `release` to be destroyed outside the table, so reading its fields again
@@ -750,8 +756,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - Audit items F1 / F2 / F4 / F7 / F8 / F12 are landed; F5 / F9 / F10 / F11 / F13 are kept as follow-up per §1.3. Several drivers are entirely landed, with the shape in
   §2.11 and `graphics-sessions.md`; **today's three TSan readings are in `graphics-threading.md` R18.**
-- `test_vk` **174 cases / 42 suites** (2026-11-23, Windows RelWithDebInfo: 174/174, no skips; the ASan gate reports 0 in the vk
-  scope); `test_vsg` **577**, `test_graphics` **639** (same build, `--gtest_list_tests`); `BackendParityTest` **13/13**. The target map, the shapes and the leases are one
+- `test_vk` **175 cases / 42 suites** (2026-11-23, Linux: 175/175; the Windows reading the same day was 174/174 with no skips, before the
+  two-window case landed); `test_vsg` **576**, `test_graphics` **639** (same build, `--gtest_list_tests`); `BackendParityTest` **15/15**. The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** (an old `.so` makes `VsgBackendPluginTest` segfault).
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
@@ -776,7 +782,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
   174/174, no skips, the window cases reading the compositor); **still missing** are a measured Wayland fallback and a performance reading the gate accepts.
 - **Backlog `T12` / `T13`**: reading pixels from a Windows window, and the Wayland fallback.
-- **Backlog `T60`**: retiring `vsg` after this gate - trigger, rides and reasoning are in the item.
+- **Backlog `T60`**: retiring `vsg` after this gate - trigger, rides and reasoning are in the item; the terms (mechanism
+  ownership, the 24 `vsg.*` codes, the document collapse and the batch order `T54` → `T11` → `T58` → delete) are
+  [ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md), and this backend is the one the
+  retirement leaves in place.
 
 ### 9.3 Compatibility / migration
 
@@ -806,6 +815,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - `../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md`: sample counts are "refused, not lowered".
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`: residency is pinned by content.
 - `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`: the exposure boundary (V1–V4) and the switch gate.
+- `../decisions/ADR-2026-11-23-retiring-the-reference-backend.md`: the seam's promise rule and the retirement's terms
+  (which is what makes this backend the only implementation).
 
 ### 10.3 External material
 

@@ -205,10 +205,11 @@ header does not name a backend") is gate-able as a baseline count that must fall
 a diagnostic CODE is an identity a host matches (`DiagnosticDraft.hpp:49`), so `vk.*` inside a code string is
 not a violation.
 
-### C4 Diagnostic codes are a public identity, and 24 of 168 are `vsg.*`
+### C4 Diagnostic codes are a public identity, and 24 of 125 are `vsg.*`
 
-`scripts/diagnostic_codes.txt` is the registry a host matches against. Retiring `vsg` deletes 24 codes - a
-seventh of the registry - and the repo's rule is "no deprecated aliases" (`BC-17`…`BC-21`). That makes the
+`scripts/diagnostic_codes.txt` is the registry a host matches against. Retiring `vsg` deletes 24 codes - a fifth of
+the registry (re-measured 2026-11-23: 125 codes, of which 24 `vsg.*` and 65 `vk.*`) - and the repo's rule is "no
+deprecated aliases" (`BC-17`…`BC-21`). That makes the
 retirement a compatibility event that has to be written down, not a folder deletion: a host that gated on
 `vsg.target.samples_above_limit` gets nothing instead of a classification.
 
@@ -460,6 +461,35 @@ Four batches; R0–R2 pay for themselves even if the retirement never happens, R
   `T15` is **deleted** (its subject is done) with `T30` / `S4` repointed at the surviving trigger.
 - Verification: build clean; `test_graphics` 639 / 81, `test_vk` 175 / 42, `test_vsg` 576 / 83; the parity suite
   15/15; doc, include-hygiene, api-style, export-annotation, vk-exposure and content-seam gates green.
+- Re-measured while writing R2: **125** registered codes (not 168), of which 24 `vsg.*` and 65 `vk.*`; **19** SDK
+  headers / **41** case-sensitive occurrences of `vk`/`vsg` (C3's 20/41 baseline predates the `K1` paragraph below);
+  `RenderDevice` **19** virtuals, **5** pure.
+
+### 5.4 R2 landed 2026-11-23: the retirement's terms are recorded
+
+- **`ADR-2026-11-23-retiring-the-reference-backend.md`** decides the terms `T60` will consume: D1 the seam's entry
+  condition becomes the promise a host can observe (the eight mechanisms stay; "both backends use it" was the
+  evidence, not the rule), D2 the 24 `vsg.*` codes leave with **no aliases** and the compatibility event is stated,
+  D3 the comparison documents collapse into vk facts, D4 the batch order is `T54` → `T11` → `T58` → delete (the floor
+  raise is what the retirement buys), D5 what stays true if the reference STAYS under another owner.
+- **C1's one exception is withdrawn**: the review proposed moving `TargetPlan` into the plugin because its table is
+  internal, but its consequences are a number a host reads (`PrepareReport::pipelines`, with the promise stated in
+  `RenderArea.hpp` and `RenderDevice::initialize`), so two copies could disagree about a host-visible value. All
+  eight follow one rule; the ADR carries the promise table, `graphics-architecture.md` 2.9 summarises it.
+- **K1 landed**: `Capabilities.hpp` now separates the DEVICE's answer (`Features::GpuTimings`) from the BACKEND's
+  (`FrameReport::timing`), and the `Limits` paragraph states all four as device answers instead of surveying the two
+  backends - which is also what dropped the SDK's mention count from 20 headers to 19.
+- **The four cross-owner gaps** (review §4.8): the conformance entry condition is written into
+  `tests/BackendSeamTest.cpp` and the user page's §5; the ABI/build-identity rule and the registry rule (keep-first,
+  report the attempt) are decided in the ADR and tracked as backlog **`T64`** / **`T65`**; the user page's §3 now says
+  its rows are the differences the CONTRACT ALLOWS, and its `depthReadbackOf` citation was corrected to
+  `vn::graphics::depthReadbackOf` (it said `core::`, which is the vsg namespace).
+- **Three vk facts moved out of the difference column** into `vk-backend.md`: the named target refusal (`F4`), D24 /
+  borrowed depth answering `Unsupported` (`F11`), and `F5` already stated the declared-vertex-input rule.
+- Backlog: `T60` carries the terms and the order; `T62`'s count is re-measured (19/41); `T30` points at D5 so the
+  D3D12 author follows the recorded placement instead of re-deciding.
+- **Still open**: `P4` (shader source language), deferred by the owner on 2026-11-23 - the ADR states why it is
+  separable; and R3, the deletion itself, whose trigger is unchanged.
 
 ## 6. Backlog candidates (listed for approval; not added)
 

@@ -91,12 +91,24 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (86)
+## decisions/ — decision records (ADRs) (87)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
+
+- `ADR-2026-11-23-retiring-the-reference-backend.md` — **the seam keeps promises, not a second reader**: the eight
+  shared mechanisms stay in the SDK because each implements a sentence a host can observe (one line per mechanism
+  in `graphics-architecture.md` 2.9), and membership henceforth changes when a promise appears or stops being true -
+  not when a reader does; `TargetPlan` stays on the same rule (`PrepareReport::pipelines` is the number its resize
+  decision protects), withdrawing review 8's single exception. The retirement's terms follow: 24 `vsg.*` diagnostic
+  codes leave with no aliases (a stated compatibility event), the comparison documents collapse into vk facts and
+  three vk facts move into `vk-backend.md` now, the batch order is `T54` → `T11` → `T58` → delete (the floor raise is
+  what the retirement buys), and if the reference stays under another owner the placements are identical with four
+  obligations added (a conformance entry condition, an ABI/build-identity rule and a registry keep-first rule as
+  backlog `T64` / `T65`, and the user page's difference table stated as what the contract allows). The shader source
+  language is explicitly not decided here.
 
 - `ADR-2026-11-21-state-identity-and-vertex-format.md` — **state is not data, identity carries the format, and a
   backend bakes only what its floor cannot move**: the primitive's `topology` leaves `ResolvedRenderState` for

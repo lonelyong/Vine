@@ -3,7 +3,7 @@
 > **Status**: current
 > **Last verified**: 2026-11-23
 > **Scope**: how the vsg backend materialises a compiled frame value into Vulkan commands; the platform facts and the traps already hit.
-> **Sources**: `RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/` (the 7 shared mechanisms) /
+> **Sources**: `RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/` (the 8 shared mechanisms) /
 > `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/**`.
 > **Backlog**: `../backlog/graphics.md`
 
@@ -53,7 +53,7 @@ cost is one more layer of pure values in the adapter (which is the shape it alre
 
 | Layer | Location | Contents |
 |---|---|---|
-| SDK shared mechanisms (both backends use them) | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
+| SDK shared mechanisms (family-neutral, each enforcing a public promise - `graphics-architecture.md` 2.9) | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
 | This backend's portable half (moved out of the SDK by ADR-2026-11-16 §2, now in `vn::backend_vsg::core`) | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `PinnedResources` |
 | Plugin internals | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend` (the facade) / `VsgExecutor` / `api::WindowSession` / `api::OffscreenSession` / `WindowTarget` / `TargetObjects` / `TargetTable` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | Plugin support | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / the entry points |
@@ -350,6 +350,14 @@ See `../backlog/graphics.md`. One boundary fact is not in the backlog: `VSG_MAX_
 
 New code is written against §4's interfaces; old names appear only in §7 or in git history.
 
+**If this backend is retired** (`../backlog/graphics.md` T60, terms in
+[ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md)): no public signature changes, because the
+seam this plugin consumes is family-neutral by rule; what DOES change for a host is the diagnostic registry - the 24 `vsg.*`
+codes leave with the plugin and are not aliased (`BC-17`…`BC-21`'s rule: a deleted code is deleted, never reused), so a host
+that matched one gets nothing instead of a classification. The comparison documents (`graphics-architecture.md` 2.12's peer
+table and the user page's difference table) collapse into vk facts rather than being deleted wholesale.
+
 ## 10. References
 
-`graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` · `../backlog/graphics.md`
+`graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` · `../backlog/graphics.md` ·
+`../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` (what a retirement of this backend decides)
