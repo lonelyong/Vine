@@ -50,85 +50,6 @@ constexpr std::uint64_t kAcquireTimeoutNanoseconds = 1'000'000'000ULL;
     return formats.front();
 }
 
-/**
- * @brief Creates one of the window's two render passes (colour CLEAR or colour LOAD).
- *
- * @details
- * - Colour: CLEAR or LOAD, STORE, into `COLOR_ATTACHMENT_OPTIMAL` (the device records the present transition after
- *   the last pass). Depth: CLEAR in the first pass, LOAD in a later pass into the same image.
- * - A LOAD op may not name UNDEFINED, so the LOAD variant starts in the attachment layouts the earlier pass left.
- *
- * @param table       The device's entry points.
- * @param device      The logical device.
- * @param format      The swapchain's colour format.
- * @param load_color  Whether the colour attachment is LOADed.
- * @param load_depth  Whether the depth attachment is LOADed.
- * @param out         Receives the render pass.
- * @return true when the render pass exists.
- */
-[[nodiscard]] bool createWindowRenderPass(const VolkDeviceTable& table,
-                                          const VkDevice         device,
-                                          const VkFormat         format,
-                                          const bool             load_color,
-                                          const bool             load_depth,
-                                          VkRenderPass&          out)
-{
-    VkAttachmentDescription color{};
-    color.format         = format;
-    color.samples        = VK_SAMPLE_COUNT_1_BIT;
-    color.loadOp         = load_color ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-    color.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color.initialLayout  = load_color ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-    color.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentDescription depth{};
-    depth.format         = kDepthFormat;
-    depth.samples        = VK_SAMPLE_COUNT_1_BIT;
-    depth.loadOp         = load_depth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-    depth.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth.initialLayout  = load_depth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-    depth.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    const VkAttachmentDescription attachments[2]{ color, depth };
-    const VkAttachmentReference   color_ref{ 0U, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-    const VkAttachmentReference   depth_ref{ 1U, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount    = 1U;
-    subpass.pColorAttachments       = &color_ref;
-    subpass.pDepthStencilAttachment = &depth_ref;
-
-    VkSubpassDependency dependency{};
-    dependency.srcSubpass    = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass    = 0U;
-    dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependency.srcAccessMask = 0U;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-    VkRenderPassCreateInfo info{};
-    info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    info.attachmentCount = 2U;
-    info.pAttachments    = attachments;
-    info.subpassCount    = 1U;
-    info.pSubpasses      = &subpass;
-    info.dependencyCount = 1U;
-    info.pDependencies   = &dependency;
-    if (table.vkCreateRenderPass(device, &info, nullptr, &out) != VK_SUCCESS) {
-        out = VK_NULL_HANDLE;
-        return false;
-    }
-    return true;
-}
-
 } // namespace
 
 struct WindowTarget::Impl {
@@ -153,20 +74,19 @@ struct WindowTarget::Impl {
     /// fix it (see WindowTarget::deviceLost).
     bool           device_lost{ false };
 
-    std::vector<VkImage>       images;
-    std::vector<VkImageView>   views;
-    std::vector<VkFramebuffer> framebuffers;
+    std::vector<VkImage>     images;
+    std::vector<VkImageView> views;
 
     VkImage       depth{ VK_NULL_HANDLE };
     MemorySlice   depth_memory{};
     VkImageView   depth_view{ VK_NULL_HANDLE };
 
-    VkRenderPass pass_clear{ VK_NULL_HANDLE };
-    VkRenderPass pass_load{ VK_NULL_HANDLE };
-    /// Colour LOADed, depth CLEARed: the HUD pass that keeps the picture and owns the depth inside its rectangle.
-    VkRenderPass pass_load_color{ VK_NULL_HANDLE };
-    /// Colour CLEARed, depth LOADed: a later pass that resets the picture and keeps testing against the depth.
-    VkRenderPass pass_load_depth{ VK_NULL_HANDLE };
+    /// The layout each swapchain image is in, indexed like @ref images (see WindowTarget::beginPass): `Undefined` on its
+    /// first use, `Present` once it has been presented, the colour attachment layout in between. PER IMAGE because the
+    /// presentation engine hands out a different one each frame, and "never used yet" is not a fact about the target.
+    std::vector<ImageLayout> image_layouts;
+    /// The layout the shared depth image is in: `Undefined` on its first use, a depth attachment afterwards.
+    ImageLayout depth_layout{ ImageLayout::Undefined };
 
     VkSemaphore image_available{ VK_NULL_HANDLE };
     /// ONE PRESENT-WAIT SEMAPHORE PER SWAPCHAIN IMAGE, indexed by the acquired image (see renderFinishedOfAcquiredImage).
@@ -188,9 +108,13 @@ struct WindowTarget::Impl {
         return image_acquired && image_index < render_finished.size() ? render_finished[image_index] : VK_NULL_HANDLE;
     }
 
-    /** @brief Creates the swapchain's views, depth image, render passes and framebuffers for the current images. */
+    /** @brief Creates the swapchain's views, depth image and layout bookkeeping for the current images. */
     [[nodiscard]] bool createSwapchainObjects(vn::String* why)
     {
+        // EVERY IMAGE STARTS UNDEFINED: a swapchain image nobody has presented is in `UNDEFINED` on its first use, and
+        // which one the presentation engine hands out next is its choice - so the record is per image (see beginPass).
+        image_layouts.assign(images.size(), ImageLayout::Undefined);
+        depth_layout = ImageLayout::Undefined;
         views.resize(images.size(), VK_NULL_HANDLE);
         for (std::size_t index = 0; index < images.size(); ++index) {
             VkImageViewCreateInfo view{};
@@ -224,7 +148,7 @@ struct WindowTarget::Impl {
             }
         }
 
-        // THE DEPTH IMAGE: one image shared by every swapchain image (the render pass clears it per frame).
+        // THE DEPTH IMAGE: one image shared by every swapchain image (the first pass of every frame clears it).
         VkImageCreateInfo depth_info{};        depth_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         depth_info.imageType     = VK_IMAGE_TYPE_2D;
         depth_info.extent        = VkExtent3D{ extent.width, extent.height, 1U };
@@ -277,35 +201,8 @@ struct WindowTarget::Impl {
             return false;
         }
 
-        if (!createWindowRenderPass(*device.table, device.device, format, false, false, pass_clear) ||
-            !createWindowRenderPass(*device.table, device.device, format, true, true, pass_load) ||
-            !createWindowRenderPass(*device.table, device.device, format, true, false, pass_load_color) ||
-            !createWindowRenderPass(*device.table, device.device, format, false, true, pass_load_depth)) {
-            if (why != nullptr) {
-                *why = vn::String(u8"vk: the window's render pass could not be created");
-            }
-            return false;
-        }
-
-        framebuffers.resize(images.size(), VK_NULL_HANDLE);
-        for (std::size_t index = 0; index < images.size(); ++index) {
-            const VkImageView attachments[2]{ views[index], depth_view };
-            VkFramebufferCreateInfo info{};
-            info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            info.renderPass      = pass_clear;
-            info.attachmentCount = 2U;
-            info.pAttachments    = attachments;
-            info.width           = extent.width;
-            info.height          = extent.height;
-            info.layers          = 1U;
-            if (device.table->vkCreateFramebuffer(device.device, &info, nullptr, &framebuffers[index]) != VK_SUCCESS) {
-                framebuffers[index] = VK_NULL_HANDLE;
-                if (why != nullptr) {
-                    *why = vn::String(u8"vk: a window framebuffer could not be created");
-                }
-                return false;
-            }
-        }
+        // NO RENDER PASS AND NO FRAMEBUFFER: a window pass states these attachments on the command buffer (see
+        // beginPass). The formats a pipeline is built for come from `compatibility()`, not from a structure.
         return true;
     }
 
@@ -335,28 +232,6 @@ struct WindowTarget::Impl {
     void destroySwapchain() noexcept
     {
         if (device.device != VK_NULL_HANDLE && device.table != nullptr) {
-            for (const VkFramebuffer framebuffer : framebuffers) {
-                if (framebuffer != VK_NULL_HANDLE) {
-                    device.table->vkDestroyFramebuffer(device.device, framebuffer, nullptr);
-                }
-            }
-            framebuffers.clear();
-            if (pass_clear != VK_NULL_HANDLE) {
-                device.table->vkDestroyRenderPass(device.device, pass_clear, nullptr);
-                pass_clear = VK_NULL_HANDLE;
-            }
-            if (pass_load != VK_NULL_HANDLE) {
-                device.table->vkDestroyRenderPass(device.device, pass_load, nullptr);
-                pass_load = VK_NULL_HANDLE;
-            }
-            if (pass_load_color != VK_NULL_HANDLE) {
-                device.table->vkDestroyRenderPass(device.device, pass_load_color, nullptr);
-                pass_load_color = VK_NULL_HANDLE;
-            }
-            if (pass_load_depth != VK_NULL_HANDLE) {
-                device.table->vkDestroyRenderPass(device.device, pass_load_depth, nullptr);
-                pass_load_depth = VK_NULL_HANDLE;
-            }
             if (depth_view != VK_NULL_HANDLE) {
                 device.table->vkDestroyImageView(device.device, depth_view, nullptr);
                 depth_view = VK_NULL_HANDLE;
@@ -385,6 +260,8 @@ struct WindowTarget::Impl {
                 swapchain = VK_NULL_HANDLE;
             }
             images.clear();
+            image_layouts.clear();
+            depth_layout = ImageLayout::Undefined;
         }
         image_acquired = false;
     }
@@ -590,7 +467,7 @@ bool WindowTarget::attach(const WindowDevice& device, vn::String* why)
 
 bool WindowTarget::ready() const noexcept
 {
-    return impl != nullptr && impl->attached && !impl->detached && impl->swapchain != VK_NULL_HANDLE && impl->pass_clear != VK_NULL_HANDLE;
+    return impl != nullptr && impl->attached && !impl->detached && impl->swapchain != VK_NULL_HANDLE && impl->depth_view != VK_NULL_HANDLE;
 }
 
 bool WindowTarget::deviceLost() const noexcept
@@ -665,28 +542,38 @@ bool WindowTarget::acquire(vn::String* why)
     return false;
 }
 
-VkRenderPass WindowTarget::renderPass(const bool load_color, const bool load_depth) const noexcept
+void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& load)
 {
-    // The four combinations a pass can ask for, one render pass each (see the Impl fields); a variant that could not be
-    // built falls back to the CLEAR pass, which is the answer a frame's first pass needs.
-    if (load_color) {
-        if (load_depth) {
-            return impl->pass_load != VK_NULL_HANDLE ? impl->pass_load : impl->pass_clear;
-        }
-        return impl->pass_load_color != VK_NULL_HANDLE ? impl->pass_load_color : impl->pass_clear;
+    if (impl == nullptr || !impl->image_acquired || impl->image_index >= impl->images.size()) {
+        return; // nothing acquired: the caller never reaches here (see acquire), and a pass with no image is nothing
     }
-    if (load_depth) {
-        return impl->pass_load_depth != VK_NULL_HANDLE ? impl->pass_load_depth : impl->pass_clear;
-    }
-    return impl->pass_clear;
+    const std::size_t index = impl->image_index;
+
+    // THE IMAGE RENDERING WRITES is the acquired one; its colour FROM is what this image's own record says (Undefined on
+    // first use, Present after it was presented, the colour layout between two passes of one frame).
+    const VkImage     colour_image = impl->images[index];
+    const VkImageView colour_view  = impl->views[index];
+
+    PassAttachments attachments{};
+    attachments.extent       = VkExtent2D{ impl->extent.width, impl->extent.height };
+    attachments.color_images = std::span<const VkImage>(&colour_image, 1U);
+    attachments.color_views  = std::span<const VkImageView>(&colour_view, 1U);
+    attachments.color_from   = impl->image_layouts[index];
+    attachments.depth_image        = impl->depth;
+    attachments.depth_view         = impl->depth_view;
+    attachments.depth_aspect       = depthAspectMask(kDepthFormat);
+    attachments.depth_from         = impl->depth_layout;
+
+    // `beginRendering` records the barriers before the instance: every window pass announces its own, because the
+    // instance may start in a layout the presentation engine left (Present) or one an earlier pass left (colour).
+    beginRendering(*impl->device.table, commands, attachments, load);
+    impl->image_layouts[index] = ImageLayout::ColorAttachment;
+    impl->depth_layout         = ImageLayout::DepthAttachment;
 }
 
-VkFramebuffer WindowTarget::framebuffer() const noexcept
+void WindowTarget::endPass(const VkCommandBuffer commands) const noexcept
 {
-    if (impl == nullptr || !impl->image_acquired || impl->image_index >= impl->framebuffers.size()) {
-        return VK_NULL_HANDLE;
-    }
-    return impl->framebuffers[impl->image_index];
+    endRendering(*impl->device.table, commands);
 }
 
 std::uint32_t WindowTarget::imageIndex() const noexcept
@@ -727,20 +614,21 @@ VkSemaphore WindowTarget::renderFinishedSemaphore() const noexcept
     return impl->renderFinishedOfAcquiredImage();
 }
 
-void WindowTarget::recordPresentTransition(const VkCommandBuffer commands) const
+void WindowTarget::recordPresentTransition(const VkCommandBuffer commands)
 {
     if (commands == VK_NULL_HANDLE || impl == nullptr || !impl->image_acquired || impl->image_index >= impl->images.size()) {
         return;
     }
     // THE TRANSITION IS TWO ROWS OF THE BARRIER TABLE: colour attachment -> present. The table owns the layouts, the
     // stage masks and the access masks (BarrierPlan), so this function names none of them and cannot pair a layout with
-    // the wrong mask.
+    // the wrong mask. The record follows: the next acquire of this image starts from Present (see beginPass).
     recordBarrier(*impl->device.table,
                   commands,
                   barrierBetween(impl->images[impl->image_index],
                                  stateOf(ImageLayout::ColorAttachment),
                                  stateOf(ImageLayout::Present),
                                  VK_IMAGE_ASPECT_COLOR_BIT));
+    impl->image_layouts[impl->image_index] = ImageLayout::Present;
 }
 
 vn::graphics::PresentOutcome WindowTarget::present()

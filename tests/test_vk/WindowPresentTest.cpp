@@ -339,6 +339,15 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
     const vn::raw_ptr<vn::graphics::WindowPresentTarget> again = backend->createSurfaceTarget(window.handle(), &result);
     EXPECT_EQ(result, SurfaceTargetResult::WindowOccupied);
 
+    // EVERY SWAPCHAIN IMAGE IS REUSED EVENTUALLY, and the layout it starts a pass in is THAT IMAGE's fact - PRESENT_SRC
+    // once it was presented, UNDEFINED before. Presenting more frames than the swapchain has images forces the
+    // presentation engine to hand one back, so a recorder that assumed "undefined on every acquire" would state the
+    // wrong old layout here and the validation layer would report it (dynamic rendering states the attachments, so
+    // nothing else catches the mistake). See WindowTarget::beginPass.
+    for (int frame = 0; frame < 6; ++frame) {
+        ASSERT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Presented) << "frame " << frame;
+    }
+
     // RESIZE: another frame still presents (the swapchain follows the surface).
     target->resize(kWindowWidth, kWindowHeight);
     EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Presented);

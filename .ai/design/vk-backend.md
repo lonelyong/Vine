@@ -39,8 +39,6 @@
 
 - **Several frames in flight** (audit F5): one `submit` + `fence wait` per frame is the **current contract choice** (§2.3); changing it would touch the SDK's "read when drawn"
   and needs an ADR; it is recorded in the backlog, not in the code.
-- **`vkCmdPipelineBarrier2` / dynamic rendering** (audit F9 / F10): they need API 1.3; the target is 1.2 and the current barrier table is a single
-  definition covered by synchronisation validation. That is modernisation, not a defect.
 - **A dedicated transfer queue / queue-family ownership transfer** (audit F11): the gain under the synchronous submission model is tiny (`G8`).
 - **`VMA`**: no third-party dependency; the hand-written pool already covers today's consumers (§2.4, `MemoryAllocator`).
 - **Real-hardware evidence for Wayland** (backlog T13): both platform branches are implemented and both are measured on hardware - X11 through `XGetImage` and
@@ -114,11 +112,11 @@ and every cache has a witness a test can read.**
 
 ### 2.6 Shape vs extent: a resize does not recompile a pipeline
 
-- **What it is**: the render pass is decided by the **shape** (colour / depth formats, sample count); images, views and framebuffers by the **extent**. `planTarget`
+- **What it is**: the ATTACHMENT SET is decided by the **shape** (colour / depth formats, sample count); images and views by the **extent**. `planTarget`
   therefore answers Rebuild / ResizeInPlace / Repair (the SDK's `TargetDecision`; `TargetPlan.hpp` is the unit, `planTarget` the verb).
 - **Why**: `G1` (shape and size are two concepts) + `G9` (a new format or sample count only extends the shape table) + `G10` (a resize pays no recompile).
-- **Boundary**: `ResizeInPlace` keeps the render pass (pipeline compatibility) and only `Rebuild` changes the shape; `TargetObjects`' three load-op variants share one
-  framebuffer (the load op is not part of compatibility).
+- **Boundary**: `ResizeInPlace` keeps the shape, and the shape is the WHOLE pipeline key half that describes the attachments; `Rebuild` is the only path that changes
+  it. Nothing is created per attachment set any more, so a load op cannot split the set into variants (see §2.7 and `F4`).
 
 ### 2.7 Barriers are one table, not scattered calls
 
@@ -129,8 +127,15 @@ and every cache has a witness a test can read.**
 - **Synchronisation 2**: the stage masks travel ON the barrier (they are two rows of the table), so no call site passes a
   stage pair of its own and no site can pair a layout with another row's stages. The Vulkan-1.0 form is not kept - the
   floor is 1.3 and the `synchronization2` feature is enabled and required (`vk.init.device_features_missing` otherwise).
+- **Dynamic rendering, and the dependency it does not insert**: since the attachments are stated on the command buffer
+  (`vkCmdBeginRendering`), there is no render pass to move them from `initialLayout` to the subpass layout and no subpass
+  dependency to order two passes into one image. `DynamicRendering::beginRendering` does both: one barrier per attachment
+  from the layout its owner records to the rendering layout, INCLUDING a barrier between two identical states (that is the
+  execution dependency), then the instance. `TargetObjects::beginPass` / `WindowTarget::beginPass` are the two call sites; the
+  layout bookkeeping is theirs (see `F4` and `P15`).
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
-  a new purpose is one more row, not one more inline barrier.
+  a new purpose is one more row, not one more inline barrier. An ATTACHMENT row states the read side of its access as well as
+  the write side, because under dynamic rendering the LOAD (and a blend's destination read) has no implicit ordering.
 
 ### 2.8 Honest reporting: absent is not zero, one report per episode
 
@@ -349,10 +354,10 @@ and every cache has a witness a test can read.**
 | F1 | Device lifecycle and loss | instance / device / queue / command pool / fence; loss ends the session | landed |
 | F2 | Physical device selection | ordered by `VkPhysicalDeviceType`, ties keep the first seen | landed |
 | F3 | Window and swap chain | surface, FIFO, one present semaphore per image, a 1 s acquire timeout, rebuild | landed (Linux/X11) |
-| F4 | Offscreen targets | render-pass variants, MRT, MSAA + depth resolve, borrowed depth, resize keeping the pass | landed |
+| F4 | Offscreen targets | dynamic-rendering attachment sets, MRT, MSAA + depth resolve, borrowed depth, resize keeping the pipelines | landed |
 | F5 | Content drawing | program → SPIR-V → pipeline; state mapping; vertex / index / instance streams | landed |
 | F6 | Fullscreen drawing | the screen ABI; depth forced to Disabled; binds the shadow map the pass resolved | landed |
-| F7 | Textures and samplers | revision cache, the 1×1 stand-in, uploads before the render pass | landed |
+| F7 | Textures and samplers | revision cache, the 1×1 stand-in, uploads before the rendering instance | landed |
 | F8 | The constant ring | one persistently mapped buffer per frame, slices + dynamic offsets | landed |
 | F9 | Descriptor-set cache | cached by (the view set, the shadow map); released entry by entry, swept periodically | landed |
 | F10 | Device memory pool | blocks + slices, usage / kind, granularity, whole-block mapping | landed |
@@ -389,26 +394,33 @@ and every cache has a witness a test can read.**
 
 ### 3.1.4 F4 Offscreen targets
 
-- **Behaviour**: `TargetObjects` holds the colour / sample buffer / depth / depth-resolve images and views, **four** render-pass variants (clear everything, load depth, load
-  everything, and **load colour + clear depth** - the HUD pass that keeps the picture and owns the depth inside its rectangle) and one framebuffer. The WINDOW keeps the
-  same four variants (`WindowTarget::renderPass(load_color, load_depth)`), so a later window pass loads the picture and resets only the depth its content tests against.
-  An MSAA target resolves colour into the single-sample image; depth resolves through `vkCreateRenderPass2`'s
-  `pDepthStencilResolveAttachment` (`sample0`); a depth-only target is a shadow map; a `shareDepth` target borrows another target's depth view.
+- **Behaviour**: `TargetObjects` holds the colour / sample buffer / depth / depth-resolve images and views, and the layout each
+  one is in; a pass opens a **dynamic-rendering instance** over them (`beginPass` / `endPass`, and `DynamicRendering`), stating
+  ONE load answer per attachment - so the HUD case (keep the picture, own the depth inside its rectangle) is two fields of one
+  `VkRenderingAttachmentInfo` instead of a fourth render pass. The WINDOW owns the same pair (`WindowTarget::beginPass`), with
+  a PER-IMAGE layout record: a swapchain image is `UNDEFINED` on its first use, `PRESENT_SRC_KHR` after it was presented, and
+  the colour layout between two passes of one frame. An MSAA target draws into the sample buffers and resolves colour with
+  `AVERAGE` and depth with `SAMPLE_ZERO` in the attachment info (`resolveMode` / `resolveImageView`, core 1.3 - no
+  `vkCreateRenderPass2`); a depth-only target is a shadow map; a `shareDepth` target attaches the lender's depth view and
+  ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared).
 - **A target it cannot build is named at BUILD time**: a target with no usable extent answers `vk.target.size_unknown` and a borrowed
   depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
   announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
 - **Constraints**: `C5`, `C8`, `N2`.
 - **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`, and
-  `BackendParityTest.ADepthOnlyClearKeepsThePictureOnBothBackends` (the four render-pass variants agree with the vsg backend
-  pixel for pixel).
-- **Caveat**: `P4`, `P15` (even the **dependencies** must agree between variants).
+  `BackendParityTest.ADepthOnlyClearKeepsThePictureOnBothBackends` (a depth-only clear keeps the picture on both backends) plus
+  `VkWindowPresentTest.AWindowFrameIsDrawnAndPresented`'s frame loop, which forces a presented image to be acquired again and is
+  therefore the witness for the per-image layout record.
+- **Caveat**: `P4`, `P15` (dynamic rendering inserts no dependency between two passes into one attachment).
 
 ### 3.1.5 F5 Content drawing
 
 - **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key is the
   SEAM's `vn::graphics::PipelineKey` and NOTHING ELSE (kind, program identity + revision, the vertex layout slots,
-  render-pass compatibility, variant, topology class - see `ContentPipelineKey`); one `DrawItem` = one
-  `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision.
+  attachment-set compatibility, variant, topology class - see `ContentPipelineKey`); one `DrawItem` = one
+  `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision. The pipeline states NO render pass: it carries
+  the attachment FORMATS through `VkPipelineRenderingCreateInfo`, so its blend-array length and the rendering instance's colour
+  count are the same number derived from one value.
 - **EVERY state item is a command** (`T54`, `ADR-2026-11-23` D4): viewport, scissor, line width and the depth-bias
   values always were; cull mode, polygon mode, depth test/write/compare and blend enable/factors joined them when the
   floor rose to `VK_EXT_extended_dynamic_state` / `_state2` / `_state3` (REQUIRED - a device without them is refused
@@ -561,8 +573,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `ContentDraw` | content / fullscreen recording, programs and pipelines, the ring, the set cache, the pipeline cache object | F5 / F6 / F8 / F9 / F12 |
 | `ContentImages` | texture revisions, samplers, the stand-in | F7 |
 | `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) | F4 / §2.18 |
-| `TargetObjects` | an offscreen target's objects and pass variants | F4 |
-| `WindowTarget` / `WindowSystem` | the swap chain and the surface | F3 |
+| `TargetObjects` | an offscreen target's attachment set: images, views and the layout each one is in (`beginPass` / `endPass`) | F4 |
+| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields | F4 / §2.7 |
+| `WindowTarget` / `WindowSystem` | the swap chain and the surface (per-image layout record, `beginPass` / `endPass`) | F3 |
 | `MemoryAllocator` | the device memory pool (blocks / slices / mapping) | F10 |
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |
 | `ReadbackStaging` | one readback's staging sequence | F11 |
@@ -608,7 +621,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 ### 5.3 Invariants (N#)
 
 - **N1** A descriptor set is emptied only when the ring changes generation; a steady frame builds and destroys nothing.
-- **N2** A resize with an unchanged shape rebuilds no render pass, and therefore recompiles no pipeline.
+- **N2** A resize with an unchanged shape recompiles no pipeline (a pipeline is keyed by the shape alone and states no extent).
 - **N3** A frame's command buffer is reset / released only after its `fence` has signalled; nothing is destroyed while it is still referenced.
 - **N4** Pool slices: the ranges inside one block are ordered and alternate live / free; a release merges with its two neighbours only.
 - **N5** A cache file is either read back whole (magic / version / key / length all match) or refused; there is no half parse.
@@ -645,9 +658,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - How to detect it: validation reports a layout / usage violation; or the picture is black.
 - How to prevent it: `depthPicture()` / `depthPictureView()` are the only entry points; a borrowing target answers `VK_NULL_HANDLE` and the read goes to the lender.
 
-### 6.5 P5 An upload may only be recorded before the render pass
+### 6.5 P5 An upload may only be recorded before the rendering instance
 
-- How it fails: `vkCmdCopyBufferToImage` and some barriers are illegal inside a render-pass instance.
+- How it fails: `vkCmdCopyBufferToImage` and some barriers are illegal inside a rendering instance (and `vkCmdBeginRendering`)
+  may not be followed by one).
 - How to detect it: validation reports it directly; or the texture stays in TRANSFER_DST for ever.
 - How to prevent it: `preparePass` runs before `vkCmdBeginRenderPass`; `ContentImages`' "not prepared" gives an explicit `why`.
 
@@ -712,15 +726,19 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - How to prevent it: `shutdown()` has a fixed order — `vkDeviceWaitIdle` → write the cache → content → targets → windows → **pool** → command pool / fence / query
   pool → device → instance; every step is idempotent and a failure in one does not skip the rest.
 
-### 6.15 P15 When one framebuffer serves several render-pass variants, the **dependencies** must agree too
+### 6.15 P15 Dynamic rendering inserts no dependency, and states no layout
 
-- How it fails: the load op is not part of compatibility, **but the subpass dependency is**. Widening `srcStage/srcAccess` on the LOAD variant ("read the depth the
-  previous pass wrote") without doing the same on the CLEAR variant gives the two variants different dependencies, so the one framebuffer is compatible with the CLEAR
-  variant only — the second pass writing the same depth target reports `VUID-VkRenderPassBeginInfo-renderPass-00904` when it starts recording (measured; it appears only
-  when "two passes of one frame write the same depth target", which is why the existing cross-target cases cannot see it).
-- How to detect it: validation's 00904 (the renderPass and framebuffer are incompatible); by eye it is a frame with several passes on one target.
-- How to prevent it: the three variants **share one set of dependencies**, and a widening applies to all of them (the CLEAR variant covering the same source scope costs
-  nothing); the case `BackendParityTest.APrepareReportsTheShapeBothBackendsThenRecord` asserts zero vk warnings / errors while frames run.
+- How it fails: a render pass moved every attachment from `initialLayout` to the subpass layout and ordered the pass' accesses
+  after what an earlier submission did. `vkCmdBeginRendering` does NEITHER: an image whose layout differs from the one its
+  `VkRenderingAttachmentInfo` states is an invalid command (`VUID-vkCmdBeginRendering-pRenderingInfo-09592`), and two passes
+  into one attachment have no execution dependency between them unless the recorder writes one.
+- How to detect it: validation names 09592 at the pass' first draw (MEASURED: skipping `beginRendering`'s transitions turns
+  seventeen `test_vk` cases red, each pointing at that VUID); a second pass that LOADs what the first wrote reads stale data
+  with no message at all on a driver that does not hazard-check.
+- How to prevent it: `DynamicRendering::beginRendering` records one barrier per attachment before the instance - including one
+  between two identical states, which IS the dependency - and the LAYOUT it starts from is the owner's own record
+  (`TargetObjects::fresh` / `color_sampled` / `depth_sampled`, `WindowTarget`'s per-image record). A new caller must state its
+  layouts instead of assuming a render pass would move them.
 
 ### 6.16 P16 An allocation failure classified across kinds
 
@@ -738,7 +756,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | D1 | using `VMA` for memory | `G8`: today's consumers (targets, textures, streams, the ring, staging) are covered by the hand-written pool; a new dependency has to be paid for by someone | — |
 | D2 | one `vkAllocateMemory` per resource | `G10`: allocations grow with the scene, and `maxMemoryAllocationCount`'s failure shape is "it looks like out of video memory" | — (changed, see F10) |
 | D3 | compiling SPIR-V with vsg's `ShaderCompiler` | `G2`: that would point a dependency at another backend plugin; glslang is supplied centrally by `cmake/VineGlslang.cmake` | — |
-| D4 | synchronization2 / dynamic rendering now | `G8`: the target is API 1.2; the barrier table is a single definition covered by validation, and moving to 1.3 replaces the whole layer (audit F9 / F10) | — |
+| D4 | synchronization2 / dynamic rendering "later" | `G8` said the target was API 1.2; the 1.3 floor and the retirement's ordered batch made both the floor move and the legacy path go - D4 is LANDED as steps 1/1b/`T11` (2026-11-23) | `../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` |
 | D5 | putting the cache file format into the SDK | `G1`: the SDK does not know Vulkan; the right seam is "the host gives the location, the backend the format" (§2.9) | — |
 | D6 | implementing several frames in flight directly | `G4`: changing the "read when drawn" contract needs a decision document first; the measured ceiling is about 10% (the device is 90%) | `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` |
 | D7 | splitting the device and the session objects right away | `G8`: the contract is one frame in flight, one at a time, and a split would only add a layer of forwarding; because concurrent frames are clearly wanted it lands in **two steps** (the gate + the contract first, then the split) rather than in one go | `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` |
@@ -761,8 +779,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 ### 9.1 Current status
 
-- Audit items F1 / F2 / F4 / F7 / F8 / F12 are landed; F5 / F9 / F10 / F11 / F13 are kept as follow-up per §1.3. Several drivers are entirely landed, with the shape in
-  §2.11 and `graphics-sessions.md`; **today's three TSan readings are in `graphics-threading.md` R18.**
+- Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
+  follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
+  readings are in `graphics-threading.md` R18.**
 - `test_vk` **176 cases / 42 suites** (2026-11-23, Linux: 176/176; the Windows reading the same day was 174/174 with no skips,
   before the two-window case and the `T54` witnesses landed); `test_vsg` **576**, `test_graphics` **639** (same build,
   `--gtest_list_tests`); `BackendParityTest` **15/15**. The target map, the shapes and the leases are one
@@ -784,9 +803,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - **Audit F5 (several frames in flight)**: **decided to keep one frame in flight** (`../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`), with the trigger
   conditions written in the ADR (device time under half the wall clock, an artefact shape that must overlap the GPU, or a second backend needing the same semantics).
-- **Audit F9 / F10**: `vkCmdPipelineBarrier2` is landed (the floor is 1.3, `synchronization2` enabled - `BC-38`);
-  dynamic rendering is the remaining step of `T60`'s batch (backlog `T11`), and the 1.3 floor it was waiting for is now
-  the device requirement.
+- **Audit F9 / F10**: LANDED. `vkCmdPipelineBarrier2` (step 1b, `BC-38`) and dynamic rendering (`T11`, `BC-39`) are the only
+  spellings now - no `VkRenderPass`, no `VkFramebuffer`, no 1.0 `vkCmdPipelineBarrier` or `vkCmdBeginRenderPass` in the
+  backend. The 1.3 floor with the `synchronization2` and `dynamicRendering` features is the device requirement.
 - **Backlog `T35` (becoming the default backend)**'s gate (`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`): `releaseRenderTarget` really frees the
   attachments, `readDepthBuffer` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
   `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
@@ -795,8 +814,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **Backlog `T60`**: retiring `vsg` after this gate - trigger, rides and reasoning are in the item; the terms (mechanism
   ownership, the 24 `vsg.*` codes, the document collapse and the batch order `T54` → `T11` → `T58` → delete) are
   [ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md), and this backend is the one the
-  retirement leaves in place. **Step 1 (`T54`) landed 2026-11-23**: the floor is EDS1 + EDS3 and the pipeline key has
-  no state half; the remaining steps are dynamic rendering (`T11`), the alpha-to-coverage bit (`T58`) and the deletion.
+  retirement leaves in place. **Steps 1 (`T54`), 1b (`BC-38`) and 2 (`T11`, `BC-39`) landed 2026-11-23**: the floor is
+  Vulkan 1.3 with `synchronization2` + `dynamicRendering`, the pipeline key has no state half, and the backend has no
+  render-pass or framebuffer object left; the remaining steps are the alpha-to-coverage bit (`T58`) and the deletion.
 
 ### 9.3 Compatibility / migration
 
@@ -807,9 +827,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   `synchronization2` and `dynamicRendering` FEATURES enabled - a 1.3 device that does not offer them is refused with
   `vk.init.device_features_missing`, and an older one with `vk.init.api_version_low` - PLUS
   `VK_EXT_extended_dynamic_state3` with the polygon-mode and colour-blend features (`T54`); a device without that
-  extension is refused with `vk.init.dynamic_state_missing`. Multisample depth resolve is core 1.2 (`vkCreateRenderPass2`)
-  and creation feedback is core 1.3, so neither needs an extension any more.
-  extension.
+  extension is refused with `vk.init.dynamic_state_missing`. Multisample depth resolve is one attachment field of dynamic
+  rendering (the 1.3 floor guarantees it), and creation feedback is core 1.3, so neither needs an extension or a version
+  check any more.
 - **Platforms**: Linux/X11 and Win32 both have a `WindowSystem` implementation and both are measured with a pixel instrument; Wayland is implemented against the WSI
   contract only.
 
@@ -818,7 +838,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 ### 10.1 Code
 
 - `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/**`: every contract (`Device`, `ContentDraw`, `TargetObjects`, `ContentImages`, `WindowTarget`,
-  `MemoryAllocator`, `PipelineCacheFile`, `ReadbackStaging`, `BarrierPlan`, `StateMapping`, `Handles`).
+  `MemoryAllocator`, `PipelineCacheFile`, `ReadbackStaging`, `BarrierPlan`, `DynamicRendering`, `StateMapping`, `Handles`).
 - `src/plugins/gfx_backend_vk/src/shell/**`: `Plugin`, `BackendFactory`.
 - `tests/test_vk/**`: behaviour; `tests/test_vsg/BackendParityTest.cpp`: the comparison.
 - `scripts/check_vk_exposure.py`: the exposure-boundary gate.

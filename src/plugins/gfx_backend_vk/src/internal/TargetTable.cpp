@@ -179,7 +179,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         // this is the answer a caller gets instead of a build against null handles.
         return false;
     }
-    // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the render-pass
+    // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the attachment-set
     // compatibility - the engine's formats AND the device spelling only this backend can fill (see
     // RenderPassCompatibility).
     vn::graphics::TargetDesc wanted;
@@ -234,7 +234,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     wanted.shape.samples         = requested_samples;
     wanted.shape.render_pass_key = kSingleSubpassRenderPass;
     // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
-    // `TargetObjects` builds the single-sample picture the render pass resolves into and every reader uses
+    // `TargetObjects` builds the single-sample picture the rendering instance resolves into and every reader uses
     // (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so multisampling cannot change the
     // depth a later pass tests against. The resolve is Vulkan 1.2 (see Limits::depth_resolve_supported), and a device
     // below that genuinely cannot serve this shape: nothing is created, nothing is drawn, and `readColorBuffer`
@@ -380,9 +380,9 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         }
         return true;
     case TargetAction::Rebuild:
-        // The shape changed: the render pass, the framebuffer and the attachments are rebuilt; pipelines are keyed by
-        // compatibility, so the ones built for the old shape are simply never asked for again (and a resize, which
-        // keeps the shape, reuses them - see ContentDraw).
+        // The shape changed: the attachments are rebuilt; pipelines are keyed by compatibility, so the ones built for
+        // the old shape are simply never asked for again (and a resize, which keeps the shape, reuses them - see
+        // ContentCaches).
         destroyTarget(*device_.table, device_.device, *device_.allocator, images);
         images.desc                = wanted;
         images.depth_borrowed      = lender != nullptr;

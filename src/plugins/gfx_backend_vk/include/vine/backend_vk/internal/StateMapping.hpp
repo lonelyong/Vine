@@ -132,8 +132,8 @@ struct StateMapping {
      * - A TARGET'S SAMPLE COUNT IS A NUMBER, not a device flag: the SDK states samples per pixel
      *   (`RenderPassCompatibility::samples`),
      *   while Vulkan spells the same fact as a `VkSampleCountFlagBits` whose enumerator happens to be that number. The
-     *   mapping is stated once, here, because the render pass and the pipeline must read the same answer - two
-     *   spellings would be a render pass and a pipeline that disagree about how many samples they draw.
+     *   mapping is stated once, here, because the rendering instance and the pipeline must read the same answer - two
+     *   spellings would be a set and a pipeline that disagree about how many samples they draw.
      * - A count Vulkan has no flag for (0, or a number that is not one of its counts) answers 1: the request is clamped
      *   to what the device offers before it reaches this table (see `TargetTable::ensure`), so an unknown value is a
      *   bug upstream, and drawing single-sampled is the only safe reading of it.

@@ -24,6 +24,7 @@
 #include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/DynamicRendering.hpp>
 #include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/FrameScratch.hpp>
 #include <vine/backend_vk/internal/NumberText.hpp>
@@ -614,9 +615,10 @@ struct Device::Impl {
     /// this device cannot build (see `TargetTable::ensure`).
     std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT };
 
-    /// Whether this device can resolve a multisampled DEPTH (`VkSubpassDescriptionDepthStencilResolve`, and with it
-    /// `vkCreateRenderPass2`): true from Vulkan 1.2, which is the version that made both core. A device below it still
-    /// serves every other shape - only "multisampled AND depth-attached" is refused (see `TargetTable::ensure`).
+    /// Whether this device can resolve a multisampled DEPTH. Dynamic rendering states the resolve as one attachment
+    /// field (`resolveMode` / `resolveImageView`, core in Vulkan 1.3), and this backend refuses to come up below 1.3 -
+    /// so the answer is always true; it stays a VALUE because `TargetTable::ensure` asks it before it builds a shape and
+    /// the refusal has to remain expressible for a family that cannot do it.
     bool depth_resolve_supported{ false };
 
     /// Whether this device answers PIPELINE CREATION FEEDBACK (Vulkan 1.3 or `VK_EXT_pipeline_creation_feedback`): the
@@ -854,10 +856,10 @@ struct Device::Impl {
      *   the frame value directly rather than going through the shared compiler. A G-buffer's depth is not a shadow: a
      *   target nobody stated a light for is skipped, which is the defect the rule exists to prevent.
      * - WHAT IT DOES BESIDES ANSWER: moves the map's depth image to `SHADER_READ_ONLY_OPTIMAL` before the consuming
-     *   pass begins. A barrier is not legal inside a render pass instance, and the map was left in the attachment
+     *   pass begins. A barrier is not legal inside a rendering instance, and the map was left in the attachment
      *   layout by the pass that wrote it - so this is the one moment the transition can be recorded.
      *
-     * @param commands The command buffer being recorded (OUTSIDE any render pass).
+     * @param commands The command buffer being recorded (OUTSIDE any rendering instance).
      * @param inputs   The pass' resolved inputs, in declaration order.
      * @param lent     The depths THIS FRAME lends to another target (see RenderTarget::shareDepth); such an image
      *                 cannot be a sampled picture and a pass' depth attachment at once, so it is skipped.
@@ -1201,9 +1203,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         /// The target's attachments (null for a window pass), resolved where the target was claimed - the frame head
         /// needs them to resolve pipelines, and the recording loop must not look the target up again.
         TargetObjects*                 images{ nullptr };
-        /// A render pass with the target's compatibility, used only where a pipeline must be CREATED.
-        VkRenderPass                  pipeline_pass{ VK_NULL_HANDLE };
-        std::uint32_t                 color_count{ 0 };
+        /// The attachment set's pipeline compatibility: the formats AND the colour count a pipeline and its rendering
+        /// instance are both stated from. Nothing in this loop names a render pass any more (see DynamicRendering).
         vn::graphics::RenderPassCompatibility compatibility{};
     };
 
@@ -1319,7 +1320,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 continue;
             }
             count_pass();
-            runnable_passes.push_back(Runnable{ &entry, &draw, true, nullptr, window->renderPass(false, false), 1U, window->compatibility() });
+            runnable_passes.push_back(Runnable{ &entry, &draw, true, nullptr, window->compatibility() });
             continue;
         }
         // ONE DRIVER AT A TIME, ONE FRAME AT A TIME (see TargetTable): the claim is taken BEFORE the
@@ -1353,8 +1354,6 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                             &draw,
                                             false,
                                             &claimed_images,
-                                            claimed_images.renderPassFor(false, false),
-                                            static_cast<std::uint32_t>(claimed_images.colorCount()),
                                             claimed_images.compatibility() });
     }
 
@@ -1414,8 +1413,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         return PresentOutcome::Skipped;
     }
 
-    // THE DEVICE CLOCK OPENS HERE (see FrameTiming): the reset is legal outside a render pass, which is where this is,
-    // and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
+    // THE DEVICE CLOCK OPENS HERE (see FrameTiming): the reset is legal outside a rendering instance, which is where this
+    // is, and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
     ++clock_frames;
     const bool sample_clock = timestamps && (clock_frames % kTimestampSampleFrames) == 1U;
     // THE PER-PASS BOUNDARIES NEED ONE QUERY PER PASS PLUS THE TAIL, beside the frame's own pair (see PassTiming). A
@@ -1462,8 +1461,6 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                     (void)owner.caches.planDraw(description,
                                                 pass_draw,
                                                 item.compatibility,
-                                                item.pipeline_pass,
-                                                item.color_count,
                                                 plan,
                                                 call.refusal,
                                                 cache_lock);
@@ -1482,8 +1479,6 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                                pass_draw,
                                                head_program.get(),
                                                item.compatibility,
-                                               item.pipeline_pass,
-                                               item.color_count,
                                                plan,
                                                call.refusal,
                                                cache_lock,
@@ -1519,11 +1514,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         }
         const PassDraw& draw = *item.draw;
         // THE PASS' TEXTURE UPLOADS ALREADY RAN, at the frame head, on this same command buffer (see above): an upload
-        // records image barriers and copies, neither legal inside a render pass instance - which is why the head runs
+        // records image barriers and copies, neither legal inside a rendering instance - which is why the head runs
         // before the first pass begins. Nothing here consults the caches.
 
         // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
-        // barrier is unambiguously allowed (before any render pass instance begins).
+        // barrier is unambiguously allowed (before any rendering instance begins).
         for (const DrawPacket& description : draw.packets) {
             if (description.kind != vn::graphics::DrawKind::Fullscreen || description.source == nullptr) {
                 continue;
@@ -1543,114 +1538,75 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         }
 
         // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
-        // SHADER_READ_ONLY here, before the render pass begins (see resolveShadow).
+        // SHADER_READ_ONLY here, before the pass begins (see resolveShadow).
         ContentDraw::ShadowSource shadow{};
         (void)owner.resolveShadow(commands, item.entry->inputs, lent_depths, shadow);
 
-        TargetObjects*                                  images        = nullptr;
-        VkRenderPass                                   render_pass   = VK_NULL_HANDLE;
-        VkFramebuffer                                  framebuffer   = VK_NULL_HANDLE;
+        TargetObjects*                                  images        = item.images;
         VkExtent2D                                     extent{};
-        std::uint32_t                                  color_count   = 0U;
-        bool                                           has_depth     = false;
-        vn::graphics::RenderPassCompatibility compatibility{};
+        const vn::graphics::RenderPassCompatibility    compatibility = item.compatibility;
+        const std::uint32_t                            color_count   = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
+        const bool                                     has_clear     = draw.clear.has_value();
+        bool                                           load_color    = false;
+        bool                                           load_depth    = false;
 
         if (item.window) {
-            // A WINDOW PASS: the swapchain's image, the window's render pass. WHAT IT LOADS is the pass' OWN policy, one
-            // attachment at a time (see ClearPolicy's two independent dimensions): the first pass into the frame's image
-            // can clear either or both (an image nobody wrote cannot be loaded), and a later pass loads what the earlier
-            // one wrote EXCEPT the attachment it asks to clear - which is how a HUD owns the depth inside its rectangle
-            // and keeps the picture underneath.
-            const bool has_clear  = draw.clear.has_value();
-            const bool written    = !first_window_pass;
-            const bool load_color = written && (!has_clear || !draw.clear->clear_color);
-            const bool load_depth = written && (!has_clear || !draw.clear->clear_depth);
-            render_pass           = window->renderPass(load_color, load_depth);
-            framebuffer           = window->framebuffer();
-            extent                = VkExtent2D{ window->width(), window->height() };
-            color_count           = 1U;
-            has_depth             = true;
-            compatibility         = window->compatibility();
-            first_window_pass     = false;
+            // A WINDOW PASS: the acquired swapchain image and the window's depth. WHAT IT LOADS is the pass' OWN policy,
+            // one attachment at a time (see ClearPolicy's two independent dimensions): the first pass into the frame's
+            // image can clear either or both (an image nobody wrote cannot be loaded), and a later pass loads what the
+            // earlier one wrote EXCEPT the attachment it asks to clear - which is how a HUD owns the depth inside its
+            // rectangle and keeps the picture underneath.
+            const bool written = !first_window_pass;
+            load_color         = written && (!has_clear || !draw.clear->clear_color);
+            load_depth         = written && (!has_clear || !draw.clear->clear_depth);
+            extent             = VkExtent2D{ window->width(), window->height() };
+            first_window_pass  = false;
         }
         else {
-            images = item.images;
-
-            // A TARGET A SCREEN DRAW SAMPLED is in SHADER_READ_ONLY: put its colour images back before this pass
-            // writes them.
-            if (images->color_sampled) {
-                for (const VkImage image : images->colors) {
-                    const VkImageMemoryBarrier2 back = barrierBetween(image,
-                                                                     stateOf(ImageLayout::ShaderReadOnly),
-                                                                     stateOf(ImageLayout::ColorAttachment),
-                                                                     VK_IMAGE_ASPECT_COLOR_BIT);
-                    recordBarrier(owner.device_table, commands, back);
-                }
-                images->color_sampled = false;
-            }
-
-            // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth PICTURE in SHADER_READ_ONLY: put it back before
-            // this pass writes the depth (the mirror of the colour rule above, on the depth attachment).
-            if (images->depth_sampled) {
-                const VkImageMemoryBarrier2 back = barrierBetween(images->depthPicture(),
-                                                                 stateOf(ImageLayout::ShaderReadOnly),
-                                                                 stateOf(ImageLayout::DepthAttachment),
-                                                                 depthAspectMask(images->depthFormat()));
-                recordBarrier(owner.device_table, commands, back);
-                images->depth_sampled = false;
-            }
-
-            // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something gets the CLEAR variant for
-            // its first frame (there is nothing to load yet). A pass that announces NO clear loads both attachments;
-            // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
-            const bool has_clear  = draw.clear.has_value();
+            // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something gets a CLEAR for its first
+            // frame (there is nothing to load yet). A pass that announces NO clear loads both attachments.
             const bool drawn_into = !images->fresh.load(std::memory_order_relaxed);
             // ONE ANSWER PER ATTACHMENT (see ClearPolicy): a pass that clears only the depth loads the colour it is drawn
             // over and resets the depth, which is what a HUD pass asks for.
-            const bool load_color = has_clear ? (!draw.clear->clear_color && drawn_into) : drawn_into;
-            const bool load_depth = has_clear ? (!draw.clear->clear_depth && drawn_into) : drawn_into;
-            render_pass           = images->renderPassFor(load_depth, load_color);
-            framebuffer           = images->framebuffer;
-            extent                = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
-            color_count           = static_cast<std::uint32_t>(images->colorCount());
-            has_depth             = images->hasDepth();
-            compatibility         = images->compatibility();
+            load_color  = has_clear ? (!draw.clear->clear_color && drawn_into) : drawn_into;
+            load_depth  = has_clear ? (!draw.clear->clear_depth && drawn_into) : drawn_into;
+            extent      = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
         }
 
-        // PER-ATTACHMENT CLEAR (a LOAD variant ignores these values): the clear values are indexed by ATTACHMENT, and
-        // attachment 0 is the pass' colour while the rest of the COLOUR slots come from extra_colors (an absent entry
-        // is transparent black - see ClearPolicy). A MULTISAMPLED target's array is [sample buffers, resolve images,
-        // depth], so its depth slot is not `color_count`; the resolve slots in between are DONT_CARE and their values
-        // are never read (see TargetObjects' class note).
-        const std::size_t         depth_slot  = images != nullptr ? images->depthAttachmentIndex() : static_cast<std::size_t>(color_count);
-        std::vector<VkClearValue> clear_values(depth_slot + (has_depth ? 1U : 0U));
-        const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        // PER-ATTACHMENT CLEAR (a loading attachment ignores its value): the array is in colour output-location order and
+        // a value the pass does not state is transparent black - see ClearPolicy. A DEPTH-ONLY pass has no colour slot
+        // at all, which is why the depth value is its own field rather than the array's last entry.
+        std::vector<VkClearValue> color_clears(color_count);
+        const Colorf              colour = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         if (color_count != 0U) {
-            // A DEPTH-ONLY PASS (a shadow map) has no colour slot to clear: its clear values start at the depth.
-            clear_values[0].color = { { colour.r, colour.g, colour.b, colour.a } };
+            color_clears[0].color = { { colour.r, colour.g, colour.b, colour.a } };
         }
         for (std::size_t index = 1; index < color_count; ++index) {
             const Colorf extra = images != nullptr && draw.clear.has_value() && index - 1U < draw.clear->extra_colors.size()
                                      ? draw.clear->extra_colors[index - 1U]
                                      : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
-            clear_values[index].color = { { extra.r, extra.g, extra.b, extra.a } };
+            color_clears[index].color = { { extra.r, extra.g, extra.b, extra.a } };
         }
-        if (has_depth) {
-            // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
-            // (see ClearPolicy: the policy states WHETHER, never to what).
-            clear_values[depth_slot].depthStencil = { 0.0F, 0U };
+        // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0 (see
+        // ClearPolicy: the policy states WHETHER, never to what).
+        VkClearValue depth_clear{};
+        depth_clear.depthStencil = { 0.0F, 0U };
+
+        PassLoad load{};
+        load.load_color   = load_color;
+        load.load_depth   = load_depth;
+        load.color        = color_clears.empty() ? VkClearValue{} : color_clears[0];
+        load.extra_colors = color_count > 1U ? std::span<const VkClearValue>(color_clears).subspan(1U) : std::span<const VkClearValue>{};
+        load.depth        = depth_clear;
+
+        // THE SET OWNS THE TRANSITIONS AND THE INSTANCE (see TargetObjects::beginPass / WindowTarget::beginPass): the
+        // layouts each attachment is in are the owner's bookkeeping, so the recorder cannot disagree with them.
+        if (item.window) {
+            window->beginPass(commands, load);
         }
-
-        VkRenderPassBeginInfo pass_begin{};
-        pass_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        pass_begin.renderPass        = render_pass;
-        pass_begin.framebuffer       = framebuffer;
-        pass_begin.renderArea.offset = VkOffset2D{ 0, 0 };
-        pass_begin.renderArea.extent = extent;
-        pass_begin.clearValueCount   = static_cast<std::uint32_t>(clear_values.size());
-        pass_begin.pClearValues      = clear_values.data();
-
-        owner.device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+        else {
+            images->beginPass(owner.device_table, commands, load);
+        }
         // WHAT THIS PASS DRAWS: the frame head's plans and resolved bindings, in the draw packet's own order. Every
         // command inside a call becomes one GPU draw (M3: the plan selected the pipeline, one `DrawItem` = one
         // indexed draw). The frame's DRAWING-CALL count was taken from the frame's shape above - a call is the
@@ -1714,9 +1670,12 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 }
             }
         }
-        owner.device_table.vkCmdEndRenderPass(commands);
-        if (images != nullptr) {
-            images->fresh.store(false, std::memory_order_relaxed);
+        // THE PASS ENDS: the attachments stay in the rendering layout and the set's own record says so (see beginPass).
+        if (item.window) {
+            window->endPass(commands);
+        }
+        else {
+            images->endPass(owner.device_table, commands);
         }
     }
     if (!content_refused) {
@@ -1951,7 +1910,8 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
     // THE ONE THING THIS CALL MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN (see RenderFrameExecutor::prepareFrame and
     // ADR-2026-11-14): the builds that need a command buffer - the 1x1 stand-in and every material texture of a pass -
     // are recorded on one command buffer here, submitted on the device's own fence and waited for before this call
-    // answers. It is NOT a frame: no swapchain image is acquired, no render pass opens, nothing is drawn or presented,
+    // answers. It is NOT a frame: no swapchain image is acquired, no rendering instance opens, nothing is drawn or
+    // presented,
     // and `books.progress` does not move. The buffer is allocated LAZILY, on the first pass this device can serve: a
     // frame whose passes it cannot serve records nothing and therefore allocates nothing.
     VkCommandBuffer batch{ VK_NULL_HANDLE };
@@ -1996,16 +1956,14 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                 continue; // nothing drawn, nothing cleared: there is nothing to prepare
             }
 
-            VkRenderPass                                  render_pass   = VK_NULL_HANDLE;
-            std::uint32_t                                 color_count   = 0U;
+            // THE ATTACHMENT SET'S COMPATIBILITY (formats and colour count): what a pipeline is built for, and the only
+            // thing a pass needs to name - dynamic rendering states the attachments when the frame records them.
             vn::graphics::RenderPassCompatibility compatibility{};
             if (draw.target == nullptr) {
                 // A WINDOW PASS: its shape is known only once a swapchain exists - and preparing must not create one.
                 if (window == nullptr || !window->ready()) {
                     continue;
                 }
-                render_pass   = window->renderPass(false, false);
-                color_count   = 1U;
                 compatibility = window->compatibility();
             }
             else {
@@ -2028,9 +1986,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                     continue;
                 }
                 TargetObjects& images = *owner.target_table.lookup(draw.target);
-                render_pass   = images.renderPassFor(false, false);
-                color_count   = static_cast<std::uint32_t>(images.colorCount());
-                compatibility = images.compatibility();
+                compatibility         = images.compatibility();
             }
 
             // THE BATCH IS OPENED ON THE FIRST PASS THIS DEVICE CAN SERVE - the same condition the branch above just
@@ -2069,14 +2025,14 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                 ContentRefusal refusal;
                 if (description.kind == vn::graphics::DrawKind::Fullscreen) {
                     FrameHead::DrawPlan plan;
-                    (void)owner.caches.planDraw(description, draw, compatibility, render_pass, color_count, plan, refusal, cache_lock);
+                    (void)owner.caches.planDraw(description, draw, compatibility, plan, refusal, cache_lock);
                 }
                 else if (description.commands != nullptr) {
                     // ONE PLAN PER COMMAND, the same resolution the frame head runs (see ContentCaches::planDraw): a
                     // warm-up may not build something the frame would not ask for, and vice versa.
                     for (const vn::graphics::DrawItem& command : *description.commands) {
                         FrameHead::DrawPlan plan;
-                        (void)owner.caches.planDraw(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock, warmup_builds);
+                        (void)owner.caches.planDraw(command, draw, head_program.get(), compatibility, plan, refusal, cache_lock, warmup_builds);
                     }
                 }
                 if (refusal.isRefused()) {
@@ -2765,10 +2721,10 @@ bool Device::initialize()
     // CAPABILITIES ARE WHAT THIS BACKEND CAN SERVE, not what the device can do: M1 builds off-screen colour targets and
     // reads them back, and still presents nothing (M5).
 
-    // DEPTH RESOLVE IS THE DEVICE'S API VERSION (see Impl::depth_resolve_supported): the render pass that carries a
-    // `pDepthStencilResolveAttachment` is created with `vkCreateRenderPass2` under a
-    // `VkSubpassDescriptionDepthStencilResolve`, and both are Vulkan 1.2.
-    impl->depth_resolve_supported = properties.apiVersion >= VK_API_VERSION_1_2;
+    // DEPTH RESOLVE IS THE FLOOR'S (see Impl::depth_resolve_supported): a multisampled depth is resolved by the
+    // rendering instance's own attachment info, which is core in Vulkan 1.3 - the version `initialize` refuses to go
+    // below - so every device this backend comes up on can serve the shape.
+    impl->depth_resolve_supported = true;
 
     // THE DEVICE CLOCK (see FrameTiming): the frame's own pair to start; the per-pass boundaries are added by the first
     // frame that needs them, between frames (see ensureTimestampQueries).
@@ -2807,7 +2763,7 @@ bool Device::initialize()
     // it" are different facts, and so are "wide lines are allowed" and "how wide".
     impl->caps.limits.max_anisotropy          = impl->caps.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
     impl->caps.limits.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
-    // THE DEVICE'S OWN COUNT: an off-full-screen pass here can reference as many colour attachments as the render pass
+    // THE DEVICE'S OWN COUNT: an off-full-screen pass here can reference as many colour attachments as the device
     // takes, and capping that below what the device offers would be an amputation nothing in this backend needs.
     impl->caps.limits.max_color_attachments   = properties.limits.maxColorAttachments;
 
@@ -2956,7 +2912,7 @@ void Device::shutdown()
         // allocator, while the layouts it allocated against belong to the caches - so the borrowed half goes first.
         impl->session->scratch.destroy();
 
-        // Pipelines are keyed by render-pass COMPATIBILITY, so they hold no render-pass handle; destroying the content
+        // Pipelines are keyed by the attachment-set COMPATIBILITY, so they hold no render-pass handle; destroying the content
         // caches first is still the order that keeps teardown simple (the queue is idle, nothing names them).
         impl->caches.destroy();
 
@@ -3607,8 +3563,8 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
         return fail(ReadbackResult::Failed);
     }
 
-    // RECORD: colour attachment -> transfer source -> copy -> back, so the next frame's render pass finds the layout its
-    // render pass was built with (COLOR_ATTACHMENT_OPTIMAL).
+    // RECORD: colour attachment -> transfer source -> copy -> back, so the next pass into this target finds the colour
+    // where it expects it (COLOR_ATTACHMENT_OPTIMAL).
 
     // A target a SCREEN DRAW sampled is in SHADER_READ_ONLY: put every colour attachment back before this readback's
     // own transition names COLOR_ATTACHMENT_OPTIMAL as the old layout.
@@ -3754,8 +3710,7 @@ vn::graphics::ReadbackOutcome Device::readDepthBuffer(const vn::graphics::ImageR
         return fail(ReadbackResult::Failed);
     }
 
-    // RECORD: depth picture -> transfer source -> copy -> back to the one layout a render pass expects, so a later
-    // pass into this target finds its depth where its render pass was built to write it (DEPTH_ATTACHMENT).
+    // RECORD: depth picture -> transfer source -> copy -> back to the layout a later pass expects (DEPTH_ATTACHMENT).
 
     // A PASS THAT SAMPLED THIS DEPTH AS A SHADOW MAP left the picture in SHADER_READ_ONLY: put it back before this
     // readback's own transition names DEPTH_ATTACHMENT as the old layout (the mirror of readColorBuffer's

@@ -6,8 +6,8 @@
  *     above 1 on a device that can multisample at all - the number a host reads before it chooses `setSamples`.
  *   - THE PICTURE SURVIVES THE RESOLVE: a 64x64 RGBA8 + D24 target drawn with `samples = 4` (or the largest count
  *     the device offers) hands back the fragment stage's colour at the centre AND at a corner through
- *     `readColorBuffer`, which reads the RESOLVE image - so a target whose resolve never ran, or whose framebuffer
- *     names its attachments in the wrong order, answers the clear instead.
+ *     `readColorBuffer`, which reads the RESOLVE image - so a target whose resolve never ran, or whose pass attached
+ *     the sample buffers to the wrong location, answers the clear instead.
  *   - THE SAME FRAME, SINGLE-SAMPLED, IS THE SAME PICTURE: the two targets are drawn with one program and one
  *     camera, and the centre pixels must be equal - multisampling changes edges, never the colour of a covered pixel.
  *   - A COUNT THE DEVICE CANNOT BUILD IS REFUSED, NEVER LOWERED (ADR-2026-11-14): asking above the device's limit,

@@ -48,6 +48,9 @@ struct ImageState {
  *   is why it carries no access mask and only the top-of-pipe stage.
  * - `Present` is the only value whose layout belongs to the platform rather than to a queue operation, so it is the
  *   only one that names an extension-provided layout.
+ * - AN ATTACHMENT ROW STATES BOTH HALVES OF ITS ACCESS, read and write: under dynamic rendering there is no subpass
+ *   dependency to order a pass' LOAD (or its blend read) after the previous write, so a barrier that named only the
+ *   write would leave the read unordered (see `DynamicRendering`).
  *
  * @param usage What the image is used for (see `ImageLayout`).
  * @return The layout, stages and access mask for @p usage.

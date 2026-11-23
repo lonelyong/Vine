@@ -27,7 +27,7 @@ VN_BACKEND_VK_NS_BEGIN
  * - THE UPLOAD IS RECORDED, NOT SUBMITTED BY THIS CACHE. A texture is copied on a command buffer the CALLER records
  *   the first time a draw samples it (or when its revision moved), because this backend records and submits one frame
  *   synchronously - there is no upload queue to hand it to. Two callers exist, and they are the same copies: the
- *   frame's own command buffer (recorded outside each render pass, at the frame head), and the ONE transfer-only
+ *   frame's own command buffer (recorded outside each rendering instance, at the frame head), and the ONE transfer-only
  *   command buffer a warm-up submits of its own (see `RenderFrameExecutor::prepareFrame`). Staging buffers therefore
  *   stay alive until the command buffer that recorded them has completed - and each driver's are grouped in its own
  *   batch (@ref BatchId), so the frame that ends first never frees the staging of the frame that is still recording.

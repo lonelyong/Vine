@@ -8,6 +8,7 @@
 #include <volk.h>
 
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/DynamicRendering.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/WindowPresentTarget.hpp>
@@ -29,15 +30,16 @@ struct WindowDevice {
 };
 
 /**
- * @brief A window's swapchain on the direct-Vulkan backend: the surface, its images, one render pass and the
- *        per-image framebuffers.
+ * @brief A window's swapchain on the direct-Vulkan backend: the surface, its images and the depth they are drawn with.
  *
  * @details
  * - ONE LIVE TARGET PER WINDOW, which is the platform constraint `WindowPresentTarget` states: the device hands one
  *   out (see `Device::createSurfaceTarget`) and refuses a second for the same handle.
  * - WHAT IT OWNS. The `VkSurfaceKHR` (created through the device's window system; Win32 uses the host module), the
- *   swapchain and its images/views, one D24 depth image, TWO render passes (colour CLEAR / colour LOAD - a load op is
- *   not part of compatibility) and one framebuffer per swapchain image.
+ *   swapchain and its images/views, and one D24 depth image shared by every acquired image.
+ * - NO RENDER PASS, NO FRAMEBUFFER. Dynamic rendering states the attachments on the command buffer, so a window pass
+ *   needs only the acquired image, the depth image and the layout each one is in - which is why this class records its
+ *   own attachment transitions (see @ref beginPass) instead of owning a family of render passes.
  * - WHAT IT BORROWS. The `VkInstance`, `VkDevice` and queue: the device owns them and hands the target a
  *   borrowed `WindowDevice` (see @ref attach), so the target never destroys what it did not make. The CONNECTION a
  *   surface is created on is borrowed the same way, from the device's `WindowSystem` - one per session, outliving
@@ -87,7 +89,7 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      */
     [[nodiscard]] bool attach(const WindowDevice& device, vn::String* why);
 
-    /** @brief Answers whether a swapchain and its render passes currently exist. */
+    /** @brief Answers whether a swapchain and its images currently exist. */
     [[nodiscard]] bool ready() const noexcept;
 
     /**
@@ -117,11 +119,32 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      */
     [[nodiscard]] bool acquire(vn::String* why);
 
-    /** @brief Gets the render pass a window pass records with (colour and depth load ops as stated). */
-    [[nodiscard]] VkRenderPass renderPass(bool load_color, bool load_depth) const noexcept;
+    /**
+     * @brief Records the acquired image's and the depth image's attachment transitions, then opens the rendering instance.
+     *
+     * @details
+     * - THE TWO LAYOUTS THIS TARGET TRACKS (see the class note): the ACQUIRED IMAGE is in `PRESENT_SRC_KHR` after it was
+     *   presented, in `UNDEFINED` on its first use, and in the colour attachment layout between two passes of one frame;
+     *   the shared DEPTH image is `UNDEFINED` on its first use and a depth attachment afterwards. A per-image record is
+     *   what makes "the first use" exact - a swapchain image the presentation engine has never handed out is not the
+     *   one that was presented last frame.
+     * - THE LOAD POLICY IS THE PASS' OWN (see `ClearPolicy`'s two independent dimensions): the first pass into an image
+     *   that has no earlier pass this frame CLEARs, and a later pass keeps what the earlier one wrote unless it asks to
+     *   reset an attachment.
+     *
+     * @param commands The command buffer being recorded (outside any rendering instance).
+     * @param load     The pass' load policy and clear values (one colour attachment, one depth attachment).
+     *
+     * @warning The caller acquired an image first (@ref acquire) and ends the pass with @ref endPass.
+     */
+    void beginPass(VkCommandBuffer commands, const PassLoad& load);
 
-    /** @brief Gets the framebuffer of the acquired image. */
-    [[nodiscard]] VkFramebuffer framebuffer() const noexcept;
+    /**
+     * @brief Closes the rendering instance @ref beginPass opened.
+     *
+     * @param commands The command buffer the pass was recorded into.
+     */
+    void endPass(VkCommandBuffer commands) const noexcept;
 
     /** @brief Gets the acquired image's index (valid between @ref acquire and @ref present). */
     [[nodiscard]] std::uint32_t imageIndex() const noexcept;
@@ -143,12 +166,14 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      * @brief Records the transition from the attachment layout to the one presenting requires.
      *
      * @details
-     * - Called by the device after the window's last pass, before the command buffer ends: the render passes leave
-     *   the image in `COLOR_ATTACHMENT_OPTIMAL`, and `vkQueuePresentKHR` needs `PRESENT_SRC_KHR`.
+     * - Called by the device after the window's last pass, before the command buffer ends: the passes leave the image in
+     *   `COLOR_ATTACHMENT_OPTIMAL`, and `vkQueuePresentKHR` needs `PRESENT_SRC_KHR`.
+     * - IT UPDATES THE BOOKKEEPING: the acquired image is then in the present layout, which is what the next acquire of
+     *   that image states as its starting point (see @ref beginPass).
      *
-     * @param commands The command buffer the frame is being recorded into (outside any render pass).
+     * @param commands The command buffer the frame is being recorded into (outside any rendering instance).
      */
-    void recordPresentTransition(VkCommandBuffer commands) const;
+    void recordPresentTransition(VkCommandBuffer commands);
 
     /** @brief Presents the acquired image (the submit that produced it must have completed). */
     [[nodiscard]] vn::graphics::PresentOutcome present() override;

@@ -8,6 +8,7 @@
 
 #include <volk.h>
 
+#include <vine/backend_vk/internal/DynamicRendering.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/TargetPlan.hpp>
@@ -15,41 +16,45 @@
 VN_BACKEND_VK_NS_BEGIN
 
 /**
- * @brief The render-pass key every target of this backend states: one subpass, no structure variants.
+ * @brief The render-pass key every target of this backend states: one attachment set, no structure variants.
  *
  * @details
- * - This backend builds render passes with exactly one subpass, so every pair of its passes that agrees
- *   on formats/depth/samples is compatible - and one non-zero class states that. 0 is RenderPassKey's
- *   "not stated", which a plan that never learned the shape keeps; the two must not compare equal.
+ * - This backend's passes each render into ONE attachment set in one instance, so every pair of its targets that agrees
+ *   on formats/depth/samples is compatible - and one non-zero class states that. 0 is RenderPassKey's "not stated",
+ *   which a plan that never learned the shape keeps; the two must not compare equal.
+ * - THE KEY SURVIVES DYNAMIC RENDERING. It is a PIPELINE cache key fact (the attachment set a pipeline was built for),
+ *   not a `VkRenderPass` handle: since Vulkan 1.3 states the attachments on the command buffer, the set is named by
+ *   the compatibility the key belongs to (see `ContentCaches` and `DynamicRendering`).
  */
 inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
 
 /**
- * @brief One off-screen target's Vulkan objects: the images a pass draws into, the render passes it can run in, and
- *        the framebuffer that binds them.
+ * @brief One off-screen target's Vulkan objects: the images a pass draws into and the layouts they are in.
  *
  * @details
- * - WHAT IT OWNS AND WHAT IT DOES NOT. It owns the images, their memory, their views, TWO render-pass variants (depth
- *   CLEAR and depth LOAD - a load op is not part of render-pass compatibility, so one framebuffer serves both) and
- *   the framebuffer. It does NOT own the `RenderTarget` it was built for (the host owns that) and it does not decide
- *   WHEN to rebuild: the device asks `planTarget` and calls @ref buildTarget / @ref resizeTarget accordingly.
- * - SHAPE VS EXTENT. The ATTACHMENT SET (colour formats, depth format, sample count) decides what the render pass is
- *   and therefore what a pipeline is compatible with; the EXTENT decides only the images and the framebuffer. That
- *   split is what lets a resize keep the render pass - and every pipeline compiled against it - alive
- *   (`TargetAction::ResizeInPlace`, see `planTarget`).
- * - MRT. Every colour attachment is built, cleared and read back on its own; the render pass' subpass references them
- *   in order, which is the order a fragment's output locations write.
+ * - WHAT IT OWNS AND WHAT IT DOES NOT. It owns the images, their memory and their views. It does NOT own the
+ *   `RenderTarget` it was built for (the host owns that) and it does not decide WHEN to rebuild: the device asks
+ *   `planTarget` and calls @ref buildTarget / @ref resizeTarget accordingly.
+ * - NO RENDER PASS, NO FRAMEBUFFER. Dynamic rendering (Vulkan 1.3) states the attachments on the command buffer, so
+ *   the set is exactly its images plus the layout each one holds (see @ref beginPass, and `DynamicRendering`). A load
+ *   op is no longer a structure variant at all: it is one field of the pass' `VkRenderingAttachmentInfo`, which is
+ *   what lets a HUD pass keep the picture and clear its own depth without a fourth render pass.
+ * - SHAPE VS EXTENT. The ATTACHMENT SET (colour formats, depth format, sample count) decides what a pipeline is
+ *   compatible with; the EXTENT decides only the images. That split is what lets a resize keep every pipeline
+ *   compiled for the shape alive (`TargetAction::ResizeInPlace`, see `planTarget`).
+ * - MRT. Every colour attachment is built, cleared and read back on its own; the rendering info references them in
+ *   order, which is the order a fragment's output locations write.
  * - MULTISAMPLING IS A SHAPE FACT, AND IT ADDS A SECOND IMAGE PER ATTACHMENT. A target whose shape says `samples > 1`
- *   is drawn into MULTISAMPLED colour images and the render pass RESOLVES them into single-sample ones at the end of
- *   its subpass. `colors` / `color_views` are then the RESOLVE images - the picture this device hands out, which is
- *   what a full-screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
+ *   is drawn into MULTISAMPLED colour images and RESOLVES them into single-sample ones when the rendering instance
+ *   ends. `colors` / `color_views` are then the RESOLVE images - the picture this device hands out, which is what a
+ *   full-screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
  *   `multisample_color_views` are the sample buffers, which nothing samples and nothing reads back. The DEPTH is
  *   resolved the same way into `depth_resolve` / `depth_resolve_view` (`sample0`, so multisampling cannot change the
  *   depth a later pass tests against): `depthPicture()` / `depthPictureView()` name whichever depth image is the
  *   PICTURE - the resolve one on a multisampled target, the attachment itself otherwise - and that is what a shader
  *   samples and what a borrower attaches.
  * - DEPTH-ONLY IS A SHAPE. A target with a depth attachment and no colour attachment is the engine's SHADOW MAP and
- *   builds like any other (the render pass simply references no colour attachment, and a fragment's outputs are
+ *   builds like any other (the rendering info references no colour attachment, and a fragment's outputs are
  *   discarded); a target with neither attachment is not a target.
  * - MEMORY IS A SLICE OF THE DEVICE'S POOL. Each image asks the device's MemoryAllocator for a range (see MemorySlice)
  *   and binds it at that offset, so a scene with hundreds of targets reaches the driver a handful of times instead of
@@ -71,15 +76,15 @@ struct TargetObjects {
     vn::graphics::TargetDesc desc{};
 
     /// THE PICTURE, one per colour attachment: the single-sample image a later pass samples, a readback copies and a
-    /// single-sampled pass draws into - and, on a multisampled target, the RESOLVE image the render pass writes at the
-    /// end of its subpass. Nothing here is ever drawn into directly while `isMultisampled()` is true.
+    /// single-sampled pass draws into - and, on a multisampled target, the RESOLVE image the rendering instance writes
+    /// when it ends. Nothing here is ever drawn into directly while `isMultisampled()` is true.
     std::vector<VkImage>        colors{};
     std::vector<MemorySlice>    color_memory{};
     std::vector<VkImageView>    color_views{};
 
     /// THE SAMPLE BUFFERS, one per colour attachment, EMPTY on a single-sampled target: the images a multisampled
-    /// pass draws into, whose content the render pass resolves into `colors`. They carry no sampled or transfer usage
-    /// because nothing reads them; the resolve is the only way out of them.
+    /// pass draws into, whose content the rendering instance resolves into `colors`. They carry no sampled or transfer
+    /// usage because nothing reads them; the resolve is the only way out of them.
     std::vector<VkImage>        multisample_colors{};
     std::vector<MemorySlice>    multisample_color_memory{};
     std::vector<VkImageView>    multisample_color_views{};
@@ -89,50 +94,35 @@ struct TargetObjects {
     MemorySlice    depth_memory{};
     VkImageView    depth_view{ VK_NULL_HANDLE };
 
-    /// The single-sample depth PICTURE of a multisampled target (see the class note): the render pass resolves the
-    /// depth into it, a shader samples it and a borrower attaches it. Empty on a single-sampled target, where
+    /// The single-sample depth PICTURE of a multisampled target (see the class note): the rendering instance resolves
+    /// the depth into it, a shader samples it and a borrower attaches it. Empty on a single-sampled target, where
     /// `depth` already is the picture.
     VkImage        depth_resolve{ VK_NULL_HANDLE };
     MemorySlice    depth_resolve_memory{};
     VkImageView    depth_resolve_view{ VK_NULL_HANDLE };
 
     /// True when the depth attachment is ANOTHER target's image (see RenderTarget::shareDepth): `depth`,
-    /// `depth_memory` and `depth_view` stay null and the framebuffer binds @ref borrowed_depth_view instead. The
-    /// shape still states a depth format - the LENDER's, which is what the render pass is built with - and every
-    /// variant LOADs that depth, because a pass may not clear an image an earlier pass wrote.
+    /// `depth_memory` and `depth_view` stay null and the pass attaches @ref borrowed_depth_view instead. The shape
+    /// still states a depth format - the LENDER's, which is what a pipeline is built with - and every pass LOADs that
+    /// depth, because a pass may not clear an image an earlier pass wrote.
     bool depth_borrowed{ false };
-    /// The view a borrowing target's framebuffer attaches: the lender's `depthPictureView()` as it was when this one
-    /// was built. NOT owned here - the lender's record owns the image, and this target is rebuilt whenever that
-    /// picture moves (see TargetTable::ensure), so the value can never outlive what it names.
+    /// The view a borrowing target's pass ATTACHES: the lender's `depthPictureView()` as it was when this one was built.
+    /// NOT owned here - the lender's record owns the image, and this target is rebuilt whenever that picture moves (see
+    /// TargetTable::ensure), so the value can never outlive what it names.
     VkImageView borrowed_depth_view{ VK_NULL_HANDLE };
 
-    /// The render pass whose depth attachment is CLEARed (the first pass into a fresh target).
-    VkRenderPass render_pass{ VK_NULL_HANDLE };
-    /// The variant whose depth attachment is LOADed (a pass that preserves the depth an earlier pass wrote); null for
-    /// a colour-only target, where the two variants are the same thing.
-    VkRenderPass render_pass_load_depth{ VK_NULL_HANDLE };
-    /// The variant that LOADs every attachment, for a pass that announces no clear at all (a full-screen pass): colour and
-    /// depth keep what earlier passes wrote. Only valid on a NON-fresh attachment set.
-    VkRenderPass render_pass_load{ VK_NULL_HANDLE };
-    /// The variant that LOADs the COLOUR and CLEARs the depth: a HUD pass that keeps the picture it is drawn over and
-    /// owns the depth inside its rectangle (see ClearPolicy's two independent dimensions). Null for a target that
-    /// cannot express it - a depth-only one (no colour to load) or one whose depth is BORROWED (it may never clear).
-    VkRenderPass render_pass_load_color{ VK_NULL_HANDLE };
-    /// Binds the attachments IN THE ORDER the render pass declares them: every sample buffer, then (on a multisampled
-    /// target) every resolve image, then the depth view when present. Compatible with ALL render-pass variants.
-    VkFramebuffer framebuffer{ VK_NULL_HANDLE };
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
-    /// the depth is given the CLEAR variant instead (loading an image nobody wrote is meaningless and invalid).
+    /// an attachment is given CLEAR instead (loading an image nobody wrote is meaningless and invalid).
     /// ATOMIC because the frame body is its only writer and takes no lock (see the class note); relaxed is enough -
     /// every decision a reader outside the gate takes from it is a hint that the gate re-checks.
     std::atomic<bool> fresh{ true };
     /// True after a full-screen draw sampled this target: its colour images (the PICTURE - the resolve images on a
-    /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the device transitions them back before the
-    /// next pass writes them (or before a readback reads them).
+    /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the next pass moves them back before it writes
+    /// them (or before a readback reads them).
     bool color_sampled{ false };
     /// True after a pass sampled this target as a SHADOW MAP: its depth PICTURE (see `depthPicture`) is then in
-    /// `SHADER_READ_ONLY_OPTIMAL`, and the device transitions it back before the next pass writes the depth (the
-    /// same rule `color_sampled` follows, on the other attachment).
+    /// `SHADER_READ_ONLY_OPTIMAL`, and the next pass moves it back before it writes the depth (the same rule
+    /// `color_sampled` follows, on the other attachment).
     bool depth_sampled{ false };
 
     /** @brief Gets the target width in pixels. */
@@ -203,7 +193,7 @@ struct TargetObjects {
         return depth_borrowed;
     }
 
-    /** @brief Gets the DEPTH VIEW a framebuffer attaches: the owned one, or the lender's when this target borrows. */
+    /** @brief Gets the DEPTH VIEW a pass ATTACHES: the owned one, or the lender's when this target borrows. */
     [[nodiscard]] VkImageView depthAttachmentView() const noexcept
     {
         return depth_borrowed ? borrowed_depth_view : depth_view;
@@ -228,43 +218,31 @@ struct TargetObjects {
     }
 
     /**
-     * @brief Gets the ATTACHMENT INDEX the depth occupies in the render pass and in the framebuffer.
+     * @brief Records this set's attachment transitions and opens the rendering instance a pass draws into.
      *
      * @details
-     * - The attachment array is [sample buffers..., colour resolve images..., depth, depth resolve], so the depth's
-     *   index is the number of COLOUR slots - and a clear-value array (indexed by attachment, see
-     *   `VkRenderPassBeginInfo`) has to agree with it, or a multisampled pass would clear the depth with the resolve's
-     *   slot. The depth RESOLVE image (when there is one) is the slot right after the depth, which is why a clear-value
-     *   array sized to this index still names the highest LOAD_OP_CLEAR attachment.
-     * - The colour slots' own count is this index: `colorCount()` on a single-sampled target, twice that when the
-     *   attachments are resolved.
+     * - THE 1.3 REPLACEMENT for the render pass variant this record used to own: the attachments and their load ops are
+     *   stated on the command buffer (see `DynamicRendering::beginRendering`), and the layouts it transitions FROM are
+     *   this record's own bookkeeping - `fresh` (nothing has been written yet), `color_sampled` / `depth_sampled` (a
+     *   reader sampled the picture last time, so it is in `SHADER_READ_ONLY_OPTIMAL`), the attachment layout otherwise.
+     * - IT UPDATES THAT BOOKKEEPING: after the call every attachment is in the rendering layout and has been written,
+     *   so `fresh` becomes false and both sampled bits clear. The pass is expected to end with @ref endPass.
+     * - A BORROWED DEPTH IS ALWAYS LOADED (see RenderTarget::shareDepth): the caller's @p load states the policy for
+     *   THIS target's own attachments, and a target whose depth belongs to another one may never clear it.
      *
-     * @return The depth attachment's index, or the colour slot count when the target has no depth.
+     * @param table    The device's entry points (volk table).
+     * @param commands The command buffer being recorded (outside any rendering instance).
+     * @param load     The pass' load policy - one answer per attachment (see ClearPolicy).
      */
-    [[nodiscard]] std::size_t depthAttachmentIndex() const noexcept
-    {
-        return colorCount() * (isMultisampled() ? 2U : 1U);
-    }
+    void beginPass(const VolkDeviceTable& table, VkCommandBuffer commands, const PassLoad& load);
 
-    /** @brief Gets the render pass that serves a pass' two load ops, one per attachment (see the variants above). */
-    ///
-    /// The four combinations are the four statements a clear policy can make. A variant a target could not build (a
-    /// depth-only target has no colour to load, a borrower may never clear its depth) falls back to the CLEAR pass,
-    /// which is the safe answer: it erases what a LOAD would have had to name, and a target that cannot express the
-    /// request has already been reported by the compiler.
-    [[nodiscard]] VkRenderPass renderPassFor(bool load_depth, bool load_color) const noexcept
-    {
-        if (load_color) {
-            if (load_depth) {
-                return render_pass_load != VK_NULL_HANDLE ? render_pass_load : render_pass;
-            }
-            return render_pass_load_color != VK_NULL_HANDLE ? render_pass_load_color : render_pass;
-        }
-        if (load_depth) {
-            return render_pass_load_depth != VK_NULL_HANDLE ? render_pass_load_depth : render_pass;
-        }
-        return render_pass;
-    }
+    /**
+     * @brief Closes the rendering instance @ref beginPass opened (see `DynamicRendering::endRendering`).
+     *
+     * @param table    The device's entry points (volk table).
+     * @param commands The command buffer the pass was recorded into.
+     */
+    void endPass(const VolkDeviceTable& table, VkCommandBuffer commands) const noexcept;
 
     /** @brief Gets the pipeline compatibility of this target (the value its description states). */
     [[nodiscard]] vn::graphics::RenderPassCompatibility compatibility() const noexcept
@@ -318,12 +296,13 @@ struct TargetObjects {
 [[nodiscard]] VkImageAspectFlags depthAspectMask(VkFormat format) noexcept;
 
 /**
- * @brief Creates everything `images.desc` describes: render passes, images, views and the framebuffer.
+ * @brief Creates everything `images.desc` describes: the images and their views.
  *
  * @details
  * - `desc.width` / `height` and the shape must be set first; they are the description the objects are built for.
  * - A shape whose `samples` is above 1 builds the multisampled attachments AND their single-sample resolve images (see
- *   the class note): the render pass resolves the colour into `colors`, and the framebuffer lists both sets.
+ *   the class note): the rendering instance resolves the colour into `colors`, and states the resolve on each sample
+ *   buffer's attachment info.
  * - On failure the function destroys whatever it made and answers false, so the caller never holds a half-built target
  *   (the same rule the device's `initialize` follows).
  *
@@ -336,11 +315,11 @@ struct TargetObjects {
 [[nodiscard]] bool buildTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetObjects& images);
 
 /**
- * @brief Rebuilds the images, views and framebuffer for a new EXTENT, keeping the render passes.
+ * @brief Rebuilds the images and views for a new EXTENT, keeping the shape.
  *
  * @details
- * - This is `TargetAction::ResizeInPlace`: the shape did not change, so the render passes (and every pipeline
- *   compiled against them) stay; only what the extent decides is replaced.
+ * - This is `TargetAction::ResizeInPlace`: the shape did not change, so every pipeline compiled for it stays valid;
+ *   only what the extent decides is replaced.
  * - On failure the target is left with no attachments (and no stale objects), so the caller reports and retries later.
  *
  * @param table     The device's entry points (volk table).
@@ -352,7 +331,7 @@ struct TargetObjects {
 [[nodiscard]] bool resizeTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetObjects& images);
 
 /**
- * @brief Destroys every object `images` holds (idempotent), including the render passes and the description.
+ * @brief Destroys every object `images` holds (idempotent), including the images and the description.
  *
  * @param table     The device's entry points (volk table).
  * @param device    The logical device.

@@ -82,7 +82,7 @@ class VN_BACKEND_VK_API TargetTable final {
      */
     struct Limits {
         std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT }; ///< The counts both attachments offer.
-        bool          depth_resolve_supported{ false };                 ///< Vulkan 1.2's depth/stencil resolve.
+        bool          depth_resolve_supported{ false };                 ///< A multisampled depth can be resolved.
     };
 
     /**
@@ -218,7 +218,7 @@ class VN_BACKEND_VK_API TargetTable final {
      *
      * @details
      * - `planTarget` decides Reuse / ResizeInPlace / Rebuild; the borrow edge is compared as well, because a target
-     *   that started or stopped borrowing has a different framebuffer to bind.
+     *   that started or stopped borrowing has a different depth view to attach.
      * - A request this device cannot serve (a sample count it does not offer, a multisampled depth, a borrow from a
      *   target it has not built) is REFUSED with one warning naming the request and the limit, and nothing is
      *   created - the pass naming it is skipped, and `readColorBuffer` answers NotReady.

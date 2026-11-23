@@ -5,7 +5,7 @@
  * What each case pins:
  *   - MRT: every colour attachment is its own image, cleared to its OWN colour (`ClearPolicy::extra_colors`) and
  *     written by its own fragment output location - two facts a single-attachment target cannot tell apart;
- *   - RESIZE: an extent change replaces the images and the framebuffer but not the render passes, so the pipeline is
+ *   - RESIZE: an extent change replaces the images but not the SHAPE (formats, depth, samples), so the pipeline is
  *     REUSED (`Device::contentPipelines()` does not move); a SHAPE change does rebuild it. That is `planTarget`'s
  *     ResizeInPlace vs Rebuild, observed from outside;
  *   - DEPTH: the default pass policy tests and writes depth (the SDK projection puts the near plane at clip z = -1,

@@ -111,8 +111,8 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @brief Records one CONTENT draw description's commands into @p commands.
      *
      * @details
-     * - Must run INSIDE the render pass that names the target, because it records drawing commands. Everything it
-     *   draws with arrives as the frame head's plans: this call creates nothing, uploads nothing and takes no lock.
+     * - Must run INSIDE the rendering instance that names the target, because it records drawing commands. Everything
+     *   it draws with arrives as the frame head's plans: this call creates nothing, uploads nothing and takes no lock.
      * - The viewport is the pass' rectangle, or the whole of the target when the pass states none.
      * - The STATE was resolved per command (`resolveRenderState`) when the plan was made, and EVERY item of it is a
      *   command here: cull/front face, polygon mode, depth test/write/compare (reverse-Z), blend enable and factors,
@@ -129,7 +129,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - THE CONSTANTS GO INTO THE DRIVER'S RING (see FrameScratch): one slice per call, bound as dynamic offsets, and
      *   a full ring skips the draw and grows before the next frame rather than growing in place.
      *
-     * @param commands        The command buffer being recorded (inside a render pass).
+     * @param commands        The command buffer being recorded (inside a rendering instance).
      * @param width           The target's width in pixels.
      * @param height          The target's height in pixels.
      * @param draw            The draw to record (borrowed for the call).
@@ -167,9 +167,9 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - The pass' state becomes commands exactly as a content draw's does (reverse-Z, culling, blend - all dynamic);
      *   a full-screen draw writes its rectangle, and a multi-attachment target never blends (the content rule).
      * - The source's images must already be in `SHADER_READ_ONLY_OPTIMAL`: the device records that transition before
-     *   the destination's render pass begins, where an image barrier is unambiguously allowed.
+     *   the destination's rendering instance begins, where an image barrier is unambiguously allowed.
      *
-     * @param commands          The command buffer being recorded (inside the destination's render pass).
+     * @param commands          The command buffer being recorded (inside the destination's rendering instance).
      * @param width             The destination's width in pixels.
      * @param height            The destination's height in pixels.
      * @param draw              The full-screen draw (its fragment program and camera are read; borrowed).

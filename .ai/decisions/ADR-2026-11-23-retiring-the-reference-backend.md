@@ -248,3 +248,27 @@ filled frame AND creates no pipeline - dropping `vkCmdSetPolygonModeEXT` made bo
 `VkContentDrawTest.AStateChangeIsACommandNotAPipeline` (blend on/off, pixel-checked, no compile - dropping
 `vkCmdSetColorBlendEnableEXT` turned the mix into a replace). `test_vk` 176 cases / 42 suites, `test_vsg` 576,
 `test_graphics` 639. Steps 2-4 (`T11`, `T58`, the deletion) remain.
+
+## Amendment 2026-11-23 - D4 step 2 landed (dynamic rendering)
+
+`T11` is in: `gfx_backend_vk` has no `VkRenderPass` and no `VkFramebuffer` left. A pass opens a dynamic-rendering
+instance (`vkCmdBeginRendering`) over its attachment set, load ops / clear values / resolves are per-attachment fields
+(colour `AVERAGE`, depth `SAMPLE_ZERO`), and pipelines are created with `VkPipelineRenderingCreateInfo` and
+`renderPass = VK_NULL_HANDLE` from the attachment FORMATS of their compatibility. The four load-op render-pass variants
+and the window's four variants are gone; the HUD case is now one field pair.
+
+What the record's promise table said had to survive, and did: the attachment set is still the SHAPE (formats, samples),
+so a resize recompiles nothing; a borrowed depth is still always LOADed (the borrower may never clear the lender's
+image - `TargetObjects::beginPass` states the override, and
+`VkContentTargetTest.ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovered` was red while it was missing);
+MSAA depth still resolves with `sample0`.
+
+The witness for the NEW requirement dynamic rendering introduces: deleting the per-attachment transition in
+`DynamicRendering::beginRendering` turns seventeen `test_vk` cases red, every one citing
+`VUID-vkCmdBeginRendering-pRenderingInfo-09592` (the view is not in the layout the attachment info states) - the
+implicit `initialLayout` a render pass gave is now the recorder's job, and the suite proves it is done. The window's
+per-image layout record has its own witness: the frame loop added to
+`VkWindowPresentTest.AWindowFrameIsDrawnAndPresented` forces a presented image to be acquired again, and recording the
+wrong post-present layout there makes the device report validation errors.
+`test_vk` 176 cases / 42 suites, `test_vsg` 576, `test_graphics` 639; ten gates green. Steps 3-4 (`T58`, the deletion)
+remain.

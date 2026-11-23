@@ -17,13 +17,18 @@ ImageState stateOf(const ImageLayout usage) noexcept
                            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                            0 };
     case ImageLayout::ColorAttachment:
+        // READ AND WRITE: a pass both writes the attachment and reads it (a LOAD op, a blend against the destination).
+        // The read half is stated here because dynamic rendering inserts no subpass dependency: a barrier whose dst
+        // access names only the write does not order the LOAD that follows it (see DynamicRendering::beginRendering).
         return ImageState{ VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                           VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT };
+                           VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT };
     case ImageLayout::DepthAttachment:
+        // READ AND WRITE for the same reason as the colour row: the depth TEST reads the attachment and the write mask
+        // writes it, and a pass that LOADs a depth an earlier pass wrote needs the read in the destination scope.
         return ImageState{ VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                           VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT };
+                           VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT };
     case ImageLayout::ShaderReadOnly:
         return ImageState{ VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,

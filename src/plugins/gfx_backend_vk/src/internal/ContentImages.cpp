@@ -625,11 +625,11 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
     if (found != impl->textures.end() && found->second.revision == texture.revision()) {
         return found->second.view;
     }
-    // A NEW revision needs a copy, and a copy may not be recorded inside a render pass: the device prepared the pass'
+    // A NEW revision needs a copy, and a copy may not be recorded inside a rendering instance: the device prepared the pass'
     // textures first (preparePass). Reaching here without a command buffer means that step was skipped.
     if (commands == VK_NULL_HANDLE) {
         if (why != nullptr) {
-            *why = vn::String(u8"vk: a material texture was not prepared before its render pass began");
+            *why = vn::String(u8"vk: a material texture was not prepared before its rendering instance began");
         }
         return VK_NULL_HANDLE;
     }
@@ -728,7 +728,7 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
     }
     if (commands == VK_NULL_HANDLE) {
         if (why != nullptr) {
-            *why = vn::String(u8"vk: the 1x1 fallback image was not prepared before the render pass began");
+            *why = vn::String(u8"vk: the 1x1 fallback image was not prepared before the rendering instance began");
         }
         return false;
     }

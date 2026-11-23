@@ -194,6 +194,22 @@ another row's stages; `recordBarrier` is the single place the sync2 command is n
 - Dynamic rendering is the next step of the same batch (`T11`); until it lands, pass objects are still `VkRenderPass`,
   which the 1.3 floor permits.
 
+**The same day, step 2: vk draws through dynamic rendering** (`BC-39`; `ADR-2026-11-23` D4, backlog `T11`).
+`gfx_backend_vk` has no `VkRenderPass` and no `VkFramebuffer` any more. A pass opens a dynamic-rendering instance
+(`vkCmdBeginRendering`) over its attachment set; the load ops, the clear values and the MSAA resolves (colour
+`AVERAGE`, depth `SAMPLE_ZERO`) are fields of the per-attachment `VkRenderingAttachmentInfo`, and a pipeline is built
+with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the attachment FORMATS of its compatibility.
+
+- What a host must change: nothing. The SDK never named a render pass; `RenderPassKey` / `RenderPassCompatibility`
+  keep their names and meaning - they are the pipeline's shape identity, not a Vulkan handle.
+- What a backend author must know: dynamic rendering inserts NO dependency and states NO layout. Every pass records its
+  own attachment transitions (one barrier per attachment, from the layout its owner tracks to the rendering layout),
+  and a barrier between two identical states is deliberate - it is the execution dependency a render pass used to
+  provide. The trap, its VUID and the mutation that proves the transitions load-bearing are `vk-backend.md` `P15`.
+- What it bought: one load policy per attachment instead of a render-pass variant, so the HUD case (keep the picture,
+  clear only the depth inside its rectangle) and the MSAA resolve pair are values rather than structures - and the last
+  legacy creation call in the backend is gone.
+
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
 

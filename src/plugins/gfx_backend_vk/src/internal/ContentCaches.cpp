@@ -15,6 +15,7 @@
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -667,6 +668,12 @@ struct ContentCaches::Impl {
     /**
      * @brief Gets (or builds) one graphics pipeline from a fully stated key and its shader/vertex-input data.
      *
+     * @details
+     * - THE PIPELINE IS BUILT FOR DYNAMIC RENDERING: `renderPass` is `VK_NULL_HANDLE` and `VkPipelineRenderingCreateInfo`
+     *   states the attachment formats instead. Those formats are the key's COMPATIBILITY - the same value every target
+     *   of that shape states - so the count, the colour formats and the depth/stencil format cannot disagree with the
+     *   set a pass will actually attach (a render pass handle could only say "a set like mine").
+     *
      * @param key               The cache key (the portable identity plus the state this device bakes).
      * @param vertex            The compiled vertex module.
      * @param vertex_entry      The vertex stage's entry point.
@@ -675,8 +682,6 @@ struct ContentCaches::Impl {
      * @param bindings          The vertex input bindings (empty for the full-screen triangle).
      * @param attributes        The vertex input attributes (empty for the full-screen triangle).
      * @param layout            The pipeline layout the program's descriptor sets agree with.
-     * @param render_pass       A render pass with the key's compatibility (used only when the pipeline is CREATED).
-     * @param color_attachments How many colour attachments the pass writes.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
      */
@@ -688,8 +693,6 @@ struct ContentCaches::Impl {
                                            const std::vector<VkVertexInputBindingDescription>&  bindings,
                                            const std::vector<VkVertexInputAttributeDescription>& attributes,
                                            VkPipelineLayout                                     layout,
-                                           VkRenderPass                                         render_pass,
-                                           std::uint32_t                                        color_attachments,
                                            vn::String&                                          why)
     {
         const auto found = pipelines.find(key);
@@ -744,7 +747,7 @@ struct ContentCaches::Impl {
         multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         // THE SAMPLE COUNT COMES FROM THE TARGET'S SHAPE, not from this file: a pipeline's rasterisation sample count
         // must equal the subpass' colour attachment count, and `compatibility` is the shape half of the key - so the
-        // same value the render pass was built with reaches the pipeline. The key compares it, which is why a
+        // same value the rendering instance states reaches the pipeline. The key compares it, which is why a
         // single-sample and a multisampled target never share one compiled pipeline.
         multisample.rasterizationSamples = StateMapping::sampleCount(key.identity.compatibility.samples);
 
@@ -755,10 +758,12 @@ struct ContentCaches::Impl {
         depth.depthWriteEnable = VK_FALSE;
         depth.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
 
-        // THE ATTACHMENT COUNT IS THE ONE STATIC FACT LEFT, because it is the blend state's array length (one entry per
-        // attachment the pass declares). Blend enable and the factors are DYNAMIC, so every entry carries the same
-        // neutral value; the count also reaches the recorder, which issues the per-attachment commands.
-        std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_attachments);
+        // THE ATTACHMENT COUNT IS THE COMPATIBILITY'S (see the note above): it is the blend state's array length (one
+        // entry per attachment the pass declares) AND the rendering info's colour count, because a dynamic-rendering
+        // pipeline is only valid for the set its format list describes. Blend enable and the factors remain DYNAMIC, so
+        // every entry carries the same neutral value and the recorder issues the per-attachment commands.
+        const std::vector<vn::graphics::DeviceFormat>& color_formats = key.identity.compatibility.device_color_formats;
+        std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_formats.size());
         for (VkPipelineColorBlendAttachmentState& attachment : blend_attachments) {
             attachment.blendEnable         = VK_FALSE;
             attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -809,8 +814,27 @@ struct ContentCaches::Impl {
         info.pColorBlendState    = &blend;
         info.pDynamicState       = &dynamic;
         info.layout              = layout;
-        info.renderPass          = render_pass;
-        info.subpass             = 0U;
+        // DYNAMIC RENDERING: no render pass to be compatible with, and the attachment formats say what the pipeline was
+        // built for (see the method note). `viewMask` stays 0 - no multiview.
+        std::vector<VkFormat> color_attachment_formats;
+        color_attachment_formats.reserve(color_formats.size());
+        for (const vn::graphics::DeviceFormat& format : color_formats) {
+            color_attachment_formats.push_back(static_cast<VkFormat>(format.code));
+        }
+        const VkFormat depth_format = static_cast<VkFormat>(key.identity.compatibility.device_depth_format.code);
+        VkPipelineRenderingCreateInfo rendering{};
+        rendering.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+        rendering.colorAttachmentCount    = static_cast<std::uint32_t>(color_attachment_formats.size());
+        rendering.pColorAttachmentFormats = color_attachment_formats.empty() ? nullptr : color_attachment_formats.data();
+        rendering.depthAttachmentFormat   = depth_format;
+        // A COMBINED DEPTH/STENCIL FORMAT STATES BOTH: the pipeline's stencil format is the same handle, which is what a
+        // rendering instance attaching that image uses for its depth AND stencil aspect.
+        rendering.stencilAttachmentFormat = depth_format != VK_FORMAT_UNDEFINED &&
+                                                    (depthAspectMask(depth_format) & VK_IMAGE_ASPECT_STENCIL_BIT) != 0U
+                                                ? depth_format
+                                                : VK_FORMAT_UNDEFINED;
+        info.renderPass          = VK_NULL_HANDLE;
+        info.pNext               = &rendering;
 
         // THE CACHE'S ONLY WITNESS (see setCreationFeedback): with feedback enabled the driver answers, per creation,
         // whether it served this pipeline out of the cache. The structure is chained when the device offers it; a
@@ -821,6 +845,8 @@ struct ContentCaches::Impl {
             feedback_info.sType                            = VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO;
             feedback_info.pPipelineCreationFeedback        = &overall_feedback;
             feedback_info.pipelineStageCreationFeedbackCount = 0U;
+            // THE RENDERING INFO IS THE TAIL OF THE CHAIN either way: feedback first, then the attachment formats.
+            feedback_info.pNext                            = &rendering;
             info.pNext                                     = &feedback_info;
         }
 
@@ -849,9 +875,7 @@ struct ContentCaches::Impl {
      * @param variant           The variant the program was compiled under (see ProgramVariant).
      * @param instanced         Whether the command reads an instance stream (one more binding at 12-15).
      * @param compatibility     The target's pipeline compatibility (the key's shape half).
-     * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
      * @param topology          The draw's effective topology (the SDK enum: the key carries it, the create-info maps it).
-     * @param color_attachments How many colour attachments the pass writes.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
      */
@@ -860,9 +884,7 @@ struct ContentCaches::Impl {
                                                    const ProgramVariant&                                 variant,
                                                    bool                                                  instanced,
                                                    const vn::graphics::RenderPassCompatibility& compatibility,
-                                                   VkRenderPass                                          render_pass,
                                                    vn::graphics::Topology                                topology,
-                                                   std::uint32_t                                         color_attachments,
                                                    vn::String&                                           why)
     {
         if (program.vertex == VK_NULL_HANDLE || program.fragment == VK_NULL_HANDLE) {
@@ -949,8 +971,6 @@ struct ContentCaches::Impl {
                              bindings,
                              attributes,
                              content_pipeline_layout,
-                             render_pass,
-                             color_attachments,
                              why);
     }
 
@@ -961,16 +981,12 @@ struct ContentCaches::Impl {
      * @param fragment          The compiled FRAGMENT program (its description is the key's program half).
      * @param vertex            The compiled full-screen vertex stage (see `screen_vertex`).
      * @param compatibility     The destination's pipeline compatibility.
-     * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
-     * @param color_attachments How many colour attachments the destination writes.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
      */
     [[nodiscard]] VkPipeline ensureScreenPipeline(const ProgramEntry&                                   fragment,
                                                   const ProgramEntry&                                   vertex,
                                                   const vn::graphics::RenderPassCompatibility& compatibility,
-                                                  VkRenderPass                                          render_pass,
-                                                  std::uint32_t                                         color_attachments,
                                                   vn::String&                                           why)
     {
         if (vertex.vertex == VK_NULL_HANDLE) {
@@ -996,8 +1012,6 @@ struct ContentCaches::Impl {
                              {},
                              {},
                              screen_pipeline_layout,
-                             render_pass,
-                             color_attachments,
                              why);
     }
 
@@ -1007,9 +1021,7 @@ struct ContentCaches::Impl {
      * @param command           The draw packet to resolve.
      * @param pass              The pass drawing it (its program override and state are read).
      * @param default_program   The program content without one of its own is drawn with, or null.
-     * @param compatibility     The target's pipeline compatibility.
-     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
-     * @param color_attachments How many colour attachments the pass writes.
+     * @param compatibility     The target's pipeline compatibility (the attachment formats AND colour count).
      * @param plan              Receives what was resolved (untouched when this answers false).
      * @param refusal           Receives the reason a command could not be resolved, with its code and category.
      * @param builds            This frame's admissions (see FrameBuilds).
@@ -1019,8 +1031,6 @@ struct ContentCaches::Impl {
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::ShaderProgramDescription*          default_program,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
-                                VkRenderPass                                           render_pass,
-                                std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
                                 ContentRefusal&                                        refusal,
                                 FrameBuilds&                                           builds)
@@ -1096,16 +1106,16 @@ struct ContentCaches::Impl {
         plan.resolved = vn::graphics::resolveRenderState(command.authored_state,
                                                          pass.state,
                                                          primitives[command.primitive_index].topology);
-        plan.color_attachments = color_attachments;
+        // THE COUNT IS THE COMPATIBILITY'S (see buildPipeline): the blend commands the recorder issues and the colour
+        // count the rendering instance states are the same number, because both are derived from this one value.
+        plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
         vn::String pipeline_why;
         plan.pipeline = ensureContentPipeline(*compiled,
                                               *geometry,
                                               variant,
                                               instanced,
                                               compatibility,
-                                              render_pass,
                                               plan.resolved.topology,
-                                              color_attachments,
                                               pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
@@ -1134,8 +1144,6 @@ struct ContentCaches::Impl {
      * @param draw              The full-screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
      * @param compatibility     The destination's pipeline compatibility.
-     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
-     * @param color_attachments How many colour attachments the destination writes.
      * @param plan              Receives what was resolved.
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @return true when the draw can be recorded.
@@ -1143,8 +1151,6 @@ struct ContentCaches::Impl {
     [[nodiscard]] bool planDraw(const vn::graphics::DrawPacket&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
-                                VkRenderPass                                           render_pass,
-                                std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
                                 ContentRefusal&                                        refusal)
     {
@@ -1181,18 +1187,16 @@ struct ContentCaches::Impl {
         // POLICY FORCED OFF. A full-screen packet is the canonical triangle at z = 0.0, which under this engine's
         // reverse-Z convention is the FAR plane: any depth test against what the destination carries discards every
         // fragment. The destinations that expose this are exactly the ones the reference backend's M4b rule names: a
-        // window pass' render pass clears D24 to 0 (far), and the deferred chain's composite BORROWS the G-buffer's
+        // window pass' depth attachment clears D24 to 0 (far), and the deferred chain's composite BORROWS the G-buffer's
         // depth. The pass' depth policy is about the CONTENT it draws into that target, not about this call.
         vn::graphics::PassRenderState screen_state = pass.state;
         screen_state.depth                         = vn::graphics::DepthPolicy::Disabled;
         plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, screen_state, vn::graphics::Topology::Triangles);
-        plan.color_attachments = color_attachments;
+        plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
         vn::String pipeline_why;
         plan.pipeline = ensureScreenPipeline(*fragment,
                                              *vertex,
                                              compatibility,
-                                             render_pass,
-                                             color_attachments,
                                              pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
@@ -1664,28 +1668,24 @@ bool ContentCaches::planDraw(const vn::graphics::DrawItem&                     c
                              const vn::graphics::PassDraw&                          pass,
                              const vn::graphics::ShaderProgramDescription*          default_program,
                              const vn::graphics::RenderPassCompatibility&  compatibility,
-                             const VkRenderPass                                     render_pass,
-                             const std::uint32_t                                    color_attachments,
                              FrameHead::DrawPlan&                                   plan,
                              ContentRefusal&                                        refusal,
                              const Lock&                                            held,
                              FrameBuilds&                                           builds)
 {
     (void)held; // the type is the proof; an unheld lock cannot be built outside this class (see Lock)
-    return impl->planDraw(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal, builds);
+    return impl->planDraw(command, pass, default_program, compatibility, plan, refusal, builds);
 }
 
 bool ContentCaches::planDraw(const vn::graphics::DrawPacket&                  draw,
                              const vn::graphics::PassDraw&                          pass,
                              const vn::graphics::RenderPassCompatibility&  compatibility,
-                             const VkRenderPass                                     render_pass,
-                             const std::uint32_t                                    color_attachments,
                              FrameHead::DrawPlan&                                   plan,
                              ContentRefusal&                                        refusal,
                              const Lock&                                            held)
 {
     (void)held; // see the content overload
-    return impl->planDraw(draw, pass, compatibility, render_pass, color_attachments, plan, refusal);
+    return impl->planDraw(draw, pass, compatibility, plan, refusal);
 }
 
 ContentCaches::Lock ContentCaches::lock() const
@@ -2017,7 +2017,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
 {
     (void)held;
     plan.slots = {};
-    // THE STAND-IN FIRST: it is what an absent slot binds, and its own copy has to be recorded before any render pass
+    // THE STAND-IN FIRST: it is what an absent slot binds, and its own copy has to be recorded before any rendering
     // begins - which is where this runs (the frame head, or a warm-up's transfer batch for preparePass). The stand-in
     // and the two samplers are the same for every call of one frame, so they land on the HEAD, not on the plan.
     vn::String why;

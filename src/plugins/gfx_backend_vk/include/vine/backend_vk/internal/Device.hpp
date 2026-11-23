@@ -15,7 +15,7 @@ VN_BACKEND_VK_NS_BEGIN
  *
  * @details
  * - WHAT IT IS. A `RenderBackend` implemented directly on Vulkan through volk: it owns one `VkInstance`, one
- *   `VkPhysicalDevice`, one `VkDevice` and one graphics queue, off-screen targets with their render passes, and (M2)
+ *   `VkPhysicalDevice`, one `VkDevice` and one graphics queue, off-screen targets with their attachment sets, and (M2)
  *   one content draw per `DrawItem` - a GLSL program compiled through glslang into a pipeline, the geometry's
  *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
  *   `vkCmdDrawIndexed`.
@@ -162,7 +162,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   so a frame that later names the target finds them built and builds nothing. A shape this device cannot build
      *   is reported once, on the call, and the announcement is not taken.
      *
-     * @param target Target the host will draw into, or null for the default framebuffer.
+     * @param target Target the host will draw into, or null for the window's acquired image.
      */
     void setRenderTarget(vn::graphics::RenderTarget* target) override;
 
@@ -171,8 +171,8 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @details
      * - WHAT IT FREES. Every attachment built for the target - the colour images (one per MRT slot), the depth image
-     *   and a multisampled target's resolve images, their views, the framebuffer(s), the render pass and the device
-     *   memory behind them - and forgets the entry, so the target is "not built" afterwards.
+     *   and a multisampled target's resolve images, their views and the device memory behind them - and forgets the
+     *   entry, so the target is "not built" afterwards.
      * - WHAT IT KEEPS. The host's `RenderTarget` object: it is a description, and a later frame that names it builds
      *   the attachments again through the same `planTarget` path (so the shape is re-checked, never assumed).
      *   Release is a residency choice, not a lifetime change.
@@ -310,16 +310,16 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *        loads its target, then records the draw packets of every `DrawPacket` it carries.
      *
      * @details
-     * - WHICH PASSES RUN. One that names an off-screen target is recorded as one render pass (colour attachments
-     *   CLEAR or LOAD, depth CLEAR or LOAD, as `ClearPolicy` says); one that names no target draws into the acquired
-     *   image of `present_to` when that is a window this device handed out, and the frame's tail presents it (M5).
-     *   A frame that names no presenter, or a pass that names a target this device cannot build, is reported once and
-     *   left out.
+     * - WHICH PASSES RUN. One that names an off-screen target is recorded as ONE DYNAMIC-RENDERING INSTANCE (colour
+     *   attachments CLEAR or LOAD, depth CLEAR or LOAD, as `ClearPolicy` says); one that names no target draws into the
+     *   acquired image of `present_to` when that is a window this device handed out, and the frame's tail presents it
+     *   (M5). A frame that names no presenter, or a pass that names a target this device cannot build, is reported once
+     *   and left out.
      * - WHAT A PASS SAMPLES. A pass that DECLARES an input which is a shadow map (a target stating whose shadow it is,
      *   with a published view-projection) gets that map bound and its `VineShadowBlock` packed per draw packet: a map
      *   whose light this call does not announce, or whose light stopped casting, leaves the switch off and shades
-     *   nothing. The map's depth image is moved to `SHADER_READ_ONLY_OPTIMAL` before the pass begins (a barrier inside
-     *   a render pass is not legal), and back before a later pass writes that depth.
+     *   nothing. The map's depth image is moved to `SHADER_READ_ONLY_OPTIMAL` before the pass begins (an image barrier
+     *   inside a rendering instance is not legal), and back before a later pass writes that depth.
      * - Each scene draw is projected with its own camera snapshot and shaded with the resolved program (the pass'
      *   override, else the command's own, else the default content program). One `DrawItem` is one indexed draw.
      *   A pass whose target has no colour attachment (a shadow map) draws with a depth-only pipeline and its fragment
@@ -331,7 +331,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   outcome a host acts on, with `shutdown()` + `initialize()` as the rebuild path.
      *
      * @param frame      The frame to execute (borrowed for the call).
-     * @param present_to Window the default framebuffer resolves to, or null for a frame that has no window.
+     * @param present_to Window the frame's passes draw into, or null for a frame that has no window.
      * @return `Presented` when a window took the picture, `Skipped` for the off-screen form (a first-class state, not
      *         a failure) and `Lost` when a window was named and the picture could not reach it.
      */
@@ -347,8 +347,8 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   each command's program and geometry and the pipeline its state selects (see `ContentDraw::prepare`), and it
      *   records the pass' texture uploads and the 1x1 stand-in (see `ContentDraw::preparePass`), so a later frame of
      *   the same declarations builds nothing (its upload/compile deltas are zero).
-     * - WHAT IT DELIBERATELY DOES NOT DO. No swapchain image is acquired, no window is resized, no render pass is
-     *   opened, nothing is drawn or presented, and `FrameProgress`'s `submitted` / `presented` do not move: those
+     * - WHAT IT DELIBERATELY DOES NOT DO. No swapchain image is acquired, no window is resized, no rendering instance
+     *   is opened, nothing is drawn or presented, and `FrameProgress`'s `submitted` / `presented` do not move: those
      *   count FRAMES. The window passes are walked for their shapes but build no pipeline of their own unless the
      *   swapchain already exists (`WindowTarget::ready`).
      * - THE ONE THING IT MAY SUBMIT is a command buffer holding nothing but transfers (the 1x1 stand-in and the
@@ -359,7 +359,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   `passes`/`draws` (the shape of the frame asked for) and the build counts say what became objects.
      *
      * @param frame      The frame to prepare (borrowed for the call).
-     * @param present_to The surface the frame's default framebuffer resolves to, or null for the off-screen form.
+     * @param present_to The surface the frame's window passes draw into, or null for the off-screen form.
      *                   Nothing is acquired from it.
      * @return What this call built (see PrepareReport); `NotReady` before `initialize()`.
      */
@@ -403,8 +403,8 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @details
      * - THE EVIDENCE FOR "A RESIZE MUST NOT RECOMPILE": a frame drawn again after an EXTENT change leaves this
-     *   unmoved (the pipeline is compatible with the new framebuffer), while a shape change or a new program moves it.
-     *   Like `handles()`, it is a diagnostic fact this backend offers the host, not a verb the SDK promises.
+     *   unmoved (a pipeline is keyed by the SHAPE alone and states no extent), while a shape change or a new program
+     *   moves it. Like `handles()`, it is a diagnostic fact this backend offers the host, not a verb the SDK promises.
      *
      * @return Pipelines created since the device came up (0 when it built none).
      */

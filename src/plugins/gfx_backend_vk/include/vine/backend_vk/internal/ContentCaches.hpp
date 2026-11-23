@@ -444,7 +444,8 @@ class VN_BACKEND_VK_API ContentCaches final {
      *
      * @details
      * - THE COUNTER THE RESIZE RULE IS OBSERVED WITH: a frame drawn again after an extent change must leave it where
-     *   it was (the pipeline is compatible with the new framebuffer), while a shape change or a new program moves it.
+     *   it was (a pipeline is keyed by the attachment SHAPE and states no extent), while a shape change or a new
+     *   program moves it.
      *
      * @return Pipelines created since @ref create (0 after a failure that built none).
      */
@@ -569,16 +570,16 @@ class VN_BACKEND_VK_API ContentCaches final {
     std::size_t releaseStreams(const void* buffer);
 
     /**
-     * @brief Prepares the textures one pass' draws sample, BEFORE the pass' render pass begins.
+     * @brief Prepares the textures one pass' draws sample, BEFORE the pass' rendering instance begins.
      *
      * @details
-     * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a render
-     *   pass instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The WARM-UP calls this
+     * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a rendering
+     *   instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The WARM-UP calls this
      *   once per pass on its transfer-only batch; the frame path does the same work at its head, through
      *   @ref resolveTextures, on the frame's own command buffer.
      * - It also creates the 1x1 white fallback every absent slot is bound to, on the first preparation that needs it.
      *
-     * @param commands The command buffer being recorded (outside any render pass).
+     * @param commands The command buffer being recorded (outside any rendering instance).
      * @param draws    The pass' draw packets (borrowed for the call).
      * @param held     The cache lock (see @ref Lock).
      */
@@ -590,14 +591,14 @@ class VN_BACKEND_VK_API ContentCaches final {
      *
      * @details
      * - THE FRAME HEAD'S TEXTURE HALF: a slot the material names is uploaded here (the copy is legal only outside a
-     *   render pass, which is where the head runs), and a slot it does not name answers the 1x1 stand-in with
+     *   rendering instance, which is where the head runs), and a slot it does not name answers the 1x1 stand-in with
      *   `present == false`. A texture the cache cannot serve is reported through @p refusal and stays absent.
      * - THE FRAME-LEVEL FACTS ARE THE HEAD'S: the stand-in's view and sampler and the shadow sampler are the same for
      *   every call of one frame, so they are resolved onto @p head and the recording reads them from there. The slots
      *   are per call and stay in @p plan.
      *
      * @param material The material to resolve (its slots are read; null means "no material", everything absent).
-     * @param commands The frame's command buffer (uploads are recorded before any render pass begins).
+     * @param commands The frame's command buffer (uploads are recorded before any rendering instance begins).
      * @param head     The frame's head (its stand-in view/sampler and shadow sampler are (re)filled here).
      * @param plan     Receives the slots (cleared on entry).
      * @param refusal  Receives the first reason a texture could not be served (kept when already refused).
@@ -653,9 +654,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param command           The command to resolve.
      * @param pass              The pass drawing it (its program override and state are read).
      * @param default_program   The program content without one of its own is drawn with, or null.
-     * @param compatibility     The target's pipeline compatibility.
-     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
-     * @param color_attachments How many colour attachments the pass writes.
+     * @param compatibility     The target's pipeline compatibility (the attachment formats and the colour count).
      * @param plan              Receives what was resolved (untouched when this answers false).
      * @param refusal           Receives the reason a command could not be resolved, with its code and category.
      * @param held              The cache lock (see @ref Lock).
@@ -667,8 +666,6 @@ class VN_BACKEND_VK_API ContentCaches final {
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::ShaderProgramDescription*          default_program,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
-                                VkRenderPass                                           render_pass,
-                                std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
                                 ContentRefusal&                                        refusal,
                                 const Lock&                                            held,
@@ -686,9 +683,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      *
      * @param draw              The full-screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
-     * @param compatibility     The destination's pipeline compatibility.
-     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
-     * @param color_attachments How many colour attachments the destination writes.
+     * @param compatibility     The destination's pipeline compatibility (the attachment formats and the colour count).
      * @param plan              Receives what was resolved.
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @param held              The cache lock (see @ref Lock).
@@ -697,8 +692,6 @@ class VN_BACKEND_VK_API ContentCaches final {
     [[nodiscard]] bool planDraw(const vn::graphics::DrawPacket&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::RenderPassCompatibility&  compatibility,
-                                VkRenderPass                                           render_pass,
-                                std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
                                 ContentRefusal&                                        refusal,
                                 const Lock&                                            held);

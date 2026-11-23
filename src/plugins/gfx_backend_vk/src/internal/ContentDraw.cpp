@@ -52,7 +52,7 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
  *   and a target wider than one chunk loops.
  *
  * @param table             The device table to record through.
- * @param commands          The command buffer being recorded (inside the render pass).
+ * @param commands          The command buffer being recorded (inside the rendering instance).
  * @param state             The state `resolveRenderState` produced for this draw.
  * @param color_attachments How many colour attachments the pass writes (0 for a depth-only pass).
  */

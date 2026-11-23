@@ -59,8 +59,8 @@ class FrameHead final {
      * - THE ONE PAYLOAD THAT IS NOT SHARED is the content call's: material, variant and streams describe a
      *   `DrawItem`, and a full-screen packet has none of them. The pipeline and the resolved state are what a screen
      *   call uses beside its slots, which is why they are the common half of this value.
-     * - THE SLOTS ARE RESOLVED BEFORE THE RENDER PASS BEGINS, because a texture upload records a buffer-to-image copy
-     *   and an image barrier, neither of which is legal inside a render pass instance (the same rule
+     * - THE SLOTS ARE RESOLVED BEFORE THE RENDERING INSTANCE BEGINS, because a texture upload records a
+     *   buffer-to-image copy and an image barrier, neither of which is legal inside a rendering instance (the same rule
      *   `ContentCaches::preparePass` states for the warm-up path). The copies land on the frame's own command buffer,
      *   ahead of every pass.
      */

@@ -68,7 +68,7 @@
 | GPU 计时 | 按设备能力报 `Feature::GpuTimings`；每 pass 时间来自时间戳 | 同一条 `Feature`，来自设备时间戳 | "设备能写时间戳"不等于"本后端在报告"，读数看 `frameReport()` / 帧表 |
 | 验证层 | validation + debug utils **可用即开** | vsg 自己的验证开关 | 只影响诊断量，不影响契约 |
 | 平台 | Linux/X11、Win32 | Linux/X11 + Win32 | 切换门的一项 |
-| 渲染通道 | 自建 `VkRenderPass` 变体（全 CLEAR / 深度 LOAD / 全 LOAD）+ MRT/MSAA resolve | vsg 的 render pass 机制 | 同一种 `RenderPassCompatibility` 进入两边管线键 |
+| 渲染通道 | **动态渲染**（Vulkan 1.3 `vkCmdBeginRendering`）：附件、载入/清除策略与 MRT/MSAA resolve 都是每个附件的字段，没有 `VkRenderPass` / `VkFramebuffer` 对象 | vsg 的 render pass 机制 | 同一种 `RenderPassCompatibility` 进入两边管线键：它是形状身份，不是句柄 |
 | 窗口 | `createSurfaceTarget` 一格一次（第二次答 `WindowOccupied` 并**报一次**具名诊断），`nullptr` 请求设备自己的窗口 | 同一契约；窗口尺寸与格式的答案问平台 | 窗口目标由设备发放，设备/引擎不是任何一块窗口 |
 | 深度读回 | 纯深度格式（D16/D32/D32F，MSAA 读 resolve 图）；D24 与借用深度答 `Unsupported` | 同分类 | 格式表在 SDK（`vn::graphics::depthReadbackOf`），两边共用 |
 | 顶点输入声明 | 只声明**顶点段真正读的** location（从编译出的 SPIR-V 读回；矩阵段按列算，实例流 12–15 全保留） | 声明几何的全部通道：未读的通道不会被取数，驱动也不报错 | 只是声明面，不影响取数；vk 这样声明是为了 pipeline 说真话（否则验证层报 "attribute at location N not consumed"） |
