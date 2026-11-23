@@ -418,6 +418,11 @@ class TestHostWindow {
  */
 class TestDisplay {
   public:
+    /// Declared because the deleted copy constructor beside it is a user-declared constructor, which
+    /// otherwise suppresses the implicit default one - a fact the Win32 half above does not share
+    /// (it deletes nothing), so the omission only broke the build on Linux.
+    TestDisplay() = default;
+
     /**
      * @brief Connects to the default X display and takes its first screen.
      *
