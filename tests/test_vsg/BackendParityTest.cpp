@@ -25,6 +25,28 @@
  *
  * THE FRAMES ARE HAND-BUILT VALUES, not engine output: `FrameDescription` is the wire, so a case that goes
  * through the engine would be testing the engine twice. What each case says is only what a backend may rely on.
+ *
+ * WHAT SURVIVES THE REFERENCE (review 8, C2). The reference backend is the retirement's subject (backlog T60), and
+ * this suite is the direct backend's only cross-implementation oracle. Every case therefore states its ABSOLUTE
+ * expectation twice - on `reference.pixels` and on `candidate.pixels` (`expectPixelOnBoth`) - so the day the second
+ * backend is deleted these cases MOVE to `tests/test_vk`, lose the reference device and the equality lines, and keep
+ * every expectation they had. Which facts a STANDALONE `test_vk` case already asserts (so the move cannot be a loss):
+ *
+ *   - clear                    -> `VkOffscreenTest.AClearedTargetReadsBackAsThatColour`
+ *   - opaque triangle          -> `VkContentDrawTest.ATriangleIsDrawnIntoTheTargetAndProbed`
+ *   - depth order              -> `VkContentTargetTest.ThePassDepthPolicyDecidesWhichFragmentSurvives`
+ *   - half-opacity blend       -> `VkContentDrawTest.ABlendedDrawFollowsTheEngineOrder`
+ *   - full-screen copy         -> `VkContentDrawTest.AFullscreenCopySamplesTheSourceTarget`
+ *   - sampled texture          -> `VkContentDrawTest.ABaseColorTextureIsUploadedAndSampled`
+ *   - engine unlit program     -> `VkBuiltinProgramTest.TheEngineUnlitProgramDrawsItsMaterialColour`
+ *   - shadow map               -> `VkShadowTest.TheMapDarkensWhatTheCasterBlocks`
+ *   - deferred chain           -> `VkDeferredTest.TheDeferredFrameLightsTheGbuffer`
+ *   - sample limit             -> `VkMsaaTest.TheDeviceReportsTheSampleCountItCanBuild` (this case RETIRES; it is the
+ *                                one whose fact is a comparison rather than a picture)
+ *
+ * Five facts have NO standalone successor and exist only here - which is why the move is not optional: a depth-only
+ * clear over a drawn picture, a draw packet's packet/draw counts, the prepare shape agreeing with the record, a pass
+ * with no effect, and an entry that names no pass.
  */
 
 #include <gtest/gtest.h>
@@ -471,6 +493,34 @@ void expectTheSamePicture(const Ran& reference, const Ran& candidate, const char
     EXPECT_EQ(differing, 0U) << "the two backends drew different pixels for the same frame";
 }
 
+/// @brief One expectation, TWO pictures: the same exact pixel value, at the same place, on both sides.
+///
+/// @details
+/// - The absolute value is the half that SURVIVES the reference backend: after the deletion the equality lines go and
+///   this stays, as `EXPECT_EQ(pixelAt(candidate...), expected)`. Stating it while the reference exists is what keeps
+///   the move a subtraction rather than a rewrite (review 8, C2).
+///
+/// @param reference The reference backend's picture.
+/// @param candidate The direct backend's picture.
+/// @param x Device-space column of the pixel.
+/// @param y Device-space row of the pixel.
+/// @param expected The four stored channels the frame's own declaration makes inevitable.
+/// @param what One sentence naming the fact being asserted.
+void expectPixelOnBoth(const Ran& reference,
+                       const Ran& candidate,
+                       int         x,
+                       int         y,
+                       std::array<int, 4> expected,
+                       const char* what)
+{
+    SCOPED_TRACE(what);
+    // A picture that did not read back has no pixel to name: without this guard the index below would run off an
+    // empty vector in a helper, where gtest's ASSERT cannot stop the caller.
+    ASSERT_TRUE(reference.read && candidate.read) << "both pictures must have read back before a pixel is named";
+    EXPECT_EQ(pixelAt(reference.pixels, x, y), expected) << "the reference picture";
+    EXPECT_EQ(pixelAt(candidate.pixels, x, y), expected) << "the direct backend's own picture";
+}
+
 } // namespace
 
 /// @brief The two devices every case drives, and the targets both of them announce.
@@ -601,11 +651,15 @@ TEST_F(BackendParityTest, TheSameClearIsTheSamePicture)
     expectTheSameRecord(reference, candidate, 1, 0, "clear-only frame");
     expectTheSamePicture(reference, candidate, "clear-only frame");
     // "BOTH BLACK" MUST NOT PASS: the picture is the pass' clear colour (0.25 linear reads back as 64 +- 1).
-    const std::array<int, 4> centre = pixelAt(reference.pixels, kSide / 2, kSide / 2);
-    EXPECT_LE(std::abs(centre[0]), 1);
-    EXPECT_LE(std::abs(centre[1] - 64), 1);
-    EXPECT_LE(std::abs(centre[2]), 1);
-    EXPECT_EQ(centre[3], 255);
+    ASSERT_TRUE(reference.read && candidate.read);
+    for (const Ran* picture : { &reference, &candidate }) {
+        const char* const who            = picture == &candidate ? "the direct backend" : "the reference";
+        const std::array<int, 4> centre  = pixelAt(picture->pixels, kSide / 2, kSide / 2);
+        EXPECT_LE(std::abs(centre[0]), 1) << who;
+        EXPECT_LE(std::abs(centre[1] - 64), 1) << who;
+        EXPECT_LE(std::abs(centre[2]), 1) << who;
+        EXPECT_EQ(centre[3], 255) << who;
+    }
 }
 
 TEST_F(BackendParityTest, ADepthOnlyClearKeepsThePictureOnBothBackends)
@@ -652,8 +706,12 @@ TEST_F(BackendParityTest, ADepthOnlyClearKeepsThePictureOnBothBackends)
 
     expectTheSameRecord(reference, candidate, 2, 1, "depth-only clear over a drawn picture");
     expectTheSamePicture(reference, candidate, "depth-only clear over a drawn picture");
-    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
-        << "the colour was LOADed: the triangle the first pass drew is still the picture";
+    expectPixelOnBoth(reference,
+                      candidate,
+                      kSide / 2,
+                      kSide / 2,
+                      std::array<int, 4>{ 255, 0, 0, 255 },
+                      "the colour was LOADed: the triangle the first pass drew is still the picture");
 }
 
 TEST_F(BackendParityTest, TheSameTriangleIsTheSamePicture)
@@ -676,10 +734,18 @@ TEST_F(BackendParityTest, TheSameTriangleIsTheSamePicture)
 
     expectTheSameRecord(reference, candidate, 1, 1, "opaque triangle");
     expectTheSamePicture(reference, candidate, "opaque triangle");
-    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
-        << "the reference picture is not the fragment stage's colour";
-    EXPECT_EQ(pixelAt(reference.pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the reference picture is not the pass' clear";
-    EXPECT_EQ(pixelAt(candidate.pixels, kSide / 2, kSide / 2), pixelAt(reference.pixels, kSide / 2, kSide / 2));
+    expectPixelOnBoth(reference,
+                      candidate,
+                      kSide / 2,
+                      kSide / 2,
+                      std::array<int, 4>{ 255, 0, 0, 255 },
+                      "the centre is the fragment stage's colour");
+    expectPixelOnBoth(reference,
+                      candidate,
+                      2,
+                      2,
+                      std::array<int, 4>{ 0, 0, 0, 255 },
+                      "the corner is the pass' clear");
 }
 
 TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
@@ -751,10 +817,13 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
     ASSERT_TRUE(candidate.prepared()) << "the direct backend would not prepare the frame";
     EXPECT_EQ(reference.passes, 2U) << "the reference backend did not report the asked shape";
     EXPECT_EQ(candidate.passes, reference.passes) << "the two backends reported different asked shapes";
+    EXPECT_EQ(candidate.passes, 2U) << "the direct backend did not report the asked shape";
     EXPECT_EQ(reference.draw_packets, 1U) << "only the packet that issues something counts";
     EXPECT_EQ(candidate.draw_packets, reference.draw_packets) << "the two backends counted different draw packets";
+    EXPECT_EQ(candidate.draw_packets, 1U) << "only the packet that issues something counts (direct backend)";
     EXPECT_EQ(reference.draws, 1U) << "the one effective packet submits one draw";
     EXPECT_EQ(candidate.draws, reference.draws) << "the two backends counted different draws";
+    EXPECT_EQ(candidate.draws, 1U) << "the one effective packet submits one draw (direct backend)";
 
     const Ran reference_run = run(*vsg, frame, shared);
     const Ran candidate_run = run(*vk, frame, shared);
@@ -796,6 +865,8 @@ TEST_F(BackendParityTest, ADrawPacketCarriesItsDrawsAndBothBackendsCountThem)
     EXPECT_EQ(reference.draws, 2U) << "the packet carries two draws";
     EXPECT_EQ(candidate.draw_packets, reference.draw_packets) << "the two backends counted different draw packets";
     EXPECT_EQ(candidate.draws, reference.draws) << "the two backends counted different draws";
+    EXPECT_EQ(candidate.draw_packets, 1U) << "one view's list is one draw packet (direct backend)";
+    EXPECT_EQ(candidate.draws, 2U) << "the packet carries two draws (direct backend)";
 
     const Ran reference_run = run(*vsg, frame, shared);
     const Ran candidate_run = run(*vk, frame, shared);
@@ -806,6 +877,7 @@ TEST_F(BackendParityTest, ADrawPacketCarriesItsDrawsAndBothBackendsCountThem)
     EXPECT_EQ(reference_run.report.counters->draws, 2U) << "the reference backend lost a draw";
     EXPECT_EQ(candidate_run.report.counters->draws, reference_run.report.counters->draws)
         << "the same frame is the same number of draws";
+    EXPECT_EQ(candidate_run.report.counters->draws, 2U) << "the direct backend lost a draw";
     EXPECT_EQ(candidate_run.report.counters->draw_packets, 1U) << "one view's list is one draw packet";
 }
 
@@ -835,8 +907,12 @@ TEST_F(BackendParityTest, TheNearerFragmentSurvivesOnBothBackends)
 
     expectTheSameRecord(reference, candidate, 1, 1, "near then far");
     expectTheSamePicture(reference, candidate, "near then far");
-    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
-        << "the reference backend did not keep the nearer fragment";
+    expectPixelOnBoth(reference,
+                      candidate,
+                      kSide / 2,
+                      kSide / 2,
+                      std::array<int, 4>{ 0, 255, 0, 255 },
+                      "the nearer fragment survives");
 }
 
 TEST_F(BackendParityTest, TheSameHalfOpacityDrawBlendsTheSame)
@@ -865,11 +941,15 @@ TEST_F(BackendParityTest, TheSameHalfOpacityDrawBlendsTheSame)
 
     expectTheSameRecord(reference, candidate, 1, 1, "half-opacity overlay");
     expectTheSamePicture(reference, candidate, "half-opacity overlay");
-    const std::array<int, 4> centre = pixelAt(reference.pixels, kSide / 2, kSide / 2);
-    EXPECT_LE(std::abs(centre[0] - 127), 2);
-    EXPECT_LE(std::abs(centre[1] - 128), 2);
-    EXPECT_EQ(centre[2], 0);
-    EXPECT_LE(std::abs(centre[3] - 191), 2);
+    ASSERT_TRUE(reference.read && candidate.read);
+    for (const Ran* picture : { &reference, &candidate }) {
+        const char* const        who    = picture == &candidate ? "the direct backend" : "the reference";
+        const std::array<int, 4> centre = pixelAt(picture->pixels, kSide / 2, kSide / 2);
+        EXPECT_LE(std::abs(centre[0] - 127), 2) << who;
+        EXPECT_LE(std::abs(centre[1] - 128), 2) << who;
+        EXPECT_EQ(centre[2], 0) << who;
+        EXPECT_LE(std::abs(centre[3] - 191), 2) << who;
+    }
 }
 
 TEST_F(BackendParityTest, TheSameFullscreenCopySamplesTheSameColours)
@@ -908,9 +988,18 @@ TEST_F(BackendParityTest, TheSameFullscreenCopySamplesTheSameColours)
     const Ran candidate = run(*vk, screen_frame, destination);
     expectTheSameRecord(reference, candidate, 1, 1, "screen copy frame");
     expectTheSamePicture(reference, candidate, "screen copy frame");
-    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
-        << "the reference copy did not sample the source's drawn pixel";
-    EXPECT_EQ(pixelAt(reference.pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the reference copy did not sample the source's cleared corner";
+    expectPixelOnBoth(reference,
+                      candidate,
+                      kSide / 2,
+                      kSide / 2,
+                      std::array<int, 4>{ 255, 0, 0, 255 },
+                      "the copy samples the source's drawn pixel");
+    expectPixelOnBoth(reference,
+                      candidate,
+                      2,
+                      2,
+                      std::array<int, 4>{ 0, 0, 0, 255 },
+                      "the copy samples the source's cleared corner");
 }
 
 TEST_F(BackendParityTest, TheSameTextureIsSampledTheSame)
@@ -947,8 +1036,12 @@ TEST_F(BackendParityTest, TheSameTextureIsSampledTheSame)
 
     expectTheSameRecord(reference, candidate, 1, 1, "sampled texture");
     expectTheSamePicture(reference, candidate, "sampled texture");
-    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
-        << "the reference backend did not sample the base-colour texture";
+    expectPixelOnBoth(reference,
+                      candidate,
+                      kSide / 2,
+                      kSide / 2,
+                      std::array<int, 4>{ 0, 0, 255, 255 },
+                      "the base-colour texture is sampled");
 }
 
 TEST_F(BackendParityTest, TheEngineUnlitProgramDrawsTheSamePictureOnBothBackends)
@@ -990,8 +1083,12 @@ TEST_F(BackendParityTest, TheEngineUnlitProgramDrawsTheSamePictureOnBothBackends
 
     expectTheSameRecord(reference, candidate, 1, 1, "engine unlit program, textured");
     expectTheSamePicture(reference, candidate, "engine unlit program, textured");
-    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
-        << "the reference backend did not sample the engine's base-colour map";
+    expectPixelOnBoth(reference,
+                      candidate,
+                      kSide / 2,
+                      kSide / 2,
+                      std::array<int, 4>{ 0, 255, 0, 255 },
+                      "the engine's base-colour map is sampled");
 }
 
 TEST_F(BackendParityTest, APassWithNoEffectIsNotAScopeOnEitherBackend)
@@ -1012,7 +1109,7 @@ TEST_F(BackendParityTest, APassWithNoEffectIsNotAScopeOnEitherBackend)
 
     expectTheSameRecord(reference, candidate, 0, 0, "pass with no effect");
     EXPECT_FALSE(reference.read) << "a pass that announces no target cannot have produced a picture";
-    EXPECT_EQ(candidate.read, reference.read) << "the same frame is refused the same way";
+    EXPECT_FALSE(candidate.read) << "the direct backend produced a picture for a pass that announced no target";
 }
 
 TEST_F(BackendParityTest, AnEntryThatNamesNoPassIsNothingToRunOnBothBackends)
@@ -1044,7 +1141,7 @@ TEST_F(BackendParityTest, AnEntryThatNamesNoPassIsNothingToRunOnBothBackends)
 
     expectTheSameRecord(reference, candidate, 0, 0, "entry without a pass");
     EXPECT_FALSE(reference.read) << "an entry that names no pass must not have drawn anything";
-    EXPECT_EQ(candidate.read, reference.read) << "the same frame is refused the same way";
+    EXPECT_FALSE(candidate.read) << "the direct backend drew an entry that names no pass";
 }
 
 TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
@@ -1114,9 +1211,13 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
 
     // AND THE SHADOW IS THERE: the strip behind the caster is darker than the strip beside it on BOTH sides, so the
     // diff above compares two pictures that actually carry a shadow rather than two identical unshadowed ones.
-    const int shadowed = pixelAt(reference.pixels, kSide / 4, kSide / 2)[1];
-    const int lit      = pixelAt(reference.pixels, (3 * kSide) / 4, kSide / 2)[1];
-    EXPECT_LT(shadowed, lit) << "the reference backend's own picture has no shadow either";
+    ASSERT_TRUE(reference.read && candidate.read);
+    for (const Ran* picture : { &reference, &candidate }) {
+        const char* const who      = picture == &candidate ? "the direct backend" : "the reference";
+        const int         shadowed = pixelAt(picture->pixels, kSide / 4, kSide / 2)[1];
+        const int         lit      = pixelAt(picture->pixels, (3 * kSide) / 4, kSide / 2)[1];
+        EXPECT_LT(shadowed, lit) << who << " picture has no shadow either";
+    }
 }
 
 TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
@@ -1208,13 +1309,18 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     expectTheSameRecord(reference, candidate, 2, 2, "the same deferred frame");
     expectTheSamePicture(reference, candidate, "the same deferred frame");
 
-    // TWO EMPTY PICTURES MUST NOT PASS: the reference composite's centre is the ambient-lit surface and it is opaque,
-    // so the byte-identical comparison above is comparing two shaded G-buffers rather than two clear colours.
+    // TWO EMPTY PICTURES MUST NOT PASS: the composite's centre is the ambient-lit surface and it is opaque, so the
+    // byte-identical comparison above is comparing two shaded G-buffers rather than two clear colours.
     const std::array<int, 4> centre = pixelAt(reference.pixels, kSide / 2, kSide / 2);
     std::printf("[parity] deferred result centre r=%d g=%d b=%d a=%d\n", centre[0], centre[1], centre[2], centre[3]);
-    EXPECT_GT(centre[0] + centre[1] + centre[2], 0)
-        << "the reference composite is black: the deferred lighting pass did not shade the G-buffer";
-    EXPECT_EQ(centre[3], 255) << "the lighting pass writes an opaque composite";
+    ASSERT_TRUE(reference.read && candidate.read);
+    for (const Ran* picture : { &reference, &candidate }) {
+        const char* const        who    = picture == &candidate ? "the direct backend" : "the reference";
+        const std::array<int, 4> pixel  = pixelAt(picture->pixels, kSide / 2, kSide / 2);
+        EXPECT_GT(pixel[0] + pixel[1] + pixel[2], 0)
+            << who << " composite is black: the deferred lighting pass did not shade the G-buffer";
+        EXPECT_EQ(pixel[3], 255) << who << " lighting pass does not write an opaque composite";
+    }
 }
 
 /*
@@ -1225,6 +1331,10 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
  * question - the same device used to say "15" - which is what ADR-2026-11-14-sample-count-refused-not-lowered
  * settles. The counting rule lives in each backend's own mapping (they share no library, by design), so the only
  * way it stays one answer is a case that compares the two.
+ *
+ * WHAT SURVIVES THE REFERENCE: the direct backend's half is already pinned on its own by
+ * `VkMsaaTest.TheDeviceReportsTheSampleCountItCanBuild` (count, power of two, and the device behind it), so this case
+ * is the one that retires with the reference rather than moving to `test_vk`.
  */
 TEST_F(BackendParityTest, TheSampleLimitsAgreeBetweenTheBackends)
 {
@@ -1237,5 +1347,8 @@ TEST_F(BackendParityTest, TheSampleLimitsAgreeBetweenTheBackends)
         << "Capabilities::limits.max_samples is a sample COUNT, and " << reference.limits.max_samples << " is not a power of two";
     EXPECT_EQ(candidate.limits.max_samples, reference.limits.max_samples)
         << "the two backends describe one GPU with two different sample limits";
+    EXPECT_GT(candidate.limits.max_samples, 0U) << "a device always offers one sample";
+    EXPECT_EQ(candidate.limits.max_samples & (candidate.limits.max_samples - 1U), 0U)
+        << "Capabilities::limits.max_samples is a sample COUNT, and " << candidate.limits.max_samples << " is not a power of two";
 }
 
