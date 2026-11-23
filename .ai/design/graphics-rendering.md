@@ -352,6 +352,7 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 | N8 | Shadow-casting lights are directional and spot (orthographic / perspective light cameras, the same 2D depth map, the same `VineShadowBlock`); **each chain has only one map** — a second casting light gets no map; a point light needs a six-face cube, and `setCastShadow` on a point light builds no pass. The three reasons for not building (second casting light / point light / this path produces no lighting) are reported separately by `ChainBuilder::reportRequestedShadows`, see 2.7 and backlog S6. CSM / PCSS are not done. |
 | N9 | The dynamic state a pipeline declares must cover every item the commands write; an item written but not declared takes the create-info baked value (silently). |
 | N10 | Dynamic state cannot change an enable: switches such as `depthBiasEnable` stay in the pipeline and must be fixed together with the state list, not left to the commands alone. |
+| N11 | Alpha-to-coverage is not stated: a Mask fragment on a multisampled target keeps binary edges. On this backend it is ONE switch (`vkCmdSetAlphaToCoverageEnableEXT`, dynamic under the EDS3 floor), so the obstacle is not the backend - coverage is derived from the fragment's first colour output, which is the material's fact (`graphics-material.md` N6, backlog `T58`). |
 
 ## 6. Caveats and Traps
 

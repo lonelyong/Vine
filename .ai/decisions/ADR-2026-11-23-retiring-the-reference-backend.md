@@ -272,3 +272,35 @@ per-image layout record has its own witness: the frame loop added to
 wrong post-present layout there makes the device report validation errors.
 `test_vk` 176 cases / 42 suites, `test_vsg` 576, `test_graphics` 639; ten gates green. Steps 3-4 (`T58`, the deletion)
 remain.
+
+## Amendment 2026-11-23 - D4 step 3 (T58) lands as a decision, not as code
+
+Step 3 was written as "becomes one pipeline bit, and its shader `gl_SampleMask` workaround is deleted rather than
+inherited". The second half has nothing to delete: measured today, `gl_SampleMask` appears nowhere in `src/`, `tests/`
+or the GLSL - the workaround was a design sketch that was never written, because its trigger (the first real
+Mask-on-MSAA workload) never fired. So the obligation is met by making sure it is never written, and the page that would
+grow it is `graphics-material.md` F7 N6.
+
+What the step's remaining half turned out to be, and why it is recorded instead of built:
+
+- The switch itself is one command: `VkPipelineMultisampleStateCreateInfo::alphaToCoverageEnable` as dynamic state under
+the EDS3 floor this batch already requires (`VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT`, feature
+`extendedDynamicState3AlphaToCoverageEnable`, issued in `ContentDraw::recordRasterState` beside `blendEnable`).
+- But alpha-to-coverage derives the sample mask from the alpha of the fragment's FIRST colour output, and this tree's
+forward program writes the drawable's opacity there (`builtin_forward.frag`), not the masked alpha. The bit alone would
+therefore dither a faded Mask draw instead of antialiasing a cutout. The feature is three parts: that shader branch
+(under `gl_NumSamples > 1`, so a single-sampled target writes exactly what it writes today), one neutral fact beside
+`blend` in `DynamicState`, and the backend's switch. It can never serve the deferred G-buffer, whose attachment 0 alpha
+is the occlusion the lighting pass scales.
+- Building that now would add a seam field and a required EDS3 sub-feature for a capability no host uses - **no content
+in the tree draws Mask into a multisampled target** (`G8`). `T58` therefore stays trigger-gated with the mechanism and
+its three parts written down (backlog `T58`, `graphics-material.md` N6, `graphics-rendering.md` N11), which is what step
+3 was for: the retirement must not leave a compromise for a later reader to inherit by inertia.
+
+The rejected option is now explicit: a shader-side `gl_SampleMask` write. It existed only because vsg's render graph and
+compile traversal pushed their own `MultisampleState` after the application's - a fact that retires with the backend - and
+it is a spelling Vulkan-1.3, Metal and D3D12 do not share (`G6` / `G9`).
+
+Counts at this amendment: `test_vk` 178 cases / 42 suites (the two-frame multisampled shadow case and the same-state
+barrier case landed with the depth-pair fix), `test_vsg` 576, `test_graphics` 639, ten gates green. Step 4 (the
+deletion) is all that remains.

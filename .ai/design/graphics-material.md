@@ -157,10 +157,18 @@ An instance copies neither textures nor bytes beyond the block.
 - **Acceptance** (T4): a Mask leaf discards correctly on both sides of the cutoff; a Blend leaf blends by opacity × material alpha.
 - **Caveat** (N4): the deferred G-buffer does not write Blend content; it can only appear in the forward overlay.
 - **Caveat** (N6): on a MULTISAMPLED target a Mask fragment still discards whole fragments, so its cutout edges keep
-  their pixel steps - alpha-to-coverage is not implemented. The pipeline switch is not available on the vsg path: its
-  render graph and compile traversal push their own `MultisampleState` (which states `alphaToCoverageEnable = false`)
-  after the application's, so the only door is a shader-side `gl_SampleMask`. Trigger, design sketch and cost are
-  backlog T58; nothing in this tree draws Mask content into a multisampled target today.
+  their pixel steps. The mechanism is alpha-to-coverage - one switch (`VkPipelineMultisampleStateCreateInfo::
+  alphaToCoverageEnable`, dynamic under the EDS3 floor this tree already requires) - and **the switch alone is not the
+  feature**: coverage is derived from the alpha of the fragment's FIRST colour output, and `builtin_forward.frag` writes
+  the drawable's opacity there, not the masked alpha. Landing it is therefore three parts: the forward program's Mask
+  branch writes `opacity × surface alpha` as its output alpha when `gl_NumSamples > 1`; the seam carries "this draw's
+  alpha is a coverage fraction" beside `blend`; and the backend states the switch per draw, where it states
+  `blendEnable`. **It cannot serve the deferred G-buffer**, whose attachment 0 alpha is the occlusion the lighting pass
+  scales - Mask content on a multisampled G-buffer keeps binary edges by construction. The shader-side `gl_SampleMask`
+  sketch is WITHDRAWN: it existed only because the retired vsg path overrode `MultisampleState` after the application,
+  it costs a variant bit plus a per-sample write, and every API family this seam serves has the switch - a workaround no
+  second family would spell (`G6` / `G9`). Trigger unchanged: the first Mask-on-MSAA workload; backlog `T58` keeps it,
+  and `ADR-2026-11-23` D4's amendment records the decision.
 
 ### 3.6 F8 import conversion
 

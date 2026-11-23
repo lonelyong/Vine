@@ -436,7 +436,11 @@ and every cache has a witness a test can read.**
   at `initialize` with `vk.init.dynamic_state_missing`). The commands live in ONE recorder helper
   (`recordRasterState`), so a state change compiles nothing: `VkContentTargetTest` pins that a wireframe paints fewer
   pixels than the filled frame and creates no pipeline, and `VkContentDrawTest.AStateChangeIsACommandNotAPipeline`
-  pins the same for blend - with the pixel as the proof the command ran.
+  pins the same for blend - with the pixel as the proof the command ran. The one EDS3 switch this helper does NOT state
+  is alpha-to-coverage (`vkCmdSetAlphaToCoverageEnableEXT`): stating it is one command, but coverage is derived from the
+  fragment's first colour output, which the forward program fills with the drawable opacity - the feature needs a shader
+  branch and one seam fact as well, and nothing draws Mask content into a multisampled target yet
+  (`graphics-material.md` F7 N6, backlog `T58`).
 - **The declared vertex input is the vertex stage's own set**: the geometry contributes channels, but the pipeline declares only the locations the compiled vertex
   stage reads (read back from the module's `OpVariable`/`Location` interface, one location per matrix column, so the instance stream keeps 12-15). A geometry channel the
   stage does not read is neither declared nor fetched - it would otherwise be a validation warning ("attribute at location N not consumed by vertex shader") and a
@@ -835,7 +839,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   [ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md), and this backend is the one the
   retirement leaves in place. **Steps 1 (`T54`), 1b (`BC-38`) and 2 (`T11`, `BC-39`) landed 2026-11-23**: the floor is
   Vulkan 1.3 with `synchronization2` + `dynamicRendering`, the pipeline key has no state half, and the backend has no
-  render-pass or framebuffer object left; the remaining steps are the alpha-to-coverage bit (`T58`) and the deletion.
+  render-pass or framebuffer object left; the remaining step is the deletion, and `T58` landed as a recorded decision
+  (there is no shader mask in the tree to delete, and the mechanism is one dynamic-state bit plus a shader branch and a
+  seam fact - `ADR-2026-11-23` D4's amendment).
 
 ### 9.3 Compatibility / migration
 
