@@ -3,7 +3,7 @@
 > **Status**: current — the takeover is complete (§9.3), and the shapes below are the ones in use.
 > **Last verified**: 2026-11-16
 > **Scope**: the shape, identity, lifetime and plan semantics of the four layers content → snapshot → derivation → execution. It excludes the geometry / picking
-> algorithms, the material model, backend implementation details (`vsg-backend.md`) and the threading contract's migration-era state (`graphics-threading.md`).
+> algorithms, the material model, backend implementation details (`vk-backend.md`) and the threading contract's migration-era state (`graphics-threading.md`).
 > **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/ResidencyClaims.hpp`,
 > `src/viz/graphics/src/SceneSnapshot.hpp` (the prototype), `Scene.hpp` / `RenderEngine.hpp` (the live entry points).
 > **Backlog**: `../backlog/graphics.md`
@@ -30,7 +30,7 @@
 
 - No multi-threaded writing on the content side (`C2`); no GPU-driven / bindless (no second backend, no measured bottleneck).
 - No automatic barrier / render graph in this layer (synchronisation belongs to the backend).
-- No ABI stability promise; vsg's internals are not changed, only the shape of its interface with this layer.
+- No ABI stability promise; a backend's internals are not changed here, only the shape of its interface with this layer.
 - No promise that every `-design` algorithm (poses, the post-processing dependency graph) lands now: they follow the triggers in `../backlog/graphics.md`.
 
 ### 1.4 One-paragraph conclusion
@@ -522,7 +522,7 @@
 
 ### 6.5 P5 Reading "pure function" as "parallelise at will"
 
-- How it fails: record is parallelised too, and two threads touch `vsg::Context` at once.
+- How it fails: record is parallelised too, and two threads touch one device's shared state at once.
 - How to detect it: the `I6` code review + TSan.
 - How to prevent it: parallelism lives in the derivation layer only; a backend that records in parallel must prove its own determinism (`R20`).
 
@@ -625,7 +625,7 @@
 | T33 | after preparation the recording's `builds` delta is 0, and preparation neither submits nor presents | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` (`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` all 0, `progress->submitted` does not move, and the pixels are still drawn) + `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing` (the engine side: the same value, nothing executed, no frame number taken) | implemented |
 | T34 | the snapshot source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` (600 frames, transform / opacity / material / placement edits, diffed item by item) + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` (the frame-level seam after binding) | implemented |
 | T36 | the frame result is that frame's value | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered` (snapshot / camera / counts / diagnostics / present; a publication landing between frames does not change the answered frame) | implemented |
-| T35 | preparation's upload batch is a real upload and is not a frame | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (preparation reports 2 streams + 1 texture; the following `executeFrame`'s `stream_uploads` / `texture_uploads` are both 0 and the pixel is the texture's colour) + `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` (`uploads == 0`, `progress->submitted` / `presented` do not move) + `PrepareUploadTest.APreparedTexturedFrameCopiesItsTextureAndUploadsNothingWhenItRuns` / `ASecondPrepareCopiesNothing` (`vsg`: the same procedure, `MaterialImages::staged() == 0` proves the host bytes were released with the copy) | implemented |
+| T35 | preparation's upload batch is a real upload and is not a frame | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (preparation reports 2 streams + 1 texture; the following `executeFrame`'s `stream_uploads` / `texture_uploads` are both 0 and the pixel is the texture's colour) + `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` (`uploads == 0`, `progress->submitted` / `presented` do not move) | implemented |
 
 ### 8.1 Kill thresholds (`K#`)
 

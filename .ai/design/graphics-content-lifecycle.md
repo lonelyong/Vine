@@ -52,16 +52,16 @@ This file defines the current design of graphics content lifecycle: release and 
     - **name**: `Node::name()`, used only for lookup and debugging, **not** an identity.
     - **key (id + revision)**: the key of the cache tables. `id` is the content object's `Handle` (see `ContentId.hpp`), and `revision` says
       "this value"; the only table still keyed by address is the upload table (see 2.6).
-    - **variant id**: a unique handle issued by `core::VariantPool`, used only to recognise "this one compiled result", and it may be invalidated across frames.
+    - **variant id**: the handle that recognises "this one compiled result" in the backend's own table, and it may be invalidated across frames.
 
 2.8 **The staging one upload relays through lives for "one upload", not for residency**: `releaseContent()` answers "does the host still want a GPU copy of this object kept",
-while the host staging one upload relays through (in vsg, `TransferTask`'s `staging`: one `HOST_VISIBLE` buffer for the whole upload, only ever grown) has
+while the host staging one upload relays through (one host-visible buffer for the whole upload, only ever grown) has
 **no second reader** once the copy has landed — it is neither the host object's residency nor a reusable cache, just temporary memory not yet given back to the system. Why: only once it is classified can anyone decide "when to give it back". It cannot enter `releaseContent`'s scope (that would decide residency on the host's behalf),
 nor should it become a capacity cap / budget (`G8`: no consumer).
-Boundary: **this staging is no longer retained, but the reusable minimum size stays** (see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`). It is the source of **one** `vkCmdCopyBuffer`, with no second reader; the moment the copy's fence completes it is dead weight.
-So "when to give it back" is not a question anyone has to decide: give it back when the evidence (that block's fence) arrives, and the trigger is the **frame boundary**, with the host neither participating nor needing to know (F16–F21).
+Boundary: **this staging is no longer retained, but the reusable minimum size stays** (see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`). It is the source of **one** upload copy, with no second reader; the moment that batch's command buffer completes it is dead weight.
+So "when to give it back" is not a question anyone has to decide: give it back when the evidence (that batch's command buffer completing) arrives, and the trigger is the **frame boundary**, with the host neither participating nor needing to know (F16–F17).
 Satisfies `G1` / `G7` / `G10`: one rule, zero waiting; and the same thing no longer has a second name (there is no longer a "clear one upload" verb on `RenderDevice`).
-The cost is written in D14: it relies on vsg's protected block state (the derived task reads/clears it).
+The cost: the backend must keep a batch's staging alive until that batch's submitted command buffer has completed — the per-batch bookkeeping (`ContentImages::BatchId`) is the whole of it.
 
 2.9 **The three switches behind "no longer drawn" have different consequences**: explicit `releaseContent()` (the host says "I do not want residency any more"; an object, or a
     `Buffer` one stream reads),
@@ -141,20 +141,20 @@ The cost is written in D14: it relies on vsg's protected block state (the derive
 
 | # | Feature | Notes |
 |---|---|---|
-| F16 | Not retained | The host-visible buffer of one upload is released once the copy completes: `staging` and `buffer_data` are cleared (the state vsg itself handles when "not big enough, rebuild"), and the next upload into that block allocates again. |
-| F17 | The evidence is that block's own fence | `block->fence->status() == VK_SUCCESS` means "the copy that read it has completed". No timeline window, no retirement queue, no `deviceWaitIdle` (see N8). |
+| F16 | Not retained | The staging buffer of one upload is released once the copy completes: the batch's staging is destroyed when its command buffer has completed (`ContentImages::releaseUploadStaging`), and the next upload allocates again. |
+| F17 | The evidence is that batch's own completion | The upload batch's submitted command buffer having completed means "the copy that read it is done". No timeline window, no retirement queue, no `deviceWaitIdle` (see N8). |
 | F18 | The trigger is the frame boundary | `VsgBackend::executeFrame()` runs `releaseFinishedUploadStaging()` once at its very start, asking each session about its own upload tasks. The host does not call it and does not need to know (F18 used to require the host to call it at a lifecycle point — withdrawn, see ADR-2026-11-10-upload-staging-is-not-retained). |
 | F19 | The frame boundary must not block | A block whose fence has not completed is left to the next frame; a block that still has data to copy in `DataToCopy` is skipped too (the next upload reallocates anyway, so clearing early only wastes one allocation). |
 | F20 | Per block, independently | `TransferTask` has `2 × numBuffers` blocks (early/late × 3) and uploads rotate by `frameIndex`, so both blocks can hold one model (measured: a 704 MB body → `SharedUsage` 1,228 MB = `2 × 614 MB`); clearing is per block too. |
-| F21 | Observable | `VsgBackend::uploadStagingBytes()` / `api::OffscreenSession::stagedBytes()` report the current occupancy; the steady state is always 0 (while pending, it is the span between the upload instant and the next frame boundary). |
-| F22 | Answered by the derived task | "Do I hold a block" is answered by the session's own upload task: it is a `detail::StagingTask` (derived from `vsg::TransferTask`, able to see and clear `staging` / `buffer_data` / `fence`), installed by `installStagingTask()` when the session starts. No device-level upload count (that is the device's metering, not the asked session's). |
+| F21 | Deliberately not exposed | No SDK API reports upload-staging occupancy: the steady state is 0 bytes beyond the in-flight batch, and a counter nobody branches on would be a capability with no consumer (`G8`). |
+| F22 | Answered by the batch | "Do I hold a staging" is the upload batch's own bookkeeping (`ContentImages::BatchId`): the staging of one batch is released when that batch's command buffer completes. No device-level upload count answers it (that is the device's metering, not the asked session's). |
 
 ### 3.5 The six "no longer drawn" situations
 
 | # | Situation | Rows (tables) | Uploads (stream) | Halves / descriptor sets | Material slots | Triggered at |
 |---|---|---|---|---|---|---|
-| F23 | **material leaves the tree** | Marked at the next frame boundary after the host drops the reference; rows leave only after the epoch window | — | None (the set key does not include material) | After the row leaves, the frame head's pin scan `BlockStorage::retireUnpinnedMaterials` frees the slot | `ContentStore::releaseAbandoned` / `releaseContent` |
-| F24 | **program leaves the tree** | Same as above | — | The half parks when program@rev is no longer answered by the table (the vsg pipeline it drives goes with it; pooled variants are only evicted FIFO 65) | — | Same as above |
+| F23 | **material leaves the tree** | Marked at the next frame boundary after the host drops the reference; rows leave only after the epoch window | — | None (the set key does not include material) | After the row leaves, the frame head's pin scan frees the slot | the backend's content table / `releaseContent` |
+| F24 | **program leaves the tree** | Same as above | — | The half parks when program@rev is no longer answered by the table (the pipeline it drives goes with it; pooled variants are only evicted FIFO 65) | — | Same as above |
 | F25 | **pass detaches** | The backend only has the identity: `releasePass` forgets the id (never reissues it) | — | **Not released** (session-level; it leaves only with the program or the layout); the input set falls back after one frame | — | `RenderEngine::removePass` → `device()->releasePass()` + the owned target's `releaseRenderTarget()` |
 | F26 | **geom leaves the tree** | Sweep-marked after the host drops the reference; rows leave after the epoch window ⇒ the pin disappears and the upload leaves through its own window | — | The last geometry row for the layout leaves the tree ⇒ `declaresLayout` disappears ⇒ the half parks (a program leaving the tree parks too) | `releaseAbandoned` |
 | F27 | **geom hidden** (`setVisible(false)`) | **Kept** (the host still holds it) | **Kept**: the row is still there ⇒ the pin is still there; becoming visible again retransmits nothing | Kept | — | Affects collection only, triggers no release |
@@ -220,8 +220,7 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 | N7 | There is no timer and no "collect after a few quiet frames": the criterion is that block's own fence (F17), and the frame boundary is only "when to look". |
 | N8 | The evidence for destroying staging is neither a timeline window nor device idleness: a timeline needs frames (if the host stops it never expires), and `deviceWaitIdle` stops the whole device. |
 | N9 | Staging reclamation **does no internal synchronisation**: what it reads and writes is state the frame path is reading (the task's blocks, the blocks' `staging` / `buffer_data` / `fence`). It only runs at the frame boundary (once per frame, one thread); calling it on another thread is undetectable. |
-| N10 | Clear **only `staging`** (together with the `buffer_data` pointing at it); the block itself, the fence and the command buffer / pool all stay: deleting the element does not work (`*(frames[frameIndex])` is dereferenced directly), and replacing the whole task costs much more. |
-| N11 | The derived task reads vsg's protected members (`_earlyDataToCopy` / `_lateDataToCopy` / `TransferBlock::staging`). The criterion only recognises "`staging != nullptr` ⇒ a piece of host memory is held", which is the same sentence as "this memory is still there"; an upstream rename = a compile error (loud), an upstream semantic change is the dangerous kind and is caught by the byte-count assertions in T8. |
+| N10 | Clear **only the upload's staging** (not the image it fed, not the pool): the staging is the temporary half, so destroying it early frees bytes still being copied and keeping it turns an upload into a residency. |
 ## 6. Caveats and Traps
 
 ### 6.1 One fact, one home
@@ -291,7 +290,7 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 | D12 | Registering only a "to be cleaned" mark and leaving the real cleaning to the next frame | Registering is not giving back; the frame boundary is that "next frame", and no extra state is needed. |
 | D13 | Asking "does this DataToCopy still have data to copy" before clearing a block | It looks cheap, but such a table can stay non-empty for a long time with nothing pending, so the sweep skips forever (see 6.3 E). |
 | D14 | Using the device-level upload count (`uploads()` / `count()`) to decide "do I hold a block" | The count answers for the device, not for the session being asked (see 6.3 D). Ask the session's own task instead (F22). |
-| D15 | Replacing the whole `TransferTask` to release | It throws away each block's command pool / command buffer / fence, and the three hand-overs have to be got right again (`vsg-pitfalls.md` P42.1); clearing `staging` loses only that buffer. |
+| D15 | Replacing the whole upload batch to release | It throws away the batch's command pool / command buffer / fence and has to get the ordering right again; releasing only its staging loses just those bytes. |
 | D16 | Clearing only blocks larger than `minimumStagingBufferSize` (keeping a reusable small block) | ~~Rejected~~ **Adopted (T26)**: a host that uploads every frame reaches a steady state with zero allocations, and a one-off large block is still given back; see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`. |
 
 ## 8. Tests and Acceptance
@@ -303,8 +302,8 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 | T3 | `HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice`. |
 | T4 | `BlockStorageTest.*` / `MaterialArenaTest.*` / `StreamUploadsTest.*`. |
 | T5 | `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`: frames after an upload do not raise idle; the upload's staging is reclaimed by later frames with **nobody calling** (every live block is a multiple of the reusable size; a one-off block larger than the minimum is given back); redrawing the same content uploads nothing; a new stream uploads again and falls back to the minimum again. |
-| T6 | `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`: the session has an askable task installed as soon as it starts (`stagedBytes()` has a value and is 0), emitting frames does not raise idle, and it can still submit afterwards. |
-| T7 | `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`: the mechanism layer (a 256 MB working set falls back + a later upload is read back byte for byte; a task vsg built itself cannot answer → reports 0 after being installed → reports ≥ 4096 bytes after another upload). |
+| T6 | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` / `ASecondPrepareSubmitsNothing`: the upload happens in the preparation batch, the frame that follows uploads nothing, and a second preparation submits nothing. |
+| T7 | `VkResidencyTest.ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain`: after the residency is released and wanted again, the next frame uploads it again — the first upload's staging is gone, the data is not. |
 | T8 | `HeadlessBackendTest`: the device side no longer has a staging entry point (the verb is gone from the SDK, and `RenderDevice` has one virtual function fewer). |
 | T9 | The six "no longer drawn" situations (§2.9 / F23–F28): `ContentStoreTest.*Release*` (leaving the tree and explicit release), `ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames` (cull 100 frames, zero retransmission), `ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped` (`live()` drops within `slots + 1` frames of leaving the tree), `StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave` (the pins of a shared buffer merge), `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt` (rebuild after release), and `VsgBackendTest`'s pass-identity case (`releasePass` only forgets the id). Hidden / culled "the row is unchanged and the upload stays too" is pinned half by `StreamUploadsTest` and half by `ContentStoreTest`, not merged into one — those are two different facts. |
 | T10 | The instance stream is a **declaration** too (§2.5 / §6.5): `ContentStoreTest.AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision` — the row carries the primitive's instance handle and declares it from that; after the slice is swapped but no new description is **not** reported, only the old stream is declared; after `bumpRevision()` the live row declares the new stream while the parked old row still declares the old one; once the old row leaves only the new stream remains. |
@@ -328,4 +327,4 @@ Old names / old paths appear only in §7's rejected options or in git history; n
 
 ## 10. References
 
-`graphics-architecture.md` · `graphics-geometry.md` · `vsg-backend.md` · `../backlog/graphics.md`
+`graphics-architecture.md` · `graphics-geometry.md` · `../backlog/graphics.md`

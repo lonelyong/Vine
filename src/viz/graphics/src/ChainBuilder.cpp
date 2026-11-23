@@ -295,9 +295,9 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     }
     // A shadow-casting light in the content is honoured on this path too, through the SAME pass the
     // deferred path builds (one implementation, one light camera). The map STATES whose shadow it is and how
-    // to read it (`RenderTarget::setShadowOf` + `setProducerViewProjection`), the plan copies that statement
-    // into `CompiledPass::shadow` (`core::ShadowFacts`), and the backend binds the map and packs the block -
-    // the pass model itself has no shadow field (see .ai/design/graphics-rendering.md §2.7).
+    // to read it (`RenderTarget::setShadowOf` + `setProducerViewProjection`), the backend resolves that from
+    // the declared input and packs the block - the pass model itself has no shadow field (see
+    // .ai/design/graphics-rendering.md §2.7).
     intrusive_ptr<RenderTarget> shadow_map;
     if (intrusive_ptr<const Light> shadow_light = requestedShadowLight(content_.get()); shadow_light != nullptr) {
         shadow_map = buildShadowPass(pipeline, shadow_light);
@@ -434,9 +434,8 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         if (shadow_map != nullptr) {
             // The map goes in as an ordinary INPUT, and its own statement is what makes it a shadow: the
             // target names its light and publishes how to read it (`RenderTarget::setShadowOf` /
-            // `setProducerViewProjection`), and the plan copies that into `CompiledPass::shadow`
-            // (`core::ShadowFacts`). The shadow ABI puts its two bindings right after the source's own (see
-            // BuiltinShaders::deferredLightProgram), and the engine's plan has no shadow field to fill.
+            // `setProducerViewProjection`). The shadow ABI puts its two bindings right after the source's own
+            // (see BuiltinShaders::deferredLightProgram), and the engine's plan has no shadow field to fill.
             light_desc.input_targets.push_back(shadow_map);
         }
         light_desc.program                    = std::move(light_program);

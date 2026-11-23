@@ -7,7 +7,7 @@
 > **Last verified**: 2026-11-15
 > **Scope**: who owns what of one frame's work on each of the two threads — what the content side and the engine side own, which values may cross the seam, who owns the surface and the swap chain,
 > where parallelism sits, and how shutdown finishes.
-> **Excludes** appfw's general async (`appfw-startup-phases.md`, `async-design.md`) and the Vulkan synchronisation details (`vsg-backend.md`).
+> **Excludes** appfw's general async (`appfw-startup-phases.md`, `async-design.md`) and the Vulkan synchronisation details (`vk-backend.md`).
 > **Sources**: `src/viz/graphics/src/PublicationStore.{hpp,cpp}` (the content-side publication and binding tables),
 > `src/viz/graphics/src/FrameExpand.{hpp,cpp}` (the frame's binding and expansion: `bindSceneDraws` / `expandFrame`),
 > `src/viz/graphics/src/SnapshotSource.{hpp,cpp}` (the snapshot's `DrawListSource` face),
@@ -22,7 +22,7 @@
 
 Content (scene graph, geometry, material, camera) is edited synchronously by the host on the UI thread — that is the document editor's core feel and cannot become asynchronous;
 while a frame's GPU-side work (compiling, uploading, recording, submitting, presenting, residency accounting) must be able to run in parallel with interaction, or the UI and rendering lock each other out.
-Measured (Release): 2000 drawables with a moving camera, the frame's select 337–340 µs, production miss (`SnapshotSource::collectDrawItems`) 435–443 µs, and 10000 drawables 2.3–3.1 ms / 3.4–3.6 ms (`tests/test_graphics/SelectTest.cpp`'s `MeasureWhatOneSelectCostsWithAMovingCamera`, 2026-11-13; the old 1597 µs/frame timed the direct collector that is no longer on the frame path), the backend recording baseline 33 allocations / one recorded triangle (vsg's own fixture; vk's recording window - 85 per steady frame with one draw packet - and the whole chain frame - ≈1966 - are measured apart in `vk-backend.md` 9.1).
+Measured (Release): 2000 drawables with a moving camera, the frame's select 337–340 µs, production miss (`SnapshotSource::collectDrawItems`) 435–443 µs, and 10000 drawables 2.3–3.1 ms / 3.4–3.6 ms (`tests/test_graphics/SelectTest.cpp`'s `MeasureWhatOneSelectCostsWithAMovingCamera`, 2026-11-13; the old 1597 µs/frame timed the direct collector that is no longer on the frame path), the reference backend's fixture measured 33 allocations / one recorded triangle before it retired; vk's recording window - 85 per steady frame with one draw packet - and the whole chain frame - ≈1966 - are measured apart in `vk-backend.md` 9.1).
 
 The hard part is not "starting a thread" but **who writes the content**: the backend's "fact rows" read from live content (`Geometry::revision()`, a primitive's instance handle),
 and collection walks the scene graph. As soon as rendering is on another thread, the two sides must have some relationship: share (locks), copy (a per-frame snapshot), or hand over (one writer).
@@ -57,8 +57,8 @@ There is exactly one answer to "when does this copy expire": the publication val
 ### 2.1 Two worlds, one writer each
 
 - **What it is**: the **content world** = `Scene` / `Node` / `Geometry` / `Buffer` / `Program` / `Material` / `Texture` / `Camera`,
-  written only by the content thread; the **engine world** = the snapshot's `SnapshotSource`, the fact tables (`ContentStore`), the residency tables (`StreamUploads` /
-  `CompiledPrograms` / `BindingSets` / `MaterialImages`), the vsg command graph and the swap chain, written only by the engine thread.
+  written only by the content thread; the **engine world** = the snapshot's `SnapshotSource`, the fact tables, the residency tables (`ResidencyClaims`
+  and the backend's content caches: streams, images, materials, compiled pipelines), the recorded command stream and the swap chain, written only by the engine thread.
 - **Why**: two writers sharing one mutable graph can only rely on locks — locks enter every read path and conflict directly with "zero allocation in the steady state" (`G1` / `G10`).
   One writer each plus a value channel is the only shape that keeps both sides lock-free.
 - **Boundary**: the only cross-seam reads are "the published immutable value" (§2.2) and the values snapshotted with the pass (§2.14). The engine side **does not read** any mutable field of a content object.
@@ -128,7 +128,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 ### 2.7 Parallelism lives only in the derivation layer
 
 - **What it is**: the only candidate for parallelism is the "select" step (layer pruning + frustum + command construction + sort keys), and it works on **immutable values**.
-- **Why**: a pure value is the precondition for parallelism; the device side still has one thread only (C16), because vsg's context is not safe for shared writing.
+- **Why**: a pure value is the precondition for parallelism; the device half still runs on the engine thread (C16), and the backend's shared caches are written under their own locks rather than in parallel.
 - **Boundary**: if a backend records in parallel itself, the determinism of the merged result is the backend's to prove (`graphics-frame-pipeline.md` R20).
 
 ### 2.8 When idle the engine thread waits, and the UI does not queue frames
@@ -292,20 +292,14 @@ There is exactly one answer to "when does this copy expire": the publication val
     two frames of the same session are still serialised by its `FrameGate` (another thread waits, a same-thread reentry is refused and reported once). Device-level shared pieces each have their own lock
     (the cache is taken only at the frame head; the allocator / target map / clock / report sink have one each), and a frame outside a window takes the body gate exclusively; a host verb is
     **the device's promise**: either wait (and count it in `deviceWaits()`, as readback does), or, under the park rule, not wait for a frame (release, `R6`).
-    **vsg's shape**: a frame body takes `DeviceGate`'s shared side and a host verb
-    the exclusive side; device content (tables / halves /
-    sets / uploads / images / targets / pool / storage) is serialised by **one content lock**, but only the frame head's **resolution** and the frame tail's
-    **submission** are serialised: resolution writes the per-draw needs (half / set / stream bind / material slot / texture view / block offset / pipeline identity) as
-    the driver `FrameHead`'s **values**, **recording** only reads those values and takes no device lock, and collection and plan compilation are unlocked on the session scratch;
-    two frames of the same window / offscreen session queue on its **frame claim**, and different windows do not wait for each other. `C3` holds for vsg from here on.
 - **Why**: the content cache has an "uploading" state (`ResidencyClaims`'s three states; see `graphics-sessions.md` §9.2), and the cache lock already serialises
   concurrent uploads, so "concurrency" has a definition: two engines building the same content for the first time at once **serialise** on the cache lock and do not
   get two identities. The remaining shared pieces are each protected by their own lock.
 - **Boundary**: appfw does not use sharing yet (`SurfaceWindow` builds one device per window, and `docs/guides/render-views.md` §7 records
   "later"); the case `OneDeviceServesSeveralAreasWithoutCrossingThem` proves **sharing** (two frames run one after the other), and
   `VkMultiSessionTest`'s two cases are what prove **concurrency** (two threads with N frames each; with one frame stopped the other completes whole).
-- **Both backends**: vk and vsg keep the frame machinery on the session/driver (collection staging, frame-head snapshot, the device gate's two sides, `FrameHead` value plans,
-  a lock-free recording path), and both wire `ResidencyClaims` into the frame (F4) — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds`
+- **The shipped backend**: `vk` keeps the frame machinery on the session/driver (collection staging, frame-head snapshot, the device gate's two sides, `FrameHead` value plans,
+  a lock-free recording path), and wires `ResidencyClaims` into the frame (F4) — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds`
   publishes after the frame fence waits. The decision and its argument are in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, and the shape of the
   implementation is in `graphics-sessions.md` (types, lock table, state machines).
 
@@ -431,14 +425,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | C18 | The version does not advance inside a batch: after `beginEdit()` and before the outermost `endEdit()`, publication stays where it is — a frame landing mid-batch **publishes nothing** and draws the state at the batch's start; the whole batch lands as **one** publication on the frame after `endEdit()`. |
 | C19 | Material crosses the frame as a **value**: a command carries a `MaterialDescriptionPtr` (`revision` + resolved parameters), and the engine side reads the value only, not `Material::resolved()`. The values are taken on the content side, and not inside a batch. |
 | C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: with a frame in flight, `applyPlan` (in any form) always answers `PlanResult::Refused` + `PlanRefusal::Busy` (`sessionChangeAllowed`), and reports **one** `PassProtocolViolation` per episode. |
-| C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time (vk). Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused by both backends rather than waiting for itself** (vk reports one `vk.device.reentry`, vsg reports one `vsg.device.reentry` / the read answers `InsideFrame`), and both refusals come from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's `Geometry::description()` cache is safe for concurrent readers (found and fixed by TSan); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way in both backends). **vsg's shape**:
-a frame body takes the device gate's **shared** side and a host verb the exclusive side; device content (tables / halves / sets / uploads / images / targets / pool / storage)
-is serialised by **one content lock**, taken once at the frame head and once in the resolution phase (recording takes no lock, submission takes it once); collection and plan compilation are unlocked on the session scratch,
-so while one frame is stopped inside compilation by a sink another driver's whole frame can complete (`VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame`),
-and while one frame is stopped inside **recording** another driver's whole frame (frame head + recording + submission) can complete too
-(`ARecordingFrameDoesNotStopAnotherDriversContent`); the recording path reads no device table (`C3` holds); a host verb called from inside a frame body answers refused rather than waiting
-(`vsg.readback.in_frame` / `vsg.device.reentry`). |
-
+| C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time. Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused rather than waiting for itself** (`vk.device.reentry`; a readback inside a frame answers `InsideFrame`), and the refusal comes from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's `Geometry::description()` cache is safe for concurrent readers (found and fixed by TSan); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way every run). |
 ### 5.2 Requirements (R#)
 
 | # | Requirement |
@@ -452,14 +439,14 @@ and while one frame is stopped inside **recording** another driver's whole frame
 | R15 | When a robot's 28~70 joints change every frame, the engine side recomputes only in proportion to the chain, with zero allocation per frame. |
 | R16 | After threading, `frame()` costs only O(passes) (build + hand over) plus one handshake; expand and present are off the caller's critical path. |
 | R17 | One simulation step / one assembly = **one publication**, not one per joint. |
-| R18 | Concurrent frames on a shared device must be **provable**: (a) two sessions' frame bodies really do overlap in time (with one stopped by a diagnostic sink the other completes whole, `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`); (b) **the recording path is lock-free** (`contentCacheCounters().cache_lock_acquisitions` is a fixed 4 per frame and does not grow with the draw count); (c) **TSan evidence** (measured 2026-11-17): `test_vk` 169/169, `test_graphics` 617/617, `test_vsg` 553 cases (1 case is `GTEST_SKIP`ped under TSan), **0 race reports** in each of the three. |
+| R18 | Concurrent frames on a shared device must be **provable**: (a) two sessions' frame bodies really do overlap in time (with one stopped by a diagnostic sink the other completes whole, `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`); (b) **the recording path is lock-free** (`contentCacheCounters().cache_lock_acquisitions` is a fixed 4 per frame and does not grow with the draw count); (c) **TSan evidence**: `scripts/tsan_check.sh` prints **0 race reports** per suite (the 2026-11-17 reading: `test_vk` 169/169 and `test_graphics` 617/617, 0 reports; the third suite then present has since retired). |
 
 **The three commands of R18(c)** (rerun after every concurrency change; the numbers move with the case count):
 
 ```bash
 VN_TSAN_TARGET=test_vk  scripts/tsan_check.sh
 scripts/tsan_check.sh                                   # test_graphics
-VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_check.sh
+VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_check.sh
 ```
 
 ### 5.3 Invariants (N#)
@@ -513,7 +500,7 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 
 ### 6.7 P7 Putting parallelism into the engine half
 
-- How it fails: two threads touch vsg's context at the same time.
+- How it fails: two threads touch one device's shared state at the same time.
 - How to detect it: TSan.
 - How to prevent it: parallelism only over pure values in the derivation layer (§2.7 / C16).
 
@@ -557,7 +544,7 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 | T31 | publish inside a batch | see T3 (the same set of cases) | implemented |
 | T34 | the published source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` | implemented |
 | T35 | a bound publication is the rendering truth | `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | implemented |
-| T13 | no data races | `scripts/tsan_check.sh` | run (2026-11-16: `test_vk` / `test_graphics` / `test_vsg` subsets each 0 reports) |
+| T13 | no data races | `scripts/tsan_check.sh` | run (2026-11-16: the then-present suites each 0 reports) |
 
 ## 9. Status and Evolution
 
@@ -613,7 +600,7 @@ This file describes the **present**, not the target. The target shape and its re
 - `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md` (the split and order of the snapshot taking over collection)
 - `../decisions/ADR-2026-11-10-render-world-mirrors-content.md` (**history**: the original mirror-shape decision, superseded by the two above)
 - `graphics-frame-pipeline.md` (the target shape and the step-by-step migration in §9.3)
-- `vsg-backend.md` (backend implementation and synchronisation details)
+- `vk-backend.md` (backend implementation and synchronisation details)
 - `appfw-render-surface.md` (which half the area and the window belong to)
 
 ### 10.4 External sources

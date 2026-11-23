@@ -52,8 +52,8 @@ or a separate pass with an independently sorted transparent pass (trigger in the
 
 2.10 **Node type dispatch goes through the metatype**: the scene walk decides `Node` derived types with `obj_cast<T>` (`vine/Object.hpp`'s metatype parent chain + `static_cast`),
 not `dynamic_cast`. Why: there are several checks per node, and measured `obj_cast` is about 2–2.6× `dynamic_cast` on both hit and miss (Debug / MSVC,
-20k nodes); it also unifies the spelling the project already uses (`PassChain` / the vsg backend). Boundary: this is a **contract** — `T` must carry a correct `VN_OBJECT_META_DECL/IMPL`,
-and the meta parent chain must match C++ inheritance; a wrong chain makes `static_cast` land silently at the wrong address. Types not derived from `Object` (`CameraManipulator`, third-party vsg types)
+20k nodes); it also unifies the spelling the project already uses (`PassChain`). Boundary: this is a **contract** — `T` must carry a correct `VN_OBJECT_META_DECL/IMPL`,
+and the meta parent chain must match C++ inheritance; a wrong chain makes `static_cast` land silently at the wrong address. Types not derived from `Object` (`CameraManipulator` and other non-`Object` types)
 keep using `dynamic_cast`. It satisfies `G6` / `G10`, the price is that the metatype chain must be kept correct.
 
 2.11 **Derived state gets its own object**: `Scene` holds only the author tree, lights and queries; the baked rows (`SceneBake`), the per-view memo, the edit batch

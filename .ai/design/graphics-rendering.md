@@ -44,12 +44,10 @@ This file defines the current design of graphics rendering: targets, MSAA, image
   - **Three reasons for not building are reported separately** (once per build, `UnsupportedRequest`): a second casting light / a point light that cannot be represented / this path produces no lighting at all (the host's own lighting program, or a mode that does not need shading). Counting them separately is what lets "N lights cast no shadow" be located instead of guessed.
   - **The pass names a colour-less program** (`BuiltinShaders::depthOnlyProgram()`, `program_override`): a depth map has no colour attachment, so the pass draws with a fragment stage that declares no output instead of each drawable's own program. The vertex stage stays the content's (`builtin_forward.vert`) - same push constants, same instancing, same position - which is why a triangle's depth and its colour cannot disagree; the price is that the stage still transforms a normal no fragment reads, and the alternative (a position-only stage) would declare inputs the geometry is not required to carry. Reportable effect: the shadow pass does no per-fragment material/lights/shadow work, and validation no longer says the fragment output it used to write was unused.
 
-2.8 **Dynamic state is a single list, per backend and NEXT TO ITS WRITER**: the dynamic state the pipeline **declares** (`DynamicState`) and the dynamic state the commands **write** (`SetDynamicState`
-in the vsg backend, the `vkCmdSet*` calls in vk) must be two faces of the same list, pinned by one test "every item the commands write is declared in the pipeline, and vice versa". Miss one declaration and the driver takes the create-info
+2.8 **Dynamic state is a single list, NEXT TO ITS WRITER**: the dynamic state the pipeline **declares** (`DynamicState`) and the dynamic state the commands **write** (the `vkCmdSet*` calls in `recordRasterState`) must be two faces of the same list, pinned by one test "every item the commands write is declared in the pipeline, and vice versa". Miss one declaration and the driver takes the create-info
 baked value — the half the commands wrote is silently dropped, and the picture is wrong without an error. This also governs the **switches** in create-info: dynamic state can only change values, not
 enables such as `depthBiasEnable`, so an enable must be fixed together with the list.
-There is one list **per backend** (its floor decides what it can move), and each list lives beside the recorder that writes it: vsg's is `detail::makeDynamicStateDeclaration()` in
-`backend_vsg/support/VsgDynamicState.cpp` (the same file as `SetDynamicState::record`, thirteen states), vk's is the four-entry array in `ContentCaches`'s `buildPipeline` (viewport, scissor, line width, depth bias).
+There is **one** list, declared where the pipeline is built (`ContentCaches`'s `buildPipeline`) and issued by one recorder helper (`ContentDraw::recordRasterState`): the floor requires `VK_EXT_extended_dynamic_state3`, so every item a pipeline key used to bake is a command today (`T54`).
 The witness that the rule has teeth is `../bugs/vsg-depth-bias-not-declared-dynamic.md`: the content pipeline carried a second copy of the list without `DEPTH_BIAS` and without the enable, so `setPolygonOffset` was a silent no-op until 2026-11-21.
 
 2.9 **Capabilities are two questions, readback has one "which image"**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
@@ -111,9 +109,8 @@ realigned to the industry's meaning.
   shader file `builtin_fullscreen_copy.frag` and its generated `kBuiltinFullscreenCopyFrag` (`BC-33`). `screen` now names only
   the WINDOW or screen-space COORDINATES (`Camera::screenToWorldRay`, `fitToScreen`, `RotateToScreen` / `autoScaleToScreen`,
   post-process effects), which is what the glossary's `screen` row states. What still says "screen" for a full-screen program
-  is backend-private: the vsg plugin's set/entry bookkeeping (`InputImages::screen_colors`, `screen_draws`) and the vk
-  plugin's pipeline/set plumbing plus its `vk.content.screen_*` diagnostic codes - a diagnostic code is identity, so that
-  half is a batch of its own (`T57` in the backlog).
+  is backend-private: the vk plugin's pipeline/set plumbing plus its `vk.content.screen_*` diagnostic codes - a diagnostic
+  code is identity, so that half is a batch of its own (`T57` in the backlog).
 - Rejected: keeping the `Capabilities` / `WindowId` forwarders (the glossary had already scheduled them for removal, and the
   module promises no source or ABI stability); renaming `FrameResult` instead of `FrameCallOutcome` ("result" is the word a host
   arrives with, and the odd one out was the CALL's value); renaming `PassKind::Scene` to `Content` (a scene pass draws lines and
@@ -160,8 +157,8 @@ family answers.
 
 | Before | Now | Why |
 |---|---|---|
-| `vn::graphics::ImageLayout` | `vn::backend_vk::ImageLayout` (`gfx_backend_vk/internal/ImageLayout.hpp`) and `vn::backend_vsg::core::ImageLayout` (`gfx_backend_vsg/internal/LoadOpVariantKey.hpp`) | a layout is one family's spelling of "this image is being written as colour" - D3D12 states a resource state, Metal tracks hazards itself - so it belongs beside the table that consumes it, not on the seam |
-| `vn::graphics::LoadOpVariantKey` | `vn::backend_vsg::core::LoadOpVariantKey` (same header) | the key of a render-pass OBJECT: vsg was its only producer, vk builds its variants by hand, and the engine only compared it; a D3D12 backend keys PSOs, Metal has no pass object at all |
+| `vn::graphics::ImageLayout` | `vn::backend_vk::ImageLayout` (`gfx_backend_vk/internal/ImageLayout.hpp`); the retired backend had its own copy | a layout is one family's spelling of "this image is being written as colour" - D3D12 states a resource state, Metal tracks hazards itself - so it belongs beside the table that consumes it, not on the seam |
+| `vn::graphics::LoadOpVariantKey` | the backend that builds pass objects keys its own (vk builds variants by hand) | the key of a render-pass OBJECT; a D3D12 backend keys PSOs, Metal has no pass object at all |
 
 - What a host must change: nothing - neither type was ever a parameter of a host call (the load/store DECISION reaches a
   backend through `PassDesc`'s `ClearPolicy`).
@@ -223,8 +220,7 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
   off identity and must say which ones it cannot.
 - **vk (the host's default)** moves every one of them too: its key is `ContentPipelineKey` and nothing else, and the
   commands live in one recorder helper (`recordRasterState`). It got there on 2026-11-23 (`T54`): the floor rose to
-  `VK_EXT_extended_dynamic_state`/`_state3`, which is what makes a separate raster half disappear. **vsg (an EDS3
-  floor)** had moved them all along, with its one dynamic-state list next to its writer (`support/VsgDynamicState.*`).
+  `VK_EXT_extended_dynamic_state`/`_state3`, which is what makes a separate raster half disappear.
 - The witness that "one list" has teeth is `../bugs/vsg-depth-bias-not-declared-dynamic.md`: a second copy of the
   list without `DEPTH_BIAS`, plus a pipeline without the `depthBiasEnable` switch, made `setPolygonOffset` a silent
   no-op (fixed 2026-11-21).
@@ -372,8 +368,8 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 
 - How it fails: a consumer takes "the first input with sampleable depth" as the shadow map — the G-buffer has depth too, so the sun's shadow reads the G-buffer's depth and
   only half the picture is right (this is the defect the reference backend measured).
-- How to detect it: the image fed to the shader and the one declared by `CompiledPass::shadow` are not the same; or the map's owner is not in this call's light list.
-- How to prevent it: identity comes only from the target (`setShadowOf` + `setProducerViewProjection`), the plan copies and never derives; `ShadowFacts` is the only source.
+- How to detect it: the image fed to the shader is not the target whose `shadowOf()` says it is a map; or the map's owner is not in this call's light list.
+- How to prevent it: identity comes only from the target (`setShadowOf` + `setProducerViewProjection`); nothing derives it from input order.
 
 ## 7. Rejected Options
 
@@ -395,7 +391,7 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 | T3 | A 4-sample depth is readable and has no intermediate values; after resolve it matches the 1-sample one point by point. |
 | T4 | `FullscreenDrawTest` / `ImageSourceTest` / `SamplerTest` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
 | T5 | Shadows: the ground darkens with a casting light; without one the evidence is byte-identical. |
-| T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (the current gap is `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
+| T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (witness: `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
 
 ## 9. Status and Evolution
 
@@ -413,5 +409,5 @@ Old names/paths appear only in §7's rejected options or in git history; new cod
 
 ## 10. References
 
-`graphics-architecture.md` · `graphics-scene.md` · `graphics-geometry.md` · `vsg-backend.md` ·
+`graphics-architecture.md` · `graphics-scene.md` · `graphics-geometry.md` · `vk-backend.md` ·
 `../backlog/graphics.md`

@@ -75,8 +75,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @details
      * - THE MAP ARRIVES AS A PASS INPUT, and this is the device's reading of what the TARGET said about it
      *   (`RenderTarget::shadowOf` + `producerViewProjection`): a target is a map because it states whose shadow it is,
-     *   never because it happens to have a sampleable depth (a G-buffer does too - see `ShadowFacts` in
-     *   `backend/FrameCompiler.hpp`).
+     *   never because it happens to have a sampleable depth (a G-buffer does too).
      * - THREE FACTS, each from its owner: the VIEW is the image the producing pass wrote (already in
      *   `SHADER_READ_ONLY_OPTIMAL`, the device transitions it before the pass begins), the MATRIX is the producer's own
      *   (light clip <- world, in the SDK's clip convention), and the LIGHT is the identity the map belongs to - what

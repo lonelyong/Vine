@@ -192,7 +192,6 @@ The interface layer is in place (headers plus `WindowContext.cpp`); the tests co
 
 1. `graphics` depends on `vn::Window`; `RenderEngine` gains `setWindowContext(...)`.
 2. `CameraManipulator` gains an input interface and subscribes to `WindowContext` events.
-3. the vsg layer implements a host (window creation + event translation + handle injection).
 
 ### 9.3 Compatibility and Migration
 

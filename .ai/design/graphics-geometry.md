@@ -113,7 +113,7 @@ This file defines the current design of graphics geometry: channels, primitives,
 | F23 | Uniform float | `Mesh` attributes are stored in `Buffer<float>`, indices in `Buffer<std::uint32_t>`; no precision template and no `Meshf` / `Meshd` aliases. |
 | F24 | The rendering boundary | `geometryFromShape()` hands only `TriangleMesh` to the converter and shares the attribute buffers as they are; `QuadMesh` / `MixedMesh` are converted to `TriangleMesh` at this boundary first, an analytic `Primitive` is tessellated (`vn::geom::spatial::tessellateSolid()`, see `geometry-tessellation.md` 9.1) and assembled with `meshFromTriangulation()`, and an invalid mesh yields empty geometry rather than throwing. |
 | F25 | Manual announcement | Nobody bumps `Shape` / `Geometry` automatically: a writer advances `Shape::revision()` itself after finishing an edit; `Buffer` writes happen inside the `edit()` scope (announced once automatically); only bytes changed from outside the object use `Buffer::setRevision()`; the draw layout is `Geometry::setRevision()`'s job. |
-| F26 | vsg aliasing | The backend holds Vine buffer `Data` through a real `vsg::vec3Array` alias; the stride is the array element size, not the buffer element size. |
+| F26 | Backend aliasing | The backend reads Vine buffer `Data` in place (no copy); a vertex input's stride is the channel's element size, not the buffer's allocation size. |
 | F27 | The pointer-identity criterion | Rendering evidence is indifferent to "copy vs share"; only a `dataPointer()` identity assertion can tell them apart. |
 
 ### 3.6 Mesh face topology

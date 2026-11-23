@@ -852,8 +852,8 @@ struct Device::Impl {
      * @details
      * - WHICH INPUT: the first one whose TARGET says it is a shadow map (`RenderTarget::shadowOf`), whose depth this
      *   device actually built and whose host left promotable, and whose producer published how to read it
-     *   (`hasProducerViewProjection`) - the SDK's rule (see `ShadowFacts`), restated here because this backend consumes
-     *   the frame value directly rather than going through the shared compiler. A G-buffer's depth is not a shadow: a
+     *   (`hasProducerViewProjection`) - that is the SDK's rule, restated here because this backend consumes
+     *   the frame value directly. A G-buffer's depth is not a shadow: a
      *   target nobody stated a light for is skipped, which is the defect the rule exists to prevent.
      * - WHAT IT DOES BESIDES ANSWER: moves the map's depth image to `SHADER_READ_ONLY_OPTIMAL` before the consuming
      *   pass begins. A barrier is not legal inside a rendering instance, and the map was left in the attachment

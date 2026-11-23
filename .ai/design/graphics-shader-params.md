@@ -144,8 +144,7 @@ The C++ side stays hand-written with `static_assert`. **Shape** (`ShaderAbi.hpp`
 `packedSlotOf`), material (`packMaterialBlock`) and draw (`packDrawBlock`) each get their own header. Reason: filling needs model/math values,
 pulling them into the shape header is a back edge (G2), and every consumer that only reads the shape would pay that include fan-out (G10); the dependency direction is fixed as
 `ShaderAbi.hpp` <- `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp` <- backends. The shadow block is the exception: its input
-`ShadowFacts` is in vsg's portable half (`vine/backend_vsg/internal/FrameCompiler.hpp`, D1 not open); each backend packs
-its own shadow values, but slot derivation must call
+facts live in the backend (D1 not open); each backend packs its own shadow values, but slot derivation must call
 `packedSlotOf`.
 The fragment and the structs are still two hand-written copies, guarded by adjacent review and `ProgramAbiTest`'s binding-count/block-size assertions.
 
@@ -269,7 +268,7 @@ Built-in and user shaders share the same fragment: a typo → undeclared identif
 | # | Rejected | Reason |
 |---|---|---|
 | D1 | Runtime reflection filling by name | Names become a protocol: typos, wrong types and wrong layouts all go silent; multiple backends need multiple matchers. See [ADR](../decisions/ADR-2026-10-24-shader-parameter-abi.md). |
-| D2 | Loose uniforms (osg `StateSet` style) | Vulkan GLSL forbids them (P1); osg's Vulkan successor vsg has no `Uniform` class either. |
+| D2 | Loose uniforms (osg `StateSet` style) | Vulkan GLSL forbids them (P1). |
 | D3 | A material DSL (own language + compiler) | The gain is automatic variants and cross-backend source, the cost is a compiler; no need today. |
 | D4 | A schema generator now | An internal ABI, one module, a few changes a year; after dedup only the "fragment ↔ C++" pair is left and generation costs more than it returns. Reopen when a second shader language appears. See the ADR. |
 | D5 | Lazy per-draw parameter upload / specialization constants | The block is written once for many frames, there is nothing to save. |

@@ -165,7 +165,7 @@ An instance copies neither textures nor bytes beyond the block.
   alpha is a coverage fraction" beside `blend`; and the backend states the switch per draw, where it states
   `blendEnable`. **It cannot serve the deferred G-buffer**, whose attachment 0 alpha is the occlusion the lighting pass
   scales - Mask content on a multisampled G-buffer keeps binary edges by construction. The shader-side `gl_SampleMask`
-  sketch is WITHDRAWN: it existed only because the retired vsg path overrode `MultisampleState` after the application,
+  sketch is WITHDRAWN: it existed only because the retired vsg path overrode `MultisampleState` after the application, <!-- drift-ok -->
   it costs a variant bit plus a per-sample write, and every API family this seam serves has the switch - a workaround no
   second family would spell (`G6` / `G9`). Trigger unchanged: the first Mask-on-MSAA workload; backlog `T58` keeps it,
   and `ADR-2026-11-23` D4's amendment records the decision.
