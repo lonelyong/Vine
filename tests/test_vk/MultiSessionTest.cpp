@@ -1239,6 +1239,97 @@ void main()
     backend->shutdown();
 }
 
+TEST(VkMultiSessionTest, AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampledSource)
+{
+    // THE READ SET IS RESOLVED AT THE CLAIM (`K7`, review 9). A frame CLAIMED the source it samples, but the record
+    // itself was looked up AGAIN inside the record loop - per pass and per source, under the target map's lock - so a
+    // release landing between the claim and that second call emptied the frame's answer: the copy was refused with
+    // `ScreenNoSource` ("named no source target" - a sentence about the frame's own declaration) and the destination
+    // kept its clear. The record is now resolved with the write set and kept by the pass slot, and the record loop
+    // takes no target-map lock at all.
+    //
+    // THE WINDOW IS FORCED, DETERMINISTICALLY: the frame's FIRST packet names no program, so its refusal is reported
+    // before the second packet is recorded; the sink holds the recording thread there and another thread releases the
+    // source - exactly the interleaving the second lookup lost.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<Geometry>      geometry    = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program     = redProgram();
+    const intrusive_ptr<RenderTarget>  source      = makeTarget(u8"claim_reads_this");
+    const intrusive_ptr<RenderTarget>  destination = makeTarget(u8"claim_draws_here");
+
+    // A PICTURE IN THE SOURCE (a red triangle on a black clear), so "the copy sampled it" and "the copy was refused"
+    // are different pixels rather than two shades of nothing.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(source.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+
+    const intrusive_ptr<ShaderProgram> copy = solidProgram(u8"claim_copy", u8R"(
+#version 450
+layout(set = 0, binding = 0) uniform sampler2D vn_source;
+layout(location = 0) out vec4 out_color;
+void main()
+{
+    out_color = texture(vn_source, vec2(0.5, 0.5));
+}
+)");
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> released{ false };
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped || sink_entered.exchange(true)) {
+            return;
+        }
+        // HOLD THE RECORDING FRAME, BOUNDED, until the release has been announced on the other thread: the second
+        // packet is recorded after this returns.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!released.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    DrawPacket copy_draw;
+    copy_draw.kind                = DrawKind::Fullscreen;
+    copy_draw.view.camera         = identityCamera();
+    copy_draw.source              = source.get();
+    copy_draw.program             = copy;
+    copy_draw.program_description = copy->description();
+
+    std::vector<DrawPacket> draws;
+    draws.push_back(programlessDraw(geometry)); // refuses first: its report is the hook this case needs
+    draws.push_back(std::move(copy_draw));
+
+    std::thread releaser([&]() {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        device->releaseRenderTarget(source.get());
+        released.store(true, std::memory_order_release);
+    });
+
+    EXPECT_EQ(backend->executeFrame(drawingFrameWith(destination.get(), std::move(draws)), nullptr), PresentOutcome::Skipped);
+    releaser.join();
+    backend->setDiagnosticSink({});
+
+    ASSERT_TRUE(sink_entered.load()) << "the frame never reported the program-less draw, so the release never happened";
+    ASSERT_TRUE(released.load()) << "the release never ran";
+
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[0], 254) << "the copy did not sample the source the frame had claimed (its record was lost to the release)";
+    EXPECT_LE(centre[1], 1);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 1U)
+        << "only the program-less draw was skipped: the copy sampled the record the claim resolved";
+
+    backend->shutdown();
+}
+
 TEST(VkMultiSessionTest, AFrameKeepsTheContentItResolvedUntilTheFrameEnds)
 {
     // THE OTHER HALF OF THE CONTENT WINDOW: one engine RECORDS while another engine's frames END. Every frame end runs

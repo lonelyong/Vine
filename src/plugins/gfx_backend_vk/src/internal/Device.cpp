@@ -26,6 +26,7 @@
 #include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/DeviceChoice.hpp>
 #include <vine/backend_vk/internal/DynamicRendering.hpp>
 #include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/FrameScratch.hpp>
@@ -373,29 +374,6 @@ struct MovedLayout {
 };
 
 /**
- * @brief Adds @p record to @p kept unless it is already there: "this value names it, so it may not be destroyed yet".
- *
- * @details
- * - THE ONE RULE BEHIND `FrameRecording::keepRead` AND THE SHADOW PATH (see the frame's read-set): a scan of a handful
- *   of pointers, because the recording path must not allocate per draw.
- *
- * @param kept   The frame's read-set.
- * @param record The record the frame resolved (ignored when null).
- */
-void keepRecord(std::vector<std::shared_ptr<TargetObjects>>& kept, const std::shared_ptr<TargetObjects>& record)
-{
-    if (record == nullptr) {
-        return;
-    }
-    for (const std::shared_ptr<TargetObjects>& already : kept) {
-        if (already.get() == record.get()) {
-            return;
-        }
-    }
-    kept.push_back(record);
-}
-
-/**
  * @brief ONE FRAME'S OWN STATE, kept by its driver: what it claimed, which records it moved, and what it must undo.
  *
  * @details
@@ -405,6 +383,10 @@ void keepRecord(std::vector<std::shared_ptr<TargetObjects>>& kept, const std::sh
  * - WHAT DOES NOT BELONG HERE: the passes and their resolved plans (see FrameHead), the constants ring and the
  *   descriptor pool (see FrameScratch), the report (see FrameBooks). This is only what the frame body itself decides
  *   and must be able to UNDO when its commands never reached the queue (see `rewindUnrunFrame`).
+ * - THE READ SET IS NOT HERE EITHER (`G1`): each `FrameHead::Pass` keeps the record its full-screen packets sample and
+ *   the one its shadow map comes from, resolved at the claim (see `resolveReadSet`). A second list beside those slots
+ *   would be the same fact in two places, and the release window (R6: a host may release at any moment) is closed by
+ *   the slot that already shares ownership of what it draws into.
  * - `clear()` KEEPS THE CAPACITY, so a steady frame stops allocating these - the promise this storage exists for.
  */
 struct FrameRecording {
@@ -426,17 +408,6 @@ struct FrameRecording {
     /// handful at most, so this is a small vector scanned linearly - an `unordered_set` would allocate a node per entry
     /// on the recording path, which is exactly what this value exists to stop.
     std::vector<const RenderTarget*> lent_depths{};
-    /**
-     * @brief The records this frame READS: a full-screen draw's source and a pass' shadow map.
-     *
-     * @details
-     * - A FRAME OWNS WHAT IT NAMES, NOT ONLY WHAT IT DRAWS INTO. A host may release any target at any moment (R6),
-     *   and off-screen frame bodies overlap, so the park may be free to destroy a record whose images another frame is
-     *   still going to submit. Keeping the record here closes that window with the same rule the pass handle uses.
-     * - Deduplicated by pointer and scanned linearly: a frame reads a handful, and the recording path must not
-     *   allocate per draw.
-     */
-    std::vector<std::shared_ptr<TargetObjects>> read_records{};
     /// The layout records this frame moved on ANOTHER target, with the value each stated before (see MovedLayout).
     std::vector<MovedLayout> moved_layouts{};
     /// The clock's sample buffer (see FrameTiming): resized per sampled frame, never rebuilt.
@@ -448,16 +419,16 @@ struct FrameRecording {
     /// Whether the frame's debug-utils region is open (and must be closed before the command buffer ends).
     bool frame_labelled{ false };
 
-    /// @brief Keeps @p record alive for the rest of this frame (see read_records); a repeat is not a second entry.
-    void keepRead(const std::shared_ptr<TargetObjects>& record)
+    /**
+     * @brief Drops the layout log this frame wrote.
+     *
+     * @details
+     * - The log exists so a frame that never reached the queue can put every record back (`rewindUnrunFrame`); once
+     *   the frame is over it is stale. The records it NAMES are held by the pass slots, not by this log, so the hold
+     *   ends with `FrameHead::clear`.
+     */
+    void clearMovedLayouts() noexcept
     {
-        keepRecord(read_records, record);
-    }
-
-    /// @brief Drops the strong references this frame took, and the layout log that names them (see read_records).
-    void dropReads() noexcept
-    {
-        read_records.clear();
         moved_layouts.clear();
     }
 
@@ -475,7 +446,6 @@ struct FrameRecording {
         frame_labelled   = false;
         counters         = {};
         lent_depths.clear();
-        read_records.clear();
         moved_layouts.clear();
         stamp_values.clear();
     }
@@ -637,6 +607,27 @@ class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
                                        TargetTable::Lease&                   lease,
                                        FrameHead&                            head,
                                        FrameRecording&                       recording) noexcept;
+
+    /**
+     * @brief Resolves the frame's READ SET - each full-screen packet's source record and each pass' shadow map - into
+     *        the claimed pass slots.
+     *
+     * @details
+     * - ONE RESOLUTION PER FRAME, WITH THE WRITE SET (`K7`, review 9). `claimPasses` already CLAIMS what a pass reads
+     *   (a full-screen source, a declared input), so another driver cannot draw into it meanwhile; what it did not do is
+     *   KEEP the record, so the record loop asked the target map again - per pass and per source, under the map's lock,
+     *   on the one path the head/record split exists to keep lock-free - and a release landing between the claim and
+     *   that second call took the picture away from a frame that had already claimed it.
+     * - IT RUNS AFTER THE WHOLE WALK, not inside it, because two facts are frame-wide: the record an earlier pass
+     *   samples may be the one a LATER pass' `ensure` built (a ping-pong pass reads last frame's picture), and a depth a
+     *   LATER pass lends decides whether an EARLIER pass' declared input is a sampleable map (`lent_depths`).
+     * - THE PASS SLOT OWNS WHAT IT RESOLVED (`FrameHead::Pass::sources` / `shadow_map`), so the park keeps the record
+     *   alive until the frame ends and the record loop reads values instead of the table.
+     *
+     * @param head      The claimed passes (their read slots are filled).
+     * @param recording The frame's state: the lends are collected here first, and the read set is resolved against them.
+     */
+    void resolveReadSet(FrameHead& head, FrameRecording& recording) noexcept;
 
     /**
      * @brief Resolves @p present_to to a window THIS device handed out, or null.
@@ -1176,7 +1167,7 @@ struct Device::Impl {
     }
 
     /**
-     * @brief Resolves the SHADOW MAP a pass samples out of what it declared, and makes the map readable.
+     * @brief Resolves the SHADOW MAP a pass samples out of what it declared - the facts only, no commands.
      *
      * @details
      * - WHICH INPUT: the first one whose TARGET says it is a shadow map (`RenderTarget::shadowOf`), whose depth this
@@ -1184,30 +1175,28 @@ struct Device::Impl {
      *   (`hasProducerViewProjection`) - that is the SDK's rule, restated here because this backend consumes
      *   the frame value directly. A G-buffer's depth is not a shadow: a
      *   target nobody stated a light for is skipped, which is the defect the rule exists to prevent.
-     * - WHAT IT DOES BESIDES ANSWER: moves the map's depth image to `SHADER_READ_ONLY_OPTIMAL` before the consuming
-     *   pass begins. A barrier is not legal inside a rendering instance, and the map was left in the attachment
-     *   layout by the pass that wrote it - so this is the one moment the transition can be recorded.
+     * - WHY IT TAKES NO COMMANDS (`K7`, review 9): this is the RESOLUTION - which record, which view, whose light, which
+     *   matrix - and it runs where the frame CLAIMS its passes (see `FrameDriver::claimPasses`), with the frame's lends
+     *   in hand and under the target map's own lock. The transition the picture needs IS a command, so it stays in the
+     *   record loop, where the pass slot already owns the record and no lock is taken.
+     * - IT ANSWERS THE RECORD TOO: the pass slot keeps the map alive, so a release announced after the claim parks the
+     *   map instead of taking it away from a frame that is still going to sample it (R6).
      *
-     * @param commands The command buffer being recorded (OUTSIDE any rendering instance).
-     * @param inputs   The pass' resolved inputs, in declaration order.
-     * @param lent     The depths THIS FRAME lends to another target (see RenderTarget::shareDepth); such an image
-     *                 cannot be a sampled picture and a pass' depth attachment at once, so it is skipped. A small
-     *                 span, scanned linearly: a frame lends a handful at most, and the recording path allocates nothing.
-     * @param read_records Receives the record this call resolved, so the frame keeps the map alive while it records
-     *                 (see FrameRecording::read_records).
-     * @param out      Receives the binding; empty (`view == VK_NULL_HANDLE`) when the pass samples no readable map.
-     * @param moved    Receives the record this call rewrote, so a frame that never reaches the queue can put it back
-     *                 (see `rewindUnrunFrame`).
-     * @return true when a map was resolved (and transitioned).
+     * @param inputs The pass' resolved inputs, in declaration order.
+     * @param lent   The depths THIS frame lends to another target (see RenderTarget::shareDepth); such an image cannot
+     *               be a sampled picture and a pass' depth attachment at once, so it is skipped. A small span, scanned
+     *               linearly: a frame lends a handful at most, and the claim path allocates nothing.
+     * @param record Receives the record the map is read from; cleared when the pass samples no readable map.
+     * @param out    Receives the binding; empty (`view == VK_NULL_HANDLE`) when the pass samples no readable map.
+     * @return true when a map was resolved.
      */
-    [[nodiscard]] bool resolveShadow(VkCommandBuffer                              commands,
-                                     std::span<const ImageSource>                 inputs,
-                                     std::span<const RenderTarget*>               lent,
-                                     std::vector<std::shared_ptr<TargetObjects>>& read_records,
-                                     ContentDraw::ShadowSource&                   out,
-                                     std::vector<MovedLayout>&                    moved,
-                                     RecordingTally*                              tally)
+    [[nodiscard]] bool resolveShadowSource(std::span<const ImageSource>    inputs,
+                                           std::span<const RenderTarget*>  lent,
+                                           std::shared_ptr<TargetObjects>& record,
+                                           ShadowSource&                   out) const
     {
+        record.reset();
+        out = ShadowSource{};
         for (const ImageSource& input : inputs) {
             if (input.target == nullptr || !input.isProduced()) {
                 continue;
@@ -1217,10 +1206,6 @@ struct Device::Impl {
             if (map_entry == nullptr || !map_entry->built() || !map_entry->hasDepth()) {
                 continue;
             }
-            // THIS FRAME READS THE MAP, SO IT KEEPS IT (see FrameRecording::read_records): the release that removes it
-            // from the table parks it, and the park must not destroy what this frame is still recording with.
-            keepRecord(read_records, map_entry);
-            TargetObjects* map_images = map_entry.get();
             const vn::raw_ptr<const vn::graphics::Light> light = map.shadowOf();
             if (light == nullptr || !map.hasProducerViewProjection()) {
                 continue; // not a map, or a map nobody said how to read (shading nothing is the honest answer)
@@ -1238,28 +1223,19 @@ struct Device::Impl {
                 // borrower's pass depends on is the one already in effect.
                 continue;
             }
-
-            // THE MAP IS ABOUT TO BE READ: one transition to the sampled layout, recorded together with the record it
-            // moves (see TargetObjects::transitionDepthPicture - the record is the resolve image's or the attachment's,
-            // which is exactly why the verb lives on the record). IT IS THE PICTURE that moves - on a multisampled map
-            // that is the resolved depth image, which is also the only one a shader may sample.
-            TargetObjects& sampled = *map_images;
             // A MAP THAT BORROWS ITS DEPTH OWNS NO PICTURE, so there is nothing for a shader to read: sampling it would
             // bind a null view with the switch on. The borrower's depth belongs to its lender, which is what the pass
             // that SAMPLES would have to name instead.
-            if (sampled.depthPictureView() == VK_NULL_HANDLE) {
+            const VkImageView picture = map_entry->depthPictureView();
+            if (picture == VK_NULL_HANDLE) {
                 continue;
             }
-            const ImageLayout previous = sampled.depthPictureLayout();
-            if (previous != ImageLayout::ShaderReadOnly) {
-                moved.push_back(MovedLayout{ &sampled, 0U, true, previous });
-                (void)sampled.transitionDepthPicture(device_table, commands, ImageLayout::ShaderReadOnly, tally);
-            }
 
-            out.view                  = sampled.depthPictureView();
-            out.has_view_projection   = true;
-            out.view_projection       = map.producerViewProjection();
-            out.light                 = light;
+            out.view                = picture;
+            out.has_view_projection = true;
+            out.view_projection     = map.producerViewProjection();
+            out.light               = light;
+            record                  = map_entry;
             return true;
         }
         return false;
@@ -1641,6 +1617,12 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
         pass_head.target           = PassTarget::forTarget(std::move(claimed_record));
     }
 
+    // THE FRAME'S READ SET IS RESOLVED WITH ITS WRITE SET (`K7`, review 9): which record each full-screen packet samples
+    // and which record a pass' shadow comes from are values the frame OWNS from the claim on - so a release announced
+    // while the frame records parks the record instead of taking the picture away, and the record loop takes no
+    // target-map lock (see resolveReadSet).
+    resolveReadSet(head, recording);
+
     if (head.passes().empty()) {
         // A WALK THAT TOOK THE WINDOW'S IMAGE RETURNS IT (see WindowTarget::abandonFrame): an acquire is a pair with a
         // present, and no pass was claimed to present it.
@@ -1651,6 +1633,41 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
         return PassWalk::Nothing;
     }
     return PassWalk::Ready;
+}
+
+void Device::FrameDriver::resolveReadSet(FrameHead& head, FrameRecording& recording) noexcept
+{
+    // THE DEPTHS THIS FRAME LENDS, collected once: every target another pass' target borrows its depth from
+    // (RenderTarget::shareDepth resolves to one pointer per borrower, and the borrower was built by the walk above).
+    // `resolveShadowSource` skips them - an image cannot be a shader's picture and a pass' depth attachment in the same
+    // frame - and collecting them HERE is what lets every pass' shadow be resolved before the record loop opens.
+    for (const FrameHead::Pass& item : head.passes()) {
+        if (item.draw->target != nullptr) {
+            if (const vn::raw_ptr<RenderTarget> lender = item.draw->target->depthSource(); lender != nullptr) {
+                recording.lent_depths.push_back(lender);
+            }
+        }
+    }
+    for (FrameHead::Pass& pass_head : head.passes()) {
+        const PassDraw& draw = *pass_head.draw;
+        for (std::size_t index = 0; index < draw.packets.size(); ++index) {
+            const DrawPacket& description = draw.packets[index];
+            if (description.kind != vn::graphics::DrawKind::Fullscreen || description.source == nullptr) {
+                continue;
+            }
+            // THE SOURCE'S RECORD, RESOLVED ONCE: the draw was claimed by the walk, so what is left is the record the
+            // recorder binds - and the pass slot now keeps it (a release parks it rather than emptying the frame's
+            // answer). An unbuilt source stays null and the recorder reports its own refusal, with its own code.
+            const std::shared_ptr<TargetObjects> source = owner.target_table.lookup(description.source);
+            if (source == nullptr || !source->built()) {
+                continue;
+            }
+            pass_head.sources[index] = source;
+        }
+        if (pass_head.entry != nullptr) {
+            (void)owner.resolveShadowSource(pass_head.entry->inputs, recording.lent_depths, pass_head.shadow_map, pass_head.shadow);
+        }
+    }
 }
 
 void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::FrameBuilds& frame_builds) noexcept
@@ -1798,9 +1815,9 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     frame_head.beginFrame(frame.passes.size());
     recording.clear();
 
-    // THE FRAME'S HOLD ON ITS TARGETS ENDS WITH THE FRAME (see PassTarget and FrameRecording::read_records): the pass
-    // slots keep the records this frame draws into, the read-set keeps the ones it reads, and the park's turn runs at
-    // a frame end - dropping them here (on every return below) is what lets that turn destroy a released target
+    // THE FRAME'S HOLD ON ITS TARGETS ENDS WITH THE FRAME (see PassTarget and FrameHead::Pass): the pass slots keep the
+    // records this frame draws into AND the ones it reads (its full-screen sources, its shadow map), and the park's turn
+    // runs at a frame end - dropping them here (on every return below) is what lets that turn destroy a released target
     // instead of carrying it a whole frame longer.
     struct FrameHoldCloser {
         FrameHead&      head;
@@ -1809,7 +1826,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         ~FrameHoldCloser()
         {
             head.clear();
-            recording.dropReads();
+            recording.clearMovedLayouts();
         }
     } hold_closer{ frame_head, recording };
     // THIS FRAME'S TARGET CLAIMS: one lease, and its destructor is the ONE release point every early return below
@@ -1846,17 +1863,6 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             recording.window_acquired = false;
         }
     };
-
-    // THE DEPTHS THIS FRAME LENDS: every target another pass' target borrows its depth from (RenderTarget::shareDepth
-    // resolves to one pointer per borrower, and the borrower was built by the walk). `resolveShadow` skips them - an
-    // image cannot be a shader's picture and a pass' depth attachment in the same frame.
-    for (const FrameHead::Pass& item : frame_head.passes()) {
-        if (item.draw->target != nullptr) {
-            if (const vn::raw_ptr<RenderTarget> lender = item.draw->target->depthSource(); lender != nullptr) {
-                recording.lent_depths.push_back(lender);
-            }
-        }
-    }
 
     // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The buffer is THIS DRIVER'S (see create): beginning it resets what the
     // last frame recorded, so a frame pays no allocate/free pair and has no "could not get a buffer" branch - the
@@ -1902,8 +1908,10 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         owner.device_table.vkCmdWriteTimestamp2(commands, kFrameClockStartStage, timestamp_pool, 0U);
     }
 
-    // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
-    // is complete by now (the device submits synchronously), so nothing still names them.
+    // THE RING'S CURSOR RESTARTS HERE; THE SET CACHE DOES NOT (see FrameScratch::beginFrame): the previous frame's
+    // submission is complete by now (the device submits synchronously), but a CACHED descriptor set has to outlive the
+    // frame that built it - the pool is never reset, entries are freed one at a time and swept after many frames
+    // (`N1`). What restarts is the uniform ring's write cursor, not the pool.
     scratch.beginFrame();
     // AND A NEW COMMAND BUFFER HOLDS NO STATE (see ContentDraw::beginFrame): the recorder's shadow of what is already
     // stated starts empty, so the first draw of every frame states its own.
@@ -1968,18 +1976,14 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // barrier is unambiguously allowed (before any rendering instance begins). ONE SOURCE, ONE DEPENDENCY: its
         // pictures move together (`BarrierBatch`), so a pass sampling a four-attachment G-buffer states one command
         // rather than four - and every record it writes stays in step with the barrier that moves it.
-        for (const DrawPacket& description : draw.packets) {
-            if (description.kind != vn::graphics::DrawKind::Fullscreen || description.source == nullptr) {
+        for (std::size_t draw_index = 0; draw_index < draw.packets.size(); ++draw_index) {
+            // THE RECORD IS THE CLAIM'S, NOT A LOOKUP (`K7`, review 9): `resolveReadSet` resolved it with the write set
+            // and the pass slot keeps it, so this loop reads a value and takes no target-map lock - and a release that
+            // landed after the claim cannot make the picture disappear between here and the draw.
+            const std::shared_ptr<TargetObjects>& source_entry = pass_run.sources[draw_index];
+            if (source_entry == nullptr) {
                 continue;
             }
-            const std::shared_ptr<TargetObjects> source_entry = owner.target_table.lookup(description.source);
-            if (source_entry == nullptr || !source_entry->built()) {
-                continue;
-            }
-            // THIS FRAME OWNS WHAT IT READS (see FrameRecording::read_records): a host may release the source while
-            // this frame records, and the park may then be free to destroy it - the moved-layout log below holds the
-            // record's address, so the record has to outlive the frame that wrote it.
-            recording.keepRead(source_entry);
             std::array<VkImageMemoryBarrier2, kMaxColorAttachments> sampled_moves{};
             BarrierBatch sampled_batch(owner.device_table, commands, sampled_moves, &barrier_tally);
             // EVERY PICTURE THE DRAW SAMPLES MOVES, each from its OWN record: one image per colour attachment, and a
@@ -1998,10 +2002,22 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             sampled_batch.flush();
         }
 
-        // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
-        // SHADER_READ_ONLY here, before the pass begins (see resolveShadow).
-        ContentDraw::ShadowSource shadow{};
-        (void)owner.resolveShadow(commands, pass_run.entry->inputs, recording.lent_depths, recording.read_records, shadow, moved_layouts, &barrier_tally);
+        // THE SHADOW MAP THIS PASS SAMPLES: the CLAIM resolved it (see resolveShadowSource) and the pass slot keeps the
+        // record, so what is left here is the one command it needs - the picture moves to SHADER_READ_ONLY before the
+        // pass begins, because a barrier is not legal inside a rendering instance. IT IS THE PICTURE that moves: on a
+        // multisampled map that is the resolved depth image, which is also the only one a shader may sample.
+        ContentDraw::ShadowSource shadow = pass_run.shadow;
+        if (pass_run.shadow_map != nullptr) {
+            TargetObjects& sampled = *pass_run.shadow_map;
+            const ImageLayout previous = sampled.depthPictureLayout();
+            if (previous != ImageLayout::ShaderReadOnly) {
+                // THE REWIND LOG (see rewindUnrunFrame): this picture belongs to ANOTHER target, so a frame that never
+                // reaches the queue has to put the record back exactly - not to `Undefined`, which would discard a
+                // picture an earlier frame wrote.
+                moved_layouts.push_back(MovedLayout{ &sampled, 0U, true, previous });
+                (void)sampled.transitionDepthPicture(owner.device_table, commands, ImageLayout::ShaderReadOnly, &barrier_tally);
+            }
+        }
 
         // WHAT THIS PASS LOADS AND CLEARS: ONE RULE, ONE HOME (see DynamicRendering::resolveAttachmentOps). The only input that
         // differs between the two kinds of target is "does this set already hold a picture to keep": an off-screen set
@@ -2043,12 +2059,12 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             }
             ContentRefusal refusal;
             if (description.kind == vn::graphics::DrawKind::Fullscreen) {
-                // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
-                // built answers an empty span, which makes the recorder report (and skip) the draw.
+                // THE FULL-SCREEN ABI: the source's colour attachments, bound in order - from the record the CLAIM
+                // resolved (see resolveReadSet), which the pass slot keeps alive for the whole pass. A source this
+                // device never built stays null and answers an empty span, which makes the recorder report (and skip)
+                // the draw.
                 ContentDraw::ScreenSource source{};
-                const std::shared_ptr<TargetObjects> source_entry =
-                    description.source != nullptr ? owner.target_table.lookup(description.source) : nullptr;
-                if (source_entry != nullptr && source_entry->built()) {
+                if (const std::shared_ptr<TargetObjects>& source_entry = pass_run.sources[draw_index]; source_entry != nullptr) {
                     source.views = source_entry->color_views;
                 }
                 recorder.recordFullscreen(scope, description, call.plans.front(), source, &refusal);
@@ -2377,7 +2393,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
         ~FrameHoldCloser()
         {
             head.clear();
-            recording.dropReads();
+            recording.clearMovedLayouts();
         }
     } hold_closer{ frame_head, recording };
     TargetTable::Lease target_lease = owner.target_table.lease(clock_window);
@@ -2843,7 +2859,57 @@ bool Device::initialize()
     const VkSurfaceKHR presentation_surface =
         impl->presentation_wanted && !impl->surfaces.empty() ? impl->surfaces.front()->surfaceHandle() : VK_NULL_HANDLE;
 
-    int best_rank = -1; // no candidate yet: every rank (>= 0) is better than "none"
+    // A CANDIDATE IS CHOSEN IN TWO STEPS, IN THIS ORDER: FILTER, THEN RATE (`K3`, review 9). A device that cannot serve
+    // this session's floor is dropped, and the SURVIVORS alone are ranked by type - so the answer is "the fastest device
+    // that can run this backend", not "the fastest device this machine has". Ranking first made the second question
+    // unaskable: a two-GPU machine whose top-ranked device was one driver revision behind lost the session while a
+    // capable device sat in the list, and the refusal described the backend's choice instead of the machine. The peers
+    // answer it the same way (`vk-bootstrap`'s `PhysicalDeviceSelector`, Diligent's adapter enumeration): see
+    // DeviceChoice.hpp, which owns the predicate and is testable with fabricated offers.
+    struct Candidate {
+        VkPhysicalDevice device{ VK_NULL_HANDLE };
+        std::uint32_t    queue_family{ 0 };
+        int              rank{ -1 };
+        FloorRefusal     refusal{ FloorRefusal::None };
+        bool             has_swapchain{ false };
+        bool             has_creation_feedback{ false };
+    };
+    const auto report_floor = [this](const FloorRefusal refusal) {
+        switch (refusal) {
+        case FloorRefusal::ApiVersion:
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.init.api_version_low",
+                                              u8"vk: this backend needs a Vulkan 1.3 device (dynamic rendering and "
+                                              u8"synchronisation 2 are core there), and this device is older"));
+            break;
+        case FloorRefusal::CoreFeatures:
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.init.device_features_missing",
+                                              u8"vk: this backend needs the Vulkan 1.3 synchronization2 and dynamicRendering "
+                                              u8"features, and this device does not offer them"));
+            break;
+        case FloorRefusal::DynamicState3:
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.init.dynamic_state_missing",
+                                              u8"vk: this backend needs VK_EXT_extended_dynamic_state3 with polygon mode and "
+                                              u8"colour blend (cull / depth / polygon / blend are dynamic state), and this device "
+                                              u8"does not offer them"));
+            break;
+        case FloorRefusal::None:
+            break;
+        }
+    };
+
+    std::uint32_t queue_candidates = 0U; ///< Devices a graphics (and, with a surface, presenting) queue family was found on.
+    Candidate     chosen{};              ///< The best SURVIVOR (null until one is found).
+    /// The highest-ranked device the floor turned away. It is assigned TOGETHER with `refused_rank`, which is why the
+    /// one branch that reads it (`chosen` empty) always finds a real refusal in it.
+    Candidate     best_refused{};
+    int           best_rank    = -1;
+    int           refused_rank = -1;
     for (const VkPhysicalDevice candidate : physical_devices) {
         std::uint32_t family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, nullptr);
@@ -2870,19 +2936,82 @@ bool Device::initialize()
         if (serving_family == std::numeric_limits<std::uint32_t>::max()) {
             continue;
         }
+        ++queue_candidates;
 
-        // THE BEST CANDIDATE SO FAR, not the first one (see deviceTypeRank): a machine that lists its integrated GPU
-        // first must not be the reason the slower device draws every frame.
+        // WHAT THE CANDIDATE OFFERS, in the terms the floor is stated in (see DeviceChoice.hpp). Every query is per
+        // DEVICE and happens before anything is created, so a rejected candidate costs three driver calls and no state.
         VkPhysicalDeviceProperties candidate_properties{};
         vkGetPhysicalDeviceProperties(candidate, &candidate_properties);
-        const int rank = deviceTypeRank(candidate_properties.deviceType);
-        if (rank > best_rank) {
-            best_rank          = rank;
-            impl->physical     = candidate;
-            impl->queue_family = serving_family;
+        Candidate facts;
+        facts.device       = candidate;
+        facts.queue_family = serving_family;
+        facts.rank         = deviceTypeRank(candidate_properties.deviceType);
+
+        VkPhysicalDeviceVulkan13Features candidate_vk13{};
+        candidate_vk13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        VkPhysicalDeviceExtendedDynamicState3FeaturesEXT candidate_dynamic_state3{};
+        candidate_dynamic_state3.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
+        VkPhysicalDeviceFeatures2 candidate_features{};
+        candidate_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        candidate_features.pNext = &candidate_vk13;
+        candidate_vk13.pNext     = &candidate_dynamic_state3;
+        vkGetPhysicalDeviceFeatures2(candidate, &candidate_features);
+
+        DeviceOffer offer;
+        offer.api_version          = candidate_properties.apiVersion;
+        offer.synchronization2     = candidate_vk13.synchronization2 == VK_TRUE;
+        offer.dynamic_rendering    = candidate_vk13.dynamicRendering == VK_TRUE;
+        offer.polygon_mode         = candidate_dynamic_state3.extendedDynamicState3PolygonMode == VK_TRUE;
+        offer.color_blend_enable   = candidate_dynamic_state3.extendedDynamicState3ColorBlendEnable == VK_TRUE;
+        offer.color_blend_equation = candidate_dynamic_state3.extendedDynamicState3ColorBlendEquation == VK_TRUE;
+
+        // THE EXTENSION LIST, scanned ONCE per candidate: it answers whether the EDS3 floor's extension exists AND which
+        // of the two OPTIONAL extensions this device offers (the swap chain, and creation feedback on a device below
+        // 1.3 - which the floor refuses anyway, so the flag is kept truthful rather than assumed).
+        std::uint32_t                      available = 0;
+        std::vector<VkExtensionProperties> extensions;
+        if (vkEnumerateDeviceExtensionProperties(candidate, nullptr, &available, nullptr) == VK_SUCCESS && available > 0U) {
+            extensions.resize(available);
+            if (vkEnumerateDeviceExtensionProperties(candidate, nullptr, &available, extensions.data()) != VK_SUCCESS) {
+                extensions.clear();
+            }
+        }
+        bool creation_feedback_extension = false;
+        for (const VkExtensionProperties& extension : extensions) {
+            if (std::strcmp(extension.extensionName, "VK_KHR_swapchain") == 0) {
+                facts.has_swapchain = true;
+            }
+            else if (std::strcmp(extension.extensionName, "VK_EXT_pipeline_creation_feedback") == 0) {
+                creation_feedback_extension = true;
+            }
+            else if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME) == 0) {
+                offer.extended_dynamic_state3 = true;
+            }
+        }
+        // CREATION FEEDBACK IS CORE 1.3 (`VkPipelineCreationFeedbackCreateInfo`): a device this backend accepts always
+        // answers it, and the extension only exists for devices the floor refuses.
+        facts.has_creation_feedback = candidate_properties.apiVersion >= VK_API_VERSION_1_3 || creation_feedback_extension;
+
+        facts.refusal = candidateRefusal(offer);
+        if (facts.refusal != FloorRefusal::None) {
+            // FILTERED OUT, AND KEPT FOR THE SENTENCE BELOW: a refused candidate is not the machine's answer while
+            // another may serve, so nothing is reported here - but if NOBODY serves, the refusal of the highest-ranked
+            // device is what the host is told, because that is the device the session would have used.
+            if (facts.rank > refused_rank) {
+                refused_rank = facts.rank;
+                best_refused = facts;
+            }
+            continue;
+        }
+
+        // THE BEST SURVIVOR, not the first one (see deviceTypeRank) and not the fastest device overall (see above): a
+        // machine that lists its integrated GPU first must not be the reason the slower device draws every frame.
+        if (facts.rank > best_rank) {
+            best_rank = facts.rank;
+            chosen    = facts;
         }
     }
-    if (impl->physical == VK_NULL_HANDLE) {
+    if (queue_candidates == 0U) {
         reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
                                           u8"vk.init.no_queue",
@@ -2890,25 +3019,21 @@ bool Device::initialize()
         shutdown();
         return false;
     }
-
-    // THE CHOSEN DEVICE'S PROPERTIES, ONCE: the extension choice below, the pipeline cache's key and the capabilities
-    // all describe the SAME device, so they read one value (see PipelineCacheKey).
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(impl->physical, &properties);
-
-    // THE API VERSION IS A FLOOR, NOT A PREFERENCE (`ADR-2026-11-23` D4, step 1 in T54 and step 2 in `T11`): the
-    // barrier table records synchronisation 2, and dynamic rendering replaces the render-pass objects, both core in 1.3.
-    // A device below it would have to be served by a second recording path - the legacy one this backend deliberately
-    // does not keep - so it is refused with its own code instead.
-    if (properties.apiVersion < VK_API_VERSION_1_3) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::InitFailed,
-                                          u8"vk.init.api_version_low",
-                                          u8"vk: this backend needs a Vulkan 1.3 device (dynamic rendering and "
-                                          u8"synchronisation 2 are core there), and this device is older"));
+    if (chosen.device == VK_NULL_HANDLE) {
+        // NO CANDIDATE SERVES: the diagnostic names the floor the BEST device missed - a fact about the machine - and
+        // not "this device is older" about a device the backend picked. A machine with a capable second GPU never
+        // reaches this branch any more; it is chosen.
+        report_floor(best_refused.refusal);
         shutdown();
         return false;
     }
+    impl->physical     = chosen.device;
+    impl->queue_family = chosen.queue_family;
+
+    // THE CHOSEN DEVICE'S PROPERTIES, ONCE: the pipeline cache's key and the capabilities all describe the SAME device,
+    // so they read one value (see PipelineCacheKey).
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(impl->physical, &properties);
 
     constexpr float         kQueuePriority = 1.0F;
     VkDeviceQueueCreateInfo queue_info{};
@@ -2937,47 +3062,15 @@ bool Device::initialize()
     device_info.pQueueCreateInfos    = &queue_info;
     device_info.pEnabledFeatures     = &wanted_features;
 
-    // THE DEVICE EXTENSIONS THIS BACKEND USES, EACH ASKED FOR ONLY IF THE DEVICE OFFERS IT:
+    // THE EXTENSIONS THE CHOSEN DEVICE IS ASKED FOR, from what the filter proved about it (see the candidate scan):
     //  - VK_KHR_swapchain, only when a window is to be served. Without it this device presents nothing: a warning, and
     //    a device that still runs off-screen frames.
-    //  - VK_EXT_pipeline_creation_feedback, which is WHAT MAKES "the persisted cache helped" ANSWERABLE: the driver says
-    //    per creation whether it was served from the cache (see ContentDraw's hit counter). Vulkan 1.3 made it core,
-    //    so a 1.3 device needs no extension for it. A device with neither reports NO answer, never a zero.
-    bool has_swapchain = false;
-    bool has_creation_feedback = properties.apiVersion >= VK_API_VERSION_1_3;
-    bool has_extended_dynamic_state  = false;
-    bool has_extended_dynamic_state2 = false;
-    bool has_extended_dynamic_state3 = false;
-    {
-        std::uint32_t                      available = 0;
-        std::vector<VkExtensionProperties> extensions;
-        if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, nullptr) == VK_SUCCESS && available > 0U) {
-            extensions.resize(available);
-            if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, extensions.data()) != VK_SUCCESS) {
-                extensions.clear();
-            }
-        }
-        for (const VkExtensionProperties& extension : extensions) {
-            if (std::strcmp(extension.extensionName, "VK_KHR_swapchain") == 0) {
-                has_swapchain = true;
-            }
-            if (std::strcmp(extension.extensionName, "VK_EXT_pipeline_creation_feedback") == 0) {
-                has_creation_feedback = true;
-            }
-            if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME) == 0) {
-                has_extended_dynamic_state = true;
-            }
-            if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME) == 0) {
-                has_extended_dynamic_state2 = true;
-            }
-            if (std::strcmp(extension.extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME) == 0) {
-                has_extended_dynamic_state3 = true;
-            }
-        }
-    }
+    //  - VK_EXT_extended_dynamic_state3, which IS the raster floor's extension (`T54`).
+    // Creation feedback needs no extension: it is core 1.3, and the floor is 1.3 - `impl->creation_feedback` carries
+    // what the session can rely on, and a 1.3 device always can.
     std::vector<const char*> device_extension_names;
     if (impl->presentation_wanted) {
-        if (has_swapchain) {
+        if (chosen.has_swapchain) {
             device_extension_names.push_back("VK_KHR_swapchain");
         }
         else {
@@ -2988,52 +3081,12 @@ bool Device::initialize()
             impl->presentation_wanted = false;
         }
     }
-    if (has_creation_feedback && properties.apiVersion < VK_API_VERSION_1_3) {
-        device_extension_names.push_back("VK_EXT_pipeline_creation_feedback");
-    }
-    impl->creation_feedback = has_creation_feedback;
+    impl->creation_feedback = chosen.has_creation_feedback;
 
-    // THE RASTER FLOOR (`T54`, `ADR-2026-11-23` D4): cull, polygon mode, depth test/write/compare and blend are
-    // DYNAMIC state, so they are no longer part of a pipeline's identity and a state change costs commands instead of
-    // a compile. On a 1.3 device cull and the depth items are CORE dynamic state; POLYGON MODE and COLOUR BLEND remain
-    // `VK_EXT_extended_dynamic_state3`, which is therefore the one extension this floor requires - a device without it
-    // would have to bake silently, and the picture would be wrong in a way no test could name.
-    //
-    // THE 1.3 FEATURES ARE FEATURES, NOT VERSIONS: `synchronization2` (the barrier table records `vkCmdPipelineBarrier2`)
-    // and `dynamicRendering` (step 2 of the batch) must both be ENABLED, and a 1.3 device that does not offer them is
-    // refused. A version alone is not evidence that a feature is on.
-    VkPhysicalDeviceVulkan13Features     vk13_available{};
-    vk13_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state3_available{};
-    dynamic_state3_available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
-    VkPhysicalDeviceFeatures2 dynamic_state_query{};
-    dynamic_state_query.sType     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    dynamic_state_query.pNext     = &vk13_available;
-    vk13_available.pNext          = &dynamic_state3_available;
-    vkGetPhysicalDeviceFeatures2(impl->physical, &dynamic_state_query);
-    if (vk13_available.synchronization2 == VK_FALSE || vk13_available.dynamicRendering == VK_FALSE) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::InitFailed,
-                                          u8"vk.init.device_features_missing",
-                                          u8"vk: this backend needs the Vulkan 1.3 synchronization2 and dynamicRendering "
-                                          u8"features, and this device does not offer them"));
-        shutdown();
-        return false;
-    }
-    const bool dynamic_raster_floor = has_extended_dynamic_state3 &&
-                                      dynamic_state3_available.extendedDynamicState3PolygonMode == VK_TRUE &&
-                                      dynamic_state3_available.extendedDynamicState3ColorBlendEnable == VK_TRUE &&
-                                      dynamic_state3_available.extendedDynamicState3ColorBlendEquation == VK_TRUE;
-    if (!dynamic_raster_floor) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::InitFailed,
-                                          u8"vk.init.dynamic_state_missing",
-                                          u8"vk: this backend needs VK_EXT_extended_dynamic_state3 with polygon mode and "
-                                          u8"colour blend (cull / depth / polygon / blend are dynamic state), and this device "
-                                          u8"does not offer them"));
-        shutdown();
-        return false;
-    }
+    // WHAT THE FILTER PROVED IS WHAT GETS ENABLED (`G4`, see DeviceChoice.hpp): the 1.3 features the recording path uses
+    // (`vkCmdPipelineBarrier2`, dynamic rendering) and the EDS3 switches the raster state commands. "Accepted" and
+    // "enabled" are therefore one statement - a device cannot pass the filter and then be created without them, which
+    // was a second chance for the two to disagree when the checks ran after selection.
     device_extension_names.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state3_enable{};
     dynamic_state3_enable.sType                                   = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;

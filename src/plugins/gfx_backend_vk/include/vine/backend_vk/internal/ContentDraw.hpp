@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <span>
+#include <vector>
 
 #include <volk.h>
 
@@ -79,27 +80,14 @@ class VN_BACKEND_VK_API ContentDraw final {
     };
 
     /**
-     * @brief The SHADOW MAP a content pass samples: whose map it is and how a fragment maps into it.
+     * @brief The SHADOW MAP a content pass samples (defined in `FrameHead.hpp`, where its rules are documented).
      *
      * @details
-     * - THE MAP ARRIVES AS A PASS INPUT, and this is the device's reading of what the TARGET said about it
-     *   (`RenderTarget::shadowOf` + `producerViewProjection`): a target is a map because it states whose shadow it is,
-     *   never because it happens to have a sampleable depth (a G-buffer does too).
-     * - THREE FACTS, each from its owner: the VIEW is the image the producing pass wrote (already in
-     *   `SHADER_READ_ONLY_OPTIMAL`, the device transitions it before the pass begins), the MATRIX is the producer's own
-     *   (light clip <- world, in the SDK's clip convention), and the LIGHT is the identity the map belongs to - what
-     *   the draw packet's announced lights are matched against, because the switch lives on the light.
-     * - AN EMPTY ONE MEANS "NO MAP": the content set binds the 1x1 white stand-in and the block's switch stays off, so
-     *   the engine's forward text takes its unshadowed path with the same pipeline.
-     *
-     * @see ShadowBlock: the packing rules, the clip conversion and the reverse-Z comparison.
+     * - IT IS ONE TYPE, NOT TWO (`G1`): the CLAIM resolves the map with the rest of the frame's read set, so the value
+     *   is a `FrameHead::Pass` member; the recorder names the same type instead of defining a second value that would
+     *   have to be copied field by field.
      */
-    struct ShadowSource {
-        VkImageView     view{ VK_NULL_HANDLE };       // The map's depth view, bound at set 0 binding 7.
-        bool            has_view_projection{ false }; // Whether the producer published how to read the map.
-        vn::math::Mat4d view_projection{};            // Light clip <- world, in the SDK's clip convention.
-        const void*     light{ nullptr };             // Whose map it is (a `Light`'s identity; nullptr = not a map).
-    };
+    using ShadowSource = ::vn::backend_vk::ShadowSource;
 
     /**
      * @brief WHAT ONE PASS RECORDS WITH: its command buffer, its rectangle, the frame's head and the shadow it resolved.
@@ -246,8 +234,10 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - `T54` made every state item a COMMAND rather than a pipeline variant, which is right - but a command that
      *   states what is already stated costs a driver call per draw. The viewport and the scissor are PASS facts (they
      *   are computed from the pass' rectangle), so a pass with ten draws used to state the same rectangle ten times.
-     * - IT IS INVALIDATED ON A PIPELINE BIND, because a pipeline may declare a different set of DYNAMIC states: what is
-     *   in the buffer then is a value the next draw cannot assume this pipeline carries. Nothing else invalidates it -
+     * - IT SURVIVES A PIPELINE BIND, and that is a property of THIS BACKEND, not of Vulkan: a bind resets no dynamic
+     *   state, and every pipeline here comes from one builder that declares the same eleven dynamic states
+     *   (`buildPipeline`), so a value the buffer already holds is still one the new pipeline reads. A second builder
+     *   with a narrower list would have to invalidate the shadow where it binds. Nothing else invalidates it either -
      *   dynamic state is command buffer state, and every other boundary (a new pass) states the same values anyway.
      * - The stored values are the VULKAN ones, not the seam's: this shadow answers "would the call be redundant", not
      *   "what did the host ask for".
@@ -277,7 +267,12 @@ class VN_BACKEND_VK_API ContentDraw final {
     };
 
     /**
-     * @brief Binds @p pipeline unless it is the one already bound, and forgets the state shadow when it changes.
+     * @brief Binds @p pipeline unless it is the one already bound; the state shadow is KEPT.
+     *
+     * @details
+     * - Keeping it is sound because every pipeline this backend builds declares the same dynamic set (see
+     *   `RecordedState`): Vulkan keeps dynamic state across `vkCmdBindPipeline`, so re-stating viewport, scissor and
+     *   the raster half after every bind would be a command per item with no new meaning.
      *
      * @param commands The command buffer being recorded.
      * @param pipeline The pipeline this draw needs.
@@ -323,8 +318,13 @@ class VN_BACKEND_VK_API ContentDraw final {
   private:
     ContentCaches& caches;
     FrameScratch&  scratch;
-    /// What the last commands left bound (see RecordedState); reset by @ref beginFrame and by a pipeline change.
+    /// What the last commands left bound (see RecordedState); reset by @ref beginFrame, and only there.
     RecordedState  recorded{};
+    /// The vertex bind lists of the command being recorded: cleared and refilled per call, so their storage is
+    /// allocated once instead of twice per command (see the class note on the recording cost).
+    std::vector<VkBuffer>     bind_buffers_{};
+    /// The offsets that go with `bind_buffers_`: every stream is bound at its first byte, so every entry is 0.
+    std::vector<VkDeviceSize> bind_offsets_{};
     /// How many state commands this recorder issued (see @ref stateCommands).
     std::uint64_t  state_commands_{ 0U };
 };

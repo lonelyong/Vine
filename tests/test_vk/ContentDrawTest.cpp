@@ -1228,6 +1228,73 @@ TEST(VkContentDrawTest, ARepeatedStateIsNotARepeatedCommand)
 }
 
 /**
+ * @brief THE STATE SURVIVES A PIPELINE BIND, because the dynamic set is a backend constant.
+ *
+ * WHY THIS CASE EXISTS (`K6`, review 9). `bindPipeline` used to reset the whole state shadow, on the reasoning that a
+ * pipeline MAY declare a different dynamic set. Every pipeline this backend builds comes from `buildPipeline`, which
+ * declares the same eleven dynamic states, and Vulkan resets no dynamic state on a bind - so the reset re-stated the
+ * viewport, the scissor and the whole raster half for a pipeline that reads exactly the values the buffer holds. Two
+ * commands with DIFFERENT programs therefore cost one state command (the bind itself), not two statements of
+ * everything. A mutation that restores the reset makes the deltas below read `2 * one_draw` (two commands) and
+ * `4 * one_draw` (four commands) instead of `one_draw + 1` and `one_draw + 3`.
+ */
+TEST(VkContentDrawTest, TwoAlternatingPipelinesRestateNoState)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<RenderTarget>           target   = makeTarget();
+    const intrusive_ptr<Geometry>               geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram>          first    = makeProgram();
+    const intrusive_ptr<ShaderProgram>          second   = makeProgramWith(kAlphaFragment);
+    const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+
+    // TWO PIPELINES, ONE STATE: the commands alternate their programs and share everything else, so the only thing a
+    // later command can need is a bind.
+    const auto frameWith = [&](const std::size_t command_count) {
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        for (std::size_t index = 0; index < command_count; ++index) {
+            DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+            command.program              = (index % 2U) == 0U ? first : second;
+            command.program_description  = command.program->description();
+            command.material             = material;
+            command.material_description = material->description();
+            commands->push_back(std::move(command));
+        }
+        DrawPacket draw;
+        draw.kind        = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands    = commands;
+        return drawingFrame(target.get(), std::move(draw));
+    };
+
+    (void)backend->executeFrame(frameWith(1U), nullptr);
+    const std::uint64_t one_draw = device->recordingNumbers().state_commands;
+    ASSERT_GT(one_draw, 0U) << "a drawn frame states something";
+
+    (void)backend->executeFrame(frameWith(2U), nullptr);
+    const std::uint64_t two_draws = device->recordingNumbers().state_commands;
+    EXPECT_EQ(two_draws - one_draw, one_draw + 1U)
+        << "the second command binds a different pipeline and states nothing else (measured " << (two_draws - one_draw)
+        << " against " << one_draw << " + 1)";
+
+    (void)backend->executeFrame(frameWith(4U), nullptr);
+    const std::uint64_t four_draws = device->recordingNumbers().state_commands;
+    // FOUR COMMANDS, FOUR BINDS (each differs from its predecessor) AND ONE STATEMENT OF EVERYTHING ELSE: the relation
+    // is `one_draw + (commands - 1)`, because `one_draw` already carries the first bind.
+    EXPECT_EQ(four_draws - two_draws, one_draw + 3U)
+        << "two more alternating binds cost two state commands, not two statements (measured "
+        << (four_draws - two_draws) << " against " << one_draw << " + 3)";
+
+    backend->shutdown();
+}
+
+/**
  * @brief THE FRAME NAMES ITSELF AND EVERY PASS to a capture tool.
  *
  * WHY THIS CASE EXISTS. A capture without labels is one anonymous command stream: the host's `FrameReport` names the

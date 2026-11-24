@@ -10,6 +10,7 @@ add_executable(${TEST_NAME}
         ContentTargetTest.cpp
         ConcurrentFrameTest.cpp
         DeferredTest.cpp
+        DeviceChoiceTest.cpp
         FrameRecordTest.cpp
         HandlesTest.cpp
         HostWindowReadTest.cpp

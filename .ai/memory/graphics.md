@@ -2187,7 +2187,8 @@
   right and the mutation stayed green here) - which is why the stage is a named constant (`kPassClockBoundaryStage`,
   `kFrameClockStartStage`) pinned by `BarrierPlanTest.APassClockBoundaryWaitsForEveryCommand`, with
   `VkPassTimingTest.AHeavyPassReportsMoreTimeThanACheapOne` stating the property for hardware.
-- **One pass = one value**: `FrameHead::Pass` now carries `entry` / `draw` / `images` / `window` / `compatibility`, and
+- **One pass = one value**: `FrameHead::Pass` now carries `entry` / `draw` / `target` (and, since review 9,
+  `sources` / `shadow_map` / `shadow` - what the pass READS), and
   the local `Runnable` list plus the `pass_position` / `pass_index` arithmetic are gone. The frame's own working set
   (`moved_layouts`, `lent_depths`, `stamp_values`) moved onto the driver (`FrameRun`, cleared per frame), and so did the
   command buffer (`FrameDriver::commands`, created with the pool, reset by `vkBeginCommandBuffer`) - so the frame path
@@ -2196,9 +2197,10 @@
   a pass' transitions as one `VkDependencyInfo`; a seven-attachment multisampled set is now one command with seven
   barriers instead of seven commands.
 - **A state command is issued when the state changes**: `ContentDraw` keeps a `RecordedState` shadow (viewport, scissor,
-  line width, depth bias, cull, polygon, depth test/write/compare, blend), invalidated on a pipeline bind and reset by
-  `beginFrame()`. `T54` made state a command; this makes a REPEATED state free - the viewport and the scissor are pass
-  facts and used to be re-stated per draw.
+  line width, depth bias, cull, polygon, depth test/write/compare, blend), reset by `beginFrame()` ALONE - since review 9
+  it survives a pipeline bind, because every pipeline declares the same eleven dynamic states
+  (`VkContentDrawTest.TwoAlternatingPipelinesRestateNoState`). `T54` made state a command; this makes a REPEATED state
+  free - the viewport and the scissor are pass facts and used to be re-stated per draw.
 - **The frame names itself**: one `VK_EXT_debug_utils` region per frame and one per pass, from `RenderPass::name`, so a
   capture tree and the per-pass timing agree. `transferWriteState()` moved next to its read twin in `BarrierPlan` (the
   write half was a private helper in `ContentImages.cpp`: one table in name, two in fact).
@@ -2365,3 +2367,23 @@
   ASan+LSan focused **PASS**, 11 gates green. Mutations: an extra driver freezing the watermark reddens
   `CoreDeviceClockTest.AnIdleDriverHoldsNothingBack` and the source-keeps drain; `borrow` as a no-op reddens
   `VkMultiSessionTest.AFrameKeepsTheContentItResolvedUntilTheFrameEnds` (the picture is black).
+
+## 2026-11-25 - review 9's first batch: the read set, the state shadow, the device floor
+
+- **A pass owns what it READS** (`K7`): `FrameDriver::resolveReadSet` resolves each full-screen packet's source record and
+  each pass' shadow map AFTER the claim walk (so a record a later pass builds, or a depth a later pass lends, is still
+  seen), and the pass slot (`FrameHead::Pass::sources` / `shadow_map` / `shadow`) keeps them. `FrameRecording`'s
+  `read_records` list is gone - it was the same fact in a second place. `executeFrame`'s record loop takes NO target-map
+  lock; the shadow's LAYOUT transition stays there (a command, not a resolution).
+- **The state shadow survives a pipeline bind** (`K6c`): every pipeline comes from `buildPipeline` with the same eleven
+  dynamic states, so a bind resets nothing - a second BUILDER with a narrower list must invalidate the shadow where it
+  binds. The recorder's vertex-bind lists are its own members (`K6a`), so a bind is no longer a heap operation.
+- **Device choice filters before it ranks** (`K3`): `DeviceChoice.hpp`'s `candidateRefusal(DeviceOffer)` is the floor as
+  one testable predicate; `initialize` drops any candidate that misses it and ranks only survivors. The three refusal
+  codes are published only when NOBODY serves, and they then describe the highest-ranked device the floor turned away.
+- **Still open** (backlog): `T17` (a cold build under the device-wide cache lock, and the build-admission vocabulary),
+  `T67` (streams are host-visible), `T68` (the variant rule's SDK owner), `T69` (the descriptor ceiling's trigger).
+- **Evidence**: `test_vk` green after the batch (`ctest -R test_vk`, 18 s), with the new cases `VkDeviceChoiceTest.*`,
+  `VkContentDrawTest.TwoAlternatingPipelinesRestateNoState` and
+  `VkMultiSessionTest.AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampledSource`; gates: ai-docs strict,
+  design-docs, cross-refs, include-hygiene, api-style, vk-exposure, diagnostic-formats, export-annotations.

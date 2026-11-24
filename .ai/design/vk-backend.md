@@ -432,9 +432,11 @@ and every cache has a witness a test can read.**
   * **A STATE COMMAND IS ISSUED WHEN THE STATE CHANGES** (`ContentDraw::RecordedState`): viewport, scissor, line width,
     depth bias, cull, polygon mode, depth test/write/compare and blend are diffed against what this frame's command
     buffer already holds. The viewport and the scissor are PASS facts (they are computed from the pass' rectangle), so a
-    pass with ten draws used to state the same rectangle ten times; the shadow is invalidated on a pipeline bind,
-    because that is the one moment a pipeline's dynamic set can differ, and it is reset by `beginFrame()` because every
-    frame begins a new command buffer.
+    pass with ten draws used to state the same rectangle ten times. The shadow SURVIVES a pipeline bind, and that is a
+    property of THIS backend rather than of Vulkan: a bind resets no dynamic state, and every pipeline here comes from
+    `buildPipeline`, which declares the same eleven dynamic states - so the value the buffer holds is still one the new
+    pipeline reads, and a pass that alternates two pipelines pays one command per bind instead of re-stating everything
+    (review 9 `K6`). It is reset by `beginFrame()` alone, because every frame begins a new command buffer.
   * **THE FRAME NAMES ITSELF** (`Device::debugMarkers`): one `VK_EXT_debug_utils` region around the frame and one around
     each pass, named from `RenderPass::name` - so a capture tool's tree, the host's `PrepareReport` and
     `FrameReport::timing`'s per-pass entries all use the same names.
@@ -443,19 +445,23 @@ and every cache has a witness a test can read.**
   without a consumer). Both are recorded as NUMBERS rather than as claims: `Device::recordingNumbers()` answers
   `barrier_dependencies` / `barriers` / `state_commands` / `debug_labels`, cumulative, and each case takes its delta -
   the same rule §2.4 lays down for the ring, the set cache and the pool.
-- **Boundary**: the shadow is the recorder's and lives for one frame; it never crosses a pipeline bind. A session whose
+- **Boundary**: the shadow is the recorder's and lives for one frame; a second pipeline BUILDER with a narrower dynamic
+  list would have to invalidate it where it binds, which is why the list is one constant inside `buildPipeline` rather
+  than a property each call site restates. A session whose
   loader has no `VK_EXT_debug_utils` names nothing (`debugMarkers()` answers false) rather than failing a frame, and its
   `debug_labels` stays 0.
 - **Cases**: `VkContentDrawTest.APassEntryIsOneDependencyWhateverItWrites` (a three-attachment pass = one dependency
-  carrying three barriers), `ARepeatedStateIsNotARepeatedCommand` (two identical commands cost what one does) and
-  `AFrameAndItsPassesAreNamedToACaptureTool` (passes + 1 regions).
+  carrying three barriers), `ARepeatedStateIsNotARepeatedCommand` (two identical commands cost what one does),
+  `TwoAlternatingPipelinesRestateNoState` (two pipelines that differ only by program cost one command - the bind - per
+  switch) and `AFrameAndItsPassesAreNamedToACaptureTool` (passes + 1 regions).
 
 ### 2.20 One pass is one value; one frame is one command buffer (`G1` / `G5` / `G6`)
 
 - **What it is**: the frame body used to keep four descriptions of "the pass about to run" - a local `Runnable` list,
   `FrameHead::Pass`, `PassAttachmentSet` and `PassAttachmentOps` - plus the `pass_position` / `pass_index` arithmetic that kept the
-  indexings in step. `FrameHead::Pass` now carries the frame facts (`entry`, `draw`, `target`): the walk claims them, the
-  head resolves the plans into the same slots while it holds the cache lock, and the recorder walks that one array. **A
+  indexings in step. `FrameHead::Pass` now carries the frame facts (`entry`, `draw`, `target`, and - since review 9 -
+  what the pass READS): the walk claims them, the head resolves the plans into the same slots while it holds the cache
+  lock, and the recorder walks that one array. **A
   pass' attachment set is itself a value** (`PassTarget`): the off-screen set and the window's acquired image answer the
   same four questions - extent, pipeline compatibility, what is already in it, open and close it - through ONE handle,
   so the frame body has no `if (window) A else B` pair left (it used to have four). **The handle also states who keeps
@@ -477,6 +483,14 @@ and every cache has a witness a test can read.**
   records it moved, the clock's sample buffer, its counters and its labels. Those were a dozen locals in one long
   function and, in part, stack containers rebuilt per frame; they are one value the frame's phases read and write,
   `clear()`ed per frame with its capacity kept.
+- **A PASS ALSO OWNS WHAT IT READS** (`FrameHead::Pass::sources` / `shadow_map`, review 9 `K7`): the walk already
+  CLAIMED every sampled target (a full-screen source, a declared input, a depth lender), but the RECORD was looked up
+  again in the record loop - per pass and per source, under the target map's lock - so a release landing between the
+  claim and that second call took the picture away from a frame that had claimed it (a full-screen copy refused with
+  `ScreenNoSource`, a shadowed pass drawn unshadowed with no report), and the recording path took the one lock the
+  head/record split exists to keep off it. `FrameDriver::resolveReadSet` resolves the records AFTER the whole walk - so a
+  record a LATER pass builds, or a depth a LATER pass lends, is still seen - and the pass slot keeps them, which is the
+  same "a frame owns what it names" rule the pass handle already followed (`N10`).
 - **And so does the command buffer** (`FrameDriver::commands`): the command pool, the fence and the query pool were the
   driver's; the buffer was allocated and freed per frame, with a failure branch (`vk.frame.command_buffer_missing`) a
   host could do nothing about. It is created with the pool and reset by `vkBeginCommandBuffer`, and the warm-up records
@@ -485,8 +499,10 @@ and every cache has a witness a test can read.**
   frame will run" - stays inside the walker rather than being re-derived in a second function) and `G6` (the frame
   machinery is listed in one object). Three indexings over one list is exactly the shape that lets a report name the
   wrong pass, and a per-frame allocate/free pair is the frame machinery's own cost paid outside the machine.
-- **Boundary**: a structure change with no behaviour - the 197 `test_vk` cases did not move, `FrameHead::storageGrows`
-  still answers what it did, and the clock's per-pass spans are what F13 says they are.
+- **Boundary**: the PASS VALUE is a structure change with no behaviour - the 197 `test_vk` cases did not move,
+  `FrameHead::storageGrows` still answers what it did, and the clock's per-pass spans are what F13 says they are. The
+  read-set half is the one behaviour change here: it is stated as `N10` and pinned by its own case, and the rest of the
+  suite was unchanged by it.
 
 ### 2.21 Content becomes resident when its fill is PROVEN (`G6` / `G10`)
 
@@ -542,10 +558,16 @@ and every cache has a witness a test can read.**
 
 ### 3.1.2 F2 Physical device selection
 
-- **Behaviour**: enumerate every physical device and order by type (discrete 4 / integrated 3 / virtual 2 / cpu 1 / other 0), keeping the first seen on a tie; with a
-  window, the family's present support is required as well.
+- **Behaviour**: enumerate every physical device; FILTER each candidate by the session's floor (the Vulkan 1.3 version,
+  the `synchronization2` / `dynamicRendering` features, and `VK_EXT_extended_dynamic_state3` with all three switches),
+  then order the SURVIVORS by type (discrete 4 / integrated 3 / virtual 2 / cpu 1 / other 0), keeping the first seen on a
+  tie; with a window, the family's present support is required as well. A device that misses a floor is not ranked at
+  all, and when NO candidate serves the refusal names the floor the highest-ranked device missed - a fact about the
+  machine, not about a device this backend picked (`DeviceChoice.hpp`'s `candidateRefusal`, review 9 `K3`; the peers
+  filter the same way: `vk-bootstrap`'s `PhysicalDeviceSelector`, Diligent's adapter enumeration).
 - **Constraints**: `C7`.
-- **Acceptance**: `T1`; the choice is readable through `handles()`.
+- **Acceptance**: `T1`; `VkDeviceChoiceTest` (the predicate driven with fabricated offers - two real GPUs are not in CI);
+  the choice is readable through `handles()`.
 - **Caveat**: `P10` (device identity is half of the cache key).
 
 ### 3.1.3 F3 Window and swap chain
@@ -831,7 +853,14 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   (`VkContentDrawTest.APassEntryIsOneDependencyWhateverItWrites`).
 - **N9 A state command is issued only when the state changes**: within one frame, a draw that repeats the previous
   draw's pipeline, rectangle and raster state issues no state command
-  (`VkContentDrawTest.ARepeatedStateIsNotARepeatedCommand`).
+  (`VkContentDrawTest.ARepeatedStateIsNotARepeatedCommand`), and a draw that only changes the PIPELINE issues exactly one
+  - the bind - because every pipeline declares the same dynamic set
+  (`TwoAlternatingPipelinesRestateNoState`).
+- **N10 A frame owns what it reads**: a pass' sampled sources and its shadow map are resolved where the frame claims the
+  pass, and the pass slot keeps them - so a release announced after the claim parks the record instead of emptying the
+  frame's answer, and the record loop of `Device::executeFrame` takes no lock
+  (`VkMultiSessionTest.AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampledSource`,
+  `AFrameKeepsTheSourceItReadsUntilTheFrameEnds`).
 
 ## 6. Caveats and Traps
 
@@ -1064,7 +1093,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **Host allocations, measured once and kept apart** (2026-11-18, Debug + lavapipe, `operator new` counted for one measurement): the backend's
   `executeFrame` asks for **85 allocations / 10.6 KB per steady frame with one draw packet** and **133 / 12.4 KB with four** - stable frame to frame, so it is churn,
   not growth; that is ≈**16 per further draw packet** and **69 fixed** (mostly small vectors: the pipeline key's channel/binding/attribute lists and the plan's
-  per-draw scratch). The **whole chain frame** (engine + backend, the demo's deferred path: 10 passes / 10 draws with shadows, sky and HUD) is ≈**1966 allocations /
+  per-draw scratch). The recorder's two per-command VERTEX-BIND vectors were removed afterwards (review 9 `K6`: they are the recorder's, allocated once), so the
+  per-packet share is now an upper bound - the figure is kept as measured and dated rather than restated without a run. The **whole chain frame** (engine + backend, the demo's deferred path: 10 passes / 10 draws with shadows, sky and HUD) is ≈**1966 allocations /
   ≈2.6 MB per frame** (`VN_BENCH_FRAMES` 8 vs 120 on one build, 2026-11-18). The two numbers answer different questions and are not interchangeable: the smaller one is
   the backend's own recording window, the larger one is what a host's frame costs. GPU-side builds and uploads are **0** in steady state (`VkResidencyTest`), so none
   of this is device memory.
@@ -1084,6 +1114,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **`T60` (the retirement) landed 2026-11-23**: this backend is the one the retirement leaves in place. The floor is Vulkan 1.3 with `synchronization2` +
   `dynamicRendering`, the pipeline key has no state half, and the backend has no render-pass or framebuffer object left; the retired plugin's codes and the comparison
   documents went with it ([ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md)).
+- **Review 9's remaining findings are backlog items**: `T67` - content STREAMS still live in host-visible memory while images and targets are device-local
+  (`K1`; the trigger is a measurement on a device whose memory types differ, which a software rasteriser cannot be); `T68` - the shader-variant RULE has no SDK
+  owner until a second API family starts (`K2`); `T69` - the descriptor-set cache's ceiling is combinatorial and its trigger is unstated (`K8`). `T17`'s text now
+  names the cross-driver stall a cold build causes under the device-wide cache lock (`K5`), and `K4`'s one build-admission vocabulary rides with that batch.
 
 ### 9.3 Compatibility / migration
 

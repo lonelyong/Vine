@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -18,8 +19,35 @@
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/PassTarget.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
+#include <vine/math/Matrix4x4.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
+
+/**
+ * @brief The SHADOW MAP a content pass samples: whose map it is and how a fragment maps into it.
+ *
+ * @details
+ * - THE MAP ARRIVES AS A PASS INPUT, and this is the device's reading of what the TARGET said about it
+ *   (`RenderTarget::shadowOf` + `producerViewProjection`): a target is a map because it states whose shadow it is,
+ *   never because it happens to have a sampleable depth (a G-buffer does too).
+ * - THREE FACTS, each from its owner: the VIEW is the image the producing pass wrote (already in
+ *   `SHADER_READ_ONLY_OPTIMAL`, the device transitions it before the pass begins), the MATRIX is the producer's own
+ *   (light clip <- world, in the SDK's clip convention), and the LIGHT is the identity the map belongs to - what
+ *   the draw packet's announced lights are matched against, because the switch lives on the light.
+ * - AN EMPTY ONE MEANS "NO MAP": the content set binds the 1x1 white stand-in and the block's switch stays off, so
+ *   the engine's forward text takes its unshadowed path with the same pipeline.
+ * - IT IS RESOLVED AT THE CLAIM (`Device::FrameDriver::claimPasses`) WITH THE REST OF THE FRAME'S READ SET, and the
+ *   record loop only states the transition the picture needs - so the resolution (which input is a map, is it readable,
+ *   does this frame lend it) happens once, under the target map's lock, and never on the recording path.
+ *
+ * @see ShadowBlock: the packing rules, the clip conversion and the reverse-Z comparison.
+ */
+struct ShadowSource {
+    VkImageView     view{ VK_NULL_HANDLE };       ///< The map's depth view, bound at set 0 binding 7.
+    bool            has_view_projection{ false }; ///< Whether the producer published how to read the map.
+    vn::math::Mat4d view_projection{};            ///< Light clip <- world, in the SDK's clip convention.
+    const void*     light{ nullptr };             ///< Whose map it is (a `Light`'s identity; nullptr = not a map).
+};
 
 /**
  * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per draw packet, and the frame-level texture facts every call binds.
@@ -131,9 +159,20 @@ class FrameHead final {
         /// PassTarget). Read once per pass; a resize after the claim belongs to the next frame.
         PassTarget target{};
 
+        /// The record each draw packet SAMPLES - a full-screen packet's source - one entry per packet, or null. It is
+        /// resolved where the frame CLAIMS the pass (see `Device::FrameDriver::resolveReadSet`), so a release announced
+        /// after the claim parks the record instead of taking the picture away, and the record loop reads this value
+        /// rather than asking the target map again (which took its lock on the recording path).
+        std::vector<std::shared_ptr<TargetObjects>> sources{};
+        /// The record the pass' shadow map is read from (see `ShadowSource`), or null when it samples none. Kept alive
+        /// for the whole pass for the same reason `sources` is.
+        std::shared_ptr<TargetObjects> shadow_map{};
+        /// The shadow map this pass samples, as the claim resolved it - an empty one means "no map".
+        ShadowSource shadow{};
+
         std::vector<Call> draws{};
 
-        /** @brief Releases every draw packet and the pass' facts; the vector keeps its capacity. */
+        /** @brief Releases every draw packet and the pass' facts; the vectors keep their capacity. */
         void clear() noexcept
         {
             for (Call& call : draws) {
@@ -143,6 +182,9 @@ class FrameHead final {
             entry  = nullptr;
             draw   = nullptr;
             target = PassTarget{};
+            sources.clear();
+            shadow_map.reset();
+            shadow = ShadowSource{};
         }
     };
 
@@ -192,6 +234,10 @@ class FrameHead final {
             ++storage_grows_;
         }
         slot.draws.resize(draw_count);
+        // ONE READ SLOT PER PACKET, all null until `resolveReadSet` fills the ones that sample a target: sized HERE so
+        // the recording path indexes it without a check, and re-sized over reused storage like every other slot.
+        slot.sources.clear();
+        slot.sources.resize(draw_count);
         ++used_;
         return slot;
     }

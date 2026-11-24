@@ -190,8 +190,12 @@ void ContentDraw::bindPipeline(const VkCommandBuffer commands, const VkPipeline 
     }
     caches.table().vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     ++state_commands_;
-    // A PIPELINE MAY DECLARE A DIFFERENT DYNAMIC SET, so nothing the last call left is a value this draw may assume.
-    recorded          = RecordedState{};
+    // THE STATE SURVIVES THE BIND, BECAUSE THE DYNAMIC SET IS A CONSTANT HERE. A bind resets no dynamic state, and a
+    // value only stops being usable when the NEW pipeline does not declare that state. Every pipeline this backend
+    // builds - content and full-screen alike - comes from `buildPipeline`, which declares one list of eleven dynamic
+    // states, so every value the buffer holds is still a value the new pipeline reads: re-stating the rectangle after
+    // each bind would be one command per item with no new meaning (the case `TwoAlternatingPipelinesRestateNoState`
+    // pins it). An edit that gives a SECOND builder a narrower list must reset the shadow where it binds.
     recorded.pipeline = pipeline;
 }
 
@@ -532,22 +536,24 @@ void ContentDraw::record(const DrawScope&                         scope,
                                         sizeof(push),
                                         &push);
 
-        std::vector<VkBuffer>     vertex_buffers;
-        std::vector<VkDeviceSize> vertex_offsets;
-        vertex_buffers.reserve(plan.vertex_streams.size() + (plan.instance_buffer != VK_NULL_HANDLE ? 1U : 0U));
-        vertex_offsets.reserve(vertex_buffers.capacity());
+        // THE BIND LISTS ARE THE RECORDER'S, NOT THE CALL'S (see bind_buffers_ in the header): a pass binds once per
+        // command, and two vectors built per command made the recording path's allocations grow with its draw count
+        // (measured: the per-frame count in `vk-backend.md` §9.1, most of it small vectors). Cleared and refilled here,
+        // their storage is allocated once - when the widest geometry this driver has seen binds for the first time.
+        bind_buffers_.clear();
+        bind_offsets_.clear();
         for (const VkBuffer stream : plan.vertex_streams) {
-            vertex_buffers.push_back(stream);
-            vertex_offsets.push_back(0U);
+            bind_buffers_.push_back(stream);
+            bind_offsets_.push_back(0U);
         }
         if (plan.instance_buffer != VK_NULL_HANDLE) {
             // THE INSTANCE STREAM is the LAST binding, matching the layout `ensureContentPipeline` built for it
             // (one binding, stride of a matrix, input rate INSTANCE).
-            vertex_buffers.push_back(plan.instance_buffer);
-            vertex_offsets.push_back(0U);
+            bind_buffers_.push_back(plan.instance_buffer);
+            bind_offsets_.push_back(0U);
         }
-        if (!vertex_buffers.empty()) {
-            caches.table().vkCmdBindVertexBuffers(commands, 0U, static_cast<std::uint32_t>(vertex_buffers.size()), vertex_buffers.data(), vertex_offsets.data());
+        if (!bind_buffers_.empty()) {
+            caches.table().vkCmdBindVertexBuffers(commands, 0U, static_cast<std::uint32_t>(bind_buffers_.size()), bind_buffers_.data(), bind_offsets_.data());
         }
 
         const std::uint32_t instance_count = plan.instance_buffer != VK_NULL_HANDLE ? command.instance_count : 1U;

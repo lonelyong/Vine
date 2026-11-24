@@ -67,8 +67,13 @@ VN_BACKEND_VK_NS_BEGIN
  *   one geometry, and the copies are bounded: at most one per competitor, only on the frame in which two drivers
  *   first draw the same thing (`.ai/design/graphics-sessions.md` §2.4, §3.1.4). The frame HEAD is still one hold of
  *   this cache's lock - the admission decides who builds, not how many drivers may hold the tables.
- * - MEMORY MODEL. Streams and staging copies live in host-visible coherent memory; the residency step (M6) is what
- *   moves streams to device-local memory behind one copy.
+ * - MEMORY MODEL, AS IT IS TODAY. Streams and staging copies live in HOST-VISIBLE coherent memory (`upload` asks
+ *   `detail::createHostBuffer`, and the allocator takes the first host-visible type it finds). The other two kinds of
+ *   resource already do what streams will: `ContentImages` allocates an image device-local and fills it through a host
+ *   staging copy, and a target's attachments are device-local. Moving streams behind one staging copy is a KNOWN GAP,
+ *   not a mechanism this class has: it is backlog `T67`, whose trigger is a measurement on a device whose memory types
+ *   actually differ - on a software rasteriser the host-visible and device-local type is the same one, so no number in
+ *   this tree can see the difference either way.
  *
  * @warning The lock is NOT recursive: a verb that takes `Lock&` must be called with the frame's hold, and a verb that
  *          takes its own lock (a release, `endFrame`, the progress readers) must not be called while a hold is alive.

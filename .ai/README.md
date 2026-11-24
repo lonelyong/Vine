@@ -242,16 +242,14 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (4)
+## research/ — research and proposals (6)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
-here is deleted. Every proposal and audit this tree carried has been converted except the three below,
+here is deleted. Every proposal and audit this tree carried has been converted except these records,
 which exist because the third-round audit's open items were left with no home when its page was
-deleted (git is still the archive for the page itself), because the fifth review's two deferred
-proposals (`T40` / `T41`) keep their arguments where a design page cannot carry them, because the
-sixth review's two P0 findings are a working record for the fix batch that follows, and because the
-seventh review's implementation-quality batch and its follow-up candidates are a working record for
-the next refactor batch.
+deleted (git is still the archive for the page itself), because a review's findings and deferred
+proposals are a working record for the batch that follows them, and because the fifth, eighth and
+ninth reviews compare against the peer engines at a level a design page cannot carry.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
@@ -278,6 +276,19 @@ the next refactor batch.
   itself), the floor raise as the capability the retirement buys, and four batches to run before the
   deletion. Also the Linux build break this round found and fixed (the X11 `TestDisplay` lost its default
   constructor), and two stale premises in T10/T60.
+- `graphics-2026-11-25-review-9.md` — the ninth pass, on the vk backend's SYSTEM, concepts and framework:
+  the twelve mechanisms with their owners and witnesses, the seven places the design is ahead of its
+  peers, and nine findings - content streams are the only resource still in host-visible memory (and the
+  header says otherwise), the shader-variant rule has no owner in the layer that owns the shaders, device
+  choice ranks before it filters, three content kinds have three build-admission spellings, a cold
+  glslang + PSO build runs inside the device-wide cache lock, the recording path allocates per draw and
+  re-states state per pipeline bind, a pass' read set is resolved during recording instead of at the head,
+  the descriptor-set ceiling is combinatorial with no stated trigger, and two sentences that contradict
+  their mechanism. The batch that followed (same day) fixed four of the nine in the tree - the two
+  contradicting sentences, the read set resolved at the claim and held by the pass slot, the per-command
+  bind lists and the state shadow across a bind, and filter-then-rank device choice - and the rest are
+  backlog `T17` (amended: the cross-driver cache-lock stall and the build-admission vocabulary), `T67`
+  (device-local streams), `T68` (the SDK-owned variant rule) and `T69` (the descriptor ceiling).
 
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
