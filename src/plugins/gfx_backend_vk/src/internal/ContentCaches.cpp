@@ -942,30 +942,30 @@ struct ContentCaches::Impl {
             if (channel.channel.empty()) {
                 continue;
             }
-            key.identity.vertex_layout.slots.push_back(vn::graphics::VertexLayoutSlot{ channel.location, channel.channel.components });
+            key.identity.vertex_layout.attributes.push_back(vn::graphics::VertexLayoutSlot{ channel.location, channel.channel.components });
         }
-        const std::size_t geometry_channels = key.identity.vertex_layout.slots.size();
+        const std::size_t geometry_channels = key.identity.vertex_layout.attributes.size();
         if (instanced) {
             // THE INSTANCE MATRIX IS FOUR vec4 COLUMNS at locations 12-15 (see ShaderAbi's InstanceModel), supplied by
             // ONE binding whose stride is the matrix - the same shape the engine's vertex stage declares under
             // `VN_INSTANCED`. Putting the entries in the key's slot list is what makes two layouts different keys.
             const std::uint32_t first = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
             for (std::uint32_t column = 0; column < vn::graphics::kInstanceMatrixColumns; ++column) {
-                key.identity.vertex_layout.slots.push_back(vn::graphics::VertexLayoutSlot{ first + column, 4U });
+                key.identity.vertex_layout.attributes.push_back(vn::graphics::VertexLayoutSlot{ first + column, 4U });
             }
         }
 
         std::vector<VkVertexInputBindingDescription>   bindings;
         std::vector<VkVertexInputAttributeDescription> attributes;
         bindings.reserve(geometry_channels + 1U);
-        attributes.reserve(key.identity.vertex_layout.slots.size());
+        attributes.reserve(key.identity.vertex_layout.attributes.size());
         for (std::size_t index = 0; index < geometry_channels; ++index) {
             // ONLY WHAT THE VERTEX STAGE READS. A geometry carries the channels its data has; a program reads the ones
             // it declares, and a pipeline that names the rest describes a vertex input nobody wrote (validation says
             // so: "attribute at location N not consumed by vertex shader") and makes a draw fetch what it never uses.
             // The binding NUMBER stays the geometry channel's index - that is the slot the draw binds the stream to -
             // so narrowing leaves the binding side alone (see ContentDraw's vkCmdBindVertexBuffers).
-            const vn::graphics::VertexLayoutSlot& slot = key.identity.vertex_layout.slots[index];
+            const vn::graphics::VertexLayoutSlot& slot = key.identity.vertex_layout.attributes[index];
             if (!program.vertexStageReads(slot.location)) {
                 continue;
             }
@@ -987,7 +987,7 @@ struct ContentCaches::Impl {
         // The instance stream is declared only when the stage reads it (a depth-only or unlit program may not); its
         // binding keeps the LAST slot because that is where the draw binds the matrix (see ContentDraw). Asking about
         // the FIRST column is enough: the four are one matrix input, so they are either all declared or none is.
-        if (instanced && program.vertexStageReads(key.identity.vertex_layout.slots[geometry_channels].location)) {
+        if (instanced && program.vertexStageReads(key.identity.vertex_layout.attributes[geometry_channels].location)) {
             VkVertexInputBindingDescription binding_description{};
             binding_description.binding   = static_cast<std::uint32_t>(geometry_channels);
             binding_description.stride    = vn::graphics::kInstanceMatrixColumns * 4U * static_cast<std::uint32_t>(sizeof(float));
@@ -995,7 +995,7 @@ struct ContentCaches::Impl {
             bindings.push_back(binding_description);
             for (std::uint32_t column = 0; column < vn::graphics::kInstanceMatrixColumns; ++column) {
                 VkVertexInputAttributeDescription attribute{};
-                attribute.location = key.identity.vertex_layout.slots[geometry_channels + column].location;
+                attribute.location = key.identity.vertex_layout.attributes[geometry_channels + column].location;
                 attribute.binding  = binding_description.binding;
                 attribute.format   = vertexFormatOf(4U);
                 attribute.offset   = column * 4U * static_cast<std::uint32_t>(sizeof(float));

@@ -6,14 +6,14 @@ VN_GRAPHICS_NS_BEGIN
 
 bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
 {
-    return slots == other.slots;
+    return attributes == other.attributes;
 }
 
 std::size_t VertexLayoutKeyHash::operator()(const VertexLayoutKey& key) const noexcept
 {
     std::size_t hash = 0;
     const auto  mix  = [&hash](std::uint64_t value) noexcept { hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2); };
-    for (const VertexLayoutSlot& slot : key.slots) {
+    for (const VertexLayoutSlot& slot : key.attributes) {
         mix(slot.location);
         mix(slot.components);
     }
@@ -83,7 +83,7 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     mix(key.program.id.bits());
     mix(key.program.revision);
     mix(static_cast<std::uint64_t>(key.kind));
-    for (const VertexLayoutSlot& slot : key.vertex_layout.slots) {
+    for (const VertexLayoutSlot& slot : key.vertex_layout.attributes) {
         mix(slot.location);
         mix(slot.components);
     }

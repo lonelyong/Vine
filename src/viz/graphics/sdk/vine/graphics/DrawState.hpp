@@ -101,14 +101,17 @@ struct VN_GRAPHICS_API VertexLayoutSlot {
  *   Two geometries feeding a custom channel at the same location with two and with four components are two
  *   vertex formats, and a key that named only the location shared ONE compiled pipeline between them - the
  *   second geometry then read a 4-component attribute out of a 2-component stream (G1 / G10).
- * - ORDER IS PART OF IT. Binding N is `slots[N]` on both sides (the pipeline declares attribute N at binding
- *   N, the draw binds stream N), so two layouts with the same attributes in a different order are two keys -
- *   each backend fills this in ITS OWN binding order, and that order is a fact about the backend, not a
+ * - ORDER IS PART OF IT. Binding N is `attributes[N]` on both sides (the pipeline declares attribute N at
+ *   binding N, the draw binds stream N), so two layouts with the same attributes in a different order are two
+ *   keys - each backend fills this in ITS OWN binding order, and that order is a fact about the backend, not a
  *   difference in the fact being keyed.
+ * - THE MEMBER IS `attributes`, NOT `slots`: a public header of this layer is consumed by Qt translation units,
+ *   and Qt defines `slots` as a macro, which deletes the declarator and turns the member into a bare type
+ *   declaration. The old name only compiled in non-Qt translation units.
  * - Canonical locations are the ABI's (see Geometry.hpp); a custom channel keeps its own location and width.
  */
 struct VN_GRAPHICS_API VertexLayoutKey {
-    std::vector<VertexLayoutSlot> slots; // One entry per declared attribute, in binding order.
+    std::vector<VertexLayoutSlot> attributes; // One entry per declared attribute, in binding order.
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const VertexLayoutKey& other) const noexcept;
