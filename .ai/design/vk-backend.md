@@ -526,7 +526,8 @@ and every cache has a witness a test can read.**
   ONE load/store answer PER ATTACHMENT (`ClearPolicy::color_ops` / `depth_op`; a stated op overrides the group spelling) - so the HUD case (keep the picture, own the depth inside its rectangle) is two fields of one
   `VkRenderingAttachmentInfo` instead of a fourth render pass. The WINDOW owns the same pair (`WindowTarget::beginPass`), with
   a PER-IMAGE layout record: a swapchain image is `UNDEFINED` on its first use, `PRESENT_SRC_KHR` after it was presented, and
-  the colour layout between two passes of one frame. An MSAA target draws into the sample buffers and resolves colour with
+  the colour layout between two passes of one frame. A PRESENTED COLOUR ATTACHMENT IS ALWAYS `Store`d: `beginPass` overrides a
+  stated `DontCare` (the compositor reads that image), while the depth is not forced, because it is not presented. An MSAA target draws into the sample buffers and resolves colour with
   `AVERAGE` and depth with `SAMPLE_ZERO` in the attachment info (`resolveMode` / `resolveImageView`, core 1.3 - no
   `vkCreateRenderPass2`); a depth-only target is a shadow map; a `shareDepth` target attaches the lender's depth picture and
   ALWAYS loads AND stores it (`TargetObjects::beginPass` overrides both halves - another target's image may never be

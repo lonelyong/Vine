@@ -112,7 +112,9 @@ struct VN_GRAPHICS_API PassDesc {
     /// Per-attachment load/store for the colour attachments, in attachment order (see ClearPolicy::color_ops).
     ///
     /// EMPTY keeps the group spelling: @ref clear_enabled chooses Clear-or-Load and every attachment stores its
-    /// result. A pass that states one entry for attachment 1 overrides the group for that attachment only.
+    /// result. A pass that states one entry for attachment 1 overrides the group for that attachment only. A
+    /// `DontCare` load leaves the previous contents undefined, so a pass that BLENDS against the attachment (or reads
+    /// it in a shader) must state `Load`; `DontCare` is for an attachment the pass fully overwrites.
     std::vector<AttachmentLoadStore> color_ops;
     /// Per-attachment load/store for the depth attachment (see ClearPolicy::depth_op). Unset keeps @ref clear_depth.
     std::optional<AttachmentLoadStore> depth_op;

@@ -2268,3 +2268,7 @@
   (`deferred_lighting clear=-` is a fresh target and still clears; `forward_transparent clear=-` must load). The black
   render area was this, not the per-attachment arrays. A fresh set still falls back to `Clear` (nothing to keep).
   Witness: `PassLoadTest.NoAnnouncementKeepsThePicture`.
+- **A presented image is always stored**: `WindowTarget::beginPass` forces `Store` on the window's one colour
+  attachment (a stated `DontCare` is ignored there); the depth is not forced, because it is not presented. Witness:
+  `VkWindowPresentTest.AWindowFrameIsDrawnAndPresented` draws a second frame stating `{Clear, DontCare}` and still
+  reads the clear.

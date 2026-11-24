@@ -123,7 +123,8 @@ struct ClearPolicy {
     /// EMPTY means the group spelling decides every attachment: @ref clear_color chooses Clear-or-Load and every
     /// attachment stores its result. An entry overrides the group for THAT attachment; an entry past the set's colour
     /// count is ignored. The clear VALUE stays in @ref color / @ref extra_colors - this vector says only what happens,
-    /// never what a Clear writes.
+    /// never what a Clear writes. A `DontCare` load leaves the previous contents undefined, so a pass that BLENDS
+    /// against the attachment (or reads it in a shader) must state `Load`.
     std::vector<AttachmentLoadStore> color_ops;
     /// The depth attachment's load/store ops, or nullopt for the group spelling: @ref clear_depth chooses
     /// Clear-or-Load and the depth stores its result.

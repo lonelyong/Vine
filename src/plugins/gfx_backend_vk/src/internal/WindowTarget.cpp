@@ -567,9 +567,19 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
     attachments.depth        = PassImage{ impl->depth, impl->depth_view, impl->depth_layout };
     attachments.depth_aspect = depthAspectMask(kDepthFormat);
 
+    // A PRESENTED IMAGE IS ALWAYS STORED. `storeOp = DontCare` would discard the very picture the presentation engine
+    // is about to hand to the compositor, so the window's one colour attachment takes `Store` whatever the pass
+    // stated. The DEPTH is not forced: it is not presented, and a pass may discard it (a later pass that loads it is
+    // the author's to order - the same rule every off-screen attachment follows).
+    PassAttachment window_colour = load.color.empty() ? PassAttachment{} : load.color.front();
+    window_colour.store          = vn::graphics::StoreOp::Store;
+    const std::array<PassAttachment, 1U> window_colour_ops{ window_colour };
+    PassLoad effective = load;
+    effective.color    = std::span<const PassAttachment>(window_colour_ops);
+
     // `beginRendering` records the barriers before the instance: every window pass announces its own, because the
     // instance may start in a layout the presentation engine left (Present) or one an earlier pass left (colour).
-    beginRendering(*impl->device.table, commands, attachments, load, tally);
+    beginRendering(*impl->device.table, commands, attachments, effective, tally);
     impl->image_layouts[index] = ImageLayout::ColorAttachment;
     impl->depth_layout         = ImageLayout::DepthAttachment;
     impl->pass_open            = true;

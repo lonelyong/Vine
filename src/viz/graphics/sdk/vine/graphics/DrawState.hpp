@@ -70,6 +70,9 @@ enum class StoreOp : std::uint8_t
  *   `extra_colors`), so this value stays small, copyable and comparable.
  * - `Load` on an attachment that holds nothing is not honoured as a load: the backend substitutes `Clear`, because
  *   there is no picture to keep (the rule the group spelling of `ClearPolicy` already follows).
+ * - DEPTH AND STENCIL ARE ONE PAIR: Vulkan's dynamic rendering states one load/store for both aspects, and that is the
+ *   floor this seam rests on. A family that separates them (D3D12's depth/stencil beginning access) applies this pair
+ *   to both until a stencil user exists - separate stencil ops would be an extension point with no consumer (`G8`).
  */
 struct AttachmentLoadStore {
     /// What the attachment loads before the first draw.

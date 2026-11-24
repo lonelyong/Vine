@@ -42,6 +42,10 @@ reachable only through the backend's resolve downgrade.
    into a set that already holds a picture LOADs; only a fresh set falls back to `Clear`. The old rule read nullopt
    as "clear both", which wiped the demo's deferred-lighting result (`forward_transparent` and the window overlays all
    announce no clear) and is why the render area was black.
+   **A PRESENTED IMAGE IS ALWAYS STORED.** `WindowTarget::beginPass` forces `Store` for the window's one colour
+   attachment - `DontCare` would discard what the compositor is about to read - and leaves the depth alone, because it
+   is not presented (`VkWindowPresentTest.AWindowFrameIsDrawnAndPresented` states the worst pair and still reads the
+   clear).
 5. **One value per attachment in the recorder.** `PassLoad` is `span<const PassAttachment> color` + one
    `PassAttachment depth`, and each `VkRenderingAttachmentInfo` is filled from its own entry.
 

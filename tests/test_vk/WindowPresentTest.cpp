@@ -325,6 +325,19 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
         // present is readable" from "the draw is missing" with one picture.
         EXPECT_TRUE(green(centre)) << "the triangle's green did not reach the window's centre pixel (rgb = " << static_cast<unsigned>(centre[0]) << ", " << static_cast<unsigned>(centre[1]) << ", " << static_cast<unsigned>(centre[2]) << ")";
         EXPECT_TRUE(magenta(corner)) << "the window's corner is not the pass' clear (rgb = " << static_cast<unsigned>(corner[0]) << ", " << static_cast<unsigned>(corner[1]) << ", " << static_cast<unsigned>(corner[2]) << ")";
+
+        // A STORE OF `DontCare` ON THE PRESENTED IMAGE IS NOT HONOURED: `WindowTarget::beginPass` forces `Store` for
+        // the window's one colour attachment, because `DontCare` would discard the picture the compositor is about to
+        // read. The pass states the worst pair (see `ClearPolicy::color_ops`) and the corner is still the clear.
+        FrameDescription discarded = windowFrame();
+        ASSERT_TRUE(discarded.passes.front().draw.has_value());
+        ASSERT_TRUE(discarded.passes.front().draw->clear.has_value());
+        discarded.passes.front().draw->clear->color_ops = {
+            vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Clear, vn::graphics::StoreOp::DontCare }
+        };
+        EXPECT_EQ(backend->executeFrame(discarded, target), PresentOutcome::Presented);
+        const std::array<std::uint8_t, 3> kept = window.waitForPixel(2, 2, magenta, std::chrono::milliseconds{ 1000 });
+        EXPECT_TRUE(magenta(kept)) << "a DontCare store discarded the presented image (rgb = " << static_cast<unsigned>(kept[0]) << ", " << static_cast<unsigned>(kept[1]) << ", " << static_cast<unsigned>(kept[2]) << ")";
     }
 
     // PREPARING A WINDOW FRAME touches neither the swapchain nor the queue: it is counted, it builds what the frame
