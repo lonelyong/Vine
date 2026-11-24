@@ -3596,32 +3596,23 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
         return fail(ReadbackResult::Failed);
     }
 
-    // RECORD: colour attachment -> transfer source -> copy -> back, so the next pass into this target finds the colour
-    // where it expects it (COLOR_ATTACHMENT_OPTIMAL).
-
-    // A PICTURE A SCREEN DRAW SAMPLED IS IN SHADER_READ_ONLY: put back the ones that are - per image, from their own
-    // records - so this readback's own transition names the layout the image it copies is really in.
-    for (std::size_t index = 0; index < images.colors.size(); ++index) {
-        if (images.color_layouts[index] != ImageLayout::ShaderReadOnly) {
-            continue;
-        }
-        const VkImageMemoryBarrier2 back =
-            barrierBetween(images.colors[index], stateOf(ImageLayout::ShaderReadOnly), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-        recordBarrier(impl->device_table, staging.commands(), back);
-        images.color_layouts[index] = ImageLayout::ColorAttachment;
-    }
+    // RECORD: the image's OWN layout -> transfer source -> copy -> THE SAME LAYOUT AGAIN. A readback is a device verb,
+    // not a pass: it reads ONE image and leaves it exactly where it found it, so no record changes and no other
+    // attachment of the set moves. The `fresh` check above is what rules out `Undefined` here - a set no pass has drawn
+    // into has nothing to read - so the starting layout is the colour attachment layout or the sampled one.
+    const ImageLayout colour_now = images.color_layouts[attachment_index];
 
     const VkImageMemoryBarrier2 to_transfer =
-        barrierBetween(color_image, stateOf(images.color_layouts[attachment_index]), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
+        barrierBetween(color_image, stateOf(colour_now), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
     recordBarrier(impl->device_table, staging.commands(), to_transfer);
 
     staging.recordCopy(color_image,
                        VK_IMAGE_ASPECT_COLOR_BIT,
                        VkExtent3D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U });
 
-    const VkImageMemoryBarrier2 to_attachment =
-        barrierBetween(color_image, transferReadState(), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-    recordBarrier(impl->device_table, staging.commands(), to_attachment);
+    const VkImageMemoryBarrier2 restored =
+        barrierBetween(color_image, transferReadState(), stateOf(colour_now), VK_IMAGE_ASPECT_COLOR_BIT);
+    recordBarrier(impl->device_table, staging.commands(), restored);
 
     const StagingRun run = staging.run(impl->queue, impl->queue_submit);
     if (!run.ran()) {
@@ -3744,33 +3735,25 @@ vn::graphics::ReadbackOutcome Device::readDepthBuffer(const vn::graphics::ImageR
         return fail(ReadbackResult::Failed);
     }
 
-    // RECORD: depth picture -> transfer source -> copy -> back to the layout a later pass expects (DEPTH_ATTACHMENT).
-
-    // A PASS THAT SAMPLED THIS DEPTH AS A SHADOW MAP left the picture in SHADER_READ_ONLY: put it back, stating the
-    // layout of the image that actually moved - the resolve picture, or the attachment itself on a single-sampled
-    // target - before this readback's own transition begins.
-    if (images.depthPictureLayout() != ImageLayout::DepthAttachment) {
-        const VkImageMemoryBarrier2 back = barrierBetween(depth_image,
-                                                         stateOf(images.depthPictureLayout()),
-                                                         stateOf(ImageLayout::DepthAttachment),
-                                                         depthAspectMask(images.depthFormat()));
-        recordBarrier(impl->device_table, staging.commands(), back);
-        images.setDepthPictureLayout(ImageLayout::DepthAttachment);
-    }
+    // RECORD: the PICTURE's own layout -> transfer source -> copy -> THE SAME LAYOUT AGAIN. Like the colour readback this
+    // is not a pass: it reads one image and leaves it where it found it, so the record does not change and the sample
+    // buffer of a multisampled target is never named. `fresh` rules out `Undefined`, so the starting layout is the depth
+    // attachment layout or the sampled one a shadow pass left behind.
+    const ImageLayout picture_now = images.depthPictureLayout();
 
     // A BARRIER NAMES BOTH HALVES of a combined depth/stencil image (see depthAspectMask); the COPY names only the
     // aspect it reads, because a depth readback is the depth half - the stencil half is not a depth and nothing here
     // decodes it (which is also why a combined format is refused above: this backend serves the formats the SDK's
     // table can decode, and that table has no combined entry).
     const VkImageMemoryBarrier2 to_transfer =
-        barrierBetween(depth_image, stateOf(ImageLayout::DepthAttachment), transferReadState(), depthAspectMask(images.depthFormat()));
+        barrierBetween(depth_image, stateOf(picture_now), transferReadState(), depthAspectMask(images.depthFormat()));
     recordBarrier(impl->device_table, staging.commands(), to_transfer);
 
     staging.recordCopy(depth_image, VK_IMAGE_ASPECT_DEPTH_BIT, extent);
 
-    const VkImageMemoryBarrier2 to_attachment =
-        barrierBetween(depth_image, transferReadState(), stateOf(ImageLayout::DepthAttachment), depthAspectMask(images.depthFormat()));
-    recordBarrier(impl->device_table, staging.commands(), to_attachment);
+    const VkImageMemoryBarrier2 restored =
+        barrierBetween(depth_image, transferReadState(), stateOf(picture_now), depthAspectMask(images.depthFormat()));
+    recordBarrier(impl->device_table, staging.commands(), restored);
 
     const StagingRun run = staging.run(impl->queue, impl->queue_submit);
     if (!run.ran()) {

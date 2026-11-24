@@ -2125,3 +2125,26 @@
   `VUID-vkCmdBeginRendering-pRenderingInfo-09592` + `vkCmdDraw-None-09600`, the mirror of the depth half's 09588.
 - **Lesson (the one worth keeping)**: a *derived* record pair invites the same bug twice - first in the depth direction,
   then in the colour one. Storing the fact next to the image it describes costs one enum per image and removes the class.
+
+## 2026-11-24 — review of the same change: what the records had wrong, and one correction
+
+- **Correction to the entry above**: `depth_lender` does NOT keep the lender's images alive while a borrower attaches them -
+  the device's park still destroys them once the completion watermark passes. What refuses such a frame is
+  `TargetTable::ensure`, which needs the lender's map entry and answers `vk.target.borrow_source_missing` when it is gone.
+  The shared pointer buys the RECORD's lifetime (and the layout, which cannot be read any other way without the table lock).
+- **One image playing two roles had one record but two write paths**: `beginPass` still special-cased `depth_borrowed`
+  while the image/view/layout accessors delegated. The indirection now lives in all four accessors
+  (`setDepthAttachmentLayout` added), so `beginPass` has no borrowing branch at all.
+- **A colour-only target was given a depth record**: `depth_layout = DepthAttachment` ran unconditionally, describing an
+  image the set does not have. The depth roles are now stated only `if (hasDepth())`, and no depth record is written then.
+- **Readbacks stopped being movers**: each reads ONE image from its own record and puts it back there (transfer layout
+  lives inside the command buffer), so a device verb changes no record - and a readback of one attachment no longer drags
+  the whole set out of `SHADER_READ_ONLY`.
+- **The pass contract is four ROLES**: `PassAttachments` = `color` / `picture` (`PassRole`: images + views + records, three
+  parallel spans because the bind path needs one contiguous view span) + `depth` / `depth_picture` (`PassImage` values) +
+  the aspect. 13 fields -> 5, and the silent `Undefined` fallback for a short layout span is gone with them.
+- **Renamed**: `sample_layouts` -> `multisample_color_layouts` (`sample` in this domain reads as "sampled", and the sibling
+  vectors say `multisample_*`).
+- **Measured again**: `test_vk` 188 / 44, `test_graphics` 642 / 82; forcing the colour role's and the depth role's records
+  to a constant layout turns all three `*DrawnAgain*` cases red (09588 for depth, 09592 + 09600 for colour), so the two
+  witnesses still pin the plumbing, not the old field names.

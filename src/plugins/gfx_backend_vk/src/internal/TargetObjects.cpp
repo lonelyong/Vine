@@ -208,7 +208,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
     images.color_views.clear();
     // THE LAYOUT RECORDS GO WITH THE IMAGES THEY DESCRIBE: the vectors are re-sized by createAttachments, and a record
     // that outlived its image would be an answer about something that no longer exists.
-    images.sample_layouts.clear();
+    images.multisample_color_layouts.clear();
     images.color_layouts.clear();
     images.depth_layout         = ImageLayout::Undefined;
     images.depth_picture_layout = ImageLayout::Undefined;
@@ -330,7 +330,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
     // THE LAYOUT RECORDS ARE BORN WITH THE IMAGES, one per image, all UNDEFINED (see the header: the command that moves
     // an image is the one that writes its record, and no image has been moved yet).
     images.color_layouts.assign(images.colors.size(), ImageLayout::Undefined);
-    images.sample_layouts.assign(images.multisample_colors.size(), ImageLayout::Undefined);
+    images.multisample_color_layouts.assign(images.multisample_colors.size(), ImageLayout::Undefined);
     images.depth_layout         = ImageLayout::Undefined;
     images.depth_picture_layout = ImageLayout::Undefined;
 
@@ -342,30 +342,27 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassLoad& load)
 {
     // TRANSCRIPTION, NOT DERIVATION: every layout below is the record of the image it names. The only decisions taken
-    // here are which image plays which role, and those are shape facts (`isMultisampled`, `hasDepthResolve`).
+    // here are which image plays which role, and those are shape facts (`isMultisampled`, `hasDepth`, `hasDepthResolve`).
     PassAttachments attachments{};
     attachments.extent = VkExtent2D{ static_cast<std::uint32_t>(width()), static_cast<std::uint32_t>(height()) };
     // RENDERING WRITES THE SAMPLE BUFFERS when the shape resolves; the pictures are the resolve targets then.
     if (isMultisampled()) {
-        attachments.color_images   = multisample_colors;
-        attachments.color_views    = multisample_color_views;
-        attachments.color_from     = sample_layouts;
-        attachments.picture_images = colors;
-        attachments.picture_views  = color_views;
-        attachments.picture_from   = color_layouts;
+        attachments.color   = PassRole{ multisample_colors, multisample_color_views, multisample_color_layouts };
+        attachments.picture = PassRole{ colors, color_views, color_layouts };
     }
     else {
-        attachments.color_images = colors;
-        attachments.color_views  = color_views;
-        attachments.color_from   = color_layouts;
+        attachments.color = PassRole{ colors, color_views, color_layouts };
     }
-    attachments.depth_image         = depthAttachmentImage();
-    attachments.depth_view          = depthAttachmentView();
-    attachments.depth_resolve_image = depth_resolve;
-    attachments.depth_resolve_view  = depth_resolve_view;
-    attachments.depth_aspect        = depthAspectMask(depthFormat());
-    attachments.depth_from          = depthAttachmentLayout();
-    attachments.depth_picture_from  = depthPictureLayout();
+    // A SET WITH NO DEPTH ATTACHMENT HAS NO DEPTH IMAGE TO STATE: the role stays absent rather than naming an image that
+    // does not exist, and no depth record is written for it below (a colour-only target is an ordinary off-screen
+    // target). The resolve picture is a SECOND image, so it is a role of its own.
+    if (hasDepth()) {
+        attachments.depth      = PassImage{ depthAttachmentImage(), depthAttachmentView(), depthAttachmentLayout() };
+        attachments.depth_aspect = depthAspectMask(depthFormat());
+    }
+    if (hasDepthResolve()) {
+        attachments.depth_picture = PassImage{ depth_resolve, depth_resolve_view, depthPictureLayout() };
+    }
 
     // A BORROWED DEPTH IS ALWAYS LOADED: the image is the LENDER's, and the depth it holds is the whole reason this
     // target borrows it - clearing it would erase another pass' depth. The pass' own policy describes THIS set's
@@ -380,22 +377,17 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
     // THE PASS HAS NOW WRITTEN THEM, in command order (see the header): every image rendering writes - and every resolve
     // target, which the instance writes through - is in the attachment layout from here on. That is one statement per
     // IMAGE, which is why a single-sampled depth does not need a second, contradicting one.
-    for (ImageLayout& layout : sample_layouts) {
+    for (ImageLayout& layout : multisample_color_layouts) {
         layout = ImageLayout::ColorAttachment;
     }
     for (ImageLayout& layout : color_layouts) {
         layout = ImageLayout::ColorAttachment;
     }
-    if (depth_borrowed) {
-        if (depth_lender != nullptr) {
-            depth_lender->setDepthPictureLayout(ImageLayout::DepthAttachment);
-        }
-    }
-    else {
-        depth_layout = ImageLayout::DepthAttachment;
-        if (hasDepthResolve()) {
-            depth_picture_layout = ImageLayout::DepthAttachment;
-        }
+    // THE DEPTH RECORDS FOLLOW THE IMAGES THE SET HAS: a colour-only target has none, a borrower's belong to the lender
+    // (the setters know - see the header), and a multisampled target keeps its sample buffer and its picture apart.
+    if (hasDepth()) {
+        setDepthAttachmentLayout(ImageLayout::DepthAttachment);
+        setDepthPictureLayout(ImageLayout::DepthAttachment);
     }
     fresh.store(false, std::memory_order_relaxed);
 }

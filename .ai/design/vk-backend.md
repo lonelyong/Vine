@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **186 cases / 45 suites** (2026-11-23).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **189 cases / 44 suites** (2026-11-24).
 
 ### 1.2 Goals
 
@@ -135,21 +135,28 @@ and every cache has a witness a test can read.**
   execution dependency), then the instance. `TargetObjects::beginPass` / `WindowTarget::beginPass` are the two call sites; the
   layout bookkeeping is theirs (see `F4` and `P15`).
 - **Two depth images, two layouts; a borrowed depth is a dependency, not an exception**: the depth ATTACHMENT and the picture
-  it resolves into carry separate records (`depth_from` / `depth_picture_from`), because a reader sampling the picture moves only
+  it resolves into are two ROLES (`PassAttachments::depth` / `depth_picture`), because a reader sampling the picture moves only
   the picture - a multisampled image may not be sampled at all, so stating the picture's layout for the sample buffer is an illegal
   barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). On a SINGLE-SAMPLED set the two names resolve to ONE
-  image, which therefore has ONE record (`TargetObjects::depthPictureLayout`), and the next pass transitions it back
-  (`VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain`). A `shareDepth` target states the LENDER's record for that
-  image - one image, one layout record, held in the lender (`TargetObjects::depth_lender`) - and the barrier that follows
+  image, which therefore has ONE record (`TargetObjects::depthPictureLayout`) and the `depth_picture` role is simply
+  absent, so the next pass transitions it back (`VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain`). A `shareDepth`
+  target states the LENDER's record for that image - one image, one layout record, held in the lender
+  (`TargetObjects::depth_lender`), with the borrow indirection inside the record's own accessors - and the barrier that follows
   transitions nothing and is recorded for exactly that reason: it is the execution dependency between the lender's pass and the
   borrower's LOAD.
 - **Layouts are RECORDS, not derivations**: every image of an attachment set has one `ImageLayout`, written by the command that
-  moves it (`TargetObjects::color_layouts` / `sample_layouts` / `depth_layout` / `depth_picture_layout`, and
+  moves it (`TargetObjects::color_layouts` / `multisample_color_layouts` / `depth_layout` / `depth_picture_layout`, and
   `WindowTarget`'s per-image record) and read by the barrier that states where it starts. `TargetObjects::beginPass` only picks
   WHICH record belongs to which role - it computes nothing - so the two answers an image used to be able to acquire ("the
   attachment is never sampled", "the picture was sampled") cannot disagree, and the shape that produced both halves of `P15`
-  is no longer expressible. `fresh` stays as the one SET-level, atomic hint ("no pass has drawn here") a reader outside the
-  frame gate may take.
+  is no longer expressible. The two READBACK verbs are deliberately not movers: each reads one image and puts it back in the
+  layout it found, so a device verb changes no record. `fresh` stays as the one SET-level, atomic MIRROR of "no record
+  differs from Undefined", because it is the only form of that fact a reader outside the frame gate may take.
+- **A pass states four ROLES, not thirteen fields**: `PassAttachments` is `color` (the images rendering writes), `picture`
+  (their resolve targets), `depth` and `depth_picture` (`DynamicRendering.hpp`). A role with one image is a `PassImage`
+  value (image + view + its record), a role with one image per colour attachment is a `PassRole` of three parallel spans -
+  three and not one array of structs because a full-screen draw binds the views as ONE contiguous `VkImageView` span, and
+  converting per pass would allocate on the recording path.
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
   a new purpose is one more row, not one more inline barrier. An ATTACHMENT row states the read side of its access as well as
   the write side, because under dynamic rendering the LOAD (and a blend's destination read) has no implicit ordering.
@@ -421,7 +428,7 @@ and every cache has a witness a test can read.**
   ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared), and its
   barrier is recorded against that LENDER's image as a same-layout barrier: the dependency, not a transition. The depth
   ATTACHMENT and the depth RESOLVE PICTURE keep separate layout records, because sampling the picture does not move the sample
-  buffer - and every other image has its own record too (`color_layouts` per picture, `sample_layouts` per sample buffer), which
+  buffer - and every other image has its own record too (`color_layouts` per picture, `multisample_color_layouts` per sample buffer), which
   is what lets a colour picture a screen draw sampled return to the attachment layout on its own.
 - **A target it cannot build is named at BUILD time**: a target with no usable extent answers `vk.target.size_unknown` and a borrowed
   depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
@@ -771,9 +778,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   with no message at all on a driver that does not hazard-check.
 - How to prevent it: `DynamicRendering::beginRendering` records one barrier per attachment before the instance - including one
   between two identical states, which IS the dependency - and the LAYOUT it starts from is the record of THAT image
-  (`TargetObjects::color_layouts` / `sample_layouts` / `depth_layout` / `depth_picture_layout`, `WindowTarget`'s per-image
-  record), written by whichever command moved it. A new caller must state its layouts instead of assuming a render pass would
-  move them, and a new MOVER must write the record of the image it moved.
+  (`TargetObjects::color_layouts` / `multisample_color_layouts` / `depth_layout` / `depth_picture_layout`, `WindowTarget`'s
+  per-image record), written by whichever command moved it. A new caller must state its layouts instead of assuming a render pass
+  would move them, and a new MOVER must write the record of the image it moved.
 - Two IMAGES are not one layout: a multisampled target's depth ATTACHMENT and the picture it resolves into part company as soon
   as the picture is sampled - the sample buffer stays an attachment (it may not be sampled at all) and the picture moves to
   `SHADER_READ_ONLY_OPTIMAL`. One record for both states a layout an image never had. How to detect: a second frame over the same
@@ -817,7 +824,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 174 cases / 42 suites on 2026-11-23); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 189 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
@@ -834,7 +841,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **186 cases / 45 suites**, `test_graphics` **642** (2026-11-23, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **189 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).

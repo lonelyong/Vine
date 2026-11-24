@@ -67,10 +67,12 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  *   views are written under that one lock - and a reader that wants them takes the same lock (`TargetTable::peek`)
  *   instead of borrowing this record for a field read: the record outlives its map entry (`release` parks it, the park
  *   destroys it), so a borrow has no synchronisation to point at.
- * - THE LAYOUT RECORDS ARE THE FRAME BODY'S, AND THERE IS ONE PER IMAGE. @ref color_layouts / @ref sample_layouts /
- *   @ref depth_layout / @ref depth_picture_layout say where each image IS; the command that moves an image is the one
- *   that writes its record (`C3` / `C5`: @ref beginPass, `Device::resolveShadow`, the full-screen source transition, the
- *   two readback verbs). Nothing here derives a layout from a flag, so the two answers an image could acquire - "the
+ * - THE LAYOUT RECORDS ARE THE FRAME BODY'S, AND THERE IS ONE PER IMAGE. @ref color_layouts /
+ *   @ref multisample_color_layouts / @ref depth_layout / @ref depth_picture_layout say where each image IS; the command
+ *   that moves an image is the one that writes its record (`C3` / `C5`: @ref beginPass, `Device::resolveShadow`, the
+ *   full-screen source transition). The two readback verbs are deliberately NOT movers: each puts the image back in the
+ *   layout it found, so a device verb that reads one image leaves every record as it was. Nothing here derives a layout
+ *   from a flag, so the two answers an image could acquire - "the
  *   attachment is never sampled" and "the picture was sampled" - cannot disagree: on a single-sampled target the
  *   attachment IS the picture and therefore has ONE record. The FRAME GATE serialises them, not the map lock: one frame
  *   records at a time, and the claim hand-off (writer to next claimer) plus the gate (writer to a host verb; the
@@ -105,7 +107,7 @@ struct TargetObjects {
     /// Where each colour SAMPLE BUFFER is, parallel to @ref multisample_colors (empty on a single-sampled target):
     /// `Undefined` on first use and `ColorAttachment` afterwards - nothing samples or copies a sample buffer, so those
     /// are the only two values it can ever hold.
-    std::vector<ImageLayout>    sample_layouts{};
+    std::vector<ImageLayout>    multisample_color_layouts{};
 
     /// The depth attachment, created with the target's sample count and NEVER resolved (see the class note).
     VkImage        depth{ VK_NULL_HANDLE };
@@ -134,20 +136,25 @@ struct TargetObjects {
     /// states a depth format - the LENDER's, which is what a pipeline is built with - and every pass LOADs that depth,
     /// because a pass may not clear an image an earlier pass wrote.
     bool depth_borrowed{ false };
-    /// THE LENDER'S RECORD, and the reason the borrowed image needs no copy of itself here: the picture, its view and the
-    /// layout it is in all belong to that record. Sharing ownership is also the lifetime statement - the image this
-    /// target attaches stays alive while this target names it - so `depthAttachmentImage()` can answer from the owner
-    /// instead of from a snapshot that a lender rebuild would invalidate. The edge is ONE WAY (a borrower never lends in
-    /// return), so it cannot form a cycle.
+    /// THE LENDER'S RECORD: the picture, its view and the layout that image is in all belong to it, so a borrowing target
+    /// answers every question about its depth through this record instead of copying any of the three (see
+    /// @ref depthAttachmentImage / @ref depthAttachmentView / @ref depthAttachmentLayout). Holding it is the same lifetime
+    /// rule the seam states for this edge - `DepthView` keeps the lending target alive - and it is what makes those
+    /// answers cheap: the recording path may not take the table's lock to look the lender up (`C3` / `C5`).
+    /// @note THIS DOES NOT KEEP THE LENDER'S IMAGES ALIVE PAST THE LENDER'S RELEASE. The device's park still destroys them
+    /// once the completion watermark passes; what refuses such a frame is `TargetTable::ensure`, which needs the lender's
+    /// map entry and answers `vk.target.borrow_source_missing` when it is gone. The edge is also ONE WAY (a borrower
+    /// never lends in return), so it cannot form a cycle.
     std::shared_ptr<TargetObjects> depth_lender{};
     /// The lender's picture VIEW as it was when this record was last compared (`TargetTable::ensure`): a snapshot used
     /// only to notice that the lender rebuilt its picture. The live image and view always come from @ref depth_lender.
     VkImageView borrowed_depth_view{ VK_NULL_HANDLE };
 
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
-    /// an attachment is given CLEAR instead (loading an image nobody wrote is meaningless and invalid). A SET-level
-    /// fact, distinct from the per-image layouts - it answers "has anything ever been drawn here", which is the
-    /// readback's NotReady and the load policy's question, not "where is this image now".
+    /// an attachment is given CLEAR instead (loading an image nobody wrote is meaningless and invalid). It is the MIRROR of
+    /// the layouts' own invariant (`no record differs from Undefined`) and exists for one reason: it is the only form of
+    /// that fact a reader OUTSIDE the frame gate may take (a readback's NotReady hint, the planner's), which is also why
+    /// it is atomic and why it is a SET-level answer rather than an image one. It is written where the layouts are.
     /// ATOMIC because the frame body is its only writer and takes no lock (see the class note); relaxed is enough -
     /// every decision a reader outside the gate takes from it is a hint that the gate re-checks.
     std::atomic<bool> fresh{ true };
@@ -233,21 +240,49 @@ struct TargetObjects {
     }
 
     /**
-     * @brief Gets the layout the depth ATTACHMENT image is in (a borrowed target answers with the LENDER's record).
+     * @brief Gets the LENDER's own picture record: the image a borrowing target attaches IS that picture.
+     *
+     * @return The lender's layout for its picture, or `Undefined` when no lender is named.
+     */
+    [[nodiscard]] ImageLayout lenderDepthLayout() const noexcept
+    {
+        return depth_lender != nullptr ? depth_lender->depthPictureLayout() : ImageLayout::Undefined;
+    }
+
+    /**
+     * @brief Gets the layout the depth ATTACHMENT image is in (a borrowing target answers with the LENDER's record).
      *
      * @note
-     * - A BORROWED IMAGE HAS ONE RECORD, and it is the lender's: the borrower states what the lender knows instead of
-     *   assuming "a depth attachment, because that is where the lender's pass left it".
+     * - THE BORROW INDIRECTION LIVES IN THESE ACCESSORS, NOT AT THEIR CALL SITES: a borrower owns no depth image, so
+     *   every question about one is a question about the lender's picture, and every answer is the lender's record.
+     * - It is a STRUCTURAL statement rather than a measured one: lending revokes sampling for the frame (see
+     *   RenderTarget::shareDepth), so the lender's picture is in the depth attachment layout whenever a borrower sees
+     *   it - the point is that nothing here has to assume that.
      */
     [[nodiscard]] ImageLayout depthAttachmentLayout() const noexcept
     {
-        return depth_borrowed ? (depth_lender != nullptr ? depth_lender->depthPictureLayout() : ImageLayout::Undefined)
-                              : depth_layout;
+        return depth_borrowed ? lenderDepthLayout() : depth_layout;
+    }
+
+    /**
+     * @brief Records that the depth ATTACHMENT image is now in @p layout (the lender's record when this target borrows).
+     *
+     * @param layout Where the pass left the attachment (see `ImageLayout`).
+     */
+    void setDepthAttachmentLayout(ImageLayout layout) noexcept
+    {
+        if (!depth_borrowed) {
+            depth_layout = layout;
+            return;
+        }
+        if (depth_lender != nullptr) {
+            depth_lender->setDepthPictureLayout(layout);
+        }
     }
 
     /**
      * @brief Gets the layout the depth PICTURE is in (the resolve image's on a multisampled target, the attachment's
-     *        layout otherwise).
+     *        otherwise; the LENDER's record when this target borrows).
      *
      * @note
      * - SELECTS A RECORD, it does not compute one: which image is the picture is a SHAPE fact (@ref hasDepthResolve),
@@ -255,16 +290,26 @@ struct TargetObjects {
      */
     [[nodiscard]] ImageLayout depthPictureLayout() const noexcept
     {
+        if (depth_borrowed) {
+            return lenderDepthLayout();
+        }
         return hasDepthResolve() ? depth_picture_layout : depth_layout;
     }
 
     /**
-     * @brief Records that the depth PICTURE is now in @p layout (the resolve image's record, or the attachment's).
+     * @brief Records that the depth PICTURE is now in @p layout (the resolve image's record, the attachment's, or the
+     *        LENDER's when this target borrows).
      *
      * @param layout Where the reader left the picture (see `ImageLayout`).
      */
     void setDepthPictureLayout(ImageLayout layout) noexcept
     {
+        if (depth_borrowed) {
+            if (depth_lender != nullptr) {
+                depth_lender->setDepthPictureLayout(layout);
+            }
+            return;
+        }
         if (hasDepthResolve()) {
             depth_picture_layout = layout;
         }
@@ -309,10 +354,12 @@ struct TargetObjects {
      *   into are different images, so each has its own record; a single-sampled target's attachment IS its picture, so
      *   it has ONE record and `depthPictureLayout()` names it - which is why a reader's sampling and the next pass'
      *   transition cannot state different layouts for the same image.
-     * - A BORROWED DEPTH IS THE LENDER'S RECORD: the set states where that image really is (the lender's own layout)
-     *   and writes its new layout back to the lender's record, and the pass LOADs it (a pass may not clear an image
-     *   another pass wrote - see RenderTarget::shareDepth). Its own `depth_layout` stays `Undefined`, because it owns no
-     *   depth image.
+     * - A BORROWED DEPTH IS THE LENDER'S RECORD: the accessors above answer with the lender's layout and write the new one
+     *   back to it, so this function has no borrowing branch - it states "the pass left this set's depth in the attachment
+     *   layout" and the record that fact belongs to is the one that receives it. The pass LOADs that depth (a pass may
+     *   not clear an image another pass wrote - see RenderTarget::shareDepth).
+     * - A SET WITH NO DEPTH WRITES NO DEPTH RECORD: a colour-only target leaves `depth_layout` and
+     *   `depth_picture_layout` `Undefined`, which is the truth about an image it does not have.
      *
      * @param table    The device's entry points (volk table).
      * @param commands The command buffer being recorded (outside any rendering instance).

@@ -560,14 +560,12 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
     const ImageLayout colour_from  = impl->image_layouts[index];
 
     PassAttachments attachments{};
-    attachments.extent       = VkExtent2D{ impl->extent.width, impl->extent.height };
-    attachments.color_images = std::span<const VkImage>(&colour_image, 1U);
-    attachments.color_views  = std::span<const VkImageView>(&colour_view, 1U);
-    attachments.color_from   = std::span<const ImageLayout>(&colour_from, 1U);
-    attachments.depth_image        = impl->depth;
-    attachments.depth_view         = impl->depth_view;
-    attachments.depth_aspect       = depthAspectMask(kDepthFormat);
-    attachments.depth_from         = impl->depth_layout;
+    attachments.extent   = VkExtent2D{ impl->extent.width, impl->extent.height };
+    attachments.color    = PassRole{ std::span<const VkImage>(&colour_image, 1U),
+                                     std::span<const VkImageView>(&colour_view, 1U),
+                                     std::span<const ImageLayout>(&colour_from, 1U) };
+    attachments.depth        = PassImage{ impl->depth, impl->depth_view, impl->depth_layout };
+    attachments.depth_aspect = depthAspectMask(kDepthFormat);
 
     // `beginRendering` records the barriers before the instance: every window pass announces its own, because the
     // instance may start in a layout the presentation engine left (Present) or one an earlier pass left (colour).
