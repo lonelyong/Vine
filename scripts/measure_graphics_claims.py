@@ -12,15 +12,13 @@ WHAT IT MEASURES
   bridge        ContentMirror / DeltaChannel / DrawListMemo / PublicationStore /
                 FrameExpander / FrameRunner / SceneRows / EngineFrame / DrawListBake:
                 .hpp + .cpp, and cpp-only.
-  contentstore  ContentStore.cpp lines and lifetime-token occurrences (six tokens, and
-                the same set plus `parked`).
   engine        RenderEngine.hpp lines, public-signature count and the number of files
                 that include it.
   sdk           SDK header count (top-level vs. including `backend/`) and `bool name(`
                 occurrences in the same two scopes.
-  tests         `--gtest_list_tests` case and suite counts (`test_graphics`, `test_vsg`,
-                `test_vk`) and the `ctest -N` suite count, when the binaries/build tree
-                are present; a single-config and a multi-config tree are both searched.
+  tests         `--gtest_list_tests` case and suite counts (`test_graphics`, `test_vk`)
+                and the `ctest -N` suite count, when the binaries/build tree are present;
+                a single-config and a multi-config tree are both searched.
 
 Usage:
     python3 scripts/measure_graphics_claims.py
@@ -48,10 +46,6 @@ BRIDGE = (
     "EngineFrame",
     "DrawListBake",
 )
-LIFETIME_TOKENS = re.compile(r"\b(?:markUsed|release_token|release_requested|retired|kept|retirement)\b")
-LIFETIME_WITH_PARKED = re.compile(
-    r"\b(?:markUsed|release_token|release_requested|retired|kept|retirement|parked)\b"
-)
 BOOL_RETURN = re.compile(r"\bbool\s+[A-Za-z_][A-Za-z0-9_]*\s*\(")
 PUBLIC_SIGNATURE = re.compile(r"^    [^ /].*\(", re.MULTILINE)
 INCLUDE_ENGINE = re.compile(r"^\s*#\s*include\s*[<\"].*RenderEngine\.hpp[>\"]", re.MULTILINE)
@@ -75,13 +69,6 @@ def bridge_counts() -> tuple[int, int]:
         paired += line_count(header) + line_count(source)
         cpp_only += line_count(source)
     return paired, cpp_only
-
-
-def content_store_counts() -> tuple[int, int, int]:
-    """Returns (lines, six-token count, seven-token count)."""
-    path = ROOT / "src" / "plugins" / "gfx_backend_vsg" / "src" / "internal" / "ContentStore.cpp"
-    text = path.read_text(encoding="utf-8", errors="replace")
-    return len(text.splitlines()), len(LIFETIME_TOKENS.findall(text)), len(LIFETIME_WITH_PARKED.findall(text))
 
 
 def public_signature_count(text: str) -> int:
@@ -194,7 +181,6 @@ def ctest_count() -> int | None:
 def main() -> int:
     """Prints every claim with its scope; always returns 0."""
     paired, cpp_only = bridge_counts()
-    store_lines, lifetime, lifetime_parked = content_store_counts()
     engine_lines, engine_public, engine_includes = engine_counts()
     top_headers, all_headers, top_bools, all_bools = sdk_counts()
     suites = ctest_count()
@@ -202,13 +188,12 @@ def main() -> int:
     print("graphics claims (scope is part of the number)")
     print(f"bridge header+cpp: {paired}")
     print(f"bridge cpp only:   {cpp_only}")
-    print(f"ContentStore.cpp:  {store_lines} lines; lifetime tokens {lifetime}; with parked {lifetime_parked}")
     print(f"RenderEngine.hpp:  {engine_lines} lines; public signatures {engine_public}; included by {engine_includes} files")
     print(f"SDK headers:       {top_headers} top-level; {all_headers} including backend/")
     print(f"SDK bool returns:  {top_bools} top-level; {all_bools} including backend/")
     print()
     print("test suites (the newest binary per target - a count belongs to its build)")
-    for name in ("test_graphics", "test_vsg", "test_vk"):
+    for name in ("test_graphics", "test_vk"):
         binary = test_binary(name)
         print(f"  {name + ':':<15} {suite_line(gtest_counts(binary)):<24} {binary if binary is not None else ''}")
     print(f"  {'ctest suites:':<15} {suites if suites is not None else 'n/a'}")

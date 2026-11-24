@@ -27,12 +27,13 @@ leak:libexpat
 # unload implementation must do instead, is written next to that release() in
 # src/base/runtime/src/DynamicLibraryLoader.cpp.
 #
-# Measured (2026-09-16): this is the ONLY leak a test_vsg run reports -- 808 B in
-# 16 allocations, all in vn::runtime::DynamicLibraryLoader /
-# DynamicLibrary::DynamicLibrary, with no frame in the vsg backend. Before this
-# entry, the backend's ASan run had to be judged with VN_ASAN_LEAK_SCOPE (report
-# leaks outside a pattern without failing); with it, the whole suite runs with
-# plain all-or-nothing leak judging, which is the stronger setting.
+# Measured (2026-09-16, on the then-current test_vsg suite): this was the ONLY
+# leak that run reported -- 808 B in 16 allocations, all in
+# vn::runtime::DynamicLibraryLoader / DynamicLibrary::DynamicLibrary, with no
+# frame in the backend. Before this entry, that run had to be judged with
+# VN_ASAN_LEAK_SCOPE (report leaks outside a pattern without failing); with it,
+# such a suite runs with plain all-or-nothing leak judging, which is the
+# stronger setting.
 leak:vn::runtime::DynamicLibrary
 
 # glslang's SPIR-V builder creates its extension-type instructions EAGERLY in its constructor

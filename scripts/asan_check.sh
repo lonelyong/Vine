@@ -25,8 +25,8 @@
 #   VN_ASAN_TARGET=test_core VN_ASAN_FILTER='*' scripts/asan_check.sh
 #   VN_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
 #
-# The vsg BACKEND, under STRICT leak judging. What a report may still contain,
-# and why, is part of the judge (measured 2026-09-25, design §11.16df):
+# PLUGIN LOADING, under STRICT leak judging. What a report may still contain,
+# and why, is part of the judge (measured 2026-09-25):
 #   * the plugin loader's retention is deliberate (it never dlclose()s plugin
 #     code) and is excused in asan_leaks.supp with its reason next to the
 #     release() that causes it;
@@ -39,11 +39,6 @@
 #     NOT a claimed-clean configuration: test_gui with VN_ASAN_FILTER='*'
 #     VN_ASAN_LEAKS=1 still reports that suite's own direct leaks (13 roots in
 #     GuiTest::SetUp / buildDock, 2026-09-26) - its leak story is its own item.
-#   VN_ASAN_TARGET=test_vsg VN_ASAN_FILTER='*' VN_ASAN_LEAKS=1 scripts/asan_check.sh
-#       (the device cases connect to X and close it again themselves - see
-#        TestXConnection in tests/test_vsg/TestHostWindow.hpp - and SKIP without
-#        DISPLAY. CoreAllocationGateTest's mallinfo2-teeth case skips under ASan:
-#        ASan's allocator is invisible to mallinfo2.)
 #   VN_ASAN_TARGET=test_vk VN_ASAN_FILTER='*' VN_ASAN_LEAKS=1 \
 #       VN_ASAN_LEAK_SCOPE='vn::backend_vk' scripts/asan_check.sh
 #       (the Vulkan backend's own evidence, measured 2026-11-14: 66 cases, zero
@@ -53,9 +48,6 @@
 #        test_vk links the backend sources directly, so no plugin target is
 #        needed here. Its concurrent claim is judged by scripts/tsan_check.sh
 #        instead - see scripts/tsan.supp for the third-party rule.)
-#   vsg_backend_selftest no longer exists: it drove the retired renderer and went
-#   with it (see src/plugins/gfx_backend_vsg/CMakeLists.txt). The app gate in
-#   scripts/vsg_rewrite_gate.sh is the end-to-end evidence now.
 # VN_ASAN_LEAK_SCOPE remains the FALLBACK for a run whose leaks are not excused
 # yet: it reports leaks outside the pattern without failing the run. Prefer
 # excusing them properly (a justified entry) over scoping them away, because a
@@ -70,7 +62,7 @@
 # mixes gcc's shared libasan into a binary that also carries clang's static
 # runtime, and the run dies before any test executes with "Your application is
 # linked against incompatible ASan runtimes" (measured 2026-09-25 on a tree that
-# predated the CC derivation below; test_gui/test_vsg never noticed, because
+# predated the CC derivation below; test_gui never noticed, because
 # they link no C-built library). VN_ASAN_RECONFIG=1 does NOT switch an
 # existing cache's compiler - remove the build dir and let the script configure
 # a consistent one.
@@ -195,14 +187,11 @@ else
 fi
 
 # ---- Build ------------------------------------------------------------------
-# The plugin libraries are loaded by test_gui/test_vsg from this build dir, so they
+# The plugin libraries are loaded by test_gui from this build dir, so they
 # are built here as well: a stale .so is read with the current PluginInfo layout,
 # which shows up as an ASan global-buffer-overflow inside the plugin's own static
 # metadata and looks like a bug in the host.
 PLUGIN_TARGETS="app_shell demo_plugin model_viewer test_plugin"
-if [ "$TARGET" = "test_vsg" ]; then
-    PLUGIN_TARGETS="$PLUGIN_TARGETS gfx_backend_vsg"
-fi
 
 echo "[info] building targets: $TARGET $PLUGIN_TARGETS (-j$JOBS)"
 cmake --build "$BUILD" --target "$TARGET" $PLUGIN_TARGETS -j "$JOBS" || exit 1

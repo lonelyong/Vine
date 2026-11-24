@@ -4,7 +4,7 @@ names every unit.
 
 The repository keeps two living documents that name units: the backend guide
 (``docs/guides/graphics-backends.md``: the contract, the intentional differences, the support matrix
-and the vsg unit map) and the module guide (``docs/guides/graphics.md``: the SDK's concepts, the frame
+and the backend unit map) and the module guide (``docs/guides/graphics.md``: the SDK's concepts, the frame
 and the authoring rules). Both rot in one direction: a unit is renamed or deleted and the sentence
 that named it survives. That is not compile-checked, and it is not visible in review, so it
 accumulates until a reader follows a pointer that leads nowhere (``drawScreenTexture`` outlived the
@@ -17,7 +17,8 @@ Only the two claims a script can decide EXACTLY are gated:
      cannot judge (a sentence may name a symbol that is deliberately absent, or a foreign type), so
      only UNIT files are checked - a renamed or deleted unit is exactly the drift that hurts a reader
      following the module map. This applies to EVERY document in ``DOCS``.
-  2. Every unit under ``src/`` and ``include/vine/backend_vsg/`` must be named by the document whose
+  2. Every unit under the backend plugin (``src/plugins/gfx_backend_vk``: its ``src/`` and its
+     ``include/vine/backend_vk/``) must be named by the document whose
      job is the unit map (``COVERAGE_DOCS``). The map is part of what that document is for; a unit
      nobody documented is a hole. A second document naming the unit must not paper over that hole,
      so the coverage rule reads the map document alone, not the union of all documents.
@@ -55,10 +56,10 @@ DOCS = [
 COVERAGE_DOCS = [
     ROOT / ".ai" / "design" / "vk-backend.md",
 ]
-# Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
-# `src/internal` + `src/core` (and `include/vine/backend_vsg/internal` + `core`), and a walk that stopped at the top level
-# would enumerate the seven flat files that are left (19 units) while 143 exist - which is exactly how this
-# script silently stopped covering the new architecture (the finding that put the recursion here).
+# Directories whose units the docs are expected to map. RECURSIVE: the backend keeps its units in
+# `src/{internal,shell,support}` (and `include/vine/backend_vk/{internal,shell,support}`), and a walk that
+# stopped at the top level would only see the flat files that are left - which is exactly how this
+# script silently stopped covering the architecture it was written for (the finding that put the recursion here).
 MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "backend_vk"]
 # Where a unit mention is looked for when deciding whether it names SOMETHING: every unit this repository
 # has, so a doc sentence may name the SDK's `RenderBackend.hpp` or a framework unit without being drift.

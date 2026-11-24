@@ -42,8 +42,8 @@ not part of the group order — but the group ORDER is only checked in headers:
 
   * a header has one owner and one obvious order, so the rule applies verbatim;
   * a plugin's .cpp files open with the module's own headers (its own header plus
-    the private ones it shares with sibling TUs, e.g. VsgRenderer.cpp's run of
-    vine/backend_vsg/*.hpp) before the std / third-party groups.  Reordering those is a
+    the private ones it shares with sibling TUs, e.g. ContentDraw.cpp's run of
+    vine/backend_vk/internal/*.hpp) before the std / third-party groups.  Reordering those is a
     separate decision about that house style, not a typo to gate on, and a gate
     that fires 123 times on it would be turned off instead of followed.
 
@@ -101,14 +101,15 @@ STD_HEADERS = frozenset((
 
 INCLUDE = re.compile(r'^#include\s*([<"])([^>"]+)[>"]\s*$')
 DEFAULT_PATHS = ("src", "tests", "tools")
-SKIP_PARTS = ("build/", "_deps/", "/vsg_selftest/")
+SKIP_PARTS = ("build/", "_deps/")
 # The graphics module (its SDK and its sources) must stay API-agnostic (see
 # .ai/design/graphics-architecture.md): it may include the standard library and its own headers, but
 # nothing from a render API and nothing from a backend plugin. The old rule was stated over a
-# `backend/` directory; the property it protected is about DEPENDENCY, not about a path - one `vsg/`
-# include here ties every backend, present and future, to vsg.
+# `backend/` directory; the property it protected is about DEPENDENCY, not about a path - one
+# `vine/backend_vk/...` include here ties the module to that backend, and the list grows with each
+# backend that lands.
 GRAPHICS_MODULE_DIRS = ("/graphics/src/", "/vine/graphics/")
-GRAPHICS_FORBIDDEN_PREFIXES = ("vsg/", "vine/backend_vsg/", "vine/backend_vk/")
+GRAPHICS_FORBIDDEN_PREFIXES = ("vine/backend_vk/",)
 
 
 def is_graphics_module(path):

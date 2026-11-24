@@ -7,7 +7,6 @@
 #
 # The prefix names the module, because the vocabulary belongs to the module that reports (the SDK knows no `Vk*`):
 #   vk.*      the direct-Vulkan backend (`src/plugins/gfx_backend_vk`)
-#   vsg.*     the vsg backend (`src/plugins/gfx_backend_vsg`)
 #   engine.*  the render engine itself (`src/viz/graphics`)
 #   appfw.*   the host framework above the engine (`src/fw/appfw`): a finding the layer above injects
 #             through RenderEngine::reportEngineProblem, which the engine counts under origin Host

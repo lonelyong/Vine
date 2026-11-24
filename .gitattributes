@@ -12,11 +12,9 @@
 *.tesc text eol=lf
 *.tese text eol=lf
 
-# The evidence baseline is compared line by line against a run by
-# scripts/vsg_selftest_evidence.sh, and that script is bash: a CRLF checkout would
-# make every baseline line differ and every script line a syntax error. Same
-# reason as the shaders above: the working tree has to match what the tool reads.
-scripts/vsg_selftest_evidence.txt text eol=lf
+# Shell scripts are bash: a CRLF checkout makes every line a syntax error, and the
+# scripts are run from the working tree (the doc/sanitizer recipes). Same reason as
+# the shaders above: the working tree has to match what the tool reads.
 *.sh text eol=lf
 
 # The public-docs baseline is data written back by scripts/check_public_docs.py
