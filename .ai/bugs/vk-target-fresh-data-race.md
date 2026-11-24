@@ -81,3 +81,25 @@ easy to miss: it only lives in the stretch between the two checks.
 `Device.cpp:2056`). `releaseRenderTarget` **does not wait for in-flight frames** (R6), so it can erase the entry between
 those two steps and the second `lookup` returns null, which is a null dereference. The fix is to let `ensure` hand out the
 record itself, or to null-check the second `lookup` and skip that pass as a claim conflict.
+
+## Corrected 2026-11-24 — the neighbouring problem was fixed, and it had never been in the backlog
+
+The section above says the neighbouring null dereference was "recorded in the backlog". It was not: `../backlog/graphics.md`
+carried no such row when this was checked on 2026-11-24, before the fix, so the sentence named a home the item never reached.
+
+- **What it was**: `Device::claimPasses` called `target_table.ensure(*draw.target)` and then `*target_table.lookup(draw.target)`.
+  `releaseRenderTarget` takes no body gate (`R6`), so a host thread could erase the entry between those two calls and the
+  second `lookup` answered null, which was dereferenced without a check. `prepareFrame` walks the same function.
+- **Why a null check was not the fix**: it trades undefined behaviour for a silently skipped pass and still asks the table
+  twice for one fact. The build and the answer are one question.
+- **Fix**: `TargetTable::ensure` answers `std::shared_ptr<TargetObjects>` (null = refused or unbuildable) instead of `bool`,
+  taken under the same map lock the build ran under. `claimPasses` keeps that record; `setRenderTarget`'s announce discards
+  it. One call, one answer (`G4`); the window the release used is gone by construction (`G10`).
+- **Witnesses**: `TargetTableTest.EnsureWithoutASessionAnswersNoRecord` (the refusal uses the same spelling — a null record,
+  no entry inserted), `VkMultiSessionTest.AReleaseCannotTakeAwayTheRecordAPassHasJustResolved` (the answer is still whole
+  after an erasing release, while `lookup` answers null — the call the claim path used to make), and
+  `VkMultiSessionTest.AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATarget` (a release racing frames; the
+  interleaving is **not** forced by any hook, so that case asserts the invariant — every outcome legal, the last picture
+  still drawn — rather than reproducing the crash).
+- **Honest boundary**: no test reproduces the original null dereference deterministically. What changed is the shape: there
+  is no second call to be handed null.

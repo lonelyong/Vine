@@ -214,19 +214,24 @@ class VN_BACKEND_VK_API TargetTable final {
     void close() noexcept;
 
     /**
-     * @brief Builds (or rebuilds) the Vulkan objects for @p target when they do not fit it.
+     * @brief Builds (or rebuilds) the Vulkan objects for @p target when they do not fit it, and answers the record.
      *
      * @details
      * - `planTarget` decides Reuse / ResizeInPlace / Rebuild; the borrow edge is compared as well, because a target
      *   that started or stopped borrowing has a different depth view to attach.
+     * - ONE CALL, ONE ANSWER: the record is taken from the map under the SAME lock the build ran under, so a
+     *   `release` on another thread cannot erase the entry between "the objects were built" and "here they are". A
+     *   caller that asked for a boolean and then resolved it with `lookup` had that second call, and it answered null
+     *   for exactly the release a host may announce mid-frame (R6: a release does not wait for the frames in flight).
      * - A request this device cannot serve (a sample count it does not offer, a multisampled depth, a borrow from a
      *   target it has not built) is REFUSED with one warning naming the request and the limit, and nothing is
      *   created - the pass naming it is skipped, and `readColorBuffer` answers NotReady.
      *
      * @param target The host's target (borrowed; its address is the identity).
-     * @return true when the objects exist and fit the target.
+     * @return The record holding @p target's objects (shared, so a release announced right after this call parks it
+     *         instead of destroying it), or null when the objects could not be built or do not fit the target.
      */
-    [[nodiscard]] bool ensure(const vn::graphics::RenderTarget& target);
+    [[nodiscard]] std::shared_ptr<TargetObjects> ensure(const vn::graphics::RenderTarget& target);
 
     /**
      * @brief Finds the objects built for @p target.

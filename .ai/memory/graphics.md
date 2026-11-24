@@ -2283,3 +2283,20 @@
   `PassAttachmentSet`, `decidePassLoad` → `resolveAttachmentOps`; test `PassLoadTest` → `AttachmentOpsTest`.
 - Why: `ClearPolicy`/`PassLoad` no longer said what they hold; `Op` is the neutral term the seam already used.
 - Verified: build 0; test_vk/test_graphics green; gates.
+
+## 2026-11-24 — `ensure` answers the record (the claim path could be handed null)
+
+- **The defect** (recorded 2026-11-17 in `../bugs/vk-target-fresh-data-race.md` as "neighbouring ... recorded in the
+  backlog", and it was never in `../backlog/graphics.md`): `Device::claimPasses` did `ensure(*draw.target)` and then
+  `*target_table.lookup(draw.target)`. `releaseRenderTarget` takes no body gate (R6), so a host thread could erase the
+  entry between the two calls and the second `lookup` answered null - dereferenced unchecked.
+- **Fix**: `TargetTable::ensure` returns `std::shared_ptr<TargetObjects>` (null = refused/unbuildable) taken under the
+  same map lock the build ran under; `claimPasses` keeps that record and `setRenderTarget`'s announce discards it.
+  One call, one answer (`G4`); the window the release used is gone by construction (`G10`).
+- **Witnesses**: `TargetTableTest.EnsureWithoutASessionAnswersNoRecord` (device-free: a null record and no entry);
+  `VkMultiSessionTest.AReleaseCannotTakeAwayTheRecordAPassHasJustResolved` (the answer is still whole after an erasing
+  release, while `lookup` answers null); `VkMultiSessionTest.AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATarget`
+  (a release loop racing frames - the interleaving is **not** forced by any hook, so it asserts the invariant).
+- **Honest boundary**: no test reproduces the original null dereference deterministically; what changed is the shape.
+- Verified: `test_vk` **207**/45 green, `test_graphics` green, TSan `test_vk` 207/207 with 0 warnings, ASan+LSan focused
+  PASS, eleven gates green, demo 0 error / 0 warning (session up 40 ms, `Pending -> Presenting` 183 ms).

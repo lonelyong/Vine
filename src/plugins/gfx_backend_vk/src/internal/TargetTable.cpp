@@ -170,15 +170,17 @@ void TargetTable::close() noexcept
     holders_.clear();
 }
 
-bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
+std::shared_ptr<TargetObjects> TargetTable::ensure(const vn::graphics::RenderTarget& target)
 {
     // ONE TARGET MAP OPERATION AT A TIME: two frame heads may build (or find) different targets on two threads, and a
-    // host verb may be releasing one under the exclusive gate (S6c-2).
+    // host verb may be releasing one under the exclusive gate (S6c-2). The ANSWER is taken under this same lock, so
+    // the record a caller is handed is the record this build left behind - never a second lookup a concurrent release
+    // could answer null to (see the declaration).
     const std::lock_guard<std::mutex> map_held(map_mutex_);
     if (device_.table == nullptr || device_.allocator == nullptr || device_.device == VK_NULL_HANDLE) {
         // NO SESSION: nothing can be built. A frame never reaches here (its driver checks `initialized()` first), so
         // this is the answer a caller gets instead of a build against null handles.
-        return false;
+        return nullptr;
     }
     // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the attachment-set
     // compatibility - the engine's formats AND the device spelling only this backend can fill (see
@@ -229,7 +231,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                          vn::graphics::DiagnosticLimit{ requested_samples, largest_samples }));
             }
         }
-        return false;
+        return nullptr;
     }
     samples_report_.rearm(); // a target with a count this device builds: the episode is over
     wanted.shape.samples         = requested_samples;
@@ -254,7 +256,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                          vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
             }
         }
-        return false;
+        return nullptr;
     }
     samples_depth_report_.rearm(); // a depth-attached target this device can resolve: the episode is over
 
@@ -284,7 +286,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                              vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
                 }
             }
-            return false;
+            return nullptr;
         }
         borrow_samples_report_.rearm(); // a single-sample borrower: the episode is over
         const auto source = targets_.find(lender);
@@ -299,7 +301,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                              u8"depth attachment); the lender must render earlier in the same frame (see RenderTarget::shareDepth)"));
                 }
             }
-            return false;
+            return nullptr;
         }
         borrow_source_report_.rearm(); // the lender is built here: the episode is over
         if (lender->width() != target.width() || lender->height() != target.height()) {
@@ -316,7 +318,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                                  numberText(static_cast<std::uint32_t>(target.height())) + u8"); a shared depth has one extent"));
                 }
             }
-            return false;
+            return nullptr;
         }
         borrow_extent_report_.rearm(); // equally sized: the episode is over
         // THE LENDER'S RECORD IS WHAT THE BORROWER NAMES, not a copy of its handles: the picture, its view and the
@@ -346,7 +348,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                              u8" colour attachments, which is the most Vulkan allows; it was not built"));
             }
         }
-        return false;
+        return nullptr;
     }
     too_many_colors_report_.rearm(); // a shape inside the limit: the episode is over
 
@@ -375,8 +377,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         decision.reason = RepairReason::None;
     }
     switch (decision.action) {
-    case TargetAction::None:
-        return true;
+    case TargetAction::None: return entry->second;
     case TargetAction::Repair:
         if (decision.reason == RepairReason::SizeUnknown) {
             if (size_unknown_report_.shouldReport()) {
@@ -388,11 +389,11 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                              u8"vk: a target with an unusable extent (0 in a dimension) was left unbuilt"));
                 }
             }
-            return false;
+            return nullptr;
         }
         // Bootstrap: the attachments exist and have the right shape; the colour attachments always CLEAR, so the first
         // pass in does not need a second variant.
-        return true;
+        return entry->second;
     case TargetAction::ResizeInPlace:
         images.desc = wanted;
         if (!resizeTarget(*device_.table, device_.device, *device_.allocator, images)) {
@@ -403,9 +404,9 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                          u8"vk.target.resize_failed",
                                          u8"vk: the target's attachments could not be rebuilt at the new extent (see the memory report)"));
             }
-            return false;
+            return nullptr;
         }
-        return true;
+        return entry->second;
     case TargetAction::Rebuild:
         // The shape changed: the attachments are rebuilt; pipelines are keyed by compatibility, so the ones built for
         // the old shape are simply never asked for again (and a resize, which keeps the shape, reuses them - see
@@ -423,11 +424,11 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                          u8"vk.target.build_failed",
                                          u8"vk: the off-screen target's attachments could not be built (see the memory report)"));
             }
-            return false;
+            return nullptr;
         }
-        return true;
+        return entry->second;
     }
-    return false;
+    return nullptr;
 }
 
 std::shared_ptr<TargetObjects> TargetTable::lookup(const Target target) const noexcept

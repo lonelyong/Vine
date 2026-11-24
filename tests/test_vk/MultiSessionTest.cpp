@@ -41,6 +41,7 @@
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/backend_vk/internal/Device.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 
 #include "PlanTestSupport.hpp"
 
@@ -1001,5 +1002,88 @@ TEST(VkMultiSessionTest, AReadbackRacingARebuiltTargetAnswersAValueItCanStandBeh
     EXPECT_GT(successes, 0U) << "no readback saw a finished frame, so the loop proved nothing";
 
     device->releaseFrameDriver(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReleaseCannotTakeAwayTheRecordAPassHasJustResolved)
+{
+    // R6 MEETS THE CLAIM PATH. A release does not wait for the frames in flight, so it may erase a target's entry at
+    // any moment - including the moment after a pass' `ensure` answered. That answer is the RECORD, taken under the
+    // same lock the build ran under, and this case pins the two facts the recording path stands on: the answer is the
+    // record the table held, and a release announced right after PARKS it instead of emptying the caller's answer.
+    // (The claim path used to ask `ensure` for a boolean and then resolve it with a second `lookup`; that second call
+    // was one lock late and answered null for exactly this release.)
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<RenderTarget>                    target = makeTarget(u8"ensure_answers_the_record");
+    const std::shared_ptr<vn::backend_vk::TargetObjects> built  = device->targetTable().ensure(*target);
+    ASSERT_NE(built, nullptr) << "the table did not build the target";
+    EXPECT_TRUE(built->built()) << "a build that answered a record left it unbuilt";
+
+    // THE RELEASE IS ANNOUNCED NOW: the entry leaves the map at once (a later frame rebuilds it) ...
+    EXPECT_TRUE(device->targetTable().release(target.get()));
+    EXPECT_EQ(device->targetTable().lookup(target.get()), nullptr) << "the entry survived its own release";
+    // ... and the answer this call already gave still names WHOLE objects, which is what a recording pass keeps using.
+    // The park owns it from here and destroys it only once the watermark has passed every frame that could name it.
+    EXPECT_TRUE(built->built()) << "the release destroyed the record it parked";
+    EXPECT_TRUE(built->hasDepth()) << "the parked record lost its depth half";
+
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATarget)
+{
+    // THE INTERLEAVING IS NOT FORCED (the window the fix removed is a lock acquisition, and no hook sits on it), so
+    // what this case requires is that EVERY interleaving has a legal answer: while one thread drives frames into the
+    // target, another releases it over and over. A frame that lost the race rebuilds what the release erased (a
+    // rebuild is the claim holder's verb), a release that lands mid-frame parks the images instead of destroying them,
+    // and the last frame still draws the picture. A pass handed a half-resolved record would crash or draw nothing.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(u8"release_race");
+
+    std::atomic<bool>        stop{ false };
+    std::atomic<std::size_t> frames{ 0 };
+
+    std::thread driver([&]() {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        while (!stop.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            const PresentOutcome outcome = backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr);
+            EXPECT_EQ(outcome, PresentOutcome::Skipped) << "a frame into a released-and-rebuilt target answered " << static_cast<int>(outcome);
+            frames.fetch_add(1, std::memory_order_release);
+        }
+    });
+
+    std::size_t releases = 0;
+    while (frames.load(std::memory_order_acquire) < 20U && releases < 200000U) {
+        backend->releaseRenderTarget(target.get());
+        ++releases;
+    }
+    stop.store(true, std::memory_order_release);
+    driver.join();
+
+    EXPECT_GT(frames.load(), 0U) << "the driver never ran a frame";
+    EXPECT_GT(releases, 0U) << "the release loop never ran";
+
+    // THE LAST FRAME STILL DRAWS: the target is a description, and a release only changes what is resident.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[0], 254) << "the frame after the race lost its picture";
+    EXPECT_LE(centre[1], 1);
+
     backend->shutdown();
 }

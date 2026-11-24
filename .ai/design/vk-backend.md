@@ -381,6 +381,13 @@ and every cache has a witness a test can read.**
   target" report path (`G6`), with one more code.
 - **Why the claim comes before `ensure`**: building / rebuilding attachments is **the holder's verb** (`R5`), so "who may rebuild" and "who may draw" are the same answer; a
   claim one step later would let two sessions interleave rebuilds on one target.
+- **Why `ensure` answers the record, not a boolean**: the borrowed pointer a pass keeps must be the record the build left behind, taken under the same map lock. A release
+  does **not** wait for the frames in flight (`R6`), so it can erase the entry at any moment — a boolean answer resolved by a second `lookup` was one lock late, and that
+  call answered null for exactly that release (`G4`: one call, one answer; `G10`: the window was a lifetime the caller had to re-prove). The answer is a `shared_ptr`, so a
+  release announced right after the call parks the record instead of destroying it, exactly as it does for a record a frame already resolved.
+  Witnesses: `TargetTableTest.EnsureWithoutASessionAnswersNoRecord` (the refusal is the same spelling — a null record, no entry),
+  `VkMultiSessionTest.AReleaseCannotTakeAwayTheRecordAPassHasJustResolved` (the answer is whole after an erasing release) and
+  `VkMultiSessionTest.AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATarget` (the interleaving is not forced; every interleaving must have a legal answer).
 - **Why one table**: the map and the lease answer the same question — "what is this target now, and who may touch it". With two tables a release had to do half in each place
   and a test had to drive two objects at once (`G1`); merged, `release(target)` is one call ("the entry leaves the map + the record goes to the park") and `drain()` clears
   records and leases together. The lease still holds its own lock (another driver's per-pass claim must not queue behind one build).

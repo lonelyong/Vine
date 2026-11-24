@@ -1531,14 +1531,17 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
             recording.refused_pass  = true;
             continue;
         }
-        if (!owner.target_table.ensure(*draw.target)) {
+        // ONE CALL, ONE ANSWER (see TargetTable::ensure): the record the build left behind IS what this pass keeps a
+        // borrowed pointer into, so a release announced while the frame records - which does not wait for it (R6) -
+        // can park that record but cannot take it away between "built" and "here it is". Resolving it with a second
+        // `lookup` was one lock late: that call answered null for exactly that release.
+        const std::shared_ptr<TargetObjects> claimed_record = owner.target_table.ensure(*draw.target);
+        if (claimed_record == nullptr) {
             recording.refused_pass = true;
             continue;
         }
         count_pass();
-        // THE ENTRY EXISTS NOW (the build above inserted it): the frame keeps a borrowed pointer into it, and a release
-        // during its recording hands the record to the park instead of destroying it (S6c-2b).
-        TargetObjects& claimed_images = *owner.target_table.lookup(draw.target);
+        TargetObjects&   claimed_images = *claimed_record;
         FrameHead::Pass& pass_head    = head.beginPass(draw.packets.size());
         pass_head.entry               = &entry;
         pass_head.draw                = &draw;
@@ -3484,10 +3487,10 @@ void Device::setRenderTarget(RenderTarget* target)
         impl->report_host_reentry(u8"setRenderTarget()");
         return;
     }
-    // THE VERB BUILDS WHAT IT ANNOUNCES (BC-09, see RenderDevice::setRenderTarget and the reference backend):
+    // THIS VERB BUILDS WHAT IT ANNOUNCES (BC-09, see RenderDevice::setRenderTarget and the reference backend):
     // "a target can be built without a frame" is one ability in both backends, so a later frame that names this
-    // target finds its attachments built and builds nothing. The table reports its own refusal once and answers
-    // false; the announcement is then not taken (the host learns at the call site, not on the first frame).
+    // target finds its attachments built and builds nothing. The table reports its own refusal once and answers no
+    // record; the announcement is then not taken (the host learns at the call site, not on the first frame).
     if (target != nullptr) {
         (void)impl->target_table.ensure(*target);
     }

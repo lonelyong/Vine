@@ -12,9 +12,12 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <utility>
 
+#include <vine/String.hpp>
 #include <vine/backend_vk/internal/TargetTable.hpp>
+#include <vine/graphics/RenderTarget.hpp>
 
 namespace
 {
@@ -200,4 +203,19 @@ TEST(TargetTableTest, APeekAnswersAnUnbuiltTargetAndInsertsNothing)
     EXPECT_FALSE(peek.shape.depth_format.has_value());
 
     EXPECT_TRUE(table.drain().empty()) << "a peek inserted an entry into the target map";
+}
+
+TEST(TargetTableTest, EnsureWithoutASessionAnswersNoRecord)
+{
+    // ONE SPELLING FOR BOTH ANSWERS (`G4`): `ensure` answers the record it built, so "this table cannot build it" is
+    // a NULL record rather than a second fact (a boolean) a caller has to carry beside it. A table that was never
+    // opened has no device to build against, and says exactly that.
+    TargetTable                                         table;
+    const vn::intrusive_ptr<vn::graphics::RenderTarget> target = vn::intrusive_ptr<vn::graphics::RenderTarget>(new vn::graphics::RenderTarget());
+    target->setName(vn::String(u8"no_session"));
+    target->attachColor(vn::graphics::RenderTarget::ColorFormat::RGBA8);
+    target->setSize(8, 8);
+
+    EXPECT_EQ(table.ensure(*target), nullptr) << "a table with no session answered a record";
+    EXPECT_EQ(table.lookup(target.get()), nullptr) << "a refused build inserted an entry";
 }
