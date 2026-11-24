@@ -372,6 +372,29 @@ struct MovedLayout {
 };
 
 /**
+ * @brief Adds @p record to @p kept unless it is already there: "this value names it, so it may not be destroyed yet".
+ *
+ * @details
+ * - THE ONE RULE BEHIND `FrameRecording::keepRead` AND THE SHADOW PATH (see the frame's read-set): a scan of a handful
+ *   of pointers, because the recording path must not allocate per draw.
+ *
+ * @param kept   The frame's read-set.
+ * @param record The record the frame resolved (ignored when null).
+ */
+void keepRecord(std::vector<std::shared_ptr<TargetObjects>>& kept, const std::shared_ptr<TargetObjects>& record)
+{
+    if (record == nullptr) {
+        return;
+    }
+    for (const std::shared_ptr<TargetObjects>& already : kept) {
+        if (already.get() == record.get()) {
+            return;
+        }
+    }
+    kept.push_back(record);
+}
+
+/**
  * @brief ONE FRAME'S OWN STATE, kept by its driver: what it claimed, which records it moved, and what it must undo.
  *
  * @details
@@ -402,6 +425,17 @@ struct FrameRecording {
     /// handful at most, so this is a small vector scanned linearly - an `unordered_set` would allocate a node per entry
     /// on the recording path, which is exactly what this value exists to stop.
     std::vector<const RenderTarget*> lent_depths{};
+    /**
+     * @brief The records this frame READS: a full-screen draw's source and a pass' shadow map.
+     *
+     * @details
+     * - A FRAME OWNS WHAT IT NAMES, NOT ONLY WHAT IT DRAWS INTO. A host may release any target at any moment (R6),
+     *   and off-screen frame bodies overlap, so the park may be free to destroy a record whose images another frame is
+     *   still going to submit. Keeping the record here closes that window with the same rule the pass handle uses.
+     * - Deduplicated by pointer and scanned linearly: a frame reads a handful, and the recording path must not
+     *   allocate per draw.
+     */
+    std::vector<std::shared_ptr<TargetObjects>> read_records{};
     /// The layout records this frame moved on ANOTHER target, with the value each stated before (see MovedLayout).
     std::vector<MovedLayout> moved_layouts{};
     /// The clock's sample buffer (see FrameTiming): resized per sampled frame, never rebuilt.
@@ -412,6 +446,19 @@ struct FrameRecording {
     std::uint32_t query_count{ 0 };
     /// Whether the frame's debug-utils region is open (and must be closed before the command buffer ends).
     bool frame_labelled{ false };
+
+    /// @brief Keeps @p record alive for the rest of this frame (see read_records); a repeat is not a second entry.
+    void keepRead(const std::shared_ptr<TargetObjects>& record)
+    {
+        keepRecord(read_records, record);
+    }
+
+    /// @brief Drops the strong references this frame took, and the layout log that names them (see read_records).
+    void dropReads() noexcept
+    {
+        read_records.clear();
+        moved_layouts.clear();
+    }
 
     /** @brief Forgets the last frame's entries and keeps their capacity. */
     void clear() noexcept
@@ -427,6 +474,7 @@ struct FrameRecording {
         frame_labelled   = false;
         counters         = {};
         lent_depths.clear();
+        read_records.clear();
         moved_layouts.clear();
         stamp_values.clear();
     }
@@ -968,32 +1016,48 @@ struct Device::Impl {
     static constexpr std::uint32_t               kFramesInFlight = 1U;
 
     /**
-     * @brief Runs @p destroy now, or parks it until the device's watermark has passed every frame that could name it.
+     * @brief Runs @p destroy once NO frame may name the object: every submitted command buffer that named it has
+     *        completed, and no value this device lent still holds it.
      *
      * @details
-     * - THE ONE PLACE THE DECISION IS MADE. Every released object - a geometry's streams, a program's modules and
-     *   pipelines, a texture's image, a target's attachments - comes through here, so "when may this be destroyed"
-     *   has one answer instead of one per cache.
-     * - WITHOUT EVIDENCE IT IDLES: a release with no armed queue (a device that never came up, or one being torn
-     *   down) has no parking window it could trust, so the device is idled and the object destroyed - and the idle is
-     *   COUNTED (see RetirementQueue::deviceWaits). A queue that is armed never takes this path.
+     * - TWO WINDOWS, ONE DECISION (ADR-2026-11-24-residency-borrowing). The park answers "has the work that named it
+     *   completed" (the timeline); @p named answers "does a value still name it" - a pass handle, a record a frame
+     *   reads, a host verb's own share. The second window is real and not academic: OFF-SCREEN frame bodies overlap
+     *   (see `executeFrame`), so one engine's frame can complete - and run this - while another is still recording.
+     * - THE PARK'S OWN SHARE IS NOT A HOLDER. The queued act holds the object, so it sees "one reference" when nobody
+     *   but the park holds it, and it asks again at a later frame end when it sees more - there is no spin, because
+     *   the only owners are frame bodies and host verbs, and every frame end is another chance to ask.
+     * - WITHOUT EVIDENCE IT IDLES: a release with no armed queue has no parking window it could trust, so any body
+     *   still recording is waited out (the body gate) and the device is idled - and the idle is COUNTED. A queue that
+     *   is armed never takes this path.
      *
-     * @param destroy What to run when the object may go (capture handles and slices by value).
+     * @param named   A weak view of the object; empty means "the park's own share is the last one by construction".
+     * @param destroy What to run when the object may go (it keeps the object alive for the parked act).
      */
     void releaseLater(std::function<void()> destroy)
+    {
+        releaseLater(std::weak_ptr<const void>{}, std::move(destroy));
+    }
+
+    void releaseLater(std::weak_ptr<const void> named, std::function<void()> destroy)
     {
         {
             const std::lock_guard<std::mutex> held(clock_mutex);
             // A LIVE WINDOW IS THE EVIDENCE'S PREMISE: a queue whose timeline nobody reports cannot date a park. It
             // is asked HERE rather than kept in a flag, because any number of drivers may come and go (S6c-2).
-            if (clock.windows() != 0 && retirement.retire(clock.timeline(), destroy)) {
+            if (clock.windows() != 0 && parkRelease(named, destroy, clock.timeline())) {
                 return;
             }
         }
         // NO EVIDENCE, SO NO PARKING: the honest answer to "we cannot prove it" is to stop the device (and count it),
         // never to guess a window that would destroy an object a submitted command buffer still names. The idle is a
         // host call on every queue, so it takes the queue's external-synchronization lock (see queue_submit): a frame
-        // on another thread may be inside its submit right now (a release runs beside frames, R6).
+        // on another thread may be inside its submit right now (a release runs beside frames, R6). ANY BODY STILL
+        // RECORDING IS WAITED OUT FIRST: a body holds a frame window from its first line, so "no window" already
+        // means "no body" - the gate is how this device SAYS that, and a refusal can only mean this thread is inside
+        // a body, which is the contradiction just ruled out.
+        const vn::graphics::FrameGate::Exclusive bodies = body_gate.enterExclusive();
+        (void)bodies;
         if (device != VK_NULL_HANDLE) {
             const std::lock_guard<std::mutex> submit_held(queue_submit);
             (void)device_table.vkDeviceWaitIdle(device);
@@ -1003,6 +1067,27 @@ struct Device::Impl {
             retirement.noteDeviceWait();
         }
         destroy();
+    }
+
+    /**
+     * @brief Parks @p destroy behind both windows (see releaseLater); called with the clock lock held.
+     *
+     * @param named    A weak view of the object, or empty.
+     * @param destroy  The release act (keeps the object alive while it is parked).
+     * @param timeline The frame timeline this window is dated against.
+     * @return true when the act was parked; false when the queue cannot park at all (see parkingAvailable).
+     */
+    [[nodiscard]] bool parkRelease(std::weak_ptr<const void> named, std::function<void()> destroy, const vn::graphics::FrameTimeline& timeline)
+    {
+        return retirement.retire(timeline, [this, named, destroy](const vn::graphics::FrameTimeline* at) mutable {
+            if (at != nullptr && named.use_count() > 1) {
+                // STILL NAMED BY A VALUE THIS DEVICE LENT (a pass handle, a frame's read, a host verb's share):
+                // another window. The park keeps its own share, so the object cannot die before the next turn.
+                (void)this->parkRelease(named, destroy, *at);
+                return;
+            }
+            destroy();
+        });
     }
 
     /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
@@ -1103,17 +1188,20 @@ struct Device::Impl {
      * @param lent     The depths THIS FRAME lends to another target (see RenderTarget::shareDepth); such an image
      *                 cannot be a sampled picture and a pass' depth attachment at once, so it is skipped. A small
      *                 span, scanned linearly: a frame lends a handful at most, and the recording path allocates nothing.
+     * @param read_records Receives the record this call resolved, so the frame keeps the map alive while it records
+     *                 (see FrameRecording::read_records).
      * @param out      Receives the binding; empty (`view == VK_NULL_HANDLE`) when the pass samples no readable map.
      * @param moved    Receives the record this call rewrote, so a frame that never reaches the queue can put it back
      *                 (see `rewindUnrunFrame`).
      * @return true when a map was resolved (and transitioned).
      */
-    [[nodiscard]] bool resolveShadow(VkCommandBuffer                     commands,
-                                     std::span<const ImageSource>         inputs,
-                                     std::span<const RenderTarget*>       lent,
-                                     ContentDraw::ShadowSource&           out,
-                                     std::vector<MovedLayout>&            moved,
-                                     RecordingTally*                      tally)
+    [[nodiscard]] bool resolveShadow(VkCommandBuffer                              commands,
+                                     std::span<const ImageSource>                 inputs,
+                                     std::span<const RenderTarget*>               lent,
+                                     std::vector<std::shared_ptr<TargetObjects>>& read_records,
+                                     ContentDraw::ShadowSource&                   out,
+                                     std::vector<MovedLayout>&                    moved,
+                                     RecordingTally*                              tally)
     {
         for (const ImageSource& input : inputs) {
             if (input.target == nullptr || !input.isProduced()) {
@@ -1124,6 +1212,9 @@ struct Device::Impl {
             if (map_entry == nullptr || !map_entry->built() || !map_entry->hasDepth()) {
                 continue;
             }
+            // THIS FRAME READS THE MAP, SO IT KEEPS IT (see FrameRecording::read_records): the release that removes it
+            // from the table parks it, and the park must not destroy what this frame is still recording with.
+            keepRecord(read_records, map_entry);
             TargetObjects* map_images = map_entry.get();
             const vn::raw_ptr<const vn::graphics::Light> light = map.shadowOf();
             if (light == nullptr || !map.hasProducerViewProjection()) {
@@ -1703,6 +1794,21 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     // frame must take - or build what a frame would not run (`G1` / `G5`).
     frame_head.beginFrame(frame.passes.size());
     recording.clear();
+
+    // THE FRAME'S HOLD ON ITS TARGETS ENDS WITH THE FRAME (see PassTarget and FrameRecording::read_records): the pass
+    // slots keep the records this frame draws into, the read-set keeps the ones it reads, and the park's turn runs at
+    // a frame end - dropping them here (on every return below) is what lets that turn destroy a released target
+    // instead of carrying it a whole frame longer.
+    struct FrameHoldCloser {
+        FrameHead&      head;
+        FrameRecording& recording;
+
+        ~FrameHoldCloser()
+        {
+            head.clear();
+            recording.dropReads();
+        }
+    } hold_closer{ frame_head, recording };
     // THIS FRAME'S TARGET CLAIMS: one lease, and its destructor is the ONE release point every early return below
     // passes through (`P3`).
     TargetTable::Lease target_lease = owner.target_table.lease(clock_window);
@@ -1867,6 +1973,10 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             if (source_entry == nullptr || !source_entry->built()) {
                 continue;
             }
+            // THIS FRAME OWNS WHAT IT READS (see FrameRecording::read_records): a host may release the source while
+            // this frame records, and the park may then be free to destroy it - the moved-layout log below holds the
+            // record's address, so the record has to outlive the frame that wrote it.
+            recording.keepRead(source_entry);
             std::array<VkImageMemoryBarrier2, kMaxColorAttachments> sampled_moves{};
             BarrierBatch sampled_batch(owner.device_table, commands, sampled_moves, &barrier_tally);
             // EVERY PICTURE THE DRAW SAMPLES MOVES, each from its OWN record: one image per colour attachment, and a
@@ -1888,7 +1998,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
         // SHADER_READ_ONLY here, before the pass begins (see resolveShadow).
         ContentDraw::ShadowSource shadow{};
-        (void)owner.resolveShadow(commands, pass_run.entry->inputs, recording.lent_depths, shadow, moved_layouts, &barrier_tally);
+        (void)owner.resolveShadow(commands, pass_run.entry->inputs, recording.lent_depths, recording.read_records, shadow, moved_layouts, &barrier_tally);
 
         // WHAT THIS PASS LOADS AND CLEARS: ONE RULE, ONE HOME (see DynamicRendering::resolveAttachmentOps). The only input that
         // differs between the two kinds of target is "does this set already hold a picture to keep": an off-screen set
@@ -2239,6 +2349,19 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
     // only difference: nothing is acquired, presented or counted.
     frame_head.beginFrame(frame.passes.size());
     recording.clear();
+
+    // A WARM-UP DROPS ITS STRONG REFERENCES TOO (see the recorded frame's closer): it is the same walk and the same
+    // heads, so the same rule - the frame's hold ends with the frame.
+    struct FrameHoldCloser {
+        FrameHead&      head;
+        FrameRecording& recording;
+
+        ~FrameHoldCloser()
+        {
+            head.clear();
+            recording.dropReads();
+        }
+    } hold_closer{ frame_head, recording };
     TargetTable::Lease target_lease = owner.target_table.lease(clock_window);
     (void)claimPasses(frame, window, PassMode::Prepare, target_lease, frame_head, recording);
 
@@ -3123,17 +3246,20 @@ bool Device::initialize()
     // THE TARGET TABLE'S SESSION (see TargetTable::open): the same park seam the caches got, plus the device facts a
     // build compares against. A release parks THROUGH the table, so "the entry left the map" and "the images wait for
     // the watermark" are one call and no caller can do half of it.
-    impl->target_table.open(TargetTable::Device{ impl->device, &impl->device_table, &impl->allocator },
-                            TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported },
-                            [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); },
-                            [impl = impl.get()](std::shared_ptr<TargetObjects> doomed) {
-                                impl->releaseLater([table = impl->device_table,
-                                                    device = impl->device,
-                                                    allocator = &impl->allocator,
-                                                    doomed = std::move(doomed)]() mutable {
-                                    destroyTarget(table, device, *allocator, *doomed);
-                                });
-                            });
+    impl->target_table.open(
+        TargetTable::Device{ impl->device, &impl->device_table, &impl->allocator },
+        TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported },
+        [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); },
+        [impl = impl.get()](std::shared_ptr<TargetObjects> doomed) {
+            // THE RECORD IS THE SUBJECT OF THE RELEASE (see Impl::releaseLater): a pass handle or a
+            // record some frame is reading may still name it, so the parked act asks before it
+            // destroys - a release removes the target from the table, it does not pull the images
+            // out from under a frame that already resolved them.
+            const std::weak_ptr<const void> named = doomed;
+            impl->releaseLater(named, [table = impl->device_table, device = impl->device, allocator = &impl->allocator, doomed = std::move(doomed)]() mutable {
+                destroyTarget(table, device, *allocator, *doomed);
+            });
+        });
 
     // WHAT THE RECORDER DID WITH THE FILE, recorded where it will outlive the session (see pipelineCacheReport): the
     // hand-over and any refusal happen ONCE, at creation, and `content.destroy()` is what would erase them.

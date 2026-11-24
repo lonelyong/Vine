@@ -2316,3 +2316,23 @@
   `heap-use-after-free ... in vn::backend_vk::PassTarget::holdsPicture()`.
 - **Note**: a head clears its pass slots at the NEXT `beginFrame`, so a released record is held at most one frame body
   longer than the frame that resolved it. Bounded by design, not a leak.
+
+## 2026-11-24 (third) — a release ends residency, not the objects (two windows)
+
+- **The hole**: a release does not wait (R6) and off-screen frame bodies OVERLAP (the body gate is SHARED), so one
+  engine's frame end runs the park while another engine is still recording. The park only dated the SUBMITTED window;
+  the recording window was covered by an implicit and partly false invariant set.
+- **The rule** (`ADR-2026-11-24-residency-borrowing`): destroy only when no submitted work names the object AND no
+  value the device lent still names it; a release never waits. The park asks the second question itself
+  (`Impl::parkRelease`, a `use_count` probe) and re-asks at a later frame end.
+- **Seam**: `RetirementQueue::ReleaseFn` is `void(const FrameTimeline*)` (null = teardown), so a release act can ask
+  for another window without the clock lock it runs under - the queue's note already promised that and could not.
+- **Values that keep a record alive**: the off-screen `PassTarget` (draws into) and `FrameRecording::read_records`
+  (reads: a screen draw's source, a shadow map). Both dropped by `FrameHoldCloser` at the frame's end, in both frame
+  verbs.
+- **Two defects surfaced, both in the backlog and both trigger-HIT**: `T60` (content entries are not shared, so
+  `releaseContent` beside a recording frame is a destroyed `VkBuffer` named by a live command buffer) and `T61` (an
+  idle frame window freezes the park: `updateWatermark` folds a MINIMUM over live windows, so `submitted` reached 7
+  while `completed` stayed at 2 - the clock's own note says an idle window constrains nothing). T61 is what currently
+  hides T60, so one batch should fix both.
+- Verified: `test_vk` 209/209, `test_graphics` green, TSan + ASan runs, eleven gates, demo.

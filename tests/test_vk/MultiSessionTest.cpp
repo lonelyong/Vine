@@ -1092,10 +1092,10 @@ TEST(VkMultiSessionTest, AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATa
 TEST(VkMultiSessionTest, APassHandleKeepsItsTargetAliveAfterARelease)
 {
     // THE HANDLE OWNS WHAT IT DRAWS INTO (see PassTarget). A release does not wait for the frames in flight (R6): it
-    // erases the entry and parks the record, and the park's release act is dated against the frames that were
-    // SUBMITTED - a frame that is still resolving has submitted nothing, so the only thing that can hold its record is
-    // the handle it took. This case lets the park run first (a later frame completes and the queue empties) and then
-    // touches the handle: with a borrowed pointer that read is a heap-use-after-free, which ASan reports.
+    // erases the entry and parks the record, and the park's act asks TWO questions before it destroys - has the
+    // submitted work completed, and does any value still name the record (see Impl::releaseLater). This case pins the
+    // second half by holding the only other share: the queue's turn comes at every frame end, and it must DEFER while
+    // the handle lives.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     if (!backend->initialize()) {
@@ -1116,19 +1116,117 @@ TEST(VkMultiSessionTest, APassHandleKeepsItsTargetAliveAfterARelease)
     record.reset(); // the handle is now the only owner the host can see
 
     device->releaseRenderTarget(target.get());
-    // LATER FRAMES' COMPLETIONS RUN THE PARK: the release act is dated one slot past the last submission, so it takes a
-    // few completed frames before the queue empties. The loop is bounded because "the park never ran" is the failure
-    // this case has to rule out.
-    for (int frame = 0; frame < 4 && device->retirementNumbers().pending != 0U; ++frame) {
+    // THE PARK ASKS AT EVERY FRAME END AND DEFERS WHILE THE HANDLE LIVES: the queue stays non-empty, because its turn
+    // found a value that still names the record.
+    for (int frame = 0; frame < 3; ++frame) {
         ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
     }
-    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "the park never ran, so this case proves nothing";
+    EXPECT_GE(device->retirementNumbers().pending, 1U) << "the park destroyed a record a handle still names";
 
-    // THE HANDLE STILL NAMES A LIVE RECORD: this read is the witness (a borrowed pointer made it ASan's
+    // THE HANDLE STILL NAMES A LIVE RECORD: this read is the witness (a borrowed handle made it ASan's
     // heap-use-after-free), and the snapshot it was built with is untouched.
     EXPECT_FALSE(handle.holdsPicture());
     EXPECT_EQ(handle.extent().width, static_cast<std::uint32_t>(kTargetSize));
     EXPECT_EQ(handle.colorCount(), 1U);
+
+    // AND WHEN THE LAST VALUE DROPS IT, THE NEXT TURN DESTROYS IT: nothing defers it any more.
+    handle = vn::backend_vk::PassTarget{};
+    for (int frame = 0; frame < 4 && device->retirementNumbers().pending != 0U; ++frame) {
+        ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    }
+    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "the record was never destroyed after its last holder let go";
+
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AFrameKeepsTheSourceItReadsUntilTheFrameEnds)
+{
+    // A FRAME OWNS WHAT IT NAMES, NOT ONLY WHAT IT DRAWS INTO (see FrameRecording::read_records). Off-screen frame
+    // bodies OVERLAP: while one driver records, another may complete a frame - and that frame end runs the park. A
+    // host release of the source in between must not destroy images the recording frame is still going to submit, so
+    // the frame keeps the record it resolved. The instrument is the park again: its turn must DEFER while the source
+    // is held by a frame, and destroy once that frame has ended.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+    RenderFrameExecutor* const second = device->createFrameDriver();
+    ASSERT_NE(second, nullptr);
+
+    const intrusive_ptr<Geometry>      geometry    = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program     = redProgram();
+    const intrusive_ptr<ShaderProgram> copy        = solidProgram(u8"session_copy", u8R"(
+#version 450
+layout(location = 0) out vec4 out_color;
+void main()
+{
+    out_color = vec4(0.0, 0.0, 1.0, 1.0);
+}
+)");
+    const intrusive_ptr<RenderTarget>  source      = makeTarget(u8"frame_reads_this");
+    const intrusive_ptr<RenderTarget>  destination = makeTarget(u8"frame_draws_here");
+    const intrusive_ptr<RenderTarget>  other       = makeTarget(u8"park_driver");
+
+    // A PICTURE IN THE SOURCE, so the frame has something to read (and the table holds a built record for it).
+    ASSERT_EQ(backend->executeFrame(drawingFrame(source.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> go{ false };
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped || sink_entered.exchange(true)) {
+            return;
+        }
+        // HOLD THE RECORDING FRAME, BOUNDED: the main thread releases the source and lets another frame complete
+        // while this one is inside its body.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!go.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    DrawPacket screen;
+    screen.kind                = DrawKind::Fullscreen;
+    screen.view.camera         = identityCamera();
+    screen.source              = source.get();
+    screen.program             = copy;
+    screen.program_description = copy->description();
+
+    std::vector<DrawPacket> draws;
+    draws.push_back(std::move(screen));
+    draws.push_back(programlessDraw(geometry)); // names no program: the refusal holds the frame at the sink
+
+    PresentOutcome outcome = PresentOutcome::Lost;
+    std::thread    recorder([&]() { outcome = second->executeFrame(drawingFrameWith(destination.get(), std::move(draws)), nullptr); });
+
+    const auto enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < enter_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(sink_entered.load()) << "the recording frame never reached its refusal";
+
+    // THE RELEASE AND A COMPLETED FRAME, WHILE THE OTHER BODY IS STILL RECORDING: its frame end runs the park's turn.
+    device->releaseRenderTarget(source.get());
+    ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    const std::size_t held_by_the_recording_frame = device->retirementNumbers().pending;
+    EXPECT_GE(held_by_the_recording_frame, 1U) << "the park destroyed a record a frame was still reading";
+
+    go.store(true, std::memory_order_release);
+    recorder.join();
+    EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the recording frame did not finish";
+    backend->setDiagnosticSink({});
+
+    // ONCE THAT FRAME HAS ENDED, nothing names the source any more and the queue empties - but only after the second
+    // window is gone: a park is dated against the DEVICE watermark, which folds a MINIMUM over the live windows, and
+    // an idle window keeps contributing its last proven frame (see the backlog's "an idle frame window freezes the
+    // park"). Releasing the driver removes that constraint, which is the documented way out.
+    device->releaseFrameDriver(*second);
+    for (int frame = 0; frame < 4 && device->retirementNumbers().pending != 0U; ++frame) {
+        ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    }
+    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "the source was never destroyed after its frame ended";
 
     backend->shutdown();
 }

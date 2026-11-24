@@ -51,7 +51,7 @@ void RetirementQueue::advance(const FrameTimeline& timeline)
 
     released_ += due.size();
     for (auto& entry : due) {
-        entry.release();
+        entry.release(&timeline);
     }
 }
 
@@ -68,7 +68,7 @@ void RetirementQueue::releaseAll()
 
     released_ += due.size();
     for (auto& entry : due) {
-        entry.release();
+        entry.release(nullptr);
     }
 }
 

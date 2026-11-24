@@ -37,8 +37,17 @@ VN_GRAPHICS_NS_BEGIN
  */
 class VN_GRAPHICS_API RetirementQueue {
   public:
-    /** @brief What the queue runs when a resource's turn comes. Owns nothing; it is the release act. */
-    using ReleaseFn = std::function<void()>;
+    /**
+     * @brief What the queue runs when a resource's turn comes: the release act, handed the timeline it was reached at.
+     *
+     * @details
+     * - WHY THE TIMELINE IS A PARAMETER: a release act may find that something still names the object (a frame body
+     *   that has not ended, a value a host holds) and ask for ANOTHER window. Re-parking needs a timeline, and the
+     *   queue runs its callbacks under the caller's clock lock - so handing it in is what keeps that act lock-free.
+     * - NULL MEANS TEARDOWN: `releaseAll()` is emptying the queue because the device is going away; nothing may be
+     *   parked again, so the act runs the release itself.
+     */
+    using ReleaseFn = std::function<void(const FrameTimeline*)>;
 
   public:
     /** @brief Creates a queue whose parking window is derived from @p slots.

@@ -98,6 +98,14 @@ One ADR records one decision: background, options, decision, consequences, evide
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-24-residency-borrowing.md` — **a release ends residency, not the objects**: a target's GPU objects have
+  one owner (the device's residency) and are lent to a frame for its life; they are destroyed only when no submitted
+  work names them (the park's timeline) and no value the device lent still names them (`use_count` probe, re-asked at a
+  later frame end), and neither window makes a release wait (`R6`). `RetirementQueue::ReleaseFn` receives the timeline
+  so a release act may ask for another window; the pass handle and `FrameRecording::read_records` are the values that
+  keep a record alive until the frame ends. Content entries (T60) and the idle-window watermark freeze (T61) are named
+  follow-ups.
+
 - `ADR-2026-11-24-per-attachment-load-store.md` — **a pass states load/store per attachment, and the backend resolves
   the one fact the engine cannot know**: `AttachmentLoadStore` (`LoadOp` + `StoreOp`) is the seam's per-attachment
   pair; `ClearPolicy` / `PassDesc` gain `color_ops` / `depth_op` (empty or unset keeps the group spelling, so every

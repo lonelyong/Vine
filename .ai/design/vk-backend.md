@@ -381,6 +381,17 @@ and every cache has a witness a test can read.**
   target" report path (`G6`), with one more code.
 - **Why the claim comes before `ensure`**: building / rebuilding attachments is **the holder's verb** (`R5`), so "who may rebuild" and "who may draw" are the same answer; a
   claim one step later would let two sessions interleave rebuilds on one target.
+- **Residency borrowing: a release ends residency, not the objects** (`ADR-2026-11-24-residency-borrowing`). A target's
+  or a content entry's GPU objects have one owner (the device's residency) and are LENT to a frame for that frame's
+  life and to a host verb for that call's life; the destruction waits for two windows — no submitted work names them
+  (the park's timeline) and no value the device lent still names them (a `use_count` probe the park re-asks at a later
+  frame end). Neither window ever makes a release wait (`R6`). The second window is not academic: off-screen frame
+  bodies overlap (`executeFrame` takes the body gate SHARED), so one engine's frame end can run the park while another
+  engine is still recording. Values that name a record keep it alive — the pass handle for what a frame DRAWS INTO
+  (§2.20), `FrameRecording::read_records` for what a frame READS — and both are dropped when the frame ends.
+  Witnesses: `VkMultiSessionTest.AFrameKeepsTheSourceItReadsUntilTheFrameEnds` (a release announced while another
+  engine records), `CoreRetirementQueueTest.AReleaseCallbackMayParkSomethingNew` (a release act is handed the timeline,
+  which is what lets it ask for another window without the clock lock it runs under).
 - **Why `ensure` answers the record, not a boolean**: the borrowed pointer a pass keeps must be the record the build left behind, taken under the same map lock. A release
   does **not** wait for the frames in flight (`R6`), so it can erase the entry at any moment — a boolean answer resolved by a second `lookup` was one lock late, and that
   call answered null for exactly that release (`G4`: one call, one answer; `G10`: the window was a lifetime the caller had to re-prove). The answer is a `shared_ptr`, so a

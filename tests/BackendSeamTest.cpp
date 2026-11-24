@@ -208,7 +208,7 @@ TEST(CoreRetirementQueueTest, NothingIsReleasedBeforeTheEvidenceArrives)
 
     const auto token = timeline.begin();
     timeline.submitted(token); // submitted frame 1 -> retire at 1 + 3 + 1 = 5
-    ASSERT_TRUE(queue.retire(timeline, [&releases] { ++releases; }));
+    ASSERT_TRUE(queue.retire(timeline, [&releases](const FrameTimeline*) { ++releases; }));
 
     EXPECT_EQ(queue.retirePoint(timeline), 5u);
     EXPECT_EQ(queue.pending(), 1u);
@@ -236,10 +236,12 @@ TEST(CoreRetirementQueueTest, AReleaseCallbackMayParkSomethingNew)
 
     const auto first = timeline.begin();
     timeline.submitted(first);
-    ASSERT_TRUE(queue.retire(timeline, [&] {
+    ASSERT_TRUE(queue.retire(timeline, [&](const FrameTimeline* at) {
         ++releases;
-        // Re-entrant park: the queue compacts before it releases, so this must not corrupt it.
-        EXPECT_TRUE(queue.retire(timeline, [&releases] { ++releases; }));
+        // Re-entrant park: the queue compacts before it releases, so this must not corrupt it - and the act is handed
+        // the timeline precisely so it can ask for another window without taking a lock the caller already holds.
+        ASSERT_NE(at, nullptr);
+        EXPECT_TRUE(queue.retire(*at, [&releases](const FrameTimeline*) { ++releases; }));
     }));
 
     timeline.completeUpTo(queue.retirePoint(timeline));
@@ -263,8 +265,8 @@ TEST(CoreRetirementQueueTest, ATeardownRunsEverythingParkedInOrder)
     const auto token = timeline.begin();
     timeline.submitted(token); // frame 1; nothing is completed, so advance() would release nothing
 
-    ASSERT_TRUE(queue.retire(timeline, [&order] { order.push_back(1); }));
-    ASSERT_TRUE(queue.retire(timeline, [&order] { order.push_back(2); }));
+    ASSERT_TRUE(queue.retire(timeline, [&order](const FrameTimeline*) { order.push_back(1); }));
+    ASSERT_TRUE(queue.retire(timeline, [&order](const FrameTimeline*) { order.push_back(2); }));
     EXPECT_EQ(queue.pending(), 2u);
 
     queue.advance(timeline);
