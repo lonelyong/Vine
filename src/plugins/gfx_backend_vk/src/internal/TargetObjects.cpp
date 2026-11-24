@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -237,7 +238,11 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 {
     const auto width  = static_cast<std::uint32_t>(images.desc.width);
     const auto height = static_cast<std::uint32_t>(images.desc.height);
-    if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth())) {
+    // A SHAPE THAT CANNOT BE RENDERED IS NOT BUILT: no extent, no attachment at all, or more colour attachments than
+    // `maxColorAttachments` may ever allow (the recorder's attachment-info array is a stack value of that size - see
+    // `kMaxColorAttachments`). `TargetTable::ensure` names the last case before it gets here; this is the belt.
+    if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth()) ||
+        images.colorCount() > kMaxColorAttachments) {
         return false;
     }
 
@@ -370,7 +375,7 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
     // single-sampled, so its own depth never exists to be cleared).
     PassLoad effective = load;
     if (depth_borrowed) {
-        effective.load_depth = true;
+        effective.load_depth = vn::graphics::LoadOp::Load;
     }
 
     beginRendering(table, commands, attachments, effective);
@@ -397,9 +402,40 @@ void TargetObjects::endPass(const VolkDeviceTable& table, const VkCommandBuffer 
     endRendering(table, commands);
 }
 
+bool TargetObjects::transitionDepthPicture(const VolkDeviceTable& table, const VkCommandBuffer commands, const ImageLayout to) noexcept
+{
+    const VkImage    picture = depthPicture();
+    const ImageLayout from    = depthPictureLayout();
+    if (picture == VK_NULL_HANDLE || from == to) {
+        return false; // nothing to move (a borrower owns no picture; an equal record needs no barrier)
+    }
+    recordBarrier(table,
+                  commands,
+                  barrierBetween(picture, stateOf(from), stateOf(to), depthAspectMask(depthFormat())));
+    setDepthPictureLayout(to);
+    return true;
+}
+
+void TargetObjects::resetLayouts() noexcept
+{
+    for (ImageLayout& layout : multisample_color_layouts) {
+        layout = ImageLayout::Undefined;
+    }
+    for (ImageLayout& layout : color_layouts) {
+        layout = ImageLayout::Undefined;
+    }
+    // THE DEPTH HALF MAY BELONG TO ANOTHER RECORD (a borrowed depth is the LENDER's picture), so the rewind goes through
+    // the setters - they know whose record it is - instead of touching the fields. Only THIS set's images move: a
+    // lender's colour attachments were never written by this set and keep their records.
+    setDepthAttachmentLayout(ImageLayout::Undefined);
+    setDepthPictureLayout(ImageLayout::Undefined);
+    fresh.store(true, std::memory_order_relaxed);
+}
+
 bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetObjects& images)
 {
-    if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth())) {
+    if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth()) ||
+        images.colorCount() > kMaxColorAttachments) {
         return false;
     }
 

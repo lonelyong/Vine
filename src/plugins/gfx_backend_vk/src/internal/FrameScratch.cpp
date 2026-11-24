@@ -55,15 +55,23 @@ struct FrameScratch::Impl {
      *
      * @details
      * - A SET IS A BINDING OF RESOURCES, NOT OF A DRAW: with the constants bound through dynamic offsets, a content
-     *   set depends only on the five texture views and the shadow map it names; a screen set on the source's views
-     *   and the shadow map. Both are stable across draws AND frames, which is what makes them cacheable at all
-     *   (F2 of the review: they used to be allocated per draw, per frame).
+     *   set depends only on the five texture VIEWS, the five texture SAMPLERS they are read with, and the shadow map's
+     *   view and sampler; a screen set on the source's views and the same shadow pair. Both are stable across draws AND
+     *   frames, which is what makes them cacheable at all (F2 of the review: they used to be allocated per draw, per
+     *   frame).
+     * - THE SAMPLERS ARE PART OF THE KEY because they are part of the VALUE. A `VkDescriptorImageInfo` names a view AND
+     *   a sampler (`vkUpdateDescriptorSets` writes a combined image sampler), and two materials may read ONE texture
+     *   through two authored samplers (`Material::setTexture(slot, texture, sampler)`): a key that stopped at the view
+     *   served the first material's sampler to the second, which is silent wrongness rather than a cache miss (`G4`:
+     *   a key must name everything the cached value depends on).
      * - `screen` is part of the key because the two layouts are different objects even when they name the same views.
      */
     struct SetKey {
-        bool                                   screen{ false };
-        std::array<VkImageView, detail::kTextureSlots> views{};
-        VkImageView                            shadow{ VK_NULL_HANDLE };
+        bool                                           screen{ false };
+        std::array<VkImageView, detail::kTextureSlots>  views{};
+        std::array<VkSampler, detail::kTextureSlots>    samplers{};
+        VkImageView                                    shadow{ VK_NULL_HANDLE };
+        VkSampler                                      shadow_sampler{ VK_NULL_HANDLE };
 
         [[nodiscard]] bool operator<(const SetKey& other) const
         {
@@ -73,7 +81,13 @@ struct FrameScratch::Impl {
             if (views != other.views) {
                 return views < other.views;
             }
-            return shadow < other.shadow;
+            if (samplers != other.samplers) {
+                return samplers < other.samplers;
+            }
+            if (shadow != other.shadow) {
+                return shadow < other.shadow;
+            }
+            return shadow_sampler < other.shadow_sampler;
         }
     };
     struct SetEntry {
@@ -443,14 +457,17 @@ struct FrameScratch::Impl {
     /** @brief The key a set is cached under (see SetKey). */
     [[nodiscard]] static SetKey keyOf(const bool                                                       screen,
                                       const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
-                                      const VkImageView                                                shadow) noexcept
+                                      const VkImageView                                                shadow,
+                                      const VkSampler                                                  shadow_sampler) noexcept
     {
         SetKey key;
         key.screen = screen;
         for (std::size_t slot = 0; slot < detail::kTextureSlots; ++slot) {
-            key.views[slot] = slots[slot].imageView;
+            key.views[slot]    = slots[slot].imageView;
+            key.samplers[slot] = slots[slot].sampler;
         }
-        key.shadow = shadow;
+        key.shadow         = shadow;
+        key.shadow_sampler = shadow_sampler;
         return key;
     }
 
@@ -477,7 +494,7 @@ struct FrameScratch::Impl {
                                                 const VkImageView                                        shadow_view,
                                                 const VkSampler                                          shadow_sampler)
     {
-        return cachedSet(keyOf(false, slots, shadow_view), [&] { return buildContentSet(slots, shadow_view, shadow_sampler); });
+        return cachedSet(keyOf(false, slots, shadow_view, shadow_sampler), [&] { return buildContentSet(slots, shadow_view, shadow_sampler); });
     }
 
     /** @brief The full-screen set for one call's source and map (see buildScreenSet). */
@@ -485,7 +502,7 @@ struct FrameScratch::Impl {
                                                const VkImageView                                        shadow_view,
                                                const VkSampler                                          shadow_sampler)
     {
-        return cachedSet(keyOf(true, slots, shadow_view), [&] { return buildScreenSet(slots, shadow_view, shadow_sampler); });
+        return cachedSet(keyOf(true, slots, shadow_view, shadow_sampler), [&] { return buildScreenSet(slots, shadow_view, shadow_sampler); });
     }
 
     /** @brief The per-draw set: one handle per ring generation (its only binding is the ring's draw block). */

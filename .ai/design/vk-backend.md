@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **189 cases / 44 suites** (2026-11-24).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **191 cases / 44 suites** (2026-11-24).
 
 ### 1.2 Goals
 
@@ -152,14 +152,27 @@ and every cache has a witness a test can read.**
   is no longer expressible. The two READBACK verbs are deliberately not movers: each reads one image and puts it back in the
   layout it found, so a device verb changes no record. `fresh` stays as the one SET-level, atomic MIRROR of "no record
   differs from Undefined", because it is the only form of that fact a reader outside the frame gate may take.
+- **A MOVER IS ONE CALL, NOT TWO**: `BarrierPlan::transitionImage` records the barrier AND writes the record it read it
+  from, and `TargetObjects::transitionDepthPicture` is the same verb where the record is reached through the
+  borrow/resolve indirection. Before this, every site assembled the pair by hand (`barrierBetween(stateOf(record), …)`
+  then `record = to`), which is the shape that shipped VUID 09588 and 09592: the barrier and the record drifted and the
+  next pass stated a layout the image had never been in. A new mover calls one of those two verbs; a caller that needs a
+  same-layout dependency (two passes into one attachment) is `beginRendering`'s job, not theirs.
+- **THE STORE IS DERIVED WHERE THE RESOLVE IS KNOWN**: `PassLoad` carries the seam's `LoadOp` / `StoreOp` (what every API
+  family has a spelling for), and `beginRendering` DOWNGRADES a resolved role to `DontCare` - a multisampled pass'
+  sample buffers, and a depth that resolves, are content nobody can read afterwards, so keeping them is bandwidth nobody
+  buys. The neutral ops are mapped by the table's `loadOpOf` / `storeOpOf`, which is what makes those two rows live
+  instead of a second conditional inside the recorder.
 - **A pass states four ROLES, not thirteen fields**: `PassAttachments` is `color` (the images rendering writes), `picture`
   (their resolve targets), `depth` and `depth_picture` (`DynamicRendering.hpp`). A role with one image is a `PassImage`
   value (image + view + its record), a role with one image per colour attachment is a `PassRole` of three parallel spans -
   three and not one array of structs because a full-screen draw binds the views as ONE contiguous `VkImageView` span, and
   converting per pass would allocate on the recording path.
-- **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
-  a new purpose is one more row, not one more inline barrier. An ATTACHMENT row states the read side of its access as well as
-  the write side, because under dynamic rendering the LOAD (and a blend's destination read) has no implicit ordering.
+- **Boundary**: the table covers the FIVE purposes `ImageLayout` states (Undefined / ColorAttachment / DepthAttachment /
+  ShaderReadOnly / Present) plus the one a device verb needs (`transferReadState()`, kept out of the enum because a
+  readback or an upload is not something a pass declares); a new purpose is one more row, not one more inline barrier.
+  An ATTACHMENT row states the read side of its access as well as the write side, because under dynamic rendering the
+  LOAD (and a blend's destination read) has no implicit ordering.
 
 ### 2.8 Honest reporting: absent is not zero, one report per episode
 
@@ -352,7 +365,7 @@ and every cache has a witness a test can read.**
 ### 2.18 The target table: objects, shapes and one holder per frame (`G1` / `G6` / `G7`)
 
 - **What it is**: the device holds one `TargetTable` — from the host's `RenderTarget*` to the `TargetObjects` it becomes (map + shape cache + build / rebuild / repair), the
-  six target-refusal episodes, and the per-frame leases (`RenderTarget* → FrameDriverId`) **are three questions of one table**; `lease(driver)` issues a frame-scoped `Lease`;
+  seven target-refusal episodes, and the per-frame leases (`RenderTarget* → FrameDriverId`) **are three questions of one table**; `lease(driver)` issues a frame-scoped `Lease`;
   `executeFrame` and `prepareFrame` `claim` each pass' targets **before `ensure`**. On a conflict that pass **is skipped** (the frame's other passes still run) and
   `vk.target.claim_conflict` is reported — **one per (target, episode)**, the episode ending after a frame or a preparation without a conflict.
 - **Why per pass rather than per frame**: one local conflict must not be amplified into "the frame failed"; the conflict takes the existing "this device cannot build this
@@ -426,7 +439,10 @@ and every cache has a witness a test can read.**
   `AVERAGE` and depth with `SAMPLE_ZERO` in the attachment info (`resolveMode` / `resolveImageView`, core 1.3 - no
   `vkCreateRenderPass2`); a depth-only target is a shadow map; a `shareDepth` target attaches the lender's depth picture and
   ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared), and its
-  barrier is recorded against that LENDER's image as a same-layout barrier: the dependency, not a transition. The depth
+  barrier is recorded against that LENDER's image as a same-layout barrier: the dependency, not a transition. The borrow
+  edge is also a CLAIM: a frame takes the LENDER as well as the borrower, so two drivers cannot write one depth image (and
+  its ONE record) at once - a contended lender skips the pass and reports `vk.target.claim_conflict`, exactly like a
+  contended target. The depth
   ATTACHMENT and the depth RESOLVE PICTURE keep separate layout records, because sampling the picture does not move the sample
   buffer - and every other image has its own record too (`color_layouts` per picture, `multisample_color_layouts` per sample buffer), which
   is what lets a colour picture a screen draw sampled return to the attachment layout on its own.
@@ -434,7 +450,8 @@ and every cache has a witness a test can read.**
   depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
   announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
 - **Constraints**: `C5`, `C8`, `N2`.
-- **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`, and
+- **Acceptance**: `MsaaTest`, `ContentTargetTest`, `OffscreenClearTest`, `DeferredTest`,
+  `TargetClaimFrameTest.ABorrowedDepthIsTheLendersToHold` (the borrow edge is a claim) and
   `VkFrameRecordTest.ADepthOnlyClearKeepsTheDrawnPicture` (a depth-only clear keeps the picture) plus
   `VkWindowPresentTest.AWindowFrameIsDrawnAndPresented`'s frame loop, which forces a presented image to be acquired again and is
   therefore the witness for the per-image layout record.
@@ -808,6 +825,30 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - How to prevent it: classification lives in one place (§2.12) and the pool reports facts only; `MemoryBlockCreator` is the failure path's injection point —
   `vkAllocateMemory` does not fail on a healthy machine, and without it these cases cannot be written.
 
+### 6.17 P17 A frame that never reached the queue moved nothing
+
+- How it fails: the layout records are written WHILE RECORDING (that is what lets the next pass state the right
+  `oldLayout`), on the premise of `C1` - one submission per frame, one fence wait. A frame that dies between its first
+  `beginPass` and its `vkQueueSubmit` (a command buffer that will not end, a submit the driver refuses) has advanced
+  records for commands the GPU never executed, so the next frame states layouts no image was ever in (validation's
+  `oldLayout` mismatch, or a picture nobody wrote read as if it had been). The window half has a second form: an ACQUIRED
+  swapchain image was taken and its `image_available` semaphore signalled, and a frame that never presented leaves both
+  behind - the next acquire may not even hand that signalled semaphore to the driver again.
+- How to detect it: `vkQueueSubmit` does not fail on a healthy machine, so the witness is the code path itself -
+  `Device::FrameDriver::executeFrame` rewinds on EVERY return after the first pass was recorded
+  (`rewindUnrunFrame()`), and gives the acquired image back on the paths that fail after the acquire
+  (`giveBackWindowImage()`). The memory-failure injection (`MemoryBlockCreator`) is how to reach it on purpose.
+- How to prevent it: `TargetObjects::resetLayouts()` puts THIS frame's own attachment sets back to `Undefined` (content the
+  GPU never wrote, so the next pass clears rather than loads); a **rewind log** (`MovedLayout`) puts a sampled source's or a
+  shadow map's record back to the EXACT value it had, because those images may hold a picture an earlier frame wrote and
+  nothing can reproduce (a wholesale reset there would discard a baked target); and `WindowTarget::abandonFrame()` rebuilds
+  the swapchain, which returns the acquired image and starts every window record at `Undefined`. Only what THIS frame moved
+  is touched, so another driver's targets are never rewritten.
+- NOT covered: a texture the frame uploaded is committed to the image cache when its copy is RECORDED (a geometry already
+  publishes on the fence, `ResidencyClaims` rule 2; a texture does not). A frame whose submit fails therefore leaves a
+  cache entry whose image was never uploaded - backlog `T66`, whose fix is the same publish-on-completion rule applied to
+  `ContentImages`.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -824,7 +865,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 189 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 191 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
@@ -841,7 +882,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **189 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **191 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).

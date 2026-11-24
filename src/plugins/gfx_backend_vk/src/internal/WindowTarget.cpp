@@ -627,16 +627,16 @@ void WindowTarget::recordPresentTransition(const VkCommandBuffer commands)
     if (commands == VK_NULL_HANDLE || impl == nullptr || !impl->image_acquired || impl->image_index >= impl->images.size()) {
         return;
     }
-    // THE TRANSITION IS TWO ROWS OF THE BARRIER TABLE: colour attachment -> present. The table owns the layouts, the
-    // stage masks and the access masks (BarrierPlan), so this function names none of them and cannot pair a layout with
-    // the wrong mask. The record follows: the next acquire of this image starts from Present (see beginPass).
-    recordBarrier(*impl->device.table,
-                  commands,
-                  barrierBetween(impl->images[impl->image_index],
-                                 stateOf(ImageLayout::ColorAttachment),
-                                 stateOf(ImageLayout::Present),
-                                 VK_IMAGE_ASPECT_COLOR_BIT));
-    impl->image_layouts[impl->image_index] = ImageLayout::Present;
+    // THE TRANSITION IS TWO ROWS OF THE BARRIER TABLE: colour attachment -> present, with the record written by the same
+    // call (see BarrierPlan::transitionImage). The table owns the layouts, the stage masks and the access masks, so this
+    // function names none of them and cannot pair a layout with the wrong mask. The next acquire of this image then
+    // starts from Present (see beginPass).
+    (void)transitionImage(*impl->device.table,
+                          commands,
+                          impl->images[impl->image_index],
+                          impl->image_layouts[impl->image_index],
+                          ImageLayout::Present,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 vn::graphics::PresentOutcome WindowTarget::present()
@@ -671,6 +671,20 @@ vn::graphics::PresentOutcome WindowTarget::present()
     }
     impl->needs_recreate = true;
     return vn::graphics::PresentOutcome::Lost;
+}
+
+void WindowTarget::abandonFrame() noexcept
+{
+    if (impl == nullptr || !impl->image_acquired) {
+        return; // nothing was taken from the presentation engine, so there is nothing to give back
+    }
+    // THE IMAGE AND THE SEMAPHORE BOTH GO BACK: `needs_recreate` makes the next acquire rebuild the chain, which
+    // returns the acquired image, retires the signalled `image_available` and starts every layout record at Undefined
+    // (see the header's note and `createSwapchainObjects`). Setting `image_acquired` false first keeps `present()` and
+    // `endPass()` from touching an image this target no longer holds.
+    impl->image_acquired = false;
+    impl->pass_open      = false;
+    impl->needs_recreate = true;
 }
 
 void WindowTarget::resize(const int width, const int height)

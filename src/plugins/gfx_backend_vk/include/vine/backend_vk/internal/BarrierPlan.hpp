@@ -169,7 +169,7 @@ void recordBarrier(const VolkDeviceTable& table, VkCommandBuffer commands, const
 /**
  * @brief Gets the attachment load operation for @p op.
  *
- * @param op The pass' neutral load operation (see ClearPlan).
+ * @param op The pass' neutral load operation (see `PassLoad`).
  * @return The Vulkan attachment load operation.
  */
 [[nodiscard]] VkAttachmentLoadOp loadOpOf(vn::graphics::LoadOp op) noexcept;
@@ -177,9 +177,39 @@ void recordBarrier(const VolkDeviceTable& table, VkCommandBuffer commands, const
 /**
  * @brief Gets the attachment store operation for @p op.
  *
- * @param op The pass' neutral store operation (see ClearPlan).
+ * @param op The pass' neutral store operation (see `PassLoad`).
  * @return The Vulkan attachment store operation.
  */
 [[nodiscard]] VkAttachmentStoreOp storeOpOf(vn::graphics::StoreOp op) noexcept;
+
+/**
+ * @brief MOVES @p image to @p to, recording the barrier AND writing the record that says where it now is.
+ *
+ * @details
+ * - THE ONE SHAPE EVERY MOVER USES (`G1` / `G4` / `G7`). "The command that moves an image writes its record" is the
+ *   invariant this backend's layouts rest on, and it was previously assembled by hand at every site - a barrier built
+ *   from one value and an assignment of another. Two measured VUIDs (09588 for a depth, 09592 + 09600 for a colour)
+ *   were exactly that pair drifting apart, so the pair is now one call: a caller cannot move an image and forget (or
+ *   mis-state) its record.
+ * - NOTHING HAPPENS WHEN NOTHING MOVES: @p record already stating @p to answers false and records no barrier. A
+ *   caller that needs the DEPENDENCY without a layout change (two passes into one attachment) is not this verb - that
+ *   barrier belongs to `DynamicRendering::beginRendering`, which records it deliberately.
+ * - The barrier itself is `barrierBetween`, so the barriers of `to` and `from` are the table's two rows and cannot be
+ *   paired with another usage's stages or accesses.
+ *
+ * @param table    The device's entry points (volk table).
+ * @param commands The command buffer being recorded.
+ * @param image    The image to move (may be `VK_NULL_HANDLE`: nothing is recorded then).
+ * @param record   The layout record that describes @p image; it is read AND written.
+ * @param to       The usage the image is about to be in.
+ * @param aspect   The aspect mask (colour, or depth for a depth image).
+ * @return true when a barrier was recorded (i.e. @p record differed from @p to).
+ */
+bool transitionImage(const VolkDeviceTable& table,
+                     VkCommandBuffer        commands,
+                     VkImage                image,
+                     ImageLayout&           record,
+                     ImageLayout            to,
+                     VkImageAspectFlags     aspect) noexcept;
 
 VN_BACKEND_VK_NS_END

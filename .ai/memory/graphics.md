@@ -2148,3 +2148,30 @@
 - **Measured again**: `test_vk` 188 / 44, `test_graphics` 642 / 82; forcing the colour role's and the depth role's records
   to a constant layout turns all three `*DrawnAgain*` cases red (09588 for depth, 09592 + 09600 for colour), so the two
   witnesses still pin the plumbing, not the old field names.
+
+## 2026-11-24 — the second design pass: what the records, the cache key and the failure path had wrong
+
+- **A cache key must name the sampler**: `FrameScratch`'s descriptor-set key was (screen, five views, shadow view) while a
+  `VkDescriptorImageInfo` binds a view AND a sampler, and a material authors its own (`setTexture(slot, texture, sampler)`).
+  Two materials reading ONE texture through two samplers therefore shared one set and the second silently got the first's
+  sampler. The key now carries the five samplers and the shadow sampler (`TwoMaterialsReadingOneTextureThroughTwoSamplers…`,
+  whose witness is `set_builds` going up by exactly one, not a pixel - a filter difference on a 1x1 texel is invisible).
+- **A resolved role is stored `DontCare`**: `PassLoad` now carries the seam's `LoadOp` / `StoreOp` instead of two booleans,
+  `beginRendering` downgrades a role whose resolve consumes it (sample buffers, a resolving depth), and `loadOpOf` /
+  `storeOpOf` became live - before this they had zero production call sites while the design page justified `BarrierPlan`'s
+  seam include with them (G8 by accident, G6 by claim).
+- **A mover is one call**: `BarrierPlan::transitionImage` (record + barrier together) and
+  `TargetObjects::transitionDepthPicture` (the indirect depth record) replaced every hand-assembled
+  `barrierBetween(stateOf(record), …)` + `record = to` pair - the shape that produced 09588/09592 twice.
+- **A borrowed depth is a claim on the LENDER**: the borrower's pass attaches the lender's image and rewrites the lender's
+  ONE record, so claiming only the borrower let two drivers submit against one depth image. The frame now claims
+  `depthSource()` too (`TargetClaimFrameTest.ABorrowedDepthIsTheLendersToHold`, witnessed by `claimNumbers().refused`).
+- **A frame that never reached the queue moved nothing**: `resetLayouts()` for this frame's own sets, an exact `MovedLayout`
+  rewind for a sampled source / shadow map, and `WindowTarget::abandonFrame()` for an acquired-but-unpresented image (its
+  `image_available` semaphore may not be handed to a second acquire). See `P17`; the texture half stayed open as `T66`.
+- **The recording path allocates nothing in a pass**: the colour attachment-info array and the clear-value array are stack
+  values of `kMaxColorAttachments` (Vulkan's maximum), and a shape asking for more is refused as `vk.target.too_many_colors`.
+- **`ScreenSource::images` deleted**: no reader - the source's transitions belong to the pass-order loop, against the
+  source's own records.
+- **Measured**: `test_vk` **191 cases / 44 suites**, `test_graphics` **642 / 82**. Mutations: reverting the sampler key and
+  the lender claim turns exactly the two new cases red and nothing else.

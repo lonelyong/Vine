@@ -131,6 +131,7 @@ vk.target.borrow_multisampled             — a multisampled target cannot borro
 vk.target.borrow_source_missing           — the depth lender was not built (or has no depth); it must render first
 vk.target.borrow_extent_mismatch          — a borrowed depth must have the same extent as its borrower
 vk.target.size_unknown                    — the target has no usable extent (0 in a dimension)
+vk.target.too_many_colors                 — the target asks for more colour attachments than the API allows
 vk.target.resize_failed                   — the attachments could not be rebuilt at the new extent (see the memory report)
 vk.target.build_failed                    — the attachments could not be built (see the memory report)
 vk.target.claim_conflict                  — another frame driver holds this target for the frame in progress

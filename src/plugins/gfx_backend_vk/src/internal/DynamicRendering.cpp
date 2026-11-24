@@ -1,6 +1,6 @@
 #include <vine/backend_vk/internal/DynamicRendering.hpp>
 
-#include <vector>
+#include <array>
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 
@@ -12,16 +12,18 @@ namespace
 /**
  * @brief Fills one colour attachment's rendering info.
  *
- * @param view      The image rendering writes.
- * @param resolve   The picture it resolves into, or null.
- * @param load      The pass' colour load op (one value for every colour attachment).
- * @param clear     This attachment's clear value (read only when loading is off).
+ * @param view    The image rendering writes.
+ * @param resolve The picture it resolves into, or null.
+ * @param load    The pass' colour load op (one value for every colour attachment).
+ * @param store   What the written image's contents are worth (see `PassLoad`: `DontCare` on a resolved role).
+ * @param clear   This attachment's clear value (read only when loading is off).
  * @return The attachment info.
  */
-[[nodiscard]] VkRenderingAttachmentInfo colorAttachmentInfo(const VkImageView     view,
-                                                            const VkImageView     resolve,
-                                                            const VkAttachmentLoadOp load,
-                                                            const VkClearValue&   clear) noexcept
+[[nodiscard]] VkRenderingAttachmentInfo colorAttachmentInfo(const VkImageView            view,
+                                                            const VkImageView            resolve,
+                                                            const VkAttachmentLoadOp     load,
+                                                            const VkAttachmentStoreOp    store,
+                                                            const VkClearValue&          clear) noexcept
 {
     VkRenderingAttachmentInfo info{};
     info.sType               = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -33,7 +35,7 @@ namespace
     info.resolveImageView    = resolve;
     info.resolveImageLayout  = resolve != VK_NULL_HANDLE ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
     info.loadOp              = load;
-    info.storeOp             = VK_ATTACHMENT_STORE_OP_STORE;
+    info.storeOp             = store;
     info.clearValue          = clear;
     return info;
 }
@@ -82,11 +84,21 @@ void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands
     }
 
     // THE INSTANCE: one attachment per colour output location, and the depth attachment when the set has one.
-    std::vector<VkRenderingAttachmentInfo> colors;
-    colors.reserve(attachments.color.size());
+    //
+    // THE STORE POLICY IS DERIVED, NOT REPEATED: a role that RESOLVES into another picture is content nobody may read
+    // afterwards (a resolver is the only way out of a sample buffer), so keeping it is bandwidth that buys nothing -
+    // `DontCare` is the honest store and the one a tiled renderer can use to skip the flush. The caller states what its
+    // images are worth; this call knows whether a resolve consumes them, which is why the downgrade lives here.
+    const bool                       colour_resolved = !attachments.picture.empty();
+    const bool                       depth_resolved  = attachments.depth_picture.present();
+    const VkAttachmentLoadOp         colour_load     = loadOpOf(load.load_color);
+    const VkAttachmentLoadOp         depth_load      = loadOpOf(load.load_depth);
+    const VkAttachmentStoreOp        colour_store    = storeOpOf(colour_resolved ? vn::graphics::StoreOp::DontCare : load.store_color);
+    const VkAttachmentStoreOp        depth_store     = storeOpOf(depth_resolved ? vn::graphics::StoreOp::DontCare : load.store_depth);
+    std::array<VkRenderingAttachmentInfo, kMaxColorAttachments> colors{};
     for (std::size_t index = 0; index < attachments.color.size(); ++index) {
         const VkClearValue clear = index < load.color_clears.size() ? load.color_clears[index] : VkClearValue{};
-        colors.push_back(colorAttachmentInfo(attachments.color.views[index], attachments.picture.viewAt(index), load.load_color ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR, clear));
+        colors[index] = colorAttachmentInfo(attachments.color.views[index], attachments.picture.viewAt(index), colour_load, colour_store, clear);
     }
 
     VkRenderingAttachmentInfo depth{};
@@ -95,13 +107,14 @@ void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands
         depth.imageView = attachments.depth.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         // THE DEPTH RESOLVE IS ONE FIELD PAIR now (`SAMPLE_ZERO`, the only mode that cannot change the picture), where a
-        // render pass needed `VkSubpassDescriptionDepthStencilResolve` and the 1.2 creation entry point.
+        // render pass needed `VkSubpassDescriptionDepthStencilResolve` and the 1.2 creation entry point. It also makes
+        // the sample buffer disposable: the resolve is the only reader.
         depth.resolveMode        = attachments.depth_picture.view != VK_NULL_HANDLE ? VK_RESOLVE_MODE_SAMPLE_ZERO_BIT : VK_RESOLVE_MODE_NONE;
         depth.resolveImageView   = attachments.depth_picture.view;
         depth.resolveImageLayout = attachments.depth_picture.view != VK_NULL_HANDLE ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
                                                                                      : VK_IMAGE_LAYOUT_UNDEFINED;
-        depth.loadOp     = load.load_depth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp    = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.loadOp     = depth_load;
+        depth.storeOp    = depth_store;
         depth.clearValue = load.depth;
     }
 
@@ -110,8 +123,8 @@ void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands
     rendering.renderArea.offset    = VkOffset2D{ 0, 0 };
     rendering.renderArea.extent    = attachments.extent;
     rendering.layerCount           = 1U;
-    rendering.colorAttachmentCount = static_cast<std::uint32_t>(colors.size());
-    rendering.pColorAttachments    = colors.empty() ? nullptr : colors.data();
+    rendering.colorAttachmentCount = static_cast<std::uint32_t>(attachments.color.size());
+    rendering.pColorAttachments    = colors.data();
     rendering.pDepthAttachment     = attachments.depth.view != VK_NULL_HANDLE ? &depth : nullptr;
     table.vkCmdBeginRendering(commands, &rendering);
 }

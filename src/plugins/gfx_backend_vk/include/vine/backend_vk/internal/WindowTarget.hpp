@@ -182,6 +182,24 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
     /** @brief Presents the acquired image (the submit that produced it must have completed). */
     [[nodiscard]] vn::graphics::PresentOutcome present() override;
 
+    /**
+     * @brief Abandons this frame's acquired image without presenting it, because the frame never reached the queue.
+     *
+     * @details
+     * - AN ACQUIRE IS A PAIR OR IT IS A LEAK. `vkAcquireNextImageKHR` took an image and SIGNALLED `image_available`;
+     *   the pair is a submit that waits on that semaphore and a present that hands the image back. A frame that failed
+     *   between the acquire and its submission (a command buffer that would not end, a submit the driver refused) has
+     *   done neither, and the next acquire may not hand that same signalled semaphore to the driver again
+     *   (`VUID-vkAcquireNextImageKHR-semaphore-01286`) - nor is the image ours to keep.
+     * - THE ANSWER IS THE PATH A RESIZE ALREADY TAKES: the swapchain is rebuilt. Destroying it returns the acquired
+     *   image to the presentation engine, the rebuilt chain starts every record at `Undefined` (see
+     *   `createSwapchainObjects`), and the semaphores are fresh - so nothing is left signalled and no stale layout
+     *   survives. It costs one device idle on a path that is already a failure; a steady frame never sees it.
+     * - The DEVICE decides when: the frame body calls this on the paths where the command buffer did not run (see
+     *   `Device::FrameDriver::executeFrame`), and only while an image is acquired.
+     */
+    void abandonFrame() noexcept;
+
   public:
     /** @brief Announces a surface size; the swapchain follows it on the next acquire. */
     void resize(int width, int height) override;

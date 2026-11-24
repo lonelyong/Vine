@@ -32,7 +32,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   answer: one lock for the map, one set of claim books, one release path - and `Device` only forwards.
  * - WHAT IT OWNS. The map from the host's `RenderTarget` (its address is the identity a frame names) to the
  *   `TargetObjects` the device built for it, the CJK-shaped claim books (`claimed` / `refused` / `released` / `live`),
- *   and the six refusal episodes a build can speak through (`ensure`).
+ *   and the seven refusal episodes a build can speak through (`ensure`).
  * - WHAT IT DOES NOT OWN. The Vulkan device, queue and memory pool (borrowed through `open`), and the park queue a
  *   released record goes to (borrowed as `Park`): whether an image may really be destroyed is dated against the
  *   device's completion watermark, which is the device's clock, not the table's. `release` removes the entry and hands
@@ -312,6 +312,7 @@ class VN_BACKEND_VK_API TargetTable final {
     vn::graphics::ReportOnce borrow_samples_report_{};
     vn::graphics::ReportOnce borrow_source_report_{};
     vn::graphics::ReportOnce borrow_extent_report_{};
+    vn::graphics::ReportOnce too_many_colors_report_{};
 };
 
 VN_BACKEND_VK_NS_END

@@ -63,10 +63,19 @@ class FrameScratch;
  */
 class VN_BACKEND_VK_API ContentDraw final {
   public:
-    /** @brief One full-screen draw packet's source: the target's colour images and the views a fragment stage samples. */
+    /**
+     * @brief One full-screen draw packet's source: the views a fragment stage samples, in attachment order.
+     *
+     * @details
+     * - VIEWS ONLY. The source's IMAGES are not here because a recorder never moves them: the transitions a sampled
+     *   picture needs are recorded in pass order, against the per-image records the source target owns (`G1`: one fact
+     *   one owner, and the source is the owner). An empty span is a source this device never built, which makes the
+     *   call report and skip instead of binding nothing.
+     * - ONE CONTIGUOUS SPAN because the set binds 0..N-1 as one call (`vkUpdateDescriptorSets` over the same array),
+     *   which is also why `PassRole` keeps its views in their own span.
+     */
     struct ScreenSource {
-        std::span<const VkImage>     images{}; // The source's colour images (for layout transitions; may be empty).
-        std::span<const VkImageView> views{};  // The same attachments' views, bound at set 0 bindings 0..N-1.
+        std::span<const VkImageView> views{}; // The source's attachment views, bound at set 0 bindings 0..N-1.
     };
 
     /**
@@ -175,7 +184,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param pass              The pass drawing it (state and viewport; borrowed).
      * @param plan              The resolved program and state, from the frame head.
      * @param head              The frame's head: the fallback view/sampler and the shadow sampler.
-     * @param source            The source target's colour images/views (see ScreenSource).
+     * @param source            The source target's views (see ScreenSource), in attachment order.
      * @param shadow            The map this pass resolved (see ShadowSource), or an empty one for none.
      * @param refusal           Receives the reason when the draw was skipped (cleared on entry), or null.
      * @return 1 when the full-screen draw was recorded, 0 otherwise.

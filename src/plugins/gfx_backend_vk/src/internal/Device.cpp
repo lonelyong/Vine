@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -350,6 +351,23 @@ struct ContentTotals {
     /// The cache lock's cumulative numbers: the frame's own use of the lock is the difference of two (see FrameLocking).
     std::uint64_t cache_lock_acquisitions{ 0 };
     std::uint64_t cache_lock_waits{ 0 };
+};
+
+/**
+ * @brief ONE layout record a frame moved on ANOTHER target, and the value it had before (see `rewindUnrunFrame`).
+ *
+ * @details
+ * - WHY IT IS NOT "RESET TO UNDEFINED": a sampled source or a shadow map may hold a picture an EARLIER frame wrote and
+ *   nothing in this frame would reproduce - so a frame the GPU never ran has to put back exactly what the record said,
+ *   not the "nothing was ever drawn here" value this frame's own attachment sets get.
+ * - The DEPTH picture is a flag rather than a record pointer because a borrowed or resolved depth record is reached
+ *   through `TargetObjects`' accessors, not by address (see `setDepthPictureLayout`).
+ */
+struct MovedLayout {
+    TargetObjects* images{ nullptr };                        ///< The target whose record moved.
+    std::size_t    color_index{ 0U };                        ///< The colour picture that moved (when `depth_picture` is false).
+    bool           depth_picture{ false };                   ///< True when the DEPTH picture moved.
+    ImageLayout    previous{ ImageLayout::Undefined };       ///< What the record stated before the move.
 };
 
 /**
@@ -864,12 +882,15 @@ struct Device::Impl {
      * @param lent     The depths THIS FRAME lends to another target (see RenderTarget::shareDepth); such an image
      *                 cannot be a sampled picture and a pass' depth attachment at once, so it is skipped.
      * @param out      Receives the binding; empty (`view == VK_NULL_HANDLE`) when the pass samples no readable map.
+     * @param moved    Receives the record this call rewrote, so a frame that never reaches the queue can put it back
+     *                 (see `rewindUnrunFrame`).
      * @return true when a map was resolved (and transitioned).
      */
     [[nodiscard]] bool resolveShadow(VkCommandBuffer                            commands,
                                      std::span<const ImageSource>                inputs,
                                      const std::unordered_set<const RenderTarget*>& lent,
-                                     ContentDraw::ShadowSource&                  out)
+                                     ContentDraw::ShadowSource&                  out,
+                                     std::vector<MovedLayout>&                    moved)
     {
         for (const ImageSource& input : inputs) {
             if (input.target == nullptr || !input.isProduced()) {
@@ -899,18 +920,21 @@ struct Device::Impl {
                 continue;
             }
 
-            // THE MAP IS ABOUT TO BE READ: one transition to the sampled layout, from the record of the image that
-            // actually moves. IT IS THE PICTURE that moves - on a multisampled map that is the resolved depth image,
-            // which is also the only one a shader may sample; on a SINGLE-SAMPLED one the picture IS the attachment, and
-            // `depthPictureLayout()` names that image's one record (see TargetObjects).
+            // THE MAP IS ABOUT TO BE READ: one transition to the sampled layout, recorded together with the record it
+            // moves (see TargetObjects::transitionDepthPicture - the record is the resolve image's or the attachment's,
+            // which is exactly why the verb lives on the record). IT IS THE PICTURE that moves - on a multisampled map
+            // that is the resolved depth image, which is also the only one a shader may sample.
             TargetObjects& sampled = *map_images;
-            if (sampled.depthPictureLayout() != ImageLayout::ShaderReadOnly) {
-                const VkImageMemoryBarrier2 barrier = barrierBetween(sampled.depthPicture(),
-                                                                   stateOf(sampled.depthPictureLayout()),
-                                                                   stateOf(ImageLayout::ShaderReadOnly),
-                                                                   depthAspectMask(sampled.depthFormat()));
-                recordBarrier(device_table, commands, barrier);
-                sampled.setDepthPictureLayout(ImageLayout::ShaderReadOnly);
+            // A MAP THAT BORROWS ITS DEPTH OWNS NO PICTURE, so there is nothing for a shader to read: sampling it would
+            // bind a null view with the switch on. The borrower's depth belongs to its lender, which is what the pass
+            // that SAMPLES would have to name instead.
+            if (sampled.depthPictureView() == VK_NULL_HANDLE) {
+                continue;
+            }
+            const ImageLayout previous = sampled.depthPictureLayout();
+            if (previous != ImageLayout::ShaderReadOnly) {
+                moved.push_back(MovedLayout{ &sampled, 0U, true, previous });
+                (void)sampled.transitionDepthPicture(device_table, commands, ImageLayout::ShaderReadOnly);
             }
 
             out.view                  = sampled.depthPictureView();
@@ -1343,6 +1367,23 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         if (!claim_pass_samples(draw, entry)) {
             continue;
         }
+        // THE DEPTH THIS PASS ATTACHES MAY BELONG TO ANOTHER TARGET (RenderTarget::shareDepth). Claiming only the
+        // borrower would let two drivers write ONE image - the lender's depth - with two submissions at once, and would
+        // let both write that image's ONE layout record from two threads. The borrow edge is therefore a claim on the
+        // LENDER, and a contended lender skips this pass exactly like a contended target (`G10`).
+        if (const vn::raw_ptr<RenderTarget> lender = draw.target->depthSource(); lender != nullptr && !target_lease.claim(lender)) {
+            if (claim_conflicts.insert(lender).second) {
+                owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.target.claim_conflict",
+                                              u8"vk: a pass draws against a depth another frame driver is drawing into "
+                                              u8"right now; the pass was skipped for this frame - drive the other engine "
+                                              u8"on another target, or wait for its frame to finish"));
+            }
+            claim_refused = true;
+            refused_pass  = true;
+            continue;
+        }
         if (!owner.target_table.ensure(*draw.target)) {
             refused_pass = true;
             continue;
@@ -1373,6 +1414,15 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         claim_conflicts.clear(); // no pass lost its target this frame: the conflict episode is over
     }
 
+    // THE ACQUIRED IMAGE IS A PAIR OR IT IS A LEAK: `vkAcquireNextImageKHR` took an image and signalled its semaphore,
+    // and only a present hands it back. Everything between here and the present can fail, so the give-back is one named
+    // act (`WindowTarget::abandonFrame`) that every failure path below calls instead of returning past an acquire.
+    const auto giveBackWindowImage = [&]() {
+        if (window_acquired && window != nullptr) {
+            window->abandonFrame();
+        }
+    };
+
     // THE DEPTHS THIS FRAME LENDS: every target another pass' target borrows its depth from (RenderTarget::shareDepth
     // resolves to one pointer per borrower, and the borrower was built above). `resolveShadow` skips them - an image
     // cannot be a shader's picture and a pass' depth attachment in the same frame.
@@ -1399,6 +1449,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                           DiagnosticCategory::SubmissionFailed,
                                           u8"vk.frame.command_buffer_missing",
                                           u8"vk: no command buffer"));
+        giveBackWindowImage(); // an image is already acquired and nothing was recorded: it goes back unpresented
         return PresentOutcome::Skipped;
     }
 
@@ -1411,6 +1462,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                           u8"vk.frame.begin_failed",
                                           u8"vk: vkBeginCommandBuffer failed"));
         owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
+        giveBackWindowImage();
         return PresentOutcome::Skipped;
     }
 
@@ -1503,6 +1555,38 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     // everything it was handed - a frame that still names one bad draw keeps the episode open (see ReportOnce).
     bool content_refused = false;
     std::size_t pass_position = 0;
+    // THE RECORDS THIS FRAME MOVED ON ANOTHER TARGET (a sampled source's picture, a shadow map's picture): what a frame
+    // that never reaches the queue has to put back (see rewindUnrunFrame below).
+    std::vector<MovedLayout> moved_layouts;
+    moved_layouts.reserve(runnable_passes.size() * 2U);
+    // A FRAME THAT NEVER REACHED THE QUEUE MOVED NOTHING (see TargetObjects' note on records following the recorded
+    // COMMANDS). Two answers, because the two kinds of record have different owners:
+    // - THIS FRAME'S OWN ATTACHMENT SETS go back to `Undefined`: their content is what this frame would have written, the
+    //   GPU never wrote it, and `Undefined` is the honest AND the safe statement - the next pass clears instead of
+    //   loading a picture that is not there (TargetObjects::resetLayouts).
+    // - SOMEONE ELSE'S IMAGES go back to EXACTLY what they said: a sampled source or a shadow map may hold a picture an
+    //   earlier frame wrote and nothing else can reproduce, so discarding it would be worse than the failure.
+    // - AND THE WINDOW'S ACQUIRED IMAGE IS GIVEN BACK, because it was taken from the presentation engine and may not be
+    //   re-acquired with the semaphore its acquire signalled (WindowTarget::abandonFrame).
+    const auto rewindUnrunFrame = [&]() {
+        for (const Runnable& item : runnable_passes) {
+            if (!item.window && item.images != nullptr) {
+                item.images->resetLayouts();
+            }
+        }
+        for (const MovedLayout& moved : moved_layouts) {
+            if (moved.images == nullptr) {
+                continue;
+            }
+            if (moved.depth_picture) {
+                moved.images->setDepthPictureLayout(moved.previous);
+            }
+            else if (moved.color_index < moved.images->color_layouts.size()) {
+                moved.images->color_layouts[moved.color_index] = moved.previous;
+            }
+        }
+        giveBackWindowImage();
+    };
     for (const Runnable& item : runnable_passes) {
         const std::size_t pass_index = pass_position++;
         // THE PASS' OWN BOUNDARY, written BEFORE its uploads: the transitions and copies a pass asks for exist because
@@ -1533,21 +1617,26 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             // resolve images on a multisampled target, whose sample buffers nothing may sample.
             TargetObjects& sampled = *source_entry;
             for (std::size_t index = 0; index < sampled.colors.size(); ++index) {
-                if (sampled.color_layouts[index] == ImageLayout::ShaderReadOnly) {
+                const ImageLayout previous = sampled.color_layouts[index];
+                if (previous == ImageLayout::ShaderReadOnly) {
                     continue; // an earlier pass of this frame already stated it
                 }
-                const ImageState to = stateOf(ImageLayout::ShaderReadOnly);
-                recordBarrier(owner.device_table,
-                              commands,
-                              barrierBetween(sampled.colors[index], stateOf(sampled.color_layouts[index]), to, VK_IMAGE_ASPECT_COLOR_BIT));
-                sampled.color_layouts[index] = ImageLayout::ShaderReadOnly;
+                // THE REWIND LOG (see rewindUnrunFrame): this picture belongs to ANOTHER target, so a failed frame has to
+                // put the record back exactly - not to `Undefined`, which would discard a picture an earlier frame wrote.
+                moved_layouts.push_back(MovedLayout{ &sampled, index, false, previous });
+                (void)transitionImage(owner.device_table,
+                                      commands,
+                                      sampled.colors[index],
+                                      sampled.color_layouts[index],
+                                      ImageLayout::ShaderReadOnly,
+                                      VK_IMAGE_ASPECT_COLOR_BIT);
             }
         }
 
         // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
         // SHADER_READ_ONLY here, before the pass begins (see resolveShadow).
         ContentDraw::ShadowSource shadow{};
-        (void)owner.resolveShadow(commands, item.entry->inputs, lent_depths, shadow);
+        (void)owner.resolveShadow(commands, item.entry->inputs, lent_depths, shadow, moved_layouts);
 
         TargetObjects*                                  images        = item.images;
         VkExtent2D                                     extent{};
@@ -1582,8 +1671,9 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 
         // PER-ATTACHMENT CLEAR (a loading attachment ignores its value): the array is in colour output-location order and
         // a value the pass does not state is transparent black - see ClearPolicy. A DEPTH-ONLY pass has no colour slot
-        // at all, which is why the depth value is its own field rather than the array's last entry.
-        std::vector<VkClearValue> color_clears(color_count);
+        // at all, which is why the depth value is its own field rather than the array's last entry. THE ARRAY IS A STACK
+        // VALUE sized by the API's own maximum, so a pass allocates nothing here (see kMaxColorAttachments).
+        std::array<VkClearValue, kMaxColorAttachments> color_clears{};
         const Colorf              colour = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         if (color_count != 0U) {
             color_clears[0].color = { { colour.r, colour.g, colour.b, colour.a } };
@@ -1600,9 +1690,13 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         depth_clear.depthStencil = { 0.0F, 0U };
 
         PassLoad load{};
-        load.load_color   = load_color;
-        load.load_depth   = load_depth;
-        load.color_clears = color_clears; // one value per colour attachment, in output-location order (see PassLoad)
+        load.load_color   = load_color ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear;
+        load.load_depth   = load_depth ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear;
+        // WHAT THE CONTENTS ARE WORTH: this backend keeps what a pass wrote; `beginRendering` downgrades a RESOLVED role
+        // to `DontCare` itself, because only it knows whether the images are consumed by a resolve (see PassLoad).
+        load.store_color  = vn::graphics::StoreOp::Store;
+        load.store_depth  = vn::graphics::StoreOp::Store;
+        load.color_clears = std::span<const VkClearValue>(color_clears.data(), color_count); // one value per colour attachment
         load.depth        = depth_clear;
 
         // THE SET OWNS THE TRANSITIONS AND THE INSTANCE (see TargetObjects::beginPass / WindowTarget::beginPass): the
@@ -1640,8 +1734,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 const std::shared_ptr<TargetObjects> source_entry =
                     description.source != nullptr ? owner.target_table.lookup(description.source) : nullptr;
                 if (source_entry != nullptr && source_entry->built()) {
-                    source.images = source_entry->colors;
-                    source.views  = source_entry->color_views;
+                    source.views = source_entry->color_views;
                 }
                 (void)recorder.recordFullscreen(commands,
                                             static_cast<int>(extent.width),
@@ -1706,6 +1799,9 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                           DiagnosticCategory::SubmissionFailed,
                                           u8"vk.frame.end_failed",
                                           u8"vk: vkEndCommandBuffer failed"));
+        // NOTHING WAS SUBMITTED, SO NOTHING MOVED: the records this pass walk advanced are put back (see the lambdas
+        // above), and the acquired window image is given back rather than left signalled and unpresented.
+        rewindUnrunFrame();
         owner.caches.endFrame(uploadBatch());
         owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
@@ -1806,6 +1902,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     owner.caches.endFrame(uploadBatch());
 
     if (!completed) {
+        // THE FRAME DID NOT RUN, SO ITS COMMANDS MOVED NOTHING: the same rewind the end-of-buffer failure takes (see
+        // rewindUnrunFrame). A submit that failed wrote no pixel; a fence that failed may have written some, and
+        // treating it as "did not run" is the SAFE reading - `Undefined` discards content instead of loading a picture
+        // nobody can vouch for.
+        rewindUnrunFrame();
         // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
         // can still fix, which is the difference that matters to a host.
         if (!owner.note_device_lost(submit_result, "vkQueueSubmit") && !owner.note_device_lost(fence_result, "vkWaitForFences")) {

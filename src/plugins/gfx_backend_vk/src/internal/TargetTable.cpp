@@ -157,6 +157,7 @@ void TargetTable::open(const Device device, const Limits limits, Report report, 
     borrow_samples_report_.rearm();
     borrow_source_report_.rearm();
     borrow_extent_report_.rearm();
+    too_many_colors_report_.rearm();
 }
 
 void TargetTable::close() noexcept
@@ -329,6 +330,25 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         wanted.shape.depth_format        = source->second->desc.shape.depth_format;
         wanted.shape.device_depth_format = source->second->desc.shape.device_depth_format;
     }
+
+    // A SHAPE WITH MORE COLOUR ATTACHMENTS THAN THE API ALLOWS IS NOT A TARGET (`G4`): `maxColorAttachments` is at most
+    // 8 in Vulkan, and the recorder's attachment-info array is a stack value of exactly that size (`kMaxColorAttachments`).
+    // Refused here, once per episode, so the pass naming it is skipped and no half-target is built.
+    if (wanted.shape.device_color_formats.size() > kMaxColorAttachments) {
+        if (too_many_colors_report_.shouldReport()) {
+            if (report_) {
+                report_(targetDiagnostic(target,
+                                         vn::graphics::DiagnosticSeverity::Warning,
+                                         vn::graphics::DiagnosticCategory::TargetBuildFailed,
+                                         u8"vk.target.too_many_colors",
+                                         vn::String(u8"vk: a target asks for more than ") +
+                                             numberText(static_cast<std::uint32_t>(kMaxColorAttachments)) +
+                                             u8" colour attachments, which is the most Vulkan allows; it was not built"));
+            }
+        }
+        return false;
+    }
+    too_many_colors_report_.rearm(); // a shape inside the limit: the episode is over
 
     const auto [entry, inserted] = targets_.try_emplace(&target);
     (void)inserted;

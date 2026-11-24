@@ -1052,3 +1052,74 @@ TEST(VkContentDrawTest, AShadowedFullFullscreenPassGetsTheEngineShadowBindings)
     EXPECT_EQ(report.counters->draw_packets, 1U) << "the full-screen pass reached the queue";
     backend->shutdown();
 }
+
+/**
+ * @brief THE SET CACHE KEY NAMES THE SAMPLER: one texture read through two authored samplers is two sets.
+ *
+ * @details
+ * - A descriptor set binds a view AND a sampler (`VkDescriptorImageInfo` writes a combined image sampler), and two
+ *   materials may name ONE texture through two `Sampler` values (`Material::setTexture(slot, texture, sampler)`). A key
+ *   that stopped at the view served the first material's sampler to the second: silent wrongness, not a cache miss - so
+ *   the key must name everything the cached value depends on (`G4`).
+ * - THE WITNESS IS THE BUILD COUNT, not a pixel: the discriminating fact is "a second set was needed", and a filter
+ *   difference on a 1x1 texture is (correctly) invisible in the picture.
+ */
+TEST(VkContentDrawTest, TwoMaterialsReadingOneTextureThroughTwoSamplersAreTwoSets)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kTextureFragment);
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+
+    auto image = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::span<std::byte> texel = image->mipData(0);
+    texel[0] = std::byte{ 255U };
+    texel[1] = std::byte{ 255U };
+    texel[2] = std::byte{ 255U };
+    texel[3] = std::byte{ 255U };
+    auto texture = intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    texture->setImage(image);
+
+    vn::graphics::Sampler nearest;
+    nearest.min_filter = vn::graphics::Sampler::Filter::Nearest;
+    nearest.mag_filter = vn::graphics::Sampler::Filter::Nearest;
+    const vn::graphics::Sampler linear{}; // the defaults: linear minification and magnification
+
+    const auto frameWith = [&](const vn::graphics::Sampler& sampler) {
+        const intrusive_ptr<Material> material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+        material->setTexture(TextureSlot::BaseColor, texture, sampler);
+
+        DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+        command.program              = program;
+        command.program_description  = program->description();
+        command.material             = material;
+        command.material_description = material->description();
+
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        commands->push_back(std::move(command));
+
+        DrawPacket draw;
+        draw.kind         = DrawKind::Scene;
+        draw.view.camera  = identityCamera();
+        draw.commands     = commands;
+        return drawingFrame(target.get(), std::move(draw));
+    };
+
+    (void)backend->executeFrame(frameWith(nearest), nullptr);
+    const std::uint64_t after_nearest = device->contentCacheCounters().set_builds;
+
+    (void)backend->executeFrame(frameWith(linear), nullptr);
+    const std::uint64_t after_linear = device->contentCacheCounters().set_builds;
+
+    EXPECT_EQ(after_linear - after_nearest, 1U)
+        << "the second material names another sampler, so the set it binds is another value";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}

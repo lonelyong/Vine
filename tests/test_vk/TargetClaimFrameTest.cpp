@@ -220,3 +220,54 @@ TEST(TargetClaimFrameTest, APreparationThatLostItsTargetIsSkippedAndReportedToo)
     (void)allowed;
     backend->shutdown();
 }
+
+/**
+ * @brief A BORROWED DEPTH IS THE LENDER'S TO HOLD: a pass cannot attach an image another driver owns this frame.
+ *
+ * @details
+ * - `RenderTarget::shareDepth` makes one image the depth of two targets, so a borrower's pass WRITES the lender's image
+ *   and rewrites the lender's ONE layout record (`TargetObjects::setDepthAttachmentLayout`). Claiming only the borrower
+ *   would let two drivers submit two passes against one depth image and let both write that record from two threads -
+ *   which is why the borrow edge is a claim on the LENDER too.
+ * - The witness is the claim book: `refused` moves while the rival holds the lender and stays put once it lets go, so
+ *   the refusal is the LENDER and not something else about the frame.
+ */
+TEST(TargetClaimFrameTest, ABorrowedDepthIsTheLendersToHold)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    const intrusive_ptr<RenderTarget> lender = makeTarget(); // RGBA8 + D24
+    const intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    borrower->setName(String(u8"vk_claim_borrower"));
+    borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+    borrower->setSize(kTargetSize, kTargetSize);
+    borrower->shareDepth(vn::graphics::depthViewOf(lender));
+
+    // THE LENDER IS BUILT FIRST (the SDK's ordering rule for shareDepth), so the only reason left to refuse the
+    // borrower's pass is the claim below.
+    (void)backend->executeFrame(drawingFrame(lender.get(), makeDraw()), nullptr);
+
+    // THE RIVAL DRIVER: a lease in another driver's name - exactly what a second engine's claim looks like.
+    auto rival = device->targetTable().lease(4242U);
+    ASSERT_TRUE(rival.claim(lender.get())) << "the rival could not take the lender";
+
+    const std::uint64_t refused_before = device->targetTable().claimNumbers().refused;
+    EXPECT_EQ(backend->executeFrame(drawingFrame(borrower.get(), makeDraw()), nullptr), PresentOutcome::Skipped);
+    EXPECT_GT(device->targetTable().claimNumbers().refused, refused_before)
+        << "a frame attached a depth another driver is drawing into";
+
+    // THE LENDER IS FREE AGAIN: the same frame is no longer refused by a claim.
+    rival.release(lender.get());
+    const std::uint64_t refused_released = device->targetTable().claimNumbers().refused;
+    (void)backend->executeFrame(drawingFrame(borrower.get(), makeDraw()), nullptr);
+    EXPECT_EQ(device->targetTable().claimNumbers().refused, refused_released)
+        << "the borrower's pass was still refused after the lender was free";
+
+    backend->shutdown();
+}

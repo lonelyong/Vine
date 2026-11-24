@@ -7,9 +7,24 @@
 
 #include <volk.h>
 
+#include <vine/graphics/DrawState.hpp>
+
 #include "ImageLayout.hpp"
 
 VN_BACKEND_VK_NS_BEGIN
+
+/**
+ * @brief The most colour attachments a Vulkan device may present to one rendering instance: the bound every stack
+ *        buffer on the recording path is sized by.
+ *
+ * @details
+ * - `VkPhysicalDeviceLimits::maxColorAttachments` is capped at 8 by the specification, so a fixed array of this size
+ *   holds every legal set - which is what lets `beginRendering` build its attachment-info array without allocating
+ *   (see `PassRole`'s note on why the recording path allocates nothing).
+ * - A SHAPE THAT ASKS FOR MORE IS REFUSED WHERE IT IS BUILT, not silently truncated here: `TargetTable::ensure`
+ *   answers `vk.target.too_many_colors` and builds nothing, so the recorder can rely on this bound.
+ */
+inline constexpr std::size_t kMaxColorAttachments = 8U;
 
 /**
  * @brief What ONE dynamic-rendering pass draws into: the images of an attachment set, and where each of them is now.
@@ -126,21 +141,34 @@ struct PassAttachments {
 };
 
 /**
- * @brief What one pass states about LOADING and CLEARING its attachments, one value per attachment.
+ * @brief What one pass states about its attachments' LOAD and STORE, one value per ROLE.
  *
  * @details
- * - THE PASS' TWO INDEPENDENT DIMENSIONS (see `ClearPolicy`): colour and depth are decided separately, which is what
- *   lets a HUD pass keep the picture and own the depth inside its rectangle without a second attachment set.
- * - A CLEAR VALUE IS ONLY READ WHEN THE MATCHING LOAD OP IS `CLEAR`; a loading attachment keeps what an earlier pass
+ * - THE SEAM'S OWN VOCABULARY. A load is "keep what is there" or "make a value"; a store is "keep the result" or
+ *   "nothing will read it" - `vn::graphics::LoadOp` / `StoreOp`, the neutral pair each family binds to its API.
+ *   Stating them here rather than as two booleans is what makes `BarrierPlan::loadOpOf` / `storeOpOf` the ONE place
+ *   those facts become Vulkan enums, instead of a second conditional inside the recorder (`G1` / `G6`).
+ * - WHY THE STORE IS STATED AND NOT ASSUMED. This backend keeps every attachment's contents by default, but a
+ *   MULTISAMPLED pass resolves into a separate picture: the SAMPLE BUFFERS are then content nothing can read, so
+ *   keeping them is pure bandwidth and, on a tiled renderer, a tile flush nobody consumes (`G10`). `beginRendering`
+ *   therefore DOWNGRADES a resolved role to `DontCare` - the rule lives where the resolve is known, so a caller
+ *   states what IT wants and cannot get the resolve case wrong.
+ * - COLOUR AND DEPTH ARE DECIDED SEPARATELY (see `ClearPolicy`): a HUD pass keeps the picture and owns the depth
+ *   inside its rectangle without a second attachment set.
+ * - A CLEAR VALUE IS ONLY READ WHEN THE MATCHING LOAD OP IS `Clear`; a loading attachment keeps what an earlier pass
  *   wrote and its value is ignored. `color_clears` is parallel to the colour attachments - one entry per output
  *   location, in the order a fragment's outputs are written - and an absent entry is transparent black, which is
  *   `ClearPolicy`'s rule for an attachment a pass does not state.
  */
 struct PassLoad {
-    /// Whether the colour attachments LOAD what an earlier pass wrote (false CLEARs them).
-    bool load_color{ false };
-    /// Whether the depth attachment LOADs what an earlier pass wrote (false CLEARs it).
-    bool load_depth{ false };
+    /// The colour attachments' load operation (`Load` keeps the picture, `Clear` resets it to `color_clears[0]`).
+    vn::graphics::LoadOp load_color{ vn::graphics::LoadOp::Clear };
+    /// The depth attachment's load operation (`Load` keeps the depth, `Clear` resets it to the reverse-Z far plane).
+    vn::graphics::LoadOp load_depth{ vn::graphics::LoadOp::Clear };
+    /// What a colour attachment's contents are worth AFTER the pass (downgraded to `DontCare` when it is resolved).
+    vn::graphics::StoreOp store_color{ vn::graphics::StoreOp::Store };
+    /// What the depth attachment's contents are worth after the pass (downgraded the same way when resolved).
+    vn::graphics::StoreOp store_depth{ vn::graphics::StoreOp::Store };
     /// One clear value per colour attachment, in output-location order (parallel to the `color` role).
     std::span<const VkClearValue> color_clears{};
     /// The clear value of the depth attachment.
@@ -162,10 +190,9 @@ struct PassLoad {
  *   stores exactly that.
  * - DRAWS FOLLOW, then @ref endRendering. Nothing may be recorded between the barrier set and the draws that needs the
  *   old layout.
- * - ONE ALLOCATION, AND WHY IT STAYS: the colour attachment info array is sized by the set's colour attachment COUNT,
- *   which is a runtime property (`maxColorAttachments` varies by device), so it is a vector - one small allocation per
- *   pass, the same order as the per-draw arrays the content recorder builds. A fixed array would have to cap the count,
- *   and a silent cap is a worse defect than one allocation.
+ * - NO ALLOCATION (`G10`). The colour attachment info array is a stack value of `kMaxColorAttachments` entries: the
+ *   specification caps `maxColorAttachments` at 8, and a shape asking for more is refused where it is built
+ *   (`vk.target.too_many_colors`), so the bound is a fact the recorder may rely on instead of a silent clamp.
  *
  * @param table       The device's entry points (volk table).
  * @param commands    The command buffer being recorded (outside any rendering instance).

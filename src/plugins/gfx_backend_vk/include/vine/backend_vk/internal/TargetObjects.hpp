@@ -69,16 +69,19 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  *   destroys it), so a borrow has no synchronisation to point at.
  * - THE LAYOUT RECORDS ARE THE FRAME BODY'S, AND THERE IS ONE PER IMAGE. @ref color_layouts /
  *   @ref multisample_color_layouts / @ref depth_layout / @ref depth_picture_layout say where each image IS; the command
- *   that moves an image is the one that writes its record (`C3` / `C5`: @ref beginPass, `Device::resolveShadow`, the
- *   full-screen source transition). The two readback verbs are deliberately NOT movers: each puts the image back in the
- *   layout it found, so a device verb that reads one image leaves every record as it was. Nothing here derives a layout
- *   from a flag, so the two answers an image could acquire - "the
+ *   that moves an image is the one that writes its record, through ONE of the two named verbs (`BarrierPlan::transitionImage`
+ *   for a colour picture, @ref transitionDepthPicture for the depth picture) or as a whole set by @ref beginPass. The two
+ *   readback verbs are deliberately NOT movers: each puts the image back in the layout it found, so a device verb that
+ *   reads one image leaves every record as it was. Nothing here derives a layout from a flag, so the two answers an image
+ *   could acquire - "the
  *   attachment is never sampled" and "the picture was sampled" - cannot disagree: on a single-sampled target the
  *   attachment IS the picture and therefore has ONE record. The FRAME GATE serialises them, not the map lock: one frame
  *   records at a time, and the claim hand-off (writer to next claimer) plus the gate (writer to a host verb; the
  *   readback verbs hold it exclusively) are what make their values current. @ref fresh is the one field a reader outside
  *   the gate touches (a readback's hint, the planner's), which is why it is atomic and why it is a SET-level fact ("no
- *   pass has drawn here") rather than an image layout.
+ *   pass has drawn here") rather than an image layout. @ref resetLayouts is the (rare) exception that is not a mover:
+ *   a frame whose commands never reached the queue put every image back to `Undefined`, which is the only true
+ *   statement about content the GPU never wrote.
  * - IT IS A VALUE-LIKE RECORD with explicit build/destroy calls, because Vulkan has no destructors: `destroyTarget()`
  *   is idempotent so an error path may call it unconditionally.
  */
@@ -329,12 +332,45 @@ struct TargetObjects {
     {
         return depth_borrowed ? VK_NULL_HANDLE : (hasDepthResolve() ? depth_resolve : depth);
     }
-
     /** @brief Gets the view of @ref depthPicture (what a shader samples and what a LENDER hands to a borrower). */
     [[nodiscard]] VkImageView depthPictureView() const noexcept
     {
         return depth_borrowed ? VK_NULL_HANDLE : (hasDepthResolve() ? depth_resolve_view : depth_view);
     }
+
+    /**
+     * @brief MOVES the depth PICTURE to @p to, recording the barrier from the record that belongs to it.
+     *
+     * @details
+     * - THE MOVER FOR THE ONE IMAGE WHOSE RECORD IS INDIRECTED (a borrower's is the lender's, a multisampled target's is
+     *   the resolve image's). Asking the record first - `depthPictureLayout()` - and then writing it is why this is a verb
+     *   on the record rather than `BarrierPlan::transitionImage`, which needs a record the caller can address.
+     * - IT ANSWERS WHETHER ANYTHING MOVED: a picture already in @p to records no barrier, which is the skip an earlier
+     *   pass of the same frame has already earned.
+     *
+     * @param table    The device's entry points (volk table).
+     * @param commands The command buffer being recorded.
+     * @param to       The usage the picture is about to be in.
+     * @return true when a barrier was recorded.
+     */
+    bool transitionDepthPicture(const VolkDeviceTable& table, VkCommandBuffer commands, ImageLayout to) noexcept;
+
+    /**
+     * @brief Puts every layout record back to `Undefined` because the commands that would have moved them never ran.
+     *
+     * @details
+     * - WHY THIS IS NOT "IMPORTANTLY WRONG": the records follow the RECORDED commands on the premise that the command
+     *   buffer reaches the queue (`C1`: one submission per frame, one fence wait). A frame that failed before its
+     *   submission - no command buffer, a submit the driver refused - wrote commands the GPU never executed, so every
+     *   image is still where the LAST EXECUTED frame left it and its contents are the pass' own business. `Undefined`
+     *   is the only honest answer then, and it is also the SAFE one: the next pass discards what is there instead of
+     *   loading it, and a barrier stated from `Undefined` is legal whatever the image really holds.
+     * - `fresh` follows: no pass has drawn into this set as far as anything on the GPU is concerned, so a readback's
+     *   `NotReady` hint and a first pass' CLEAR are the right answers again (`G4`).
+     * - NOT a mover: this is a bookkeeping rewind for a frame that did not run, and the only caller is the frame body's
+     *   failure path (see `Device::FrameDriver::executeFrame`).
+     */
+    void resetLayouts() noexcept;
 
     /**
      * @brief Records this set's attachment transitions and opens the rendering instance a pass draws into.
@@ -349,7 +385,8 @@ struct TargetObjects {
      *   through - is in the attachment layout, which is what a later pass, a sampling transition or a readback names as
      *   its starting point. The record follows the recorded COMMANDS, not the GPU's progress: everything below is
      *   recorded after this pass, so from here on the images ARE in the rendering layout. The pass is expected to end
-     *   with @ref endPass.
+     *   with @ref endPass. (The premise is that the command buffer reaches the queue; a frame that never did rewinds
+     *   them with @ref resetLayouts.)
      * - TWO DEPTH IMAGES, TWO RECORDS - OR ONE. A multisampled target's depth attachment and the picture it resolves
      *   into are different images, so each has its own record; a single-sampled target's attachment IS its picture, so
      *   it has ONE record and `depthPictureLayout()` names it - which is why a reader's sampling and the next pass'

@@ -106,6 +106,24 @@ void recordBarrier(const VolkDeviceTable& table, const VkCommandBuffer commands,
     table.vkCmdPipelineBarrier2(commands, &dependency);
 }
 
+bool transitionImage(const VolkDeviceTable& table,
+                     const VkCommandBuffer  commands,
+                     const VkImage          image,
+                     ImageLayout&           record,
+                     const ImageLayout      to,
+                     const VkImageAspectFlags aspect) noexcept
+{
+    // ONE CALL FOR THE PAIR (see the header): a mover that recorded a barrier without writing the record - or wrote a
+    // record the barrier did not state - is the defect this signature removes. Nothing to do when the image is already
+    // where the caller wants it, which is also the "an earlier pass of this frame already stated it" skip.
+    if (record == to || image == VK_NULL_HANDLE) {
+        return false;
+    }
+    recordBarrier(table, commands, barrierBetween(image, stateOf(record), stateOf(to), aspect));
+    record = to;
+    return true;
+}
+
 VkAttachmentLoadOp loadOpOf(const LoadOp op) noexcept
 {
     switch (op) {
