@@ -51,8 +51,11 @@ PassLoad decidePassLoad(const bool                             preserve_previous
 {
     // THE GROUP SPELLING IS THE DEFAULT, and a stated per-attachment op overrides it for its own attachment.
     // `ClearPolicy`'s two group dimensions stay independent (a HUD keeps the colour and owns the depth).
-    const bool clear_color = clear == nullptr || clear->clear_color;
-    const bool clear_depth = clear == nullptr || clear->clear_depth;
+    // NO POLICY AT ALL MEANS NO CLEAR: `RenderPass::clearPolicy()` answers nullopt for a pass that clears nothing,
+    // so a later pass into a set that already holds a picture must LOAD it - treating nullopt as "clear both" wiped
+    // the deferred-lighting result in the demo and left only the last overlay on a black window.
+    const bool clear_color = clear != nullptr && clear->clear_color;
+    const bool clear_depth = clear != nullptr && clear->clear_depth;
 
     PassLoad load{};
     const std::size_t filled = std::min(color_count, color_storage.size());

@@ -2258,8 +2258,13 @@
   `Clear` (the old safety net). The resolve downgrade stays in `beginRendering`. A BORROWED depth forces BOTH halves
   (`Load` + `Store`) - a borrower may neither clear nor discard the lender's image; the borrow test states
   `DontCare`/`DontCare` so a missing override turns it red (the load half deterministically).
-- **Witnesses**: `PassLoadTest` (5 device-free cases), `VkContentTargetTest.EachColourAttachmentLoadsOrClearsOnItsOwn`
+- **Witnesses**: `PassLoadTest` (6 device-free cases), `VkContentTargetTest.EachColourAttachmentLoadsOrClearsOnItsOwn`
   (one pass, three answers: clear / load / DontCare, read back at a corner), and
   `RenderEngineTest.APassAnnouncesPerAttachmentOpsToTheBackend`.
 - **Rejected**: backend-only arrays (no author, `G8`); renaming `ClearPolicy` in the same batch (a word sweep with no
   witness). ADR-2026-11-24.
+- **`PassDraw::clear == nullopt` now means "no clear"**: it used to be read as "clear both". The demo's
+  `forward_transparent` and every window overlay/preview announce no policy, so they were wiping the deferred result
+  (`deferred_lighting clear=-` is a fresh target and still clears; `forward_transparent clear=-` must load). The black
+  render area was this, not the per-attachment arrays. A fresh set still falls back to `Clear` (nothing to keep).
+  Witness: `PassLoadTest.NoAnnouncementKeepsThePicture`.

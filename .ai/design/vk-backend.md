@@ -164,7 +164,9 @@ and every cache has a witness a test can read.**
   resolves, are content nobody can read afterwards, so keeping them is bandwidth nobody buys. `decidePassLoad` is the
   one rule that turns `ClearPolicy` (the group flags, plus the per-attachment `color_ops` / `depth_op` an author states)
   into those entries; the neutral ops are mapped by the table's `loadOpOf` / `storeOpOf`, which is what makes those two
-  rows live instead of a second conditional inside the recorder.
+  rows live instead of a second conditional inside the recorder. **A pass that announces NO policy clears NOTHING**: a
+  later pass into a set that already holds a picture LOADs it, and only a fresh set falls back to `Clear` (there is
+  nothing to keep). Reading nullopt as "clear both" wiped the demo's deferred result and every later window pass.
 - **A pass states four ROLES, not thirteen fields**: `PassAttachments` is `color` (the images rendering writes), `picture`
   (their resolve targets), `depth` and `depth_picture` (`DynamicRendering.hpp`). A role with one image is a `PassImage`
   value (image + view + its record), a role with one image per colour attachment is a `PassRole` of three parallel spans -

@@ -191,6 +191,9 @@ struct PassLoad {
  * - THE RULE HAS ONE HOME (`G1`). The group spelling is the default: a pass loads when the set already holds a
  *   picture worth keeping AND the pass does not ask to reset that attachment. A stated per-attachment op overrides
  *   the group for ITS attachment, so "keep one, reset another, discard a third" needs no second mechanism (`G4`).
+ * - NO POLICY MEANS NO CLEAR. `RenderPass::clearPolicy()` answers nullopt for a pass that clears NOTHING, so a
+ *   later pass into a set that already holds a picture LOADs it; only a FRESH set (nothing to keep) falls back to
+ *   `Clear`, which is the one safety net the input cannot express.
  * - WHAT THE INPUT IS NOT. It is not "is this target fresh": it is "may a later pass load what is there" - a
  *   window's acquired image answers false however many frames have presented through it (see
  *   `PassTarget::holdsPicture`).
@@ -206,7 +209,8 @@ struct PassLoad {
  *   `DontCare`, because only it knows whether a resolve consumes the images.
  *
  * @param preserve_previous Whether an earlier pass (or frame) put a picture in these attachments that may be kept.
- * @param clear             The pass' policy, or null when the pass announced none (both attachments clear).
+ * @param clear             The pass' policy, or null when the pass announced none (nothing is cleared; a fresh set
+ *                          still falls back to `Clear`).
  * @param color_storage     Storage for one entry per colour attachment (the caller's array; untouched past
  *                          @p color_count).
  * @param color_count       How many colour attachments the set has (see `PassTarget::colorCount`).

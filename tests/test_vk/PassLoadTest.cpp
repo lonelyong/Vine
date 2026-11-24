@@ -6,6 +6,7 @@
  *   - a stated per-attachment op overrides the group for ITS attachment only, which is the capability the per-role
  *     pair this replaced could not express;
  *   - `Load` on a set with no picture falls back to `Clear` (the same safety net the group rule had);
+ *   - NO policy (`clear == nullopt`) clears nothing: a later pass loads the picture, and only a fresh set clears;
  *   - the depth entry is independent of the colour entries, and the clear values follow output-location order.
  *
  * The function is pure, so this file is a build-time witness: drift in the rule is caught here instead of by a pixel
@@ -76,6 +77,27 @@ TEST(PassLoadTest, APerAttachmentOpOverridesItsOwnAttachment)
     EXPECT_EQ(load.color[1].store, StoreOp::DontCare);
     EXPECT_EQ(load.color[2].load, LoadOp::Clear) << "an attachment the pass did not state follows the group";
     EXPECT_EQ(load.color[2].store, StoreOp::Store);
+}
+
+TEST(PassLoadTest, NoAnnouncementKeepsThePicture)
+{
+    std::array<PassAttachment, kColors> kept_storage{};
+    std::array<PassAttachment, kColors> fresh_storage{};
+
+    // A PASS THAT ANNOUNCES NOTHING CLEARS NOTHING: a later pass into a set that already holds a picture loads it.
+    const PassLoad kept = decide(true, nullptr, kept_storage);
+    for (const PassAttachment& op : kept.color) {
+        EXPECT_EQ(op.load, LoadOp::Load) << "no policy is not a request to clear";
+        EXPECT_EQ(op.store, StoreOp::Store);
+    }
+    EXPECT_EQ(kept.depth.load, LoadOp::Load);
+
+    // ...but a FRESH set has nothing to keep, so the same announcement still answers Clear (the safety net).
+    const PassLoad fresh = decide(false, nullptr, fresh_storage);
+    for (const PassAttachment& op : fresh.color) {
+        EXPECT_EQ(op.load, LoadOp::Clear) << "an attachment with no picture cannot be loaded";
+    }
+    EXPECT_EQ(fresh.depth.load, LoadOp::Clear);
 }
 
 TEST(PassLoadTest, AStatedLoadOnAFreshSetFallsBackToClear)

@@ -38,6 +38,10 @@ reachable only through the backend's resolve downgrade.
    `beginRendering` — only it knows whether a resolve consumes a role. A BORROWED depth overrides BOTH halves
    (`Load` + `Store`): the image belongs to the lender, so a borrower may neither clear it nor discard what the lender
    still needs (`TargetObjects::beginPass`).
+   **NO POLICY MEANS NO CLEAR.** `PassDraw::clear == nullopt` is the pass saying it clears NOTHING, so a later pass
+   into a set that already holds a picture LOADs; only a fresh set falls back to `Clear`. The old rule read nullopt
+   as "clear both", which wiped the demo's deferred-lighting result (`forward_transparent` and the window overlays all
+   announce no clear) and is why the render area was black.
 5. **One value per attachment in the recorder.** `PassLoad` is `span<const PassAttachment> color` + one
    `PassAttachment depth`, and each `VkRenderingAttachmentInfo` is filled from its own entry.
 
@@ -62,7 +66,7 @@ reachable only through the backend's resolve downgrade.
   already requires). Existing passes compile and behave identically because the defaults are the old spelling.
 - The seam is ready for D3D12 / Metal: both state the same pair per attachment, and a Metal backend maps it to
   `MTLLoadAction` / `MTLStoreAction` without a second engine concept.
-- Evidence: `test_vk`'s `PassLoadTest` (five device-free cases) and
+- Evidence: `test_vk`'s `PassLoadTest` (six device-free cases) and
   `VkContentTargetTest.EachColourAttachmentLoadsOrClearsOnItsOwn` (one pass, three answers, pixels read back);
   `test_graphics`' `RenderEngineTest.APassAnnouncesPerAttachmentOpsToTheBackend` (the policy reaches the backend
   without a group clear).
