@@ -53,10 +53,28 @@ class VN_BACKEND_VK_API ContentImages final {
      *
      * @details
      * - THE DEVICE DECIDES, THIS CACHE REPORTS (`G4`): whether an image may be destroyed is a question about the
-     *   device's completion watermark, and the answer needs the clock and the park queue - both of which belong to the
-     *   device, not to a cache. The seam is a function so this header keeps naming neither.
+     *   device's completion watermark AND about who still names the entry, and the answer needs the clock and the park
+     *   queue - both of which belong to the device, not to a cache. The seam is a function so this header keeps naming
+     *   neither.
+     * - `named` IS THE SECOND WINDOW: a weak view of the entry the act is about to destroy. The park keeps the act
+     *   alive (the act holds the entry), asks `use_count` when its turn comes, and re-parks while a frame still holds a
+     *   share it got from `viewFor` - so a release announced while another driver records neither waits nor destroys.
      */
-    using ParkFn = std::function<void(std::function<void()>)>;
+    using ParkFn = std::function<void(std::weak_ptr<const void> named, std::function<void()> destroy)>;
+
+    /**
+     * @brief One served view, and the share that keeps the image behind it alive while a frame names it.
+     *
+     * @details
+     * - THE SHARE IS THE RESIDENCY-BORROWING RULE (ADR-2026-11-24): a release ends residency, not the objects, so a
+     *   frame that resolved a view keeps the entry until the frame ends. The frame stores `owner` in its own book
+     *   (`ContentCaches::FrameBuilds::borrow`) and records the raw handle it copied - so the park's `use_count` probe
+     *   answers "is any frame still naming this?"
+     */
+    struct TextureView {
+        VkImageView                 view{ VK_NULL_HANDLE }; ///< The image's view, or the 1x1 stand-in.
+        std::shared_ptr<const void> owner{};                ///< The entry to keep; empty when no view was served.
+    };
 
     /**
      * @brief One driver's upload bookkeeping: the staging buffers it recorded and the images its revisions replaced.
@@ -201,11 +219,10 @@ class VN_BACKEND_VK_API ContentImages final {
      * @brief Drops @p texture's uploaded image, if there is one, so the next frame that samples it uploads it again.
      *
      * @details
-     * - DESTROYED, NOT PARKED: this device records and submits one frame synchronously and waits on its fence, so
-     *   between frames nothing is in flight and an image nothing names can go immediately. Call it between frames,
-     *   on the frame thread - the same contract the SDK's release verbs state.
-     * - The entry keeps nothing: a texture released here is resident again on the first frame that samples it, and
-     *   that re-upload is what the release costs.
+     * - THE ENTRY LEAVES THE TABLE NOW; THE OBJECTS FOLLOW WHEN THE DEVICE SAYS THEY MAY: the next frame that samples
+     *   the texture uploads it again (that re-upload is what the release costs), while a frame that already resolved
+     *   the view keeps its share, so the image is destroyed only once no frame names it and the submission watermark
+     *   has passed it (see `ParkFn`).
      *
      * @param texture Texture whose image leaves the cache (borrowed; the host keeps the object).
      * @return true when the cache answered - a texture with no entry is already released, which is the same true.
@@ -217,22 +234,21 @@ class VN_BACKEND_VK_API ContentImages final {
      *
      * @details
      * - The texture must be complete (see `Texture::isComplete`); an incomplete one, or one whose pixel format has no
-     *   Vulkan colour spelling, answers null and sets @p why.
+     *   Vulkan colour spelling, answers no view and sets @p why.
      * - The upload is recorded on the frame's command buffer before the draw that samples it; the image is left in
      *   `SHADER_READ_ONLY_OPTIMAL` BY THAT COMMAND BUFFER. The entry is PENDING in @p batch until it completes (see
      *   @ref batchCompleted): the view serves the frame that recorded it, and no other driver until the copy is
      *   proven - a competitor records its own copy, which is the cost of never binding an image nobody filled.
+     * - THE ANSWER CARRIES THE SHARE (see `TextureView`): the caller keeps it for the frame's life, which is what lets
+     *   a host release the texture while this frame is still recording.
      *
      * @param texture  The texture to sample.
      * @param commands The command buffer the current frame is being recorded into.
      * @param batch    The driver recording the copy (see @ref BatchId).
      * @param why      Receives the reason when no view can be served, or null to ignore.
-     * @return The view, or `VK_NULL_HANDLE`.
+     * @return The view and its share (`view == VK_NULL_HANDLE` when nothing can serve it).
      */
-    [[nodiscard]] VkImageView viewFor(const vn::graphics::Texture& texture,
-                                      VkCommandBuffer             commands,
-                                      BatchId                     batch,
-                                      vn::String*                 why);
+    [[nodiscard]] TextureView viewFor(const vn::graphics::Texture& texture, VkCommandBuffer commands, BatchId batch, vn::String* why);
 
     /**
      * @brief Gets (or creates) the sampler for @p sampler.
@@ -248,9 +264,9 @@ class VN_BACKEND_VK_API ContentImages final {
      * @param commands The command buffer the current frame is being recorded into.
      * @param batch    The driver recording the copy (see @ref BatchId).
      * @param why      Receives the reason when the fallback cannot be built, or null to ignore.
-     * @return true when @ref fallbackView serves a view.
+     * @return The stand-in's view and its share (see `TextureView`); `view == VK_NULL_HANDLE` when it cannot be built.
      */
-    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, BatchId batch, vn::String* why);
+    [[nodiscard]] TextureView ensureFallback(VkCommandBuffer commands, BatchId batch, vn::String* why);
 
     /**
      * @brief Gets the 1x1 white view every absent slot is bound to (null until @ref ensureFallback succeeded).

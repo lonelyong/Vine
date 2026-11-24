@@ -12,12 +12,12 @@ RetirementQueue::RetirementQueue(std::uint32_t slots)
     // direction that destroys an object a submitted command buffer still names.
 }
 
-bool RetirementQueue::retire(const FrameTimeline& timeline, ReleaseFn release)
+bool RetirementQueue::retire(const DeviceClock& clock, ReleaseFn release)
 {
     if (!release || !parkingAvailable()) {
         return false;
     }
-    parked_.push_back(Entry{ retirePoint(timeline), std::move(release) });
+    parked_.push_back(Entry{ retirePoint(clock), std::move(release) });
     return true;
 }
 
@@ -31,9 +31,9 @@ void RetirementQueue::setSlots(std::uint32_t slots) noexcept
     slots_ = slots;
 }
 
-void RetirementQueue::advance(const FrameTimeline& timeline)
+void RetirementQueue::advance(const DeviceClock& clock)
 {
-    const std::uint64_t completed = timeline.completedFrame();
+    const std::uint64_t completed = clock.completedSubmission();
 
     // Partition first, release second: a release callback is allowed to park something new, and doing
     // that while iterating the same vector would invalidate the walk.
@@ -51,7 +51,7 @@ void RetirementQueue::advance(const FrameTimeline& timeline)
 
     released_ += due.size();
     for (auto& entry : due) {
-        entry.release(&timeline);
+        entry.release(&clock);
     }
 }
 
@@ -72,9 +72,11 @@ void RetirementQueue::releaseAll()
     }
 }
 
-std::uint64_t RetirementQueue::retirePoint(const FrameTimeline& timeline) const noexcept
+std::uint64_t RetirementQueue::retirePoint(const DeviceClock& clock) const noexcept
 {
-    return FrameTimeline::retirePoint(timeline.submittedFrame(), slots_);
+    // ONE MORE THAN THE SLOT COUNT: by then the slot that could still name the object has been re-recorded, and a
+    // re-record waits that slot's fence - so the submission that named it is provably complete.
+    return clock.submissions() + static_cast<std::uint64_t>(slots_) + 1U;
 }
 
 std::size_t RetirementQueue::pending() const noexcept

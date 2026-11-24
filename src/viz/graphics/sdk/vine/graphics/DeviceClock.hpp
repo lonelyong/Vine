@@ -8,33 +8,31 @@
 #include <vine/graphics/graphics_global.hpp>
 
 /**
- * @brief The completion evidence of a DEVICE: one frame clock, and the watermark every window's evidence agrees on.
+ * @brief The completion evidence of a DEVICE: one submission sequence, and the watermark every submission's proof folds into.
  *
  * @details
- * - WHY IT EXISTS. A device hands out several windows (one swapchain each), and every window has its own fences: the
- *   framework waits a slot's fence before it re-records that slot, which is proof that the work THAT window submitted
- *   up to some frame is finished - and proof of nothing about another window's. A resource is shared, though: a buffer
- *   or a pipeline the host replaced may still be named by a submission from ANY window, so "may this be destroyed" is
- *   a DEVICE question, not a window's.
- * - THE RULE. Every window reports its own evidence (`windowCompleted`: "all work I submitted up to frame F is done",
- *   which is the frame its recycled slot proves). The device watermark is the MINIMUM over the live windows: for
- *   X = min, every window has proven its own work up to at least X, so every submission up to X - from any window -
- *   is finished. A window proves nothing about work it never did, which is vacuously done.
- * - FRAME NUMBERS ARE THE DEVICE'S. One `FrameTimeline` mints them, so a token and a watermark mean the same thing
- *   whichever window asked. Frames are opened one at a time (a frame is executed and presented before the next
- *   begins), so one open-frame slot is enough - see FrameTimeline::begin().
- * - A WINDOW THAT JOINS starts at the current watermark: it existed for no earlier frame, so it constrains nothing.
- *   A window that leaves stops constraining it (the min can only rise), which is why windows are removed rather than
- *   left at their last evidence forever.
- * - This is the device-level equivalent of what Filament (`Driver::destroyDeferred`), Unreal (`FRHIResource` deferred
- *   delete) and wgpu (submission index) do: ONE submission watermark per device, not one per window. See
- *   `.ai/design/graphics-sessions.md` 2.6.
- * - "WINDOW" BELOW MEANS ONE FRAME DRIVER'S REGISTRATION. What a driver reports here is a recycle of one of its
- *   swapchain image slots; a windowed driver gets those from a window's swapchain, an off-screen one from its own
- *   frames, and both register once. That is why the identity this clock mints is a `FrameDriverId` - the verbs keep
- *   the older spelling for one release (see the alias in the class).
+ * - WHY IT EXISTS. A resource is shared: a buffer, an image or a pipeline a host released may still be named by work
+ *   submitted from ANY place on the device, so "may this be destroyed" is a DEVICE question. The witness is the QUEUE -
+ *   every submission is numbered, and destroying an object asks only "is every submission up to the one that could
+ *   name it complete?"
+ * - THE RULE. A backend takes a number when it hands a command buffer to the queue (`noteSubmission`, inside the
+ *   queue's own external-synchronization lock, so the numbers follow the order the queue sees) and reports that
+ *   number's proof when the fence says its work is done (`noteCompletion`). The watermark is the highest number such
+ *   that EVERY submission up to it is complete: the oldest unproven submission minus one, or every number handed out
+ *   when nothing is unproven. That is exact regardless of the order completions arrive in, and it never moves back.
+ * - WHAT IT IS NOT (and what the previous shape got wrong). It is NOT a minimum over the drivers' own evidence. A
+ *   driver that stops framing keeps its last frame forever, so that fold stalls every release on the device as soon as
+ *   one engine idles - a defect that no amount of care in the driver could fix, because a driver is not a witness of
+ *   work it never submitted. Completion belongs to the submission (`G1`); the driver registry below exists so a backend
+ *   can key its own tables by `FrameDriverId`, and for nothing else.
+ * - WHOSE NUMBER IS MINTED WHEN. A frame's number (`FrameToken`) is minted when its body STARTS; a submission's number
+ *   is minted when its command buffer is HANDED TO THE QUEUE. Two drivers may open frames before either submits, which
+ *   is why the two sequences are separate and why a park is dated against the second one.
+ * - This is the device-level equivalent of what D3D12's `GetCompletedValue`, WebGPU's submission index, Metal's
+ *   completed handlers and Filament's `Driver::destroyDeferred` do: ONE submission watermark per device, not one per
+ *   surface. See `.ai/design/graphics-sessions.md` 2.6 and `ADR-2026-11-24-completion-belongs-to-the-submission.md`.
  *
- * NOT thread-safe: the device is driven from one thread (see RenderDevice's threading note).
+ * NOT thread-safe: the device guards it with its clock lock (see `Impl::clock_mutex` in the backend).
  */
 VN_GRAPHICS_NS_BEGIN
 
@@ -43,10 +41,10 @@ VN_GRAPHICS_NS_BEGIN
  *        takes.
  *
  * @details
- * - MINTED BY THE CLOCK, never by the caller: `DeviceClock::addWindow()` answers one, and it stays valid until that
+ * - MINTED BY THE CLOCK, never by the caller: `DeviceClock::addDriver()` answers one, and it stays valid until that
  *   clock removes it.
  * - NEVER REUSED within one clock: a removed driver's id is not handed out again, so an id that outlived its driver
- *   answers "unknown" rather than naming another driver's frames.
+ *   answers "unknown" rather than naming another driver's tables.
  * - ONE SPELLING: `DeviceClock`'s verbs take this type, and so does every seam a backend keys by driver - a backend's
  *   own tables (which driver may build a key, which driver holds a target for a frame) answer with THIS id rather than
  *   minting their own. It used to be spelled `WindowId` / `SessionId`, in three widths (`D-01`).
@@ -58,54 +56,35 @@ VN_GRAPHICS_NS_BEGIN
 using FrameDriverId = std::uint32_t;
 
 /**
- * @brief One device's frame clock and the completion watermark its frame drivers agree on (see the file note).
+ * @brief One device's submission clock: the frame numbers, the driver ids, and the completion watermark (see the file
+ *        note).
  */
 class VN_GRAPHICS_API DeviceClock {
   public:
-
-    /** @brief Registers a frame driver: from now on its evidence constrains the watermark.
+    /** @brief Registers a frame driver and answers its id.
      *
      * @details
-     * - It starts AT the current watermark, because it existed for no earlier frame - a window that has not drawn
-     *   yet must not hold the device's evidence at zero.
+     * - Registration is IDENTITY, not evidence: it keys the tables a backend keeps for itself (which driver may build a
+     *   key, which driver holds a target). The completion watermark does not consult it, which is what keeps an idle
+     *   driver from holding the device back.
      *
-     * @return The driver's id, for the calls below.
+     * @return The driver's id, for every call below that names a driver.
      */
-    [[nodiscard]] FrameDriverId addWindow() noexcept;
+    [[nodiscard]] FrameDriverId addDriver() noexcept;
 
-    /** @brief Unregisters a window: its evidence stops constraining the watermark.
+    /** @brief Unregisters a driver: its id stops naming a live driver (the number is never handed out again).
      *
-     * @param window Id returned by @ref addWindow (an unknown or already removed id changes nothing).
+     * @param driver Id returned by @ref addDriver (an unknown or already removed id changes nothing).
      */
-    void removeWindow(FrameDriverId window) noexcept;
+    void removeDriver(FrameDriverId driver) noexcept;
 
-    /** @brief Reports the in-flight slot count a window learned, or 0 when it could not learn one.
-     *
-     * @details
-     * - Until a window knows its count it proves nothing (its evidence would be a guess), and the device watermark
-     *   stays where it is - which is exactly what parking depends on: a park that cannot be dated is not made (see
-     *   core::RetirementQueue).
-     *
-     * @param window Window that learned the count.
-     * @param slots  Slots in flight, or 0 when unknown.
-     */
-    void setWindowSlots(FrameDriverId window, std::uint32_t slots) noexcept;
-
-    /** @brief Reports one window's evidence: all work IT submitted up to @p frame is complete.
-     *
-     * @details
-     * - Monotonic per window (an older report is ignored) and folded into the device watermark as a minimum, so a
-     *   window that is behind holds the watermark back until it catches up.
-     *
-     * @param window Window whose slot was recycled.
-     * @param frame  Highest frame that window's recycled slot proves finished.
-     */
-    void windowCompleted(FrameDriverId window, std::uint64_t frame) noexcept;
+    /** @brief Gets how many drivers are registered. */
+    [[nodiscard]] std::size_t drivers() const noexcept;
 
     /** @brief Opens a frame on the device's clock (see FrameTimeline::begin). */
     [[nodiscard]] FrameToken begin() noexcept;
 
-    /** @brief Marks the open frame as submitted (see FrameTimeline::submitted).
+    /** @brief Spends the frame @p token names as submitted (see FrameTimeline::submitted).
      *
      * @param token Token the device's clock returned from @ref begin.
      */
@@ -117,41 +96,52 @@ class VN_GRAPHICS_API DeviceClock {
      */
     void abandoned(FrameToken token) noexcept;
 
-    /** @brief Gets the device's frame clock (what a park is dated against). */
+    /** @brief Gets the device's frame clock (what a frame body mints its token from). */
     [[nodiscard]] FrameTimeline& timeline() noexcept;
 
     /** @brief Gets the device's frame clock (const). */
     [[nodiscard]] const FrameTimeline& timeline() const noexcept;
 
-    /** @brief Gets the frame every live window has proven finished (see the file note). */
-    [[nodiscard]] std::uint64_t completedFrame() const noexcept;
-
-    /** @brief Gets the widest in-flight count any live window learned (the park window a device queue must use).
+    /** @brief Numbers a submission: something was just handed to the queue, and this is its sequence number.
      *
      * @details
-     * - The widest, not the narrowest: a park made during window A's frame is released against the device watermark,
-     *   and the resource it names may be in flight in the window with more slots. 0 means no window knows yet, which
-     *   is what keeps parking off (see core::RetirementQueue::parkingAvailable).
+     * - CALL IT INSIDE THE QUEUE'S EXTERNAL-SYNCHRONIZATION LOCK, immediately before the submit: the numbers must
+     *   follow the order the queue receives the submissions, or "every submission up to N" would not be the set the
+     *   queue ran.
+     * - EVERY NUMBER IT HANDS OUT IS EVENTUALLY PROVEN (`noteCompletion`) or abandoned with the device: a submission
+     *   that the queue refused is proven at once (nothing it named will ever execute), and one whose fence never
+     *   signalled can only be a lost device, whose teardown releases everything at once.
+     *
+     * @return The submission's sequence number (1-based).
      */
-    [[nodiscard]] std::uint32_t widestSlots() const noexcept;
+    [[nodiscard]] std::uint64_t noteSubmission() noexcept;
 
-    /** @brief Gets how many windows are registered. */
-    [[nodiscard]] std::size_t windows() const noexcept;
+    /** @brief Reports that submission @p submission is complete: the queue proved its work is done.
+     *
+     * @details
+     * - Monotonic in effect and exact: the watermark is the oldest unproven submission minus one, so a later
+     *   submission completing while an earlier one is still in flight does NOT claim the earlier one.
+     *
+     * @param submission Number @ref noteSubmission answered (0, or one already proven, changes nothing).
+     */
+    void noteCompletion(std::uint64_t submission) noexcept;
+
+    /** @brief Gets how many submissions have been handed to the queue (the newest sequence number). */
+    [[nodiscard]] std::uint64_t submissions() const noexcept;
+
+    /** @brief Gets the submission every earlier one of which is proven complete (see the file note). */
+    [[nodiscard]] std::uint64_t completedSubmission() const noexcept;
 
   private:
-    /// One window's contribution to the device watermark (see the file note).
-    struct Window {
-        std::uint64_t completed{ 0 }; // Highest frame THIS window proved finished.
-        std::uint32_t slots{ 0 };     // In-flight count it learned, or 0 while unknown.
-        bool          live{ true };   // false once removed: it stops constraining the watermark.
-    };
-
-    /// Recomputes the device watermark from the live windows, and moves the timeline (monotonic).
+    /// Recomputes the watermark from the unproven submissions, and moves it forward only.
     void updateWatermark() noexcept;
 
-    FrameTimeline       timeline_;
-    std::vector<Window> windows_;
-    std::uint64_t       completed_{ 0 }; // The device watermark (see completedFrame).
+    FrameTimeline              timeline_;
+    std::uint32_t              next_driver_{ 0 }; // The next id addDriver hands out (never reused).
+    std::vector<bool>          drivers_{};        // live flag per id.
+    std::uint64_t              submissions_{ 0 }; // Submissions handed to the queue.
+    std::uint64_t              completed_{ 0 };   // The watermark (see completedSubmission).
+    std::vector<std::uint64_t> unproven_{};       // Submitted, not yet proven; ascending (the oldest is front).
 };
 
 VN_GRAPHICS_NS_END

@@ -102,6 +102,10 @@ namespace
 
 struct ContentImages::Impl {
     /// @brief One uploaded texture revision.
+    ///
+    /// THE ENTRY IS THE SHAREABLE UNIT (see ParkFn): the table owns one, and every frame that resolved its view holds
+    /// one too - so a release can erase the table's share while a recording frame keeps reading the image, and the park
+    /// destroys them when neither is left and the submission watermark has passed.
     struct Entry {
         vn::intrusive_ptr<const vn::graphics::Texture> texture; // Held so the key (its address) cannot be recycled.
         std::uint64_t                                 revision{ 0 };
@@ -123,7 +127,7 @@ struct ContentImages::Impl {
     /// invalid create, so the request is clamped here - the same number the capabilities report.
     float max_anisotropy{ 1.0F };
 
-    std::unordered_map<const vn::graphics::Texture*, Entry> textures;
+    std::unordered_map<const vn::graphics::Texture*, std::shared_ptr<Entry>> textures;
 
     /**
      * @brief One driver's upload bookkeeping (see BatchId): what it recorded and has not proven, and what it replaced.
@@ -140,20 +144,19 @@ struct ContentImages::Impl {
      *   frame that is still recording.
      */
     struct Batch {
-        std::vector<Entry>                            pending;
-        std::vector<Entry>                            retired;
+        std::vector<std::shared_ptr<Entry>>           pending;
+        std::vector<std::shared_ptr<Entry>>           retired;
         std::vector<std::pair<VkBuffer, MemorySlice>> staging;
     };
     std::unordered_map<std::uint64_t, Batch> batches;
 
     std::vector<std::pair<vn::graphics::Sampler, VkSampler>> samplers;
 
-    VkImage       fallback_image{ VK_NULL_HANDLE };
-    MemorySlice   fallback_memory{};
-    VkImageView   fallback_view{ VK_NULL_HANDLE };
-    VkSampler     fallback_sampler{ VK_NULL_HANDLE };
+    /// The 1x1 stand-in, as an ENTRY like any other so a frame can keep the view it bound (see TextureView).
+    std::shared_ptr<Entry> fallback{};
+    VkSampler              fallback_sampler{ VK_NULL_HANDLE };
     /// THE SAME PUBLICATION RULE AS A TEXTURE (see the class note): the batch that recorded the stand-in's copy, or 0
-    /// once that copy is proven. Another driver asking for the view before that gets null and skips its draw.
+    /// once that copy is proven. Another driver asking for the view before that gets an empty answer and skips its draw.
     std::uint64_t fallback_pending_batch{ 0 };
 
     /// The numbers a report reads (see Progress): cumulative builds/copies/releases, plus the status counts.
@@ -217,19 +220,22 @@ struct ContentImages::Impl {
     }
 
     /**
-     * @brief Runs @p destroy now, or parks it with the device until no submitted frame can still sample the image.
+     * @brief Runs @p destroy now, or parks it with the device until no submitted frame - and no frame still recording -
+     *        can still name the entry.
      *
      * @details
      * - The same rule the content recorder states (see ContentDraw::setRetirement): the cache answers "is this image
      *   resident", the queue answers "may this object be destroyed", and without a queue - before initialize, or during
      *   a teardown that already idled the device - the destruction runs at once.
      *
-     * @param destroy What to run when the image may go (capture handles and slices by value).
+     * @param named   The entry whose objects @p destroy will release (the park's share probe; empty = nobody else can
+     *                hold it).
+     * @param destroy What to run when the image may go (it keeps the entry alive until then).
      */
-    void releaseLater(std::function<void()> destroy)
+    void releaseLater(std::weak_ptr<const void> named, std::function<void()> destroy)
     {
         if (park) {
-            park(std::move(destroy));
+            park(std::move(named), std::move(destroy));
             return;
         }
         destroy();
@@ -474,16 +480,16 @@ void ContentImages::destroy() noexcept
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         for (auto& [texture, entry] : impl->textures) {
             (void)texture;
-            impl->destroyEntry(entry);
+            impl->destroyEntry(*entry);
         }
         impl->textures.clear();
         for (auto& [batch, entry] : impl->batches) {
             (void)batch;
-            for (Impl::Entry& pending : entry.pending) {
-                impl->destroyEntry(pending);
+            for (std::shared_ptr<Impl::Entry>& pending : entry.pending) {
+                impl->destroyEntry(*pending);
             }
-            for (Impl::Entry& retired : entry.retired) {
-                impl->destroyEntry(retired);
+            for (std::shared_ptr<Impl::Entry>& retired : entry.retired) {
+                impl->destroyEntry(*retired);
             }
             for (auto& [buffer, memory] : entry.staging) {
                 impl->destroyBuffer(buffer, memory);
@@ -497,16 +503,9 @@ void ContentImages::destroy() noexcept
             }
         }
         impl->samplers.clear();
-        if (impl->fallback_view != VK_NULL_HANDLE) {
-            impl->table->vkDestroyImageView(impl->device, impl->fallback_view, nullptr);
-            impl->fallback_view = VK_NULL_HANDLE;
-        }
-        if (impl->fallback_image != VK_NULL_HANDLE) {
-            impl->table->vkDestroyImage(impl->device, impl->fallback_image, nullptr);
-            impl->fallback_image = VK_NULL_HANDLE;
-        }
-        if (impl->allocator != nullptr) {
-            impl->allocator->release(impl->fallback_memory);
+        if (impl->fallback) {
+            impl->destroyEntry(*impl->fallback);
+            impl->fallback.reset();
         }
         if (impl->fallback_sampler != VK_NULL_HANDLE) {
             // The fallback sampler is one of `samplers` (created through samplerFor), so it was destroyed with them.
@@ -537,9 +536,9 @@ ContentImages::Progress ContentImages::progress() const noexcept
     // number by accident (see Progress).
     for (const auto& [batch, book] : impl->batches) {
         (void)batch;
-        for (const Impl::Entry& pending : book.pending) {
+        for (const std::shared_ptr<Impl::Entry>& pending : book.pending) {
             ++out.pending;
-            out.pending_bytes += pending.bytes;
+            out.pending_bytes += pending->bytes;
         }
     }
     return out;
@@ -553,15 +552,14 @@ bool ContentImages::releaseTexture(const vn::graphics::Texture& texture)
     bool dropped = false;
     const auto found = impl->textures.find(&texture);
     if (found != impl->textures.end()) {
-        impl->bytes_total -= found->second.bytes;
+        impl->bytes_total -= found->second->bytes;
         // THE IMAGE LEAVES THE TABLE NOW AND THE OBJECTS FOLLOW LATER (see releaseLater): the next frame uploads the
         // texture again, which is what the release costs, and the Vulkan image dies once the device's watermark has
-        // passed the frame that could still sample it.
-        Impl::Entry doomed = std::move(found->second);
+        // passed the submission that could still sample it AND no frame still names the entry.
+        std::shared_ptr<Impl::Entry> doomed = std::move(found->second);
         impl->textures.erase(found);
-        impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
-            target->destroyEntry(entry);
-        });
+        const std::weak_ptr<const void> named = doomed;
+        impl->releaseLater(named, [target = impl.get(), entry = std::move(doomed)]() mutable { target->destroyEntry(*entry); });
         dropped = true;
     }
     // A COPY THAT IS NOT PUBLISHED YET GOES THE SAME WAY: a promotion must not resurrect a texture the host let go, so
@@ -570,15 +568,14 @@ bool ContentImages::releaseTexture(const vn::graphics::Texture& texture)
     for (auto& [batch, book] : impl->batches) {
         (void)batch;
         for (auto pending = book.pending.begin(); pending != book.pending.end();) {
-            if (pending->texture.get() != &texture) {
+            if ((*pending)->texture.get() != &texture) {
                 ++pending;
                 continue;
             }
-            Impl::Entry doomed = std::move(*pending);
-            pending            = book.pending.erase(pending);
-            impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
-                target->destroyEntry(entry);
-            });
+            std::shared_ptr<Impl::Entry> doomed   = std::move(*pending);
+            pending                               = book.pending.erase(pending);
+            const std::weak_ptr<const void> named = doomed;
+            impl->releaseLater(named, [target = impl.get(), entry = std::move(doomed)]() mutable { target->destroyEntry(*entry); });
             dropped = true;
         }
     }
@@ -601,18 +598,18 @@ void ContentImages::batchCompleted(const BatchId batch) noexcept
     // PROMOTION: what this batch's command buffer copied is provable now, so the table may serve it (see the class
     // note). A revision the new one replaces leaves `live_bytes` and joins `retired` below - the entry never stopped
     // being resident, it was replaced.
-    for (Impl::Entry& entry : book.pending) {
-        const auto* const key      = entry.texture.get();
+    for (std::shared_ptr<Impl::Entry>& entry : book.pending) {
+        const auto* const key      = entry->texture.get();
         const auto        resident = impl->textures.find(key);
         if (resident != impl->textures.end()) {
-            impl->bytes_total -= resident->second.bytes;
+            impl->bytes_total -= resident->second->bytes;
             book.retired.push_back(std::move(resident->second));
             resident->second = std::move(entry);
         }
         else {
             impl->textures.emplace(key, std::move(entry));
         }
-        impl->bytes_total += impl->textures.at(key).bytes;
+        impl->bytes_total += impl->textures.at(key)->bytes;
     }
     book.pending.clear();
     // THE 1x1 STAND-IN is published by the same evidence (see ensureFallback).
@@ -625,12 +622,12 @@ void ContentImages::batchCompleted(const BatchId batch) noexcept
     }
     book.staging.clear();
     // THE REPLACED IMAGES ARE PARKED, NOT DESTROYED (see releaseLater): another driver's frame may have resolved the
-    // view this driver replaced and still be recording, so only the device's watermark proves nobody can sample them.
-    for (Impl::Entry& entry : book.retired) {
-        Impl::Entry doomed = std::move(entry);
-        impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
-            target->destroyEntry(entry);
-        });
+    // view this driver replaced and still be recording, so only the entry's own share count proves nobody can sample
+    // them.
+    for (std::shared_ptr<Impl::Entry>& entry : book.retired) {
+        std::shared_ptr<Impl::Entry>    doomed = std::move(entry);
+        const std::weak_ptr<const void> named  = doomed;
+        impl->releaseLater(named, [target = impl.get(), entry = doomed]() { target->destroyEntry(*entry); });
     }
     impl->batches.erase(found);
 }
@@ -648,37 +645,29 @@ void ContentImages::batchAbandoned(const BatchId batch) noexcept
     // PARKED, NOT DESTROYED (see the header): a submit that failed may still have executed part of the command buffer,
     // so what the driver could name waits for the device's watermark - and what was never published never becomes
     // resident, which is the whole point (the resident entry a promotion would have replaced stays).
-    const auto park = [this](Impl::Entry& entry) {
-        Impl::Entry doomed = std::move(entry);
-        impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
-            target->destroyEntry(entry);
-        });
+    const auto park   = [this](std::shared_ptr<Impl::Entry>& entry) {
+        std::shared_ptr<Impl::Entry>    doomed = std::move(entry);
+        const std::weak_ptr<const void> named  = doomed;
+        impl->releaseLater(named, [target = impl.get(), entry = doomed]() { target->destroyEntry(*entry); });
     };
-    for (Impl::Entry& entry : book.pending) {
+    for (std::shared_ptr<Impl::Entry>& entry : book.pending) {
         park(entry);
     }
     book.pending.clear();
     // THE 1x1 STAND-IN GOES WITH THEM: it is one pixel and rebuilt on demand, so a stand-in nobody filled must not
     // outlive the frame that failed to fill it.
-    if (impl->fallback_pending_batch == batch) {
-        Impl::Entry fallback{ {} };
-        fallback.image                = impl->fallback_image;
-        fallback.view                 = impl->fallback_view;
-        fallback.memory               = impl->fallback_memory;
-        impl->fallback_image          = VK_NULL_HANDLE;
-        impl->fallback_view           = VK_NULL_HANDLE;
-        impl->fallback_memory         = MemorySlice{};
-        impl->fallback_pending_batch  = 0;
-        park(fallback);
+    if (impl->fallback_pending_batch == batch && impl->fallback) {
+        impl->fallback_pending_batch = 0;
+        park(impl->fallback);
+        impl->fallback.reset();
     }
     // THE STAGING IS PARKED FOR THE SAME REASON the images are: the copy that read it may have run.
     for (auto& [buffer, memory] : book.staging) {
-        impl->releaseLater([target = impl.get(), staged = std::make_pair(buffer, memory)]() mutable {
-            target->destroyBuffer(staged.first, staged.second);
-        });
+        impl->releaseLater(std::weak_ptr<const void>{},
+                           [target = impl.get(), staged = std::make_pair(buffer, memory)]() mutable { target->destroyBuffer(staged.first, staged.second); });
     }
     book.staging.clear();
-    for (Impl::Entry& entry : book.retired) {
+    for (std::shared_ptr<Impl::Entry>& entry : book.retired) {
         park(entry);
     }
     impl->batches.erase(found);
@@ -696,32 +685,29 @@ bool ContentImages::hasPendingUploads(const BatchId batch) const noexcept
     return found != impl->batches.end() && (!found->second.staging.empty() || !found->second.pending.empty());
 }
 
-VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
-                                   const VkCommandBuffer         commands,
-                                   const BatchId                 batch,
-                                   vn::String*                   why)
+ContentImages::TextureView ContentImages::viewFor(const vn::graphics::Texture& texture, const VkCommandBuffer commands, const BatchId batch, vn::String* why)
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
-        return VK_NULL_HANDLE;
+        return {};
     }
     if (!texture.isComplete()) {
         if (why != nullptr) {
             *why = vn::String(u8"vk: a material texture is still being filled (an incomplete texture is not sampled)");
         }
-        return VK_NULL_HANDLE;
+        return {};
     }
 
     const auto found = impl->textures.find(&texture);
-    if (found != impl->textures.end() && found->second.revision == texture.revision()) {
-        return found->second.view;
+    if (found != impl->textures.end() && found->second->revision == texture.revision()) {
+        return TextureView{ found->second->view, found->second };
     }
     // A COPY THIS BATCH ALREADY RECORDED IS ITS OWN, though it is not yet anyone else's: a frame that samples one
     // texture twice must not copy it twice, and another driver must not see it before the copy is proven (see
     // batchCompleted).
     Impl::Batch& book = impl->batches[batch];
-    for (const Impl::Entry& pending : book.pending) {
-        if (pending.texture.get() == &texture && pending.revision == texture.revision()) {
-            return pending.view;
+    for (const std::shared_ptr<Impl::Entry>& pending : book.pending) {
+        if (pending->texture.get() == &texture && pending->revision == texture.revision()) {
+            return TextureView{ pending->view, pending };
         }
     }
     // NOTHING SERVES IT YET, so its copy is recorded here - and a copy may not be recorded inside a rendering instance:
@@ -730,21 +716,21 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
         if (why != nullptr) {
             *why = vn::String(u8"vk: a material texture was not prepared before its rendering instance began");
         }
-        return VK_NULL_HANDLE;
+        return {};
     }
 
-    Impl::Entry entry;
-    entry.texture  = vn::intrusive_ptr<const vn::graphics::Texture>(&texture);
-    entry.revision = texture.revision();
-    if (!impl->createTextureImage(texture, entry, why)) {
-        return VK_NULL_HANDLE;
+    auto entry      = std::make_shared<Impl::Entry>();
+    entry->texture  = vn::intrusive_ptr<const vn::graphics::Texture>(&texture);
+    entry->revision = texture.revision();
+    if (!impl->createTextureImage(texture, *entry, why)) {
+        return {};
     }
 
     // The image starts UNDEFINED; a fresh entry is uploaded whole, while a REVISION replacement is a new image (the
     // old one is retired below), so both take the same path.
-    if (!impl->recordUpload(texture, entry, commands, batch, why)) {
-        impl->destroyEntry(entry);
-        return VK_NULL_HANDLE;
+    if (!impl->recordUpload(texture, *entry, commands, batch, why)) {
+        impl->destroyEntry(*entry);
+        return {};
     }
 
     const ImageState transfer = transferWriteState();
@@ -757,16 +743,16 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
     whole.levelCount     = static_cast<std::uint32_t>(texture.mipCount());
     whole.baseArrayLayer = 0U;
     whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
-    const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry.image, transfer, sampled, whole);
+    const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry->image, transfer, sampled, whole);
     recordBarrier(*impl->table, commands, to_sampled);
 
     // THE BOOKS: built and copied now, RESIDENT only when THIS BATCH COMPLETES (see batchCompleted). The resident entry
     // this revision will replace stays exactly where it is until then - a frame that never ran must leave the last
     // proven revision in place (see batchAbandoned).
     ++impl->built;
-    impl->uploaded_bytes += entry.bytes;
+    impl->uploaded_bytes += entry->bytes;
     book.pending.push_back(std::move(entry));
-    return book.pending.back().view;
+    return TextureView{ book.pending.back()->view, book.pending.back() };
 }
 
 VkSampler ContentImages::samplerFor(const vn::graphics::Sampler& sampler)
@@ -810,23 +796,24 @@ VkSampler ContentImages::samplerFor(const vn::graphics::Sampler& sampler)
     return handle;
 }
 
-bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId batch, vn::String* why)
+ContentImages::TextureView ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId batch, vn::String* why)
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
-        return false;
+        return {};
     }
-    if (impl->fallback_view != VK_NULL_HANDLE) {
+    if (impl->fallback && impl->fallback->view != VK_NULL_HANDLE) {
         // A SHARED CONSTANT (see fallbackView): a frame that finds it mid-fill binds it anyway, because dropping every
         // draw that needs a stand-in is worse than reading one pixel whose copy is one submission away.
-        return true;
+        return TextureView{ impl->fallback->view, impl->fallback };
     }
     if (commands == VK_NULL_HANDLE) {
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback image was not prepared before the rendering instance began");
         }
-        return false;
+        return {};
     }
 
+    auto              entry = std::make_shared<Impl::Entry>();
     VkImageCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     info.imageType     = VK_IMAGE_TYPE_2D;
@@ -841,33 +828,30 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
     info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     info.samples       = VK_SAMPLE_COUNT_1_BIT;
     info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-    if (impl->table->vkCreateImage(impl->device, &info, nullptr, &impl->fallback_image) != VK_SUCCESS) {
-        impl->fallback_image = VK_NULL_HANDLE;
+    if (impl->table->vkCreateImage(impl->device, &info, nullptr, &entry->image) != VK_SUCCESS) {
+        entry->image = VK_NULL_HANDLE;
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback image could not be created");
         }
-        return false;
+        return {};
     }
 
     VkMemoryRequirements requirements{};
-    impl->table->vkGetImageMemoryRequirements(impl->device, impl->fallback_image, &requirements);
-    impl->fallback_memory = impl->allocator->allocate(requirements, MemoryUsage::DeviceLocal, MemoryKind::Optimal);
-    if (!impl->fallback_memory.valid()) {
-        impl->table->vkDestroyImage(impl->device, impl->fallback_image, nullptr);
-        impl->fallback_image = VK_NULL_HANDLE;
+    impl->table->vkGetImageMemoryRequirements(impl->device, entry->image, &requirements);
+    entry->memory = impl->allocator->allocate(requirements, MemoryUsage::DeviceLocal, MemoryKind::Optimal);
+    if (!entry->memory.valid()) {
+        impl->destroyEntry(*entry);
         if (why != nullptr) {
             *why = vn::String(u8"vk: the pool could not serve the 1x1 fallback image");
         }
-        return false;
+        return {};
     }
-    if (impl->table->vkBindImageMemory(impl->device, impl->fallback_image, impl->fallback_memory.memory, impl->fallback_memory.offset) != VK_SUCCESS) {
-        impl->allocator->release(impl->fallback_memory);
-        impl->table->vkDestroyImage(impl->device, impl->fallback_image, nullptr);
-        impl->fallback_image = VK_NULL_HANDLE;
+    if (impl->table->vkBindImageMemory(impl->device, entry->image, entry->memory.memory, entry->memory.offset) != VK_SUCCESS) {
+        impl->destroyEntry(*entry);
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback image's memory could not be bound");
         }
-        return false;
+        return {};
     }
 
     VkBuffer    staging_buffer{ VK_NULL_HANDLE };
@@ -876,7 +860,8 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be created");
         }
-        return false;
+        impl->destroyEntry(*entry);
+        return {};
     }
     void* const mapped = impl->allocator->map(staging_memory);
     if (mapped == nullptr) {
@@ -884,55 +869,52 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be mapped");
         }
-        return false;
+        impl->destroyEntry(*entry);
+        return {};
     }
     const std::uint8_t white[4]{ 255U, 255U, 255U, 255U };
     std::memcpy(mapped, white, sizeof(white));
 
     const ImageState transfer = transferWriteState();
-    const VkImageMemoryBarrier2 to_transfer =
-        barrierBetween(impl->fallback_image, stateOf(ImageLayout::Undefined), transfer, VK_IMAGE_ASPECT_COLOR_BIT);
+    const VkImageMemoryBarrier2 to_transfer = barrierBetween(entry->image, stateOf(ImageLayout::Undefined), transfer, VK_IMAGE_ASPECT_COLOR_BIT);
     recordBarrier(*impl->table, commands, to_transfer);
 
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1U;
     region.imageExtent                 = VkExtent3D{ 1U, 1U, 1U };
-    impl->table->vkCmdCopyBufferToImage(commands,
-                                        staging_buffer,
-                                        impl->fallback_image,
-                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        1U,
-                                        &region);
+    impl->table->vkCmdCopyBufferToImage(commands, staging_buffer, entry->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1U, &region);
 
     const ImageState sampled = stateOf(ImageLayout::ShaderReadOnly);
-    const VkImageMemoryBarrier2 to_sampled = barrierBetween(impl->fallback_image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
+    const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry->image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
     recordBarrier(*impl->table, commands, to_sampled);
     impl->batches[batch].staging.emplace_back(staging_buffer, staging_memory);
 
     VkImageViewCreateInfo view{};
     view.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view.image                           = impl->fallback_image;
+    view.image                           = entry->image;
     view.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
     view.format                          = VK_FORMAT_R8G8B8A8_UNORM;
     view.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
     view.subresourceRange.levelCount     = 1U;
     view.subresourceRange.layerCount     = 1U;
-    if (impl->table->vkCreateImageView(impl->device, &view, nullptr, &impl->fallback_view) != VK_SUCCESS) {
-        impl->fallback_view = VK_NULL_HANDLE;
+    if (impl->table->vkCreateImageView(impl->device, &view, nullptr, &entry->view) != VK_SUCCESS) {
+        entry->view = VK_NULL_HANDLE;
+        impl->destroyEntry(*entry);
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback image's view could not be created");
         }
-        return false;
+        return {};
     }
     // PENDING UNTIL THIS BATCH COMPLETES (see the class note): the copy above is recorded, not proven.
+    impl->fallback               = std::move(entry);
     impl->fallback_pending_batch = batch;
-    return true;
+    return TextureView{ impl->fallback->view, impl->fallback };
 }
 
 VkImageView ContentImages::fallbackView() const noexcept
 {
-    return impl != nullptr ? impl->fallback_view : VK_NULL_HANDLE;
+    return impl != nullptr && impl->fallback ? impl->fallback->view : VK_NULL_HANDLE;
 }
 
 VkSampler ContentImages::fallbackSampler() const noexcept

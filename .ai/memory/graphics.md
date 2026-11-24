@@ -2336,3 +2336,32 @@
   while `completed` stayed at 2 - the clock's own note says an idle window constrains nothing). T61 is what currently
   hides T60, so one batch should fix both.
 - Verified: `test_vk` 209/209, `test_graphics` green, TSan + ASan runs, eleven gates, demo.
+
+## 2026-11-24 — T60 + T61: completion belongs to the submission, content is borrowed too
+
+- **The concept that was wrong (T61)**: `DeviceClock`'s watermark was a MINIMUM over registered windows, so an engine
+  that stopped framing kept its last report forever and no parked release ever ran (`submitted` 7 / `completed` 2,
+  measured). Now every submit takes a number inside the queue's lock (`noteSubmission`) and reports its proof after
+  the fence (`noteCompletion`); the watermark is the oldest unproven submission minus one, or every number when
+  nothing is unproven. Registration (`addDriver` / `removeDriver`) is identity only. `FrameTimeline` keeps only
+  frame-number minting (no `submittedFrame` / `completedFrame` / `completeUpTo` / `retirePoint`), and
+  `RetirementQueue::retire/advance/retirePoint` take the clock. `ADR-2026-11-24-completion-belongs-to-the-submission`.
+- **The second window, applied to content (T60)**: the caches hold `shared_ptr` entries (`GeometryEntry`,
+  `InstanceStream`, `PipelineHandle`, `ContentImages::Impl::Entry` and its stand-in), `FrameBuilds::borrow` (deduped by
+  address) keeps every entry a frame head resolved until the frame ends, and every release path erases or REPLACES the
+  table's share before it parks. Replacing rather than mutating is load-bearing: a table's own share inside a parked
+  entry makes the `use_count` probe count it and never destroy anything (that is why `releaseStreams`,
+  `ensureInstanceStream`'s revision change and `failGeometry` all build a new entry).
+- **Traps**:
+  * A frame whose pass walk finds nothing reports `NoRunnablePass` (Info) - while a diagnostic sink is holding a frame,
+    that report waits on the sink's own `report_mutex`, which is why a test that holds a frame with a sink must run a
+    frame that DRAWS something (or must not run a frame at all).
+  * A park is dated against the SUBMISSION sequence: a frame that submits nothing (`frame.passes` empty) proves nothing,
+    so only submitting frames drain a park.
+  * A test that builds a `DrawPacket` on the driver thread while another thread releases the objects it names is a race
+    in the TEST (TSan names `ShaderProgram::description()`); build the `FrameDescription` once, before the threads.
+  * `retirementNumbers()` is a host verb (body gate EXCLUSIVE): it cannot be read while a frame is deliberately held.
+- **Evidence**: `test_vk` **212/212**, `test_graphics` 644/644, TSan `test_vk` 212/212 with **0** warnings,
+  ASan+LSan focused **PASS**, 11 gates green. Mutations: an extra driver freezing the watermark reddens
+  `CoreDeviceClockTest.AnIdleDriverHoldsNothingBack` and the source-keeps drain; `borrow` as a no-op reddens
+  `VkMultiSessionTest.AFrameKeepsTheContentItResolvedUntilTheFrameEnds` (the picture is black).

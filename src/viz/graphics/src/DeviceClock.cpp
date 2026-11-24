@@ -4,45 +4,25 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-FrameDriverId DeviceClock::addWindow() noexcept
+FrameDriverId DeviceClock::addDriver() noexcept
 {
-    // A window that joins proves nothing about the frames before it existed, so it starts AT the watermark: starting
-    // it at zero would hold the whole device's evidence at zero for as long as that window lives.
-    windows_.push_back(Window{ completed_, 0, true });
-    return static_cast<FrameDriverId>(windows_.size() - 1U);
+    // IDENTITY ONLY (see the header): the number is never reused, so an id that outlived its driver answers "unknown"
+    // instead of naming another driver's tables - which is why the vector only ever grows.
+    const auto id = next_driver_++;
+    drivers_.push_back(true);
+    return id;
 }
 
-void DeviceClock::removeWindow(FrameDriverId window) noexcept
+void DeviceClock::removeDriver(const FrameDriverId driver) noexcept
 {
-    if (window >= windows_.size()) {
-        return;
+    if (driver < drivers_.size()) {
+        drivers_[driver] = false;
     }
-    windows_[window].live = false;
-    updateWatermark();
 }
 
-void DeviceClock::setWindowSlots(FrameDriverId window, std::uint32_t slots) noexcept
+std::size_t DeviceClock::drivers() const noexcept
 {
-    if (window >= windows_.size()) {
-        return;
-    }
-    windows_[window].slots = slots;
-}
-
-void DeviceClock::windowCompleted(FrameDriverId window, std::uint64_t frame) noexcept
-{
-    if (window >= windows_.size()) {
-        return;
-    }
-    Window& entry = windows_[window];
-    if (entry.slots == 0) {
-        // It does not know how many frames may be in flight, so it cannot say which frame its evidence covers: the
-        // report is dropped rather than guessed at (see setWindowSlots).
-        return;
-    }
-    // Monotonic, like the timeline's own watermark: completion is a fact about the past.
-    entry.completed = std::max(entry.completed, frame);
-    updateWatermark();
+    return static_cast<std::size_t>(std::count(drivers_.begin(), drivers_.end(), true));
 }
 
 FrameToken DeviceClock::begin() noexcept
@@ -70,51 +50,44 @@ const FrameTimeline& DeviceClock::timeline() const noexcept
     return timeline_;
 }
 
-std::uint64_t DeviceClock::completedFrame() const noexcept
+std::uint64_t DeviceClock::noteSubmission() noexcept
+{
+    // ASCENDING BY CONSTRUCTION: the caller holds the queue's external-synchronization lock, so these numbers are the
+    // order the queue receives the submissions (see the header).
+    ++submissions_;
+    unproven_.push_back(submissions_);
+    return submissions_;
+}
+
+void DeviceClock::noteCompletion(const std::uint64_t submission) noexcept
+{
+    const auto found = std::find(unproven_.begin(), unproven_.end(), submission);
+    if (found == unproven_.end()) {
+        // A submission that was never numbered, or one already proven: completion is a fact about the past that a
+        // second report cannot change.
+        return;
+    }
+    unproven_.erase(found);
+    updateWatermark();
+}
+
+std::uint64_t DeviceClock::submissions() const noexcept
+{
+    return submissions_;
+}
+
+std::uint64_t DeviceClock::completedSubmission() const noexcept
 {
     return completed_;
 }
 
-std::uint32_t DeviceClock::widestSlots() const noexcept
-{
-    std::uint32_t widest = 0;
-    for (const Window& window : windows_) {
-        if (window.live) {
-            widest = std::max(widest, window.slots);
-        }
-    }
-    return widest;
-}
-
-std::size_t DeviceClock::windows() const noexcept
-{
-    return static_cast<std::size_t>(std::count_if(windows_.begin(), windows_.end(), [](const Window& window) { return window.live; }));
-}
-
 void DeviceClock::updateWatermark() noexcept
 {
-    // THE MINIMUM, over the windows that still exist (see the file note for why it is a minimum and not a maximum).
-    // With no window at all the last watermark stands: nothing new was submitted, so nothing new is proven or
-    // disproven.
-    bool          any   = false;
-    std::uint64_t least = 0;
-    for (const Window& window : windows_) {
-        if (!window.live) {
-            continue;
-        }
-        if (window.slots == 0) {
-            // A window that never learned its in-flight count proves NOTHING: its evidence would be a guess, and a
-            // guess in this direction destroys an object a submitted command buffer still names.
-            return;
-        }
-        least = any ? std::min(least, window.completed) : window.completed;
-        any   = true;
-    }
-    if (!any) {
-        return;
-    }
-    completed_ = std::max(completed_, least);
-    timeline_.completeUpTo(completed_);
+    // THE OLDEST UNPROVEN SUBMISSION DECIDES: every number below it is complete (the queue proved each one or it would
+    // still be in the list), and the ones above it prove nothing about it. With nothing unproven, every number handed
+    // out is complete - which is the answer a device reaches as soon as its last submission's fence signalled.
+    const std::uint64_t floor = unproven_.empty() ? submissions_ : unproven_.front() - 1U;
+    completed_                = std::max(completed_, floor);
 }
 
 VN_GRAPHICS_NS_END

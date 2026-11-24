@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/DeviceClock.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -29,6 +29,10 @@
  *   release it a frame early, which is how a render pass once died under a submitted command buffer), and advance as
  *   the LAST step of a committed frame. Both rules are here as the documented contract of retire()/advance(); the
  *   frame's own order is the executor's to keep.
+ * - DATED AGAINST THE SUBMISSION SEQUENCE, NOT A FRAME NUMBER (see DeviceClock): what a park waits for is "every
+ *   submission that could name this object is complete", and a submission is numbered when the command buffer is
+ *   handed to the queue rather than when its frame body started. The two are different on a device with several
+ *   drivers, which is exactly where the older frame-number dating stalled.
  */
 VN_GRAPHICS_NS_BEGIN
 
@@ -38,16 +42,16 @@ VN_GRAPHICS_NS_BEGIN
 class VN_GRAPHICS_API RetirementQueue {
   public:
     /**
-     * @brief What the queue runs when a resource's turn comes: the release act, handed the timeline it was reached at.
+     * @brief What the queue runs when a resource's turn comes: the release act, handed the clock it was reached at.
      *
      * @details
-     * - WHY THE TIMELINE IS A PARAMETER: a release act may find that something still names the object (a frame body
-     *   that has not ended, a value a host holds) and ask for ANOTHER window. Re-parking needs a timeline, and the
+     * - WHY THE CLOCK IS A PARAMETER: a release act may find that something still names the object (a frame body
+     *   that has not ended, a value a host holds) and ask for ANOTHER window. Re-parking needs the clock, and the
      *   queue runs its callbacks under the caller's clock lock - so handing it in is what keeps that act lock-free.
      * - NULL MEANS TEARDOWN: `releaseAll()` is emptying the queue because the device is going away; nothing may be
      *   parked again, so the act runs the release itself.
      */
-    using ReleaseFn = std::function<void(const FrameTimeline*)>;
+    using ReleaseFn = std::function<void(const DeviceClock*)>;
 
   public:
     /** @brief Creates a queue whose parking window is derived from @p slots.
@@ -58,18 +62,18 @@ class VN_GRAPHICS_API RetirementQueue {
      */
     explicit RetirementQueue(std::uint32_t slots);
 
-    /** @brief Parks @p release until the timeline is past the slot that could still need it.
+    /** @brief Parks @p release until the device has proven every submission that could still need it.
      *
      * @details
      * - Call it during the frame that replaces the object, before advance() of that same frame.
      *
-     * @param timeline The frame timeline the park is dated against.
+     * @param clock   The device's submission clock the park is dated against.
      * @param release Release act, run later; empty is ignored.
      * @return true when the object was parked; false when parking is unavailable (see parkingAvailable()), in which
      *         case the caller must release it under a COUNTED device wait instead - the object has no safe window
      *         without the evidence.
      */
-    [[nodiscard]] bool retire(const FrameTimeline& timeline, ReleaseFn release);
+    [[nodiscard]] bool retire(const DeviceClock& clock, ReleaseFn release);
 
     /** @brief Sets the parking window, once the session learns how many frames may be in flight.
      *
@@ -97,9 +101,9 @@ class VN_GRAPHICS_API RetirementQueue {
      * - The frame's last step. Releases run AFTER the queue was compacted, so a release callback that parks something
      *   new cannot invalidate the iteration it is running inside.
      *
-     * @param timeline The frame timeline, whose completed watermark decides what is due.
+     * @param clock The device's submission clock, whose completed watermark decides what is due.
      */
-    void advance(const FrameTimeline& timeline);
+    void advance(const DeviceClock& clock);
 
     /** @brief Runs every parked release NOW, whatever its turn was.
      *
@@ -117,8 +121,8 @@ class VN_GRAPHICS_API RetirementQueue {
     /** @brief Gets the number of command-buffer slots the parking window is derived from. */
     [[nodiscard]] std::uint32_t slots() const noexcept;
 
-    /** @brief Gets the frame an object parked right now would be released at. */
-    [[nodiscard]] std::uint64_t retirePoint(const FrameTimeline& timeline) const noexcept;
+    /** @brief Gets the submission a park made right now would be released at. */
+    [[nodiscard]] std::uint64_t retirePoint(const DeviceClock& clock) const noexcept;
 
     /** @brief Gets how many objects are parked. */
     [[nodiscard]] std::size_t pending() const noexcept;
@@ -146,7 +150,7 @@ class VN_GRAPHICS_API RetirementQueue {
 
   private:
     struct Entry {
-        std::uint64_t retire_at{ 0 }; // First completed frame at which the object is safe to release.
+        std::uint64_t retire_at{ 0 }; // First completed submission at which the object is safe to release.
         ReleaseFn     release;        // What to run then.
     };
 

@@ -87,7 +87,8 @@ using vn::graphics::TargetInstance;
  *   the destructor acts on. A frame that bailed out before the submit must still close its token: the timeline answers
  *   the SAME open token to the next `begin()` (see FrameTimeline::begin), so leaving one open would run two frames as
  *   one - and the parked releases would never see a watermark.
- * - SUBMITTING IS NOT COMPLETING. The success path reports completion separately, after the fence (see the callers);
+ * - SUBMITTING IS NOT COMPLETING. The success path reports completion separately, after the fence (see the callers),
+ *   and it reports it to the clock as a SUBMISSION's proof (`DeviceClock::noteCompletion`), not as a frame number:
  *   this guard only spends the frame.
  * - THE LAST STEP IS THE QUEUE'S: `advance()` runs after the token is closed, so a frame that just proved completion
  *   releases what that proof allows. Running it in the destructor is what puts it on every path.
@@ -110,7 +111,7 @@ struct FrameTokenCloser {
         else {
             clock.abandoned(token);
         }
-        retirement.advance(clock.timeline());
+        retirement.advance(clock);
     }
 };
 
@@ -992,16 +993,17 @@ struct Device::Impl {
     MemoryReports memory_reports{};
 
     /**
-     * @brief The device's completion clock and its park queue: WHEN an object a host released may really be destroyed.
+     * @brief The device's submission clock and its park queue: WHEN an object a host released may really be destroyed.
      *
      * @details
      * - ONE CLOCK, ONE PARK QUEUE, like the reference backend: whether a buffer or an image may be destroyed is a
      *   question about the WHOLE device, because every frame reads the same objects - so the answer cannot live in a
      *   session.
-     * - THIS DEVICE REGISTERS ONE CLOCK WINDOW, because a frame here is submitted and waited for inside the call
-     *   (`slots` = 1). Step 2 of `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` registers one window per
-     *   session; the queue and the arithmetic do not change - only the number of witnesses whose minimum is the
-     *   watermark.
+     * - THE CLOCK IS THE DEVICE'S, NOT A SESSION'S: every submit takes the next number from it (inside the queue's
+     *   external-synchronization lock, so the numbers follow the queue's own order) and reports that number's proof
+     *   after the fence. Nothing here is per-driver, which is what makes an idle driver harmless (see DeviceClock).
+     * - Frames in flight on this device today: one, because `executeFrame` submits and waits inside the call. The
+     *   park's window is derived from that number (see `retirement.setSlots`).
      * - `releaseAll()` at shutdown is what makes the parked releases run at all: parking exists to wait for evidence,
      *   and a device being torn down has produced it by idling.
      */
@@ -1021,9 +1023,10 @@ struct Device::Impl {
      *
      * @details
      * - TWO WINDOWS, ONE DECISION (ADR-2026-11-24-residency-borrowing). The park answers "has the work that named it
-     *   completed" (the timeline); @p named answers "does a value still name it" - a pass handle, a record a frame
-     *   reads, a host verb's own share. The second window is real and not academic: OFF-SCREEN frame bodies overlap
-     *   (see `executeFrame`), so one engine's frame can complete - and run this - while another is still recording.
+     *   completed" (the device's submission watermark); @p named answers "does a value still name it" - a pass handle,
+     *   a record a frame reads, an entry a frame resolved, a host verb's own share. The second window is real and not
+     *   academic: OFF-SCREEN frame bodies overlap (see `executeFrame`), so one engine's frame can complete - and run
+     *   this - while another is still recording.
      * - THE PARK'S OWN SHARE IS NOT A HOLDER. The queued act holds the object, so it sees "one reference" when nobody
      *   but the park holds it, and it asks again at a later frame end when it sees more - there is no spin, because
      *   the only owners are frame bodies and host verbs, and every frame end is another chance to ask.
@@ -1041,11 +1044,12 @@ struct Device::Impl {
 
     void releaseLater(std::weak_ptr<const void> named, std::function<void()> destroy)
     {
-        {
+        // THE QUEUE IS THE EVIDENCE: armed (a known slot count) means it can date a park, and it needs no driver to
+        // exist - an idle device still proves its own last submission (see DeviceClock). The act is handed over BY
+        // COPY, because a queue that cannot park must not consume what the fallback below still has to run.
+        if (retirement.parkingAvailable()) {
             const std::lock_guard<std::mutex> held(clock_mutex);
-            // A LIVE WINDOW IS THE EVIDENCE'S PREMISE: a queue whose timeline nobody reports cannot date a park. It
-            // is asked HERE rather than kept in a flag, because any number of drivers may come and go (S6c-2).
-            if (clock.windows() != 0 && parkRelease(named, destroy, clock.timeline())) {
+            if (parkRelease(named, destroy, clock)) {
                 return;
             }
         }
@@ -1074,15 +1078,16 @@ struct Device::Impl {
      *
      * @param named    A weak view of the object, or empty.
      * @param destroy  The release act (keeps the object alive while it is parked).
-     * @param timeline The frame timeline this window is dated against.
+     * @param when     The device clock this window is dated against.
      * @return true when the act was parked; false when the queue cannot park at all (see parkingAvailable).
      */
-    [[nodiscard]] bool parkRelease(std::weak_ptr<const void> named, std::function<void()> destroy, const vn::graphics::FrameTimeline& timeline)
+    [[nodiscard]] bool parkRelease(std::weak_ptr<const void> named, std::function<void()> destroy, const vn::graphics::DeviceClock& when)
     {
-        return retirement.retire(timeline, [this, named, destroy](const vn::graphics::FrameTimeline* at) mutable {
+        return retirement.retire(when, [this, named, destroy](const vn::graphics::DeviceClock* at) mutable {
             if (at != nullptr && named.use_count() > 1) {
-                // STILL NAMED BY A VALUE THIS DEVICE LENT (a pass handle, a frame's read, a host verb's share):
-                // another window. The park keeps its own share, so the object cannot die before the next turn.
+                // STILL NAMED BY A VALUE THIS DEVICE LENT (a pass handle, a frame's read, an entry a frame resolved,
+                // a host verb's share): another turn. The park keeps its own share, so the object cannot die before
+                // the next turn.
                 (void)this->parkRelease(named, destroy, *at);
                 return;
             }
@@ -1343,13 +1348,11 @@ Device::FrameDriver::CreateRefusal Device::FrameDriver::create() noexcept
             return CreateRefusal::CommandBuffer;
         }
     }
-    // THE CLOCK WINDOW: a frame reports its completion through this id (see DeviceClock), and the park queue dates a
-    // release against the watermark it feeds. The clock starts a joining window AT the current watermark, which is
-    // right for a driver created with the device: it proves nothing about frames it never drove.
+    // THE CLOCK WINDOW: the identity this driver keys its own tables by (see DeviceClock). It is NOT completion
+    // evidence - the device's watermark counts SUBMISSIONS, so a driver that stops framing stalls nothing.
     if (!clock_window_live) {
         const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
-        clock_window      = owner.clock.addWindow();
-        owner.clock.setWindowSlots(clock_window, Impl::kFramesInFlight);
+        clock_window      = owner.clock.addDriver();
         clock_window_live = true;
     }
     return CreateRefusal::Ok;
@@ -1372,11 +1375,11 @@ void Device::FrameDriver::destroy() noexcept
     // layouts (which the sets were allocated against) outlive it - `Device::shutdown` destroys the scratch before the
     // caches, and this call is idempotent for the paths that reach a destroy without a shutdown.
     scratch.destroy();
-    // THE WINDOW LEAVES FIRST: a device clock that still lists this driver keeps the device watermark where it is, and
-    // a queue that waits for evidence from a driver that no longer exists would never release anything.
+    // THE IDENTITY LEAVES FIRST: a device clock that still lists this driver lets it key a table nothing will read
+    // again; the completion watermark never consulted it, so nothing about released objects changes here.
     if (clock_window_live) {
         const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
-        owner.clock.removeWindow(clock_window);
+        owner.clock.removeDriver(clock_window);
         clock_window_live = false;
     }
     if (owner.device != VK_NULL_HANDLE) {
@@ -1672,10 +1675,10 @@ void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::Frame
             if (description.kind == vn::graphics::DrawKind::Fullscreen) {
                 call.plans.resize(1U);
                 FrameHead::DrawPlan& plan = call.plans.front();
-                (void)owner.caches.planScreen(description, pass_draw, pass_head.target.compatibility(), plan, call.refusal, cache_lock);
+                (void)owner.caches.planScreen(description, pass_draw, pass_head.target.compatibility(), plan, call.refusal, cache_lock, frame_builds);
                 // The destination's stand-in and shadow sampler: a full-screen draw samples the target it names, so its
                 // slots are the source's views (assembled where the source is), not a material's.
-                owner.caches.resolveTextures(nullptr, commands, head, plan, call.refusal, cache_lock, uploadBatch());
+                owner.caches.resolveTextures(nullptr, commands, head, plan, call.refusal, cache_lock, uploadBatch(), frame_builds);
                 continue;
             }
             if (description.commands == nullptr) {
@@ -1694,7 +1697,7 @@ void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::Frame
                                               frame_builds)) {
                     continue; // the plan stays empty and `record` skips exactly this command
                 }
-                owner.caches.resolveTextures(plan.material.get(), commands, head, plan, call.refusal, cache_lock, uploadBatch());
+                owner.caches.resolveTextures(plan.material.get(), commands, head, plan, call.refusal, cache_lock, uploadBatch(), frame_builds);
             }
         }
     }
@@ -2143,12 +2146,19 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         submit.pSignalSemaphoreInfos    = &signal_info;
     }
 
+    std::uint64_t  submission{ 0 };
     const VkResult submit_result = [&]() {
         // THE QUEUE IS EXTERNALLY SYNCHRONIZED (see Impl::queue_submit): another driver may be submitting on its own
         // thread right now, and the lock is taken for the driver call only - the fence wait below stays outside it.
         const std::lock_guard<std::mutex> submit_held(owner.queue_submit);
         if (owner.takeSubmitRefusal()) {
             return VK_ERROR_OUT_OF_HOST_MEMORY; // the test door (see Device::refuseNextSubmit): a failure, not a loss
+        }
+        // THE SUBMISSION'S NUMBER, taken where the queue is handed the buffer (see DeviceClock): inside this lock the
+        // numbers follow the order the queue sees, which is what makes "every submission up to N is complete" true.
+        {
+            const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+            submission = owner.clock.noteSubmission();
         }
         return owner.device_table.vkQueueSubmit2(owner.queue, 1U, &submit, completion);
     }();
@@ -2157,16 +2167,24 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         ++books.progress.submitted;
         frame_close.submitted = true;
     }
+    else if (submission != 0) {
+        // THE QUEUE NEVER TOOK IT, so nothing the command buffer named will ever execute: the number is proven at
+        // once, or the device's watermark would wait forever for a submission that does not exist. (A submission the
+        // queue DID take whose fence never signalled can only be a lost device, and its teardown releases everything.)
+        const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+        owner.clock.noteCompletion(submission);
+    }
     const VkResult fence_result = submitted ? owner.device_table.vkWaitForFences(owner.device, 1U, &completion, VK_TRUE, UINT64_MAX)
                                             : submit_result;
     const bool     completed    = fence_result == VK_SUCCESS;
     if (completed) {
         ++books.progress.completed;
-        // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): the frame's GPU work is provably
-        // done, so every object a release handed over while this frame was in flight may now go.
+        // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): this submission's GPU work is
+        // provably done, so every object a release handed over while it was in flight may now go - once every earlier
+        // submission is proven too, which is what the device's watermark folds (see DeviceClock).
         {
             const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
-            owner.clock.windowCompleted(clock_window, frame_token.frame);
+            owner.clock.noteCompletion(submission);
         }
         // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
         // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
@@ -2313,9 +2331,9 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
         owner.prepare_target_report.rearm(); // the frame named a target this device handed out
     }
 
-    // THE WARM-UP IS A SUBMISSION TOO (see ADR-2026-11-14): it opens a frame on the clock, so the transfer batch it may
-    // submit carries a frame number the park queue can date a release against - and a warm-up that records nothing
-    // spends the token without moving the submitted watermark.
+    // THE WARM-UP OPENS A FRAME ON THE CLOCK (see ADR-2026-11-14) so a release announced while it runs has a frame
+    // body to be told apart from - and if it submits its transfer batch, that submit takes a SUBMISSION number like
+    // any other (see DeviceClock). A warm-up that records nothing spends the token without becoming a submission.
     vn::graphics::FrameToken warmup_token{};
     {
         const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
@@ -2433,11 +2451,18 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
             submit.sType                  = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
             submit.commandBufferInfoCount = 1U;
             submit.pCommandBufferInfos    = &command_info;
+            std::uint64_t  submission{ 0 };
             const VkResult submit_result = [&]() {
                 // THE QUEUE IS EXTERNALLY SYNCHRONIZED (see Impl::queue_submit): held for the driver call only.
                 const std::lock_guard<std::mutex> submit_held(owner.queue_submit);
                 if (owner.takeSubmitRefusal()) {
                     return VK_ERROR_OUT_OF_HOST_MEMORY; // the test door (see Device::refuseNextSubmit)
+                }
+                // THE SUBMISSION'S NUMBER (see DeviceClock): a warm-up's transfer batch is submitted work, and work
+                // submitted here may name a released object just like a frame's may.
+                {
+                    const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+                    submission = owner.clock.noteSubmission();
                 }
                 return owner.device_table.vkQueueSubmit2(owner.queue, 1U, &submit, completion);
             }();
@@ -2447,9 +2472,13 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
             const bool     completed     = fence_result == VK_SUCCESS;
             transfers_completed          = completed;
             warmup_close.submitted       = submit_result == VK_SUCCESS;
-            if (completed) {
+            {
                 const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
-                owner.clock.windowCompleted(clock_window, warmup_token.frame);
+                if (submission != 0) {
+                    // A batch the queue refused never ran (nothing it named will execute); one that completed is
+                    // proven. A batch that was taken and never signalled can only be a lost device.
+                    owner.clock.noteCompletion(submission);
+                }
             }
             (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
             if (!completed && !owner.note_device_lost(submit_result, "vkQueueSubmit") && !owner.note_device_lost(fence_result, "vkWaitForFences")) {
@@ -3235,13 +3264,14 @@ bool Device::initialize()
         }
     }
 
-    // THE PARK QUEUE'S WINDOW, from the first frame on: the driver registered its clock window in create(), so the
-    // queue knows how many frames may be in flight and every released object waits for that watermark (see
-    // Impl::releaseLater).
-    impl->retirement.setSlots(impl->clock.widestSlots());
+    // THE PARK QUEUE'S WINDOW: a parked object must outlive the slot that could still name it, so the queue needs the
+    // number of frames this device may have in flight. No driver has to exist for that - the watermark counts the
+    // device's own submissions (see DeviceClock).
+    impl->retirement.setSlots(Impl::kFramesInFlight);
     // THE PARK SEAM, not the queue itself: the caches ask the DEVICE "when may this go?", and the device answers with
     // its clock and its queue (see Impl::releaseLater). That is what lets two drivers share one clock safely.
-    impl->caches.setRetirement([impl = impl.get()](std::function<void()> destroy) { impl->releaseLater(std::move(destroy)); });
+    impl->caches.setRetirement(
+        [impl = impl.get()](std::weak_ptr<const void> named, std::function<void()> destroy) { impl->releaseLater(std::move(named), std::move(destroy)); });
 
     // THE TARGET TABLE'S SESSION (see TargetTable::open): the same park seam the caches got, plus the device facts a
     // build compares against. A release parks THROUGH the table, so "the entry left the map" and "the images wait for

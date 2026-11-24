@@ -102,9 +102,14 @@ keeps the old argument.
   one owner (the device's residency) and are lent to a frame for its life; they are destroyed only when no submitted
   work names them (the park's timeline) and no value the device lent still names them (`use_count` probe, re-asked at a
   later frame end), and neither window makes a release wait (`R6`). `RetirementQueue::ReleaseFn` receives the timeline
-  so a release act may ask for another window; the pass handle and `FrameRecording::read_records` are the values that
-  keep a record alive until the frame ends. Content entries (T60) and the idle-window watermark freeze (T61) are named
-  follow-ups.
+  so a release act may ask for another window; the pass handle, `FrameRecording::read_records` and `FrameBuilds::borrow`
+  are the values that keep a record or a content entry alive until the frame ends (both originally named follow-ups are
+  closed - see its appended correction).
+
+- `ADR-2026-11-24-completion-belongs-to-the-submission.md` — **the device's completion watermark is its submission
+  sequence, not a minimum over frame drivers**: every `vkQueueSubmit2` takes the next number inside the queue's lock and
+  reports its proof after the fence; the watermark is the oldest unproven submission minus one. Driver registration is
+  identity only, so an idle engine stalls nothing (the frozen-park defect T61).
 
 - `ADR-2026-11-24-per-attachment-load-store.md` — **a pass states load/store per attachment, and the backend resolves
   the one fact the engine cannot know**: `AttachmentLoadStore` (`LoadOp` + `StoreOp`) is the seam's per-attachment

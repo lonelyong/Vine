@@ -1144,8 +1144,12 @@ TEST(VkMultiSessionTest, AFrameKeepsTheSourceItReadsUntilTheFrameEnds)
     // A FRAME OWNS WHAT IT NAMES, NOT ONLY WHAT IT DRAWS INTO (see FrameRecording::read_records). Off-screen frame
     // bodies OVERLAP: while one driver records, another may complete a frame - and that frame end runs the park. A
     // host release of the source in between must not destroy images the recording frame is still going to submit, so
-    // the frame keeps the record it resolved. The instrument is the park again: its turn must DEFER while the source
-    // is held by a frame, and destroy once that frame has ended.
+    // the frame keeps the record it resolved. The instrument is the RECORD'S SHARE COUNT, read here without taking the
+    // body gate (retirementNumbers() is a host verb and would wait out the frame this case exists to hold).
+    //
+    // AND THE DRAIN IS THE SECOND WITNESS (backlog T61): once that frame ends, the parked record must be released
+    // while the IDLE driver is still registered - the watermark counts the device's submissions, so a driver that
+    // stops framing holds nothing back.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     if (!backend->initialize()) {
@@ -1172,6 +1176,8 @@ void main()
 
     // A PICTURE IN THE SOURCE, so the frame has something to read (and the table holds a built record for it).
     ASSERT_EQ(backend->executeFrame(drawingFrame(source.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    std::shared_ptr<vn::backend_vk::TargetObjects> record = device->targetTable().lookup(source.get());
+    ASSERT_NE(record, nullptr) << "the table never built the source";
 
     std::atomic<bool> sink_entered{ false };
     std::atomic<bool> go{ false };
@@ -1207,26 +1213,170 @@ void main()
     }
     ASSERT_TRUE(sink_entered.load()) << "the recording frame never reached its refusal";
 
-    // THE RELEASE AND A COMPLETED FRAME, WHILE THE OTHER BODY IS STILL RECORDING: its frame end runs the park's turn.
+    // THE RELEASE AND A COMPLETED FRAME, WHILE THE OTHER BODY IS STILL RECORDING: its frame end runs the park's turn,
+    // which must keep the record because TWO values still name it - the reading frame's, and this case's own.
     device->releaseRenderTarget(source.get());
     ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
-    const std::size_t held_by_the_recording_frame = device->retirementNumbers().pending;
-    EXPECT_GE(held_by_the_recording_frame, 1U) << "the park destroyed a record a frame was still reading";
+    EXPECT_GE(record.use_count(), 3L)
+        << "the park let go of a record a frame was still reading (the armed act, the reporting frame and this case each hold one share)";
+    EXPECT_TRUE(record->built()) << "the record the reading frame names was destroyed under it";
 
     go.store(true, std::memory_order_release);
     recorder.join();
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the recording frame did not finish";
     backend->setDiagnosticSink({});
 
-    // ONCE THAT FRAME HAS ENDED, nothing names the source any more and the queue empties - but only after the second
-    // window is gone: a park is dated against the DEVICE watermark, which folds a MINIMUM over the live windows, and
-    // an idle window keeps contributing its last proven frame (see the backlog's "an idle frame window freezes the
-    // park"). Releasing the driver removes that constraint, which is the documented way out.
-    device->releaseFrameDriver(*second);
+    // ONCE THAT FRAME HAS ENDED, only this case's share is left - and the next frame end releases it, with the second
+    // driver still registered and idle: nothing about a driver's own framing dates a park any more (T61).
+    record.reset();
     for (int frame = 0; frame < 4 && device->retirementNumbers().pending != 0U; ++frame) {
         ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
     }
-    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "the source was never destroyed after its frame ended";
+    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "the source was never destroyed after its frame ended (the idle driver must not hold the park back)";
+    EXPECT_EQ(device->retirementNumbers().device_waits, 0U) << "a release never stops the device";
+
+    device->releaseFrameDriver(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AFrameKeepsTheContentItResolvedUntilTheFrameEnds)
+{
+    // THE OTHER HALF OF THE CONTENT WINDOW: one engine RECORDS while another engine's frames END. Every frame end runs
+    // the park's turn, so a release announced while this frame records is one turn away from destroying the streams this
+    // frame's command buffer already bound - unless the frame keeps the entry it resolved (`FrameBuilds::borrow`).
+    //
+    // THE EVIDENCE IS THE SANITIZER RUN: with the borrow removed, the parked `VkBuffer` is destroyed at one of the other
+    // driver's frame ends and this frame then submits a command buffer naming it (ASan: heap-use-after-free). What the
+    // case asserts in a normal build is the legal outcome - the frame runs to completion and still draws its picture.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+    RenderFrameExecutor* const second = device->createFrameDriver();
+    ASSERT_NE(second, nullptr);
+
+    const intrusive_ptr<Geometry>      geometry    = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program     = redProgram();
+    const intrusive_ptr<RenderTarget>  destination = makeTarget(u8"content_draws_here");
+    const intrusive_ptr<RenderTarget>  other       = makeTarget(u8"content_park_driver");
+
+    // THE DESTINATION IS BUILT AND BOTH DRIVERS ARE WARM before the hold, so every frame below is a steady frame.
+    ASSERT_EQ(backend->executeFrame(clearingFrame(destination.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)), nullptr), PresentOutcome::Skipped);
+    ASSERT_EQ(second->executeFrame(clearingFrame(destination.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)), nullptr), PresentOutcome::Skipped);
+    ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> go{ false };
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped || sink_entered.exchange(true)) {
+            return;
+        }
+        // HOLD THE RECORDING FRAME, BOUNDED: the main thread releases the geometry and lets frames END while this one is
+        // inside its body - which is when the park's turn comes.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!go.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::vector<DrawPacket> draws;
+    draws.push_back(programDraw(geometry, program));
+    draws.push_back(programlessDraw(geometry)); // names no program: the refusal holds the frame at the sink
+
+    PresentOutcome outcome = PresentOutcome::Lost;
+    std::thread    recorder([&]() { outcome = second->executeFrame(drawingFrameWith(destination.get(), std::move(draws)), nullptr); });
+
+    const auto enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < enter_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(sink_entered.load()) << "the recording frame never reached its refusal";
+
+    // THE RELEASE AND THREE COMPLETED FRAMES WHILE THE OTHER BODY IS STILL RECORDING: three submissions are more than the
+    // park's window (`slots + 1`), so every parked act's turn comes while the recorder still holds what it resolved.
+    EXPECT_TRUE(device->releaseContent(geometry.get())) << "the geometry was not resident to begin with";
+    for (int frame = 0; frame < 3; ++frame) {
+        ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(makeTriangle(), program)), nullptr), PresentOutcome::Skipped);
+    }
+
+    go.store(true, std::memory_order_release);
+    recorder.join();
+    EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the recording frame did not finish";
+    backend->setDiagnosticSink({});
+
+    // THE FRAME THAT RAN BESIDE THE RELEASE STILL DREW: its content is a description, and what it resolved stayed valid
+    // at least until it was submitted.
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[0], 254) << "the recording frame lost its picture";
+    EXPECT_LE(centre[1], 1);
+
+    device->releaseFrameDriver(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReleaseRacingAFramesContentNeverLeavesACommandBufferNamingAFreedBuffer)
+{
+    // T60: CONTENT IS THE SAME WINDOW THE TARGET HALF CLOSED. A frame head resolves the geometry streams and the
+    // pipelines its commands name; a host may release that content at any moment afterwards (`R6`: a release does not
+    // wait for the frames in flight). Before the frame kept what it resolved (`ContentCaches::FrameBuilds::borrow`), the
+    // park could destroy a `VkBuffer` that a live command buffer had already bound.
+    //
+    // THE INTERLEAVING IS NOT FORCED - nothing sits on the other side of the cache lock - so what this case requires is
+    // that EVERY interleaving has a legal answer: the frames keep answering `Skipped`, and the last one still draws the
+    // picture. The witness that the freed buffer is really gone without the fix is the sanitizer run (a `VkBuffer`
+    // destroyed under a recording command buffer is a heap-use-after-free in this backend).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(u8"content_release_race");
+
+    std::atomic<bool>        stop{ false };
+    std::atomic<std::size_t> frames{ 0 };
+
+    // THE FRAME VALUE IS BUILT ONCE, BEFORE THE THREADS: a draw packet reads the content objects it names, and the
+    // release loop below drives their descriptions - building one per iteration ON the driver thread is a race in the
+    // test, not in the backend.
+    const FrameDescription content_frame = drawingFrame(target.get(), programDraw(geometry, program));
+
+    std::thread driver([&]() {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        while (!stop.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            const PresentOutcome outcome = backend->executeFrame(content_frame, nullptr);
+            EXPECT_EQ(outcome, PresentOutcome::Skipped) << "a frame beside a release answered " << static_cast<int>(outcome);
+            frames.fetch_add(1, std::memory_order_release);
+        }
+    });
+
+    std::size_t releases = 0;
+    while (frames.load(std::memory_order_acquire) < 20U && releases < 200000U) {
+        backend->releaseContent(geometry.get());
+        backend->releaseContent(program.get());
+        ++releases;
+    }
+    stop.store(true, std::memory_order_release);
+    driver.join();
+
+    EXPECT_GT(frames.load(), 0U) << "the driver never ran a frame";
+    EXPECT_GT(releases, 0U) << "the release loop never ran";
+
+    // THE LAST FRAME STILL DRAWS: the content is a description, and a release only changes what is resident - the next
+    // frame uploads what left and reuses what compiled.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[0], 254) << "the frame after the race lost its picture";
+    EXPECT_LE(centre[1], 1);
 
     backend->shutdown();
 }

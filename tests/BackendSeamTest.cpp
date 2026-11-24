@@ -45,13 +45,14 @@
 #include <vine/graphics/RetirementQueue.hpp>
 #include <vine/graphics/TargetPlan.hpp>
 
-using vn::graphics::RenderTarget;
 using vn::graphics::DeviceClock;
 using vn::graphics::FrameGate;
 using vn::graphics::FrameTimeline;
+using vn::graphics::FrameToken;
 using vn::graphics::PipelineKey;
 using vn::graphics::ReadbackRequest;
 using vn::graphics::ReadbackState;
+using vn::graphics::RenderTarget;
 using vn::graphics::RepairReason;
 using vn::graphics::RetirementQueue;
 using vn::graphics::TargetAction;
@@ -202,27 +203,39 @@ TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
 
 TEST(CoreRetirementQueueTest, NothingIsReleasedBeforeTheEvidenceArrives)
 {
-    FrameTimeline   timeline;
+    DeviceClock     clock;
     RetirementQueue queue(3);
     int             releases = 0;
 
-    const auto token = timeline.begin();
-    timeline.submitted(token); // submitted frame 1 -> retire at 1 + 3 + 1 = 5
-    ASSERT_TRUE(queue.retire(timeline, [&releases](const FrameTimeline*) { ++releases; }));
+    const std::uint64_t first = clock.noteSubmission(); // submission 1 -> retire at 1 + 3 + 1 = 5
+    ASSERT_TRUE(queue.retire(clock, [&releases](const DeviceClock*) { ++releases; }));
 
-    EXPECT_EQ(queue.retirePoint(timeline), 5u);
-    EXPECT_EQ(queue.pending(), 1u);
+    EXPECT_EQ(queue.retirePoint(clock), 5U);
+    EXPECT_EQ(queue.pending(), 1U);
 
-    timeline.completeUpTo(4);
-    queue.advance(timeline);
-    EXPECT_EQ(releases, 0); // not yet: the slot that recorded it may still be in flight
-    EXPECT_EQ(queue.pending(), 1u);
+    clock.noteCompletion(first);
+    queue.advance(clock);
+    EXPECT_EQ(releases, 0) << "the slot that recorded it may still be in flight";
+    EXPECT_EQ(queue.pending(), 1U);
 
-    timeline.completeUpTo(5);
-    queue.advance(timeline);
+    // THE WINDOW IS THE SLOT COUNT, so the watermark has to reach 5: four more submissions, proven newest first - and
+    // the watermark is only the oldest unproven submission minus one, so proving a later number claims nothing.
+    std::array<std::uint64_t, 4> later{};
+    for (std::uint64_t& submission : later) {
+        submission = clock.noteSubmission();
+    }
+    for (auto it = later.rbegin(); it != later.rend(); ++it) {
+        clock.noteCompletion(*it);
+        queue.advance(clock);
+        if (std::next(it) != later.rend()) {
+            EXPECT_EQ(clock.completedSubmission(), 1U) << "a later submission completing claimed an earlier one";
+            EXPECT_EQ(releases, 0);
+        }
+    }
+    EXPECT_EQ(clock.completedSubmission(), 5U) << "the oldest unproven submission was the last to be proven";
     EXPECT_EQ(releases, 1);
-    EXPECT_EQ(queue.pending(), 0u);
-    EXPECT_EQ(queue.released(), 1u);
+    EXPECT_EQ(queue.pending(), 0U);
+    EXPECT_EQ(queue.released(), 1U);
 
     // The point of parking instead of idling: this path never stopped the device.
     EXPECT_EQ(queue.deviceWaits(), 0u);
@@ -230,25 +243,28 @@ TEST(CoreRetirementQueueTest, NothingIsReleasedBeforeTheEvidenceArrives)
 
 TEST(CoreRetirementQueueTest, AReleaseCallbackMayParkSomethingNew)
 {
-    FrameTimeline   timeline;
+    DeviceClock     clock;
     RetirementQueue queue(1);
     int             releases = 0;
 
-    const auto first = timeline.begin();
-    timeline.submitted(first);
-    ASSERT_TRUE(queue.retire(timeline, [&](const FrameTimeline* at) {
+    const std::uint64_t first = clock.noteSubmission();
+    ASSERT_TRUE(queue.retire(clock, [&](const DeviceClock* at) {
         ++releases;
         // Re-entrant park: the queue compacts before it releases, so this must not corrupt it - and the act is handed
-        // the timeline precisely so it can ask for another window without taking a lock the caller already holds.
+        // the clock precisely so it can ask for another window without taking a lock the caller already holds.
         ASSERT_NE(at, nullptr);
-        EXPECT_TRUE(queue.retire(*at, [&releases](const FrameTimeline*) { ++releases; }));
+        EXPECT_TRUE(queue.retire(*at, [&releases](const DeviceClock*) { ++releases; }));
     }));
 
-    timeline.completeUpTo(queue.retirePoint(timeline));
-    queue.advance(timeline);
+    const std::uint64_t second = clock.noteSubmission();
+    const std::uint64_t third  = clock.noteSubmission();
+    clock.noteCompletion(first);
+    clock.noteCompletion(second);
+    clock.noteCompletion(third); // the watermark is 3, which is the first park's point (1 + 1 + 1)
+    queue.advance(clock);
 
     EXPECT_EQ(releases, 1);
-    EXPECT_EQ(queue.pending(), 1u); // the new park is dated against the same submitted frame
+    EXPECT_EQ(queue.pending(), 1u); // the new park is dated against the submissions handed over so far
     EXPECT_EQ(queue.deviceWaits(), 0u);
 }
 
@@ -258,19 +274,18 @@ TEST(CoreRetirementQueueTest, ATeardownRunsEverythingParkedInOrder)
     // frame can still name the object, and a device being torn down has produced that evidence by idling its queue.
     // Without this call every parked object would leak with the session - so the case pins both halves: everything
     // runs, and it runs in the order it was parked (a release may name an object another one is nested inside).
-    FrameTimeline   timeline;
+    DeviceClock      clock;
     RetirementQueue queue(1);
     std::vector<int> order;
 
-    const auto token = timeline.begin();
-    timeline.submitted(token); // frame 1; nothing is completed, so advance() would release nothing
+    (void)clock.noteSubmission(); // submission 1; nothing is proven, so advance() would release nothing
 
-    ASSERT_TRUE(queue.retire(timeline, [&order](const FrameTimeline*) { order.push_back(1); }));
-    ASSERT_TRUE(queue.retire(timeline, [&order](const FrameTimeline*) { order.push_back(2); }));
+    ASSERT_TRUE(queue.retire(clock, [&order](const DeviceClock*) { order.push_back(1); }));
+    ASSERT_TRUE(queue.retire(clock, [&order](const DeviceClock*) { order.push_back(2); }));
     EXPECT_EQ(queue.pending(), 2u);
 
-    queue.advance(timeline);
-    EXPECT_TRUE(order.empty()) << "advance() released something the timeline has not proven yet";
+    queue.advance(clock);
+    EXPECT_TRUE(order.empty()) << "advance() released something the device has not proven yet";
 
     queue.releaseAll();
     EXPECT_EQ(order, (std::vector<int>{ 1, 2 })) << "the teardown did not run every release in park order";
@@ -464,58 +479,73 @@ TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
 }
 
 /**
- * @brief The device's completion watermark is what EVERY window proved, and nothing else.
+ * @brief The device's completion watermark is the OLDEST UNPROVEN SUBMISSION, and nothing else.
  *
- * This is the one rule one device with several windows rests on (see graphics::DeviceClock): a buffer or a pipeline
- * the host replaced may still be named by a submission from ANY window, so "may it be destroyed" is answered by
- * the minimum over the windows - the frame every one of them has a recycled slot for.
+ * This is the rule every deferred destruction on one device rests on (see graphics::DeviceClock): a buffer or a
+ * pipeline the host replaced may still be named by a submission from ANY driver, so "may it be destroyed" is answered
+ * by the queue's own sequence - the same shape D3D12's completed fence value and WebGPU's submission index have.
  */
-TEST(CoreDeviceClockTest, TheWatermarkIsWhatEveryWindowProved)
+TEST(CoreDeviceClockTest, TheWatermarkIsTheOldestUnprovenSubmission)
 {
     DeviceClock clock;
-    const auto  a = clock.addWindow();
-    const auto  b = clock.addWindow();
-    EXPECT_EQ(clock.windows(), 2U);
-    EXPECT_EQ(clock.completedFrame(), 0U);
+    EXPECT_EQ(clock.completedSubmission(), 0U);
 
-    // Reports before a window knows how many frames it may have in flight prove NOTHING: its evidence would be a
-    // guess, and a guess in this direction destroys an object a submitted command buffer still names.
-    clock.windowCompleted(a, 10U);
-    clock.windowCompleted(b, 10U);
-    EXPECT_EQ(clock.completedFrame(), 0U);
+    const auto first  = clock.noteSubmission();
+    const auto second = clock.noteSubmission();
+    const auto third  = clock.noteSubmission();
+    EXPECT_EQ(clock.submissions(), 3U);
+    EXPECT_EQ(clock.completedSubmission(), 0U);
 
-    clock.setWindowSlots(a, 3U);
-    clock.setWindowSlots(b, 2U);
-    clock.windowCompleted(a, 7U);
-    clock.windowCompleted(b, 9U);
-    EXPECT_EQ(clock.completedFrame(), 7U) << "the window that is behind decides";
+    clock.noteCompletion(third);
+    EXPECT_EQ(clock.completedSubmission(), 0U) << "a later submission completing says nothing about the first two";
 
-    clock.windowCompleted(b, 12U);
-    EXPECT_EQ(clock.completedFrame(), 7U) << "one window moving on does not prove anything for the other";
+    clock.noteCompletion(first);
+    EXPECT_EQ(clock.completedSubmission(), 1U) << "the second is still unproven";
 
-    clock.windowCompleted(a, 8U);
-    EXPECT_EQ(clock.completedFrame(), 8U);
-    EXPECT_EQ(clock.timeline().completedFrame(), 8U) << "and the frame clock carries the same number";
+    clock.noteCompletion(second);
+    EXPECT_EQ(clock.completedSubmission(), 3U) << "nothing unproven is left, so every number handed out is complete";
 
-    // Completion is a fact about the past: an older report never moves the device back.
-    clock.windowCompleted(a, 1U);
-    EXPECT_EQ(clock.completedFrame(), 8U);
+    // Completion is a fact about the past: a second report - or one for a number nobody handed out - changes nothing.
+    clock.noteCompletion(first);
+    clock.noteCompletion(99U);
+    EXPECT_EQ(clock.completedSubmission(), 3U);
+}
 
-    // A window that leaves stops constraining the watermark (otherwise a closed window would hold the device at
-    // its last evidence forever).
-    clock.removeWindow(b);
-    clock.windowCompleted(a, 20U);
-    EXPECT_EQ(clock.completedFrame(), 20U);
-    EXPECT_EQ(clock.windows(), 1U);
+/**
+ * @brief An IDLE driver stops nothing: the watermark counts the device's submissions, not its drivers' frames.
+ *
+ * The defect this pins (backlog T61): the watermark used to be a minimum over the drivers' own evidence, so a window
+ * that stopped framing kept contributing its last proven frame and no parked release ever ran on a device whose second
+ * engine idled. A driver is not a witness of work it never submitted, which is why registration is identity only.
+ */
+TEST(CoreDeviceClockTest, AnIdleDriverHoldsNothingBack)
+{
+    DeviceClock clock;
+    const auto  busy = clock.addDriver();
+    const auto  idle = clock.addDriver();
+    EXPECT_EQ(clock.drivers(), 2U);
 
-    // A window that joins LATER starts at the watermark: it existed for no earlier frame, so it must not roll the
-    // device's evidence back to zero.
-    const auto c = clock.addWindow();
-    clock.setWindowSlots(c, 3U);
-    clock.windowCompleted(c, 20U);
-    EXPECT_EQ(clock.completedFrame(), 20U) << "the newcomer did not roll the evidence back";
+    const auto first  = clock.noteSubmission();
+    const auto second = clock.noteSubmission();
+    clock.noteCompletion(first);
+    clock.noteCompletion(second);
+    EXPECT_EQ(clock.completedSubmission(), 2U) << "a registered driver that framed nothing held the watermark back";
 
-    EXPECT_EQ(clock.widestSlots(), 3U) << "the park window is the widest a window owns, not the narrowest";
+    // The busy driver keeps submitting while the idle one never does; the watermark follows the queue alone.
+    const auto third = clock.noteSubmission();
+    clock.noteCompletion(third);
+    EXPECT_EQ(clock.completedSubmission(), 3U);
+    EXPECT_EQ(clock.drivers(), 2U) << "a driver that is still registered but idle is still registered";
+
+    // Identity: an id is never reused, and removing a driver twice changes nothing.
+    clock.removeDriver(idle);
+    EXPECT_EQ(clock.drivers(), 1U);
+    const auto joined = clock.addDriver();
+    EXPECT_GT(joined, idle) << "a removed driver's id was handed out again";
+    clock.removeDriver(busy);
+    clock.removeDriver(idle);
+    clock.removeDriver(idle);
+    EXPECT_EQ(clock.drivers(), 1U);
 }
 
 TEST(FrameGateTest, TheOwningThreadIsRefusedInsteadOfWaitingForItself)
@@ -652,7 +682,7 @@ TEST(FrameGateTest, ANestedGateOnAnotherObjectIsNotARefusal)
     EXPECT_FALSE(driver.inSharedEntry()) << "the sides of two gates were mixed up";
 }
 
-TEST(CoreTimelineTest, SubmittedAndCompletedAreDifferentClocks)
+TEST(CoreTimelineTest, AFrameIsOpenUntilItIsSpent)
 {
     FrameTimeline timeline;
     EXPECT_FALSE(timeline.hasOpenFrame());
@@ -663,18 +693,11 @@ TEST(CoreTimelineTest, SubmittedAndCompletedAreDifferentClocks)
 
     timeline.submitted(token);
     EXPECT_FALSE(timeline.hasOpenFrame());
-    EXPECT_EQ(timeline.submittedFrame(), 1u);
-    EXPECT_EQ(timeline.completedFrame(), 0u); // submitted is not completed
-
-    timeline.completeUpTo(1);
-    EXPECT_EQ(timeline.completedFrame(), 1u);
-
-    // Completion is a fact about the past: a lower report cannot un-do it.
-    timeline.completeUpTo(0);
-    EXPECT_EQ(timeline.completedFrame(), 1u);
+    EXPECT_FALSE(timeline.isOpenFrame(token));
+    EXPECT_FALSE(timeline.isOpenFrame(FrameToken{})) << "an empty token names no frame";
 }
 
-TEST(CoreTimelineTest, AStaleTokenDoesNotAdvanceTheTimeline)
+TEST(CoreTimelineTest, ASpentTokenDoesNotCloseAnotherFrame)
 {
     FrameTimeline timeline;
     const auto    first = timeline.begin();
@@ -683,53 +706,39 @@ TEST(CoreTimelineTest, AStaleTokenDoesNotAdvanceTheTimeline)
     const auto second = timeline.begin();
     EXPECT_EQ(second.frame, 2u);
 
-    // A token from the previous frame must not commit the open one.
+    // A token from the previous frame must not commit - or abandon - the open one.
     timeline.submitted(first);
     EXPECT_TRUE(timeline.hasOpenFrame());
-    EXPECT_EQ(timeline.submittedFrame(), 1u);
+    EXPECT_TRUE(timeline.isOpenFrame(second));
+    timeline.abandoned(first);
+    EXPECT_TRUE(timeline.hasOpenFrame());
 }
 
-TEST(CoreTimelineTest, AnAbandonedFrameIsOverWithoutBecomingASubmission)
+TEST(CoreTimelineTest, AnAbandonedFrameSpendsItsNumber)
 {
     FrameTimeline timeline;
     const auto    token = timeline.begin();
     timeline.abandoned(token);
 
-    // The frame is over - the next one can be opened - but the submitted watermark is a count of
-    // SUBMISSIONS, so it does not move: nothing was handed to the queue.
+    // The frame is over - the next one can be opened - and the token names nothing any more.
     EXPECT_FALSE(timeline.hasOpenFrame());
-    EXPECT_EQ(timeline.submittedFrame(), 0u);
+    EXPECT_FALSE(timeline.isOpenFrame(token));
 
-    // NUMBERS ARE MINTED AT OPENING AND NEVER REUSED (the same rule the residency table's claim tokens
-    // follow): a frame that never reached the queue still spent its number. That is what lets two drivers
-    // hold open frames at the same time without either one's token naming the other's frame - and it is
-    // why a token is not a receipt either way: an abandoned token is stale for submission, and the number
-    // it carried never comes back.
+    // NUMBERS ARE MINTED AT OPENING AND NEVER REUSED (the same rule the residency table's claim tokens follow): a
+    // frame that never reached the queue still spent its number. That is what lets two drivers hold open frames at the
+    // same time without either one's token naming the other's frame.
     const auto next = timeline.begin();
     EXPECT_NE(next.frame, token.frame);
     EXPECT_GT(next.frame, token.frame);
     timeline.abandoned(next);
-    EXPECT_EQ(timeline.submittedFrame(), 0u);
-
-    // A real submission moves it TO THE NUMBER THAT WAS SUBMITTED (numbers are minted, so the abandoned
-    // frames spent 1 and 2 and this one is 3).
-    const auto real = timeline.begin();
-    timeline.submitted(real);
-    EXPECT_EQ(timeline.submittedFrame(), real.frame);
-    EXPECT_NE(real.frame, token.frame);
-
-    // The dating a park during an abandoned frame gets: the last frame that really was submitted - which
-    // is what makes the object releasable at all (nothing in flight names the abandoned frame's objects).
-    timeline.abandoned(timeline.begin());
-    EXPECT_EQ(timeline.submittedFrame(), real.frame);
-    EXPECT_EQ(FrameTimeline::retirePoint(timeline.submittedFrame(), 3), real.frame + 4U);
+    EXPECT_FALSE(timeline.hasOpenFrame());
 }
 
 TEST(CoreTimelineTest, TwoDriversMayHoldAFrameOpenAtTheSameTime)
 {
-    // THE DEVICE TIMELINE WITH TWO FRAME DRIVERS (S6c-2): each driver opens its own frame, and the two are
-    // two frames - not one shared token. The old single-slot form handed the second caller the first's
-    // token, which made two drivers collapse into one frame number in every watermark comparison.
+    // THE DEVICE TIMELINE WITH TWO FRAME DRIVERS (S6c-2): each driver opens its own frame, and the two are two frames
+    // - not one shared token. The old single-slot form handed the second caller the first's token, which made two
+    // drivers collapse into one frame number.
     FrameTimeline timeline;
     const auto    first  = timeline.begin();
     const auto    second = timeline.begin();
@@ -740,27 +749,29 @@ TEST(CoreTimelineTest, TwoDriversMayHoldAFrameOpenAtTheSameTime)
     EXPECT_TRUE(timeline.isOpenFrame(second));
     EXPECT_EQ(timeline.current().frame, second.frame); // the most recently opened one
 
-    // Committing one leaves the other open: the submission watermark is the highest frame handed to a
-    // queue, and a stale token for the *other* open frame is not stale - it is still open.
+    // Committing one leaves the other open: a stale token for the *other* open frame is not stale - it is still open.
     timeline.submitted(second);
     EXPECT_TRUE(timeline.isOpenFrame(first));
     EXPECT_FALSE(timeline.isOpenFrame(second));
-    EXPECT_EQ(timeline.submittedFrame(), second.frame);
 
     timeline.abandoned(first);
     EXPECT_FALSE(timeline.hasOpenFrame());
-    EXPECT_EQ(timeline.submittedFrame(), second.frame);
 
-    // A later frame is minted after both, even though the second was the only submission.
+    // A later frame is minted after both.
     const auto third = timeline.begin();
     EXPECT_GT(third.frame, second.frame);
     timeline.abandoned(third);
 }
 
-TEST(CoreTimelineTest, TheRetirePointIsOneMoreThanTheSlotCount)
+TEST(CoreTimelineTest, TheParkWindowIsOneMoreThanTheSlotCount)
 {
-    // Derived, not magic: the slot that could still reference a parked object has been recycled (and so
-    // had its fence waited) by then.
-    EXPECT_EQ(FrameTimeline::retirePoint(1, 3), 5u);
-    EXPECT_EQ(FrameTimeline::retirePoint(0, 1), 2u);
+    // Derived, not magic: the slot that could still reference a parked object has been re-recorded - and a re-record
+    // waits that slot's fence - by the time the watermark passes the last slot plus one.
+    DeviceClock clock;
+    (void)clock.noteSubmission(); // one submission handed to the queue
+
+    const RetirementQueue single(1);
+    EXPECT_EQ(single.retirePoint(clock), 3U);
+    const RetirementQueue triple(3);
+    EXPECT_EQ(triple.retirePoint(clock), 5U);
 }

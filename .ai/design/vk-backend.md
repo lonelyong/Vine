@@ -306,13 +306,17 @@ and every cache has a witness a test can read.**
 ### 2.15 Release is handed to the queue, not destroyed at once (`G4` / `G10`)
 
 - **What it is**: `releaseContent` / `releaseRenderTarget` **forget the cache entry on the spot** (the residency count drops immediately and the next frame uploads again),
-  while the Vulkan object behind it goes to `graphics/RetirementQueue.hpp` and is destroyed only once the device's completion watermark has passed that frame. The
-  completion evidence comes from `graphics/DeviceClock.hpp`: this backend registers **one** clock window (one frame in flight, `slots = 1`).
+  while the Vulkan object behind it goes to `graphics/RetirementQueue.hpp` and is destroyed only once the device's completion watermark has passed that
+  submission. The evidence is `graphics/DeviceClock.hpp`'s SUBMISSION SEQUENCE (`ADR-2026-11-24-completion-belongs-to-the-submission`): every
+  `vkQueueSubmit2` takes the next number inside the queue's lock and reports that number's proof after its fence, and the watermark is the oldest
+  unproven submission minus one. Driver registration (`addDriver` / `removeDriver`) is identity only - the watermark never consults it, which is what
+  keeps an idle engine from freezing every parked release.
 - **Why**: release has to say two things — "is this content still wanted" and "may this object be destroyed now" — and putting them together is what forces the host
   to keep the ordering "release only between frames". Split apart, each answer has one mechanism (`G6`), and the split is the premise of several sessions
   (`.ai/design/graphics-sessions.md` §2.6).
-- **Cost (written here rather than hidden)**: a released object lives to `submitted + slots + 1`, i.e. is destroyed **at most two frames later** (the conservative price of the
-  evidence "the slot has been reclaimed"). Two frames of memory latency is cheap against one device stall, and the waiting becomes a background event timed in frames.
+- **Cost (written here rather than hidden)**: a released object lives to `submissions + slots + 1`, i.e. is destroyed **at most two submissions later** (the conservative
+  price of the evidence "the slot that recorded it has been reclaimed"). Two frames of memory latency is cheap against one device stall, and the waiting becomes a background
+  event timed in submissions.
 - **Boundary**: **teardown does not park**. `shutdown()` calls `vkDeviceWaitIdle` first, then clears the seam and calls `releaseAll()` (it is the verb for "arbitration has
   already happened"); otherwise parked objects leak with the session. The **replacement path** (an old buffer on re-upload, a ring rebuild) still destroys immediately, because
   it happens while this frame is recorded and before submission; with several sessions they must park together.
@@ -389,9 +393,16 @@ and every cache has a witness a test can read.**
   bodies overlap (`executeFrame` takes the body gate SHARED), so one engine's frame end can run the park while another
   engine is still recording. Values that name a record keep it alive — the pass handle for what a frame DRAWS INTO
   (§2.20), `FrameRecording::read_records` for what a frame READS — and both are dropped when the frame ends.
-  Witnesses: `VkMultiSessionTest.AFrameKeepsTheSourceItReadsUntilTheFrameEnds` (a release announced while another
-  engine records), `CoreRetirementQueueTest.AReleaseCallbackMayParkSomethingNew` (a release act is handed the timeline,
-  which is what lets it ask for another window without the clock lock it runs under).
+  **Content obeys the same rule** (`G12`: one rule, two tables). Each table holds `shared_ptr` entries
+  (`GeometryEntry`, `InstanceStream`, `PipelineHandle`, `ContentImages::Impl::Entry`), `FrameBuilds::borrow` keeps every
+  entry a head resolved until the frame ends, and every release path erases or REPLACES the table's share before it
+  parks - replacing rather than mutating, because a table's own share inside a parked entry would make the `use_count`
+  probe count it and never destroy anything. Park witnesses: `VkMultiSessionTest.AFrameKeepsTheContentItResolvedUntilTheFrameEnds`
+  (a release announced while another engine records: three frame ends run the park, and the frame still draws its
+  picture; with `borrow` made a no-op the pool loses the streams and the picture is black),
+  `VkMultiSessionTest.AReleaseRacingAFramesContentNeverLeavesACommandBufferNamingAFreedBuffer` (the interleaving is not
+  forced; every interleaving must have a legal answer), `CoreRetirementQueueTest.AReleaseCallbackMayParkSomethingNew`
+  (a release act is handed the clock, which is what lets it ask for another window without the lock it runs under).
 - **Why `ensure` answers the record, not a boolean**: the borrowed pointer a pass keeps must be the record the build left behind, taken under the same map lock. A release
   does **not** wait for the frames in flight (`R6`), so it can erase the entry at any moment — a boolean answer resolved by a second `lookup` was one lock late, and that
   call answered null for exactly that release (`G4`: one call, one answer; `G10`: the window was a lifetime the caller had to re-prove). The answer is a `shared_ptr`, so a

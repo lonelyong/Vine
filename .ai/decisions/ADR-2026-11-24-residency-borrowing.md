@@ -90,3 +90,19 @@ Neither condition ever makes a release wait.
   is alive), `VkMultiSessionTest.AFrameKeepsTheSourceItReadsUntilTheFrameEnds` (a release announced while another
   engine records), `CoreRetirementQueueTest.AReleaseCallbackMayParkSomethingNew` (the callback is handed the
   timeline), `VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses` (R6 still holds).
+
+## Correction (2026-11-24, appended)
+
+Both follow-ups this ADR recorded are closed, in the same shape it predicted:
+
+- **Content entries are shared now.** The caches hold `shared_ptr` entries, `FrameBuilds::borrow` keeps every entry a
+  frame head resolved until the frame ends, and every release path erases or REPLACES the table's share before it parks
+  (replacing, not mutating, because a table's own share inside a parked entry would make the `use_count` probe count it
+  and never destroy anything). Witnesses:
+  `VkMultiSessionTest.AFrameKeepsTheContentItResolvedUntilTheFrameEnds` (three frame ends run the park while another
+  engine records, and the frame still draws; with `borrow` a no-op the pool loses the streams and the picture is black)
+  and `VkMultiSessionTest.AReleaseRacingAFramesContentNeverLeavesACommandBufferNamingAFreedBuffer`.
+- **The idle window no longer freezes the park**: the watermark is the device's own submission sequence, not a minimum
+  over drivers — `ADR-2026-11-24-completion-belongs-to-the-submission`. The note in the consequences above ("a parked
+  release waits for the idle driver to be released") no longer holds, so
+  `VkMultiSessionTest.AFrameKeepsTheSourceItReadsUntilTheFrameEnds` drains with that driver still registered.

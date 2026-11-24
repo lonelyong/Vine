@@ -139,13 +139,12 @@ recording path); what the wiring decides is "who may build and who copies".
 
 - **What it is**: vk today waits inside `executeFrame`, so "everything before the next frame can be destroyed at once" and `releaseContent` may only be called between
   frames. With two sessions "between frames" is no longer one instant, and a **device watermark** is needed.
-- **What is reused**: `backend/DeviceClock.hpp` is "each window reports its own completion evidence, and the device watermark is the **minimum**", and
+- **What is reused**: `backend/DeviceClock.hpp` is "a device numbers its submissions and proves them in order, and that sequence is the watermark", and
   `backend/RetirementQueue.hpp` is "park + release when due". The device adopts both, so a session's completion has one evidence type (`G6`) instead of a second counter grown
-  beside them (`G7`).
-- **Who is who**: **a frame driver is a clock window** (what `DeviceClock` issues is a `graphics::FrameDriverId`, a u32; an offscreen session registers one too). The three
-  spellings are unified on it: `DeviceClock::WindowId` is deleted (`BC-32`), so `FrameDriverId` is the only spelling.
-- **What release means**: `releaseContent` / `releaseRenderTarget` record **each session's `submitted`** at the time of the call, and the object is destroyed only once the
-  device watermark passes it; so those two verbs **may be called while another session is framing**. The contract text at `RenderDevice.hpp:302`–`308` already says exactly
+  beside them (`G7`). The evidence is the DEVICE'S (`ADR-2026-11-24-completion-belongs-to-the-submission`): a driver is not a witness, because a driver that stops framing
+  knows nothing about another driver's submission - and a minimum over drivers freezes every release as soon as one engine idles (`G1`).
+- **What release means**: `releaseContent` / `releaseRenderTarget` record **the device's current submission number** at the time of the call, and the object is destroyed
+  only once the completed watermark passes it *and* no value the device lent still names it (`ADR-2026-11-24-residency-borrowing`); so those two verbs **may be called while another session is framing**. The contract text at `RenderDevice.hpp:302`–`308` already says exactly
   this ("a device that retires asynchronously parks the free until every session is past it") — this page only makes vk such a device.
 - **Threads**: `DeviceClock` and `RetirementQueue` are contracted as "the caller serialises; a multi-threaded device supplies its own lock" (`P4`). The lock lives on the
   **device** (`Impl::clock_mutex`), not inside the two SDK value types: a single-session device supplies none, and a lock inside the values would be a mechanism with no
@@ -456,7 +455,8 @@ while the frame records is parked to the device watermark (§2.6), so another dr
 
 ### 6.4 P4 Two threads touching the watermark and the park queue
 
-- How it fails: `DeviceClock::windowCompleted` and `RetirementQueue::retire/advance` are documented as "single-threaded" today; with two sessions two threads call them at
+- How it fails: `DeviceClock::noteSubmission` / `noteCompletion` and `RetirementQueue::retire/advance` are documented as "single-threaded" (the device supplies the lock);
+  with two sessions two threads call them at
   once ⇒ a data race (visible to TSan, or worse: an early release).
 - How to detect it: TSan; or `pending()` rising again after a release.
 - How to prevent it: one small lock each, taken **only at the frame head / frame tail**; the ordering rule for `retire` and `advance` (park first, then advance) is written
@@ -544,7 +544,9 @@ points, §3's features, §4's interfaces and §5's constraints.
 
 ### 9.2 Known gaps / backlog
 
-- `DeviceClock`'s verbs are still `addWindow` / `windowCompleted` (the identity type is already `FrameDriverId`); the rename is left for a later version.
+- `DeviceClock`'s verbs are `addDriver` / `removeDriver` (the identity type is `FrameDriverId`), and the completion
+  watermark is the device's own SUBMISSION sequence (`ADR-2026-11-24-completion-belongs-to-the-submission`); a driver's
+  own evidence no longer constrains it, so an idle driver stalls nothing.
 - **How to read T3 correctly**: a whole frame takes a fixed 4 acquisitions (1 at the frame head + 2 for the books + 1 at the frame tail), and the case is `VkFrameHeadTest`;
   "a steady-state frame takes 0" is about the recording path, not the whole frame (see §2.3 and §8 T3).
 

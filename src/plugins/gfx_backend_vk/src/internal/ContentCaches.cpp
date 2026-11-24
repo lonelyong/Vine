@@ -178,10 +178,11 @@ struct ContentCaches::Impl {
     ContentImages images{};
 
     std::unordered_map<ProgramKey, ProgramEntry, ProgramKeyHash>                     programs;
-    std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry>     geometries;
+    std::unordered_map<const vn::graphics::GeometryDescription*, std::shared_ptr<GeometryEntry>> geometries;
     /// One entry per INSTANCE buffer a command read (keyed by the buffer's address, see InstanceStream).
-    std::unordered_map<const vn::Buffer<float>*, InstanceStream>                    instance_streams;
-    std::unordered_map<ContentPipelineKey, VkPipeline, ContentPipelineKeyHash>        pipelines;
+    std::unordered_map<const vn::Buffer<float>*, std::shared_ptr<InstanceStream>> instance_streams;
+    /// The built pipelines, as SHARED HANDLES (see PipelineHandle): a frame that resolved one keeps it alive.
+    std::unordered_map<ContentPipelineKey, std::shared_ptr<PipelineHandle>, ContentPipelineKeyHash> pipelines;
     /**
      * @brief WHO MAY BUILD a geometry: the device table two frame drivers share (F4, see `ResidencyClaims`).
      *
@@ -237,13 +238,14 @@ struct ContentCaches::Impl {
      *   been submitted, and during `shutdown` the device has already idled its queue and flushed it (see
      *   Device::shutdown).
      *
-     * @param destroy What to run when the object may go. Capture handles and slices BY VALUE - the closure outlives
-     *                this call, and the table entry it came from is already gone.
+     * @param named   The entry whose objects @p destroy will release (the park's share probe; empty = nobody else can
+     *                hold it - a frame-owned copy, say).
+     * @param destroy What to run when the object may go. It keeps the entry alive, which is what the probe counts.
      */
-    void releaseLater(std::function<void()> destroy)
+    void releaseLater(std::weak_ptr<const void> named, std::function<void()> destroy)
     {
         if (park) {
-            park(std::move(destroy));
+            park(std::move(named), std::move(destroy));
             return;
         }
         destroy();
@@ -304,27 +306,24 @@ struct ContentCaches::Impl {
      * @param why    Receives the reason when the bytes could not be uploaded.
      * @return The stream, or null when it could not be uploaded.
      */
-    [[nodiscard]] InstanceStream* ensureInstanceStream(const vn::Buffer<float>& buffer, vn::String& why)
+    [[nodiscard]] std::shared_ptr<InstanceStream> ensureInstanceStream(const vn::Buffer<float>& buffer, vn::String& why)
     {
-        InstanceStream&      entry    = instance_streams[&buffer];
-        const std::uint64_t revision = buffer.revision();
-        if (entry.buffer != VK_NULL_HANDLE && entry.revision == revision) {
-            return &entry;
+        std::shared_ptr<InstanceStream>& slot = instance_streams[&buffer];
+        if (!slot) {
+            slot = std::make_shared<InstanceStream>();
         }
-        // A NEW REVISION REPLACES THE BYTES, AND THE OLD BUFFER IS PARKED (see releaseLater): a frame that resolved the
-        // previous revision may still be recording, so destroying the buffer here would pull the bytes out from under
-        // a command buffer that has already named it. The plan carries the handle by value, and the park is what keeps
-        // it valid until the device's watermark.
-        if (entry.buffer != VK_NULL_HANDLE) {
-            const VkBuffer    replaced       = entry.buffer;
-            const MemorySlice replaced_memory = entry.memory;
-            entry.buffer = VK_NULL_HANDLE;
-            entry.memory = MemorySlice{};
-            releaseLater([target = this, replaced, replaced_memory]() mutable {
-                VkBuffer    buffer = replaced;
-                MemorySlice memory = replaced_memory;
-                target->destroyBuffer(buffer, memory);
-            });
+        const std::uint64_t revision = buffer.revision();
+        if (slot->buffer != VK_NULL_HANDLE && slot->revision == revision) {
+            return slot;
+        }
+        // A NEW REVISION REPLACES THE BYTES, AND THE OLD ENTRY IS PARKED (see releaseLater): a frame that resolved the
+        // previous revision holds THAT entry and may still be recording, so the buffer it copied must outlive it. The
+        // table's share moves to a fresh entry, which is what makes the park's probe count frames and nothing else.
+        if (slot->buffer != VK_NULL_HANDLE) {
+            std::shared_ptr<InstanceStream> previous = std::move(slot);
+            slot                                     = std::make_shared<InstanceStream>();
+            const std::weak_ptr<const void> named    = previous;
+            releaseLater(named, [target = this, entry = std::move(previous)]() mutable { target->destroyBuffer(entry->buffer, entry->memory); });
         }
         const std::span<const float> floats = buffer.view();
         if (floats.empty()) {
@@ -332,15 +331,15 @@ struct ContentCaches::Impl {
             return nullptr;
         }
         const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(floats.data()), floats.size() * sizeof(float));
-        if (!upload(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, entry.buffer, entry.memory)) {
+        if (!upload(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, slot->buffer, slot->memory)) {
             why = vn::String(u8"vk: an instance stream could not be uploaded");
             return nullptr;
         }
-        entry.bytes    = bytes.size();
-        entry.revision = revision;
+        slot->bytes    = bytes.size();
+        slot->revision = revision;
         ++stream_builds_;
-        stream_bytes_ += entry.bytes;
-        return &entry;
+        stream_bytes_ += slot->bytes;
+        return slot;
     }
 
     /**
@@ -450,16 +449,18 @@ struct ContentCaches::Impl {
         ResidencyClaims::Decision decision = residence.admit(&description, builds.session());
         if (decision.kind == ResidencyClaims::Decision::Kind::Use) {
             const auto found = geometries.find(&description);
-            if (found != geometries.end() && !found->second.failed) {
+            if (found != geometries.end() && !found->second->failed) {
                 // A RELEASED STREAM LEAVES A HOLE IN A RESIDENT ENTRY, and filling it is this path's job: the release
                 // names one `Buffer`, and the next frame that needs the geometry uploads exactly what left (see
-                // `releaseStreams`). A complete entry pays nothing here.
-                GeometryEntry& entry = found->second;
-                if (!fillStreams(entry, description, why)) {
-                    return failGeometry(entry, std::move(why));
+                // `releaseStreams`). A complete entry pays nothing here. Filling a hole ADDS a buffer to the entry, and
+                // every frame holding it keeps the same entry - so a recorder that copies the handle afterwards reads a
+                // buffer this entry owns (never one a release left behind).
+                if (!fillStreams(*found->second, description, why)) {
+                    return failGeometry(found->second, description, std::move(why));
                 }
-                builds.noteUsed(description, entry);
-                return &entry;
+                builds.noteUsed(description, *found->second);
+                builds.borrow(found->second);
+                return found->second.get();
             }
             // THE TABLE AND THE TABLES DISAGREE: a key the table called usable that this cache does not hold cannot be
             // used, and refusing the draw would charge the host for a bookkeeping slip. The cache is the truth, so
@@ -470,22 +471,25 @@ struct ContentCaches::Impl {
 
         if (decision.kind == ResidencyClaims::Decision::Kind::Build) {
             const auto found = geometries.find(&description);
-            if (found != geometries.end() && found->second.failed) {
+            if (found != geometries.end() && found->second->failed) {
                 // THE REFUSAL WAS REPORTED WHEN IT HAPPENED: the claim is left to `decision`, whose destructor returns
                 // the key to Absent, so the answer is "broken" without pretending the key is resident.
                 return nullptr;
             }
-            GeometryEntry* const entry = found != geometries.end()
-                                             ? &found->second
-                                             : &geometries.emplace(&description, shapedFor(description)).first->second;
+            // THE ENTRY IS A SHARED OBJECT FROM THE MOMENT IT IS PUBLISHABLE (see borrow): a frame that resolves it
+            // keeps it alive while a host may already be releasing it.
+            std::shared_ptr<GeometryEntry>& slot =
+                found != geometries.end() ? found->second
+                                          : geometries.emplace(&description, std::make_shared<GeometryEntry>(shapedFor(description))).first->second;
             // THE FILL IS THE CLAIM'S. A failure here leaves `decision` owning the ticket, so the key returns to
             // Absent at once - the next frame may try again instead of finding it Uploading forever (`P1`, `R4`).
-            if (!fillStreams(*entry, description, why)) {
-                return failGeometry(*entry, std::move(why));
+            if (!fillStreams(*slot, description, why)) {
+                return failGeometry(slot, description, std::move(why));
             }
-            builds.noteUsed(description, *entry);
+            builds.noteUsed(description, *slot);
+            builds.borrow(slot);
             builds.noteClaim(std::move(decision.claim));
-            return entry;
+            return slot.get();
         }
 
         // COPY: another driver is building this key, so this frame gets its own streams and keeps none of them (see
@@ -596,17 +600,50 @@ struct ContentCaches::Impl {
     }
 
     /**
-     * @brief Marks one geometry entry refused and destroys every stream it had.
+     * @brief Marks one geometry entry refused: the cache keeps a broken SHAPED entry, and the objects the old one held
+     *        are parked behind it.
      *
-     * @param entry The entry that could not be completed.
+     * @details
+     * - THE TABLE'S ENTRY IS REPLACED, NOT MUTATED. The refused entry must still remember the failure (so the next
+     *   frame answers null without uploading again), while the buffers that were just taken away are still named by
+     *   frames that resolved the old entry. Keeping both in one object would make the park's `use_count` probe see the
+     *   table's own share and never destroy anything, so the old entry leaves and the new one takes its key.
+     *
+     * @param slot        The table's slot (replaced by a shaped, failed entry).
+     * @param description The geometry's shape (what the replacement is shaped for).
+     * @param why         The reason, passed through to the caller.
+     * @return Always null, so a caller can write `return failGeometry(...)`.
+     */
+    GeometryEntry* failGeometry(std::shared_ptr<GeometryEntry>& slot, const vn::graphics::GeometryDescription& description, vn::String why)
+    {
+        std::shared_ptr<GeometryEntry> previous = std::move(slot);
+        auto                           broken   = std::make_shared<GeometryEntry>(shapedFor(description));
+        broken->failed                          = true;
+        slot                                    = std::move(broken);
+        stream_releases_ += liveStreams(*previous);
+        // THE OBJECTS ARE PARKED BEHIND THE ENTRY THAT HELD THEM (see releaseLater): the table does not hold it any
+        // more, so the probe counts the frames that resolved it - which is exactly who may still name its buffers.
+        const std::weak_ptr<const void> named = previous;
+        releaseLater(named, [target = this, entry = std::move(previous)]() mutable { (void)target->destroyGeometryStreams(*entry); });
+        (void)why;
+        return nullptr;
+    }
+
+    /**
+     * @brief Marks one frame-owned COPY refused and destroys what it built.
+     *
+     * @param entry The copy that could not be completed.
      * @param why   The reason, passed through to the caller.
      * @return Always null, so a caller can write `return failGeometry(...)`.
+     *
+     * @note A copy is nobody else's (see `FrameBuilds::noteCopy`): no plan was ever filled from it, so no command buffer
+     *       can name its buffers - the park's window is all it needs, and an empty `named` says exactly that.
      */
     GeometryEntry* failGeometry(GeometryEntry& entry, vn::String why)
     {
         entry.failed = true;
-        // THE STREAMS ARE PARKED, NOT DESTROYED: an entry that failed halfway may already have been resolved by a
-        // frame that is still recording (see releaseLater), so the buffers it would name live until the watermark.
+        // THE STREAMS ARE PARKED, NOT DESTROYED: the park's window is the honest dating for objects this call built and
+        // threw away (nothing else can name them, but the device's watermark is when a destroy is cheapest).
         std::vector<VkBuffer>    buffers;
         std::vector<MemorySlice> memories;
         for (VertexStream& stream : entry.streams) {
@@ -627,12 +664,13 @@ struct ContentCaches::Impl {
         }
         stream_releases_ += static_cast<std::uint32_t>(buffers.size());
         if (!buffers.empty()) {
-            releaseLater([target = this, buffers = std::move(buffers), memories = std::move(memories)]() mutable {
+            releaseLater(std::weak_ptr<const void>{}, [target = this, buffers = std::move(buffers), memories = std::move(memories)]() mutable {
                 for (std::size_t index = 0; index < buffers.size(); ++index) {
                     target->destroyBuffer(buffers[index], memories[index]);
                 }
             });
         }
+        (void)why;
         return nullptr;
     }
 
@@ -683,17 +721,17 @@ struct ContentCaches::Impl {
      * @param attributes        The vertex input attributes (empty for the full-screen triangle).
      * @param layout            The pipeline layout the program's descriptor sets agree with.
      * @param why               Receives the reason when the pipeline could not be built.
-     * @return The pipeline, or `VK_NULL_HANDLE`.
+     * @return The pipeline's share, or empty.
      */
-    [[nodiscard]] VkPipeline buildPipeline(ContentPipelineKey                                   key,
-                                           VkShaderModule                                       vertex,
-                                           const std::string&                                   vertex_entry,
-                                           VkShaderModule                                       fragment,
-                                           const std::string&                                   fragment_entry,
-                                           const std::vector<VkVertexInputBindingDescription>&  bindings,
-                                           const std::vector<VkVertexInputAttributeDescription>& attributes,
-                                           VkPipelineLayout                                     layout,
-                                           vn::String&                                          why)
+    [[nodiscard]] std::shared_ptr<PipelineHandle> buildPipeline(ContentPipelineKey                                    key,
+                                                                VkShaderModule                                        vertex,
+                                                                const std::string&                                    vertex_entry,
+                                                                VkShaderModule                                        fragment,
+                                                                const std::string&                                    fragment_entry,
+                                                                const std::vector<VkVertexInputBindingDescription>&   bindings,
+                                                                const std::vector<VkVertexInputAttributeDescription>& attributes,
+                                                                VkPipelineLayout                                      layout,
+                                                                vn::String&                                           why)
     {
         const auto found = pipelines.find(key);
         if (found != pipelines.end()) {
@@ -853,14 +891,16 @@ struct ContentCaches::Impl {
         VkPipeline pipeline = VK_NULL_HANDLE;
         if (table->vkCreateGraphicsPipelines(device, pipeline_cache, 1U, &info, nullptr, &pipeline) != VK_SUCCESS) {
             why = vn::String(u8"vk: the content pipeline could not be built (see the loader's report)");
-            return VK_NULL_HANDLE;
+            return nullptr;
         }
         ++created_;
         if ((overall_feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) != 0U) {
             ++cache_hits_;
         }
-        pipelines.emplace(std::move(key), pipeline);
-        return pipeline;
+        auto handle      = std::make_shared<PipelineHandle>();
+        handle->pipeline = pipeline;
+        pipelines.emplace(std::move(key), handle);
+        return handle;
     }
 
     /**
@@ -877,19 +917,19 @@ struct ContentCaches::Impl {
      * @param compatibility     The target's pipeline compatibility (the key's shape half).
      * @param topology          The draw's effective topology (the SDK enum: the key carries it, the create-info maps it).
      * @param why               Receives the reason when the pipeline could not be built.
-     * @return The pipeline, or `VK_NULL_HANDLE`.
+     * @return The pipeline's share, or empty.
      */
-    [[nodiscard]] VkPipeline ensureContentPipeline(const ProgramEntry&                                   program,
-                                                   const vn::graphics::GeometryDescription&              geometry,
-                                                   const ProgramVariant&                                 variant,
-                                                   bool                                                  instanced,
-                                                   const vn::graphics::RenderPassCompatibility& compatibility,
-                                                   vn::graphics::Topology                                topology,
-                                                   vn::String&                                           why)
+    [[nodiscard]] std::shared_ptr<PipelineHandle> ensureContentPipeline(const ProgramEntry&                          program,
+                                                                        const vn::graphics::GeometryDescription&     geometry,
+                                                                        const ProgramVariant&                        variant,
+                                                                        bool                                         instanced,
+                                                                        const vn::graphics::RenderPassCompatibility& compatibility,
+                                                                        vn::graphics::Topology                       topology,
+                                                                        vn::String&                                  why)
     {
         if (program.vertex == VK_NULL_HANDLE || program.fragment == VK_NULL_HANDLE) {
             why = vn::String(u8"vk: a content program needs a vertex and a fragment stage");
-            return VK_NULL_HANDLE;
+            return nullptr;
         }
 
         ContentPipelineKey key;
@@ -982,20 +1022,18 @@ struct ContentCaches::Impl {
      * @param vertex            The compiled full-screen vertex stage (see `screen_vertex`).
      * @param compatibility     The destination's pipeline compatibility.
      * @param why               Receives the reason when the pipeline could not be built.
-     * @return The pipeline, or `VK_NULL_HANDLE`.
+     * @return The pipeline's share, or empty.
      */
-    [[nodiscard]] VkPipeline ensureScreenPipeline(const ProgramEntry&                                   fragment,
-                                                  const ProgramEntry&                                   vertex,
-                                                  const vn::graphics::RenderPassCompatibility& compatibility,
-                                                  vn::String&                                           why)
+    [[nodiscard]] std::shared_ptr<PipelineHandle>
+    ensureScreenPipeline(const ProgramEntry& fragment, const ProgramEntry& vertex, const vn::graphics::RenderPassCompatibility& compatibility, vn::String& why)
     {
         if (vertex.vertex == VK_NULL_HANDLE) {
             why = vn::String(u8"vk: the full-screen vertex stage could not be compiled");
-            return VK_NULL_HANDLE;
+            return nullptr;
         }
         if (fragment.fragment == VK_NULL_HANDLE) {
             why = vn::String(u8"vk: a screen program needs a fragment stage");
-            return VK_NULL_HANDLE;
+            return nullptr;
         }
 
         ContentPipelineKey key;
@@ -1090,7 +1128,7 @@ struct ContentCaches::Impl {
                            build_why.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(build_why));
             return false;
         }
-        InstanceStream* instances = nullptr;
+        std::shared_ptr<InstanceStream> instances;
         if (instanced) {
             instances = ensureInstanceStream(*command.instance_transforms.values, build_why);
             if (instances == nullptr) {
@@ -1110,18 +1148,20 @@ struct ContentCaches::Impl {
         // count the rendering instance states are the same number, because both are derived from this one value.
         plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
         vn::String pipeline_why;
-        plan.pipeline = ensureContentPipeline(*compiled,
-                                              *geometry,
-                                              variant,
-                                              instanced,
-                                              compatibility,
-                                              plan.resolved.topology,
-                                              pipeline_why);
-        if (plan.pipeline == VK_NULL_HANDLE) {
+        const std::shared_ptr<PipelineHandle> pipeline_handle =
+            ensureContentPipeline(*compiled, *geometry, variant, instanced, compatibility, plan.resolved.topology, pipeline_why);
+        if (pipeline_handle == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
                            contentRefusalCode(ContentRefusalCause::PipelineRefused),
                            pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why));
             return false;
+        }
+        plan.pipeline = pipeline_handle->pipeline;
+        // THE HANDLES ABOVE ARE COPIES, SO THE FRAME MUST KEEP WHAT THEY NAME (see `borrow`): a host release or a
+        // revision replacement that lands while this frame records destroys nothing this plan already holds.
+        builds.borrow(pipeline_handle);
+        if (instances != nullptr) {
+            builds.borrow(instances);
         }
         plan.material    = std::move(material);
         plan.variant     = variant;
@@ -1146,13 +1186,15 @@ struct ContentCaches::Impl {
      * @param compatibility     The destination's pipeline compatibility.
      * @param plan              Receives what was resolved.
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
+     * @param builds            This frame's book: the pipeline this resolves is borrowed for the frame's life.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&                draw,
-                                  const vn::graphics::PassDraw&                      pass,
+    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&              draw,
+                                  const vn::graphics::PassDraw&                pass,
                                   const vn::graphics::RenderPassCompatibility& compatibility,
-                                  FrameHead::DrawPlan&                               plan,
-                                  ContentRefusal&                                    refusal)
+                                  FrameHead::DrawPlan&                         plan,
+                                  ContentRefusal&                              refusal,
+                                  FrameBuilds&                                 builds)
     {
         plan      = FrameHead::DrawPlan{}; // see planCommand(DrawItem): an empty plan is "this draw records nothing"
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
@@ -1194,16 +1236,15 @@ struct ContentCaches::Impl {
         plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, screen_state, vn::graphics::Topology::Triangles);
         plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
         vn::String pipeline_why;
-        plan.pipeline = ensureScreenPipeline(*fragment,
-                                             *vertex,
-                                             compatibility,
-                                             pipeline_why);
-        if (plan.pipeline == VK_NULL_HANDLE) {
+        const std::shared_ptr<PipelineHandle> pipeline_handle = ensureScreenPipeline(*fragment, *vertex, compatibility, pipeline_why);
+        if (pipeline_handle == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
                            contentRefusalCode(ContentRefusalCause::ScreenPipelineRefused),
                            pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
+        plan.pipeline = pipeline_handle->pipeline;
+        builds.borrow(pipeline_handle); // see planCommand: the handle is a copy of what the frame must keep alive
         return true;
     }
 
@@ -1227,7 +1268,7 @@ struct ContentCaches::Impl {
     {
         for (auto& [description, entry] : geometries) {
             (void)description;
-            (void)destroyGeometryStreams(entry); // a teardown is not a release: it moves no counter
+            (void)destroyGeometryStreams(*entry); // a teardown is not a release: it moves no counter
         }
         geometries.clear();
     }
@@ -1237,7 +1278,7 @@ struct ContentCaches::Impl {
     {
         for (auto& [buffer, entry] : instance_streams) {
             (void)buffer;
-            destroyBuffer(entry.buffer, entry.memory);
+            destroyBuffer(entry->buffer, entry->memory);
         }
         instance_streams.clear();
     }
@@ -1245,9 +1286,12 @@ struct ContentCaches::Impl {
     /** @brief Destroys every pipeline. */
     void destroyPipelines() noexcept
     {
-        for (auto& [key, pipeline] : pipelines) {
+        for (auto& [key, handle] : pipelines) {
             (void)key;
-            table->vkDestroyPipeline(device, pipeline, nullptr);
+            if (handle != nullptr && handle->pipeline != VK_NULL_HANDLE) {
+                table->vkDestroyPipeline(device, handle->pipeline, nullptr);
+                handle->pipeline = VK_NULL_HANDLE;
+            }
         }
         pipelines.clear();
     }
@@ -1270,13 +1314,13 @@ struct ContentCaches::Impl {
         // LIVE, FROM THE TABLES: a hole a release left has a null buffer and is not resident.
         for (const auto& [description, entry] : geometries) {
             (void)description;
-            for (const VertexStream& stream : entry.streams) {
+            for (const VertexStream& stream : entry->streams) {
                 if (stream.buffer != VK_NULL_HANDLE) {
                     ++out.streams_live;
                     out.stream_bytes_live += stream.bytes;
                 }
             }
-            for (const IndexStream& stream : entry.indices) {
+            for (const IndexStream& stream : entry->indices) {
                 if (stream.buffer != VK_NULL_HANDLE) {
                     ++out.streams_live;
                     out.stream_bytes_live += stream.bytes;
@@ -1287,9 +1331,9 @@ struct ContentCaches::Impl {
         // ledger (see ResidencyKind::Geometry), so a host release that drops one is visible there like any other.
         for (const auto& [buffer, entry] : instance_streams) {
             (void)buffer;
-            if (entry.buffer != VK_NULL_HANDLE) {
+            if (entry->buffer != VK_NULL_HANDLE) {
                 ++out.streams_live;
-                out.stream_bytes_live += entry.bytes;
+                out.stream_bytes_live += entry->bytes;
             }
         }
         return out;
@@ -1372,6 +1416,7 @@ ContentCaches::FrameBuilds::FrameBuilds(FrameBuilds&& other) noexcept
   , resolved_(std::move(other.resolved_))
   , claimed_(std::move(other.claimed_))
   , copies_(std::move(other.copies_))
+  , borrowed_(std::move(other.borrowed_))
 {
 }
 
@@ -1384,6 +1429,7 @@ ContentCaches::FrameBuilds& ContentCaches::FrameBuilds::operator=(FrameBuilds&& 
         resolved_ = std::move(other.resolved_);
         claimed_  = std::move(other.claimed_);
         copies_   = std::move(other.copies_);
+        borrowed_ = std::move(other.borrowed_);
     }
     return *this;
 }
@@ -1409,6 +1455,20 @@ void ContentCaches::FrameBuilds::noteClaim(ResidencyClaims::Claim claim)
     claimed_.push_back(std::move(claim));
 }
 
+void ContentCaches::FrameBuilds::borrow(const std::shared_ptr<const void>& entry)
+{
+    if (entry == nullptr) {
+        return;
+    }
+    // DEDUPLICATED BY ADDRESS: a frame that resolves one geometry two hundred times takes ONE share (see the header),
+    // and the list is short because it holds distinct entries, not draws.
+    const auto known =
+        std::find_if(borrowed_.begin(), borrowed_.end(), [&entry](const std::shared_ptr<const void>& held) { return held.get() == entry.get(); });
+    if (known == borrowed_.end()) {
+        borrowed_.push_back(entry);
+    }
+}
+
 ContentCaches::GeometryEntry* ContentCaches::FrameBuilds::noteCopy(const vn::graphics::GeometryDescription& description, GeometryEntry copy)
 {
     // THE COPY LIVES IN THIS OBJECT, NOT IN THE CACHE (see the class note): the cache's tables are keyed by identity,
@@ -1430,8 +1490,9 @@ void ContentCaches::FrameBuilds::publishAll()
 
 void ContentCaches::FrameBuilds::reset() noexcept
 {
-    // WITHDRAW FIRST, DISPOSE SECOND: the claim's destructor puts an unresolved key back to Absent (P1's prevention,
-    // not its cleanup), and the copies then leave without a key ever naming them.
+    // WITHDRAW FIRST, DISPOSE SECOND, DROP THE SHARES THIRD: the claim's destructor puts an unresolved key back to
+    // Absent (P1's prevention, not its cleanup), the copies leave without a key ever naming them, and the borrows are
+    // dropped LAST - they are what tells the park the frame is over.
     claimed_.clear();
     if (!copies_.empty()) {
         if (owner_ != nullptr) {
@@ -1440,6 +1501,7 @@ void ContentCaches::FrameBuilds::reset() noexcept
         copies_.clear();
     }
     resolved_.clear();
+    borrowed_.clear();
     owner_ = nullptr;
 }
 
@@ -1677,15 +1739,16 @@ bool ContentCaches::planCommand(const vn::graphics::DrawItem&                  c
     return impl->planCommand(command, pass, default_program, compatibility, plan, refusal, builds);
 }
 
-bool ContentCaches::planScreen(const vn::graphics::DrawPacket&                draw,
-                                 const vn::graphics::PassDraw&                      pass,
-                                 const vn::graphics::RenderPassCompatibility& compatibility,
-                                 FrameHead::DrawPlan&                               plan,
-                                 ContentRefusal&                                    refusal,
-                                 const Lock&                                        held)
+bool ContentCaches::planScreen(const vn::graphics::DrawPacket&              draw,
+                               const vn::graphics::PassDraw&                pass,
+                               const vn::graphics::RenderPassCompatibility& compatibility,
+                               FrameHead::DrawPlan&                         plan,
+                               ContentRefusal&                              refusal,
+                               const Lock&                                  held,
+                               FrameBuilds&                                 builds)
 {
     (void)held; // see planCommand
-    return impl->planScreen(draw, pass, compatibility, plan, refusal);
+    return impl->planScreen(draw, pass, compatibility, plan, refusal, builds);
 }
 
 ContentCaches::Lock ContentCaches::lock() const
@@ -1837,13 +1900,13 @@ std::size_t ContentCaches::releaseGeometry(const vn::graphics::GeometryDescripti
     }
     // THE ENTRY LEAVES THE CACHE NOW; ITS BUFFERS FOLLOW WHEN THE DEVICE SAYS THEY MAY (see releaseLater). The two
     // questions are different: "is this content resident" is about the table, "may this object be destroyed" is about
-    // the queue - and answering both in one place is what used to force release to be a between-frames call.
-    GeometryEntry doomed = std::move(found->second);
+    // the queue AND about the frames that resolved the entry - which is why the act holds the entry itself and the park
+    // probes its share count before it destroys anything.
+    std::shared_ptr<GeometryEntry> doomed = std::move(found->second);
     impl->geometries.erase(found);
-    impl->stream_releases_ += Impl::liveStreams(doomed);
-    impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
-        (void)target->destroyGeometryStreams(entry);
-    });
+    impl->stream_releases_ += Impl::liveStreams(*doomed);
+    const std::weak_ptr<const void> named = doomed;
+    impl->releaseLater(named, [target = impl.get(), entry = std::move(doomed)]() mutable { (void)target->destroyGeometryStreams(*entry); });
     return 1;
 }
 
@@ -1857,14 +1920,14 @@ std::size_t ContentCaches::releaseProgram(const vn::graphics::ShaderProgramDescr
     // THE PIPELINES FIRST: they are keyed by the program's IDENTITY AND REVISION (see ContentPipelineKey), so once
     // the entry is gone they could never be looked up again - keeping them alive would be a leak nothing can name.
     const vn::graphics::ContentRef released = vn::graphics::contentRefOf(description->id(), description->revision());
-    std::vector<VkPipeline>     pipelines;
-    std::vector<VkShaderModule> modules;
+    std::vector<std::shared_ptr<PipelineHandle>> pipelines;
+    std::vector<VkShaderModule>                  modules;
     for (auto it = impl->pipelines.begin(); it != impl->pipelines.end();) {
         if (!(it->first.identity.program == released)) {
             ++it;
             continue;
         }
-        pipelines.push_back(it->second);
+        pipelines.push_back(std::move(it->second));
         it = impl->pipelines.erase(it);
         ++impl->pipeline_releases_;
         ++dropped;
@@ -1887,15 +1950,21 @@ std::size_t ContentCaches::releaseProgram(const vn::graphics::ShaderProgramDescr
         ++dropped;
     }
     // THE OBJECTS LEAVE WHEN THE DEVICE SAYS THEY MAY (see releaseLater): a submitted frame may still be drawing with
-    // the pipelines this announcement forgot, so destroying them here would be a race with the GPU.
-    if (!pipelines.empty() || !modules.empty()) {
-        impl->releaseLater([table = impl->table,
-                            device = impl->device,
-                            pipelines = std::move(pipelines),
-                            modules   = std::move(modules)]() {
-            for (const VkPipeline pipeline : pipelines) {
-                table->vkDestroyPipeline(device, pipeline, nullptr);
+    // the pipelines this announcement forgot, AND a recording frame may hold the share it resolved - so each pipeline
+    // is parked behind its OWN share and destroyed only when no frame names it. The shader modules are named by no
+    // command buffer once their pipelines exist, so they need no share of their own.
+    for (std::shared_ptr<PipelineHandle>& handle : pipelines) {
+        const std::shared_ptr<PipelineHandle> doomed = std::move(handle);
+        const std::weak_ptr<const void>       named  = doomed;
+        impl->releaseLater(named, [table = impl->table, device = impl->device, doomed]() {
+            if (doomed->pipeline != VK_NULL_HANDLE) {
+                table->vkDestroyPipeline(device, doomed->pipeline, nullptr);
+                doomed->pipeline = VK_NULL_HANDLE;
             }
+        });
+    }
+    if (!modules.empty()) {
+        impl->releaseLater(std::weak_ptr<const void>{}, [table = impl->table, device = impl->device, modules = std::move(modules)]() {
             for (const VkShaderModule module : modules) {
                 table->vkDestroyShaderModule(device, module, nullptr);
             }
@@ -1910,56 +1979,67 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || buffer == nullptr) {
         return 0;
     }
-    // THE STREAMS LEAVE THE CACHE NOW AND THE BUFFERS FOLLOW (see releaseLater): the handles are taken out of the
-    // entries so a later frame uploads them again, and the destruction itself waits for the device's watermark.
+
+    // THE STREAMS LEAVE THE CACHE NOW AND THE BUFFERS FOLLOW (see releaseLater): the entry that loses them is REPLACED
+    // (a hole is what the next frame refills, so nothing about the geometry stops being live) and the old entry is
+    // parked behind its own share count. Mutating the shared entry in place would leave the park's probe counting the
+    // table's own share and never destroying anything - which is why the entry moves out of every table first.
     struct DoomedBuffer {
         VkBuffer    buffer{ VK_NULL_HANDLE };
         MemorySlice memory{};
     };
-    std::vector<DoomedBuffer> doomed;
-    const auto                take = [&doomed](VkBuffer& stream_buffer, MemorySlice& stream_memory) {
-        if (stream_buffer == VK_NULL_HANDLE) {
-            return;
-        }
-        doomed.push_back(DoomedBuffer{ stream_buffer, stream_memory });
-        stream_buffer   = VK_NULL_HANDLE;
-        stream_memory   = MemorySlice{};
-    };
-
     std::size_t dropped = 0;
     for (auto& [description, entry] : impl->geometries) {
         (void)description;
-        for (VertexStream& stream : entry.streams) {
-            if (stream.source != buffer || stream.buffer == VK_NULL_HANDLE) {
-                continue;
+        std::vector<DoomedBuffer> doomed;
+        for (const VertexStream& stream : entry->streams) {
+            if (stream.source == buffer && stream.buffer != VK_NULL_HANDLE) {
+                doomed.push_back(DoomedBuffer{ stream.buffer, stream.memory });
             }
-            take(stream.buffer, stream.memory);
-            ++impl->stream_releases_;
-            ++dropped;
         }
-        for (IndexStream& stream : entry.indices) {
-            if (stream.source != buffer || stream.buffer == VK_NULL_HANDLE) {
-                continue;
+        for (const IndexStream& stream : entry->indices) {
+            if (stream.source == buffer && stream.buffer != VK_NULL_HANDLE) {
+                doomed.push_back(DoomedBuffer{ stream.buffer, stream.memory });
             }
-            take(stream.buffer, stream.memory);
-            ++impl->stream_releases_;
-            ++dropped;
         }
-    }
-    // AN INSTANCE STREAM IS RELEASED BY THE SAME ANNOUNCEMENT (`releaseContent(Buffer)` names a vertex-or-instance
-    // stream, see RenderDevice): the next draw that reads this buffer uploads it again, exactly like a vertex one.
-    const auto instance = impl->instance_streams.find(static_cast<const vn::Buffer<float>*>(buffer));
-    if (instance != impl->instance_streams.end() && instance->second.buffer != VK_NULL_HANDLE) {
-        take(instance->second.buffer, instance->second.memory);
-        ++impl->stream_releases_;
-        ++dropped;
-    }
-    if (!doomed.empty()) {
-        impl->releaseLater([target = impl.get(), buffers = std::move(doomed)]() mutable {
+        if (doomed.empty()) {
+            continue;
+        }
+        auto replacement = std::make_shared<GeometryEntry>(*entry);
+        for (VertexStream& stream : replacement->streams) {
+            if (stream.source == buffer) {
+                stream.buffer = VK_NULL_HANDLE;
+                stream.memory = MemorySlice{};
+            }
+        }
+        for (IndexStream& stream : replacement->indices) {
+            if (stream.source == buffer) {
+                stream.buffer = VK_NULL_HANDLE;
+                stream.memory = MemorySlice{};
+            }
+        }
+        const std::shared_ptr<GeometryEntry> previous = std::move(entry);
+        entry                                         = std::move(replacement);
+        impl->stream_releases_ += static_cast<std::uint32_t>(doomed.size());
+        dropped += doomed.size();
+        const std::weak_ptr<const void> named = previous;
+        impl->releaseLater(named, [target = impl.get(), entry = previous, buffers = std::move(doomed)]() mutable {
+            (void)entry; // the share whose frames the park waits for; the objects below are the detached handles
             for (DoomedBuffer& one : buffers) {
                 target->destroyBuffer(one.buffer, one.memory);
             }
         });
+    }
+    // AN INSTANCE STREAM IS RELEASED BY THE SAME ANNOUNCEMENT (`releaseContent(Buffer)` names a vertex-or-instance
+    // stream, see RenderDevice): the next draw that reads this buffer uploads it again, exactly like a vertex one.
+    const auto instance = impl->instance_streams.find(static_cast<const vn::Buffer<float>*>(buffer));
+    if (instance != impl->instance_streams.end() && instance->second->buffer != VK_NULL_HANDLE) {
+        const std::shared_ptr<InstanceStream> previous = std::move(instance->second);
+        instance->second                               = std::make_shared<InstanceStream>();
+        ++impl->stream_releases_;
+        ++dropped;
+        const std::weak_ptr<const void> named = previous;
+        impl->releaseLater(named, [target = impl.get(), entry = previous]() { target->destroyBuffer(entry->buffer, entry->memory); });
     }
     return dropped;
 }
@@ -1970,7 +2050,8 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
                                     FrameHead::DrawPlan&                           plan,
                                     ContentRefusal&                                refusal,
                                     const Lock&                                    held,
-                                    const ContentImages::BatchId                   batch)
+                                    const ContentImages::BatchId                   batch,
+                                    FrameBuilds&                                   builds)
 {
     (void)held;
     plan.slots = {};
@@ -1979,7 +2060,10 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
     // and the two samplers are the same for every call of one frame, so they land on the HEAD, not on the plan.
     vn::String why;
     if (commands != VK_NULL_HANDLE) {
-        (void)impl->images.ensureFallback(commands, batch, &why);
+        const ContentImages::TextureView stand_in = impl->images.ensureFallback(commands, batch, &why);
+        // THE STAND-IN IS A SHARED CONSTANT, BUT THE FRAME THAT BOUND IT STILL KEEPS IT: a batch that failed on another
+        // driver drops and rebuilds the stand-in (see batchAbandoned), and this frame's plan names the view it resolved.
+        builds.borrow(stand_in.owner);
     }
     head.fallback_view    = impl->images.fallbackView();
     head.fallback_sampler = impl->images.fallbackSampler();
@@ -2000,16 +2084,19 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
         if (named.texture == nullptr || !named.texture->isComplete()) {
             continue;
         }
-        vn::String        upload_why;
-        const VkImageView view = impl->images.viewFor(*named.texture, commands, batch, &upload_why);
-        if (view == VK_NULL_HANDLE) {
+        vn::String                       upload_why;
+        const ContentImages::TextureView image = impl->images.viewFor(*named.texture, commands, batch, &upload_why);
+        if (image.view == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                            contentRefusalCode(ContentRefusalCause::MaterialTextureSkipped),
                            upload_why.empty() ? vn::String(u8"vk: a material texture could not be uploaded") : std::move(upload_why));
             continue;
         }
-        binding.view    = view;
+        binding.view    = image.view;
         binding.present = true;
+        // THE ENTRY IS THE FRAME'S NOW (see borrow): a `releaseContent(Texture)` that lands while this frame records
+        // parks the image behind this share instead of destroying what the command buffer is about to sample.
+        builds.borrow(image.owner);
         const VkSampler authored = impl->images.samplerFor(named.sampler);
         if (authored != VK_NULL_HANDLE) {
             binding.sampler = authored;

@@ -56,8 +56,10 @@ VN_BACKEND_VK_NS_BEGIN
  *   cost does not grow with its draw packets".
  * - RELEASE IS A TWO-PART ANSWER. An announced release forgets the entry NOW (so residency numbers answer the
  *   question they are asked and the next frame uploads again) while the Vulkan objects park on the device's
- *   completion watermark (`setRetirement`) until no submitted frame can still name them. Without a queue they are
- *   destroyed immediately, which is correct before `initialize()` and during `shutdown` (both sit on an idle queue).
+ *   completion watermark (`setRetirement`) AND on the entry's own share count: every frame that resolved the entry
+ *   holds a share (see `FrameBuilds::borrow`), so a release announced while another driver records destroys nothing
+ *   that driver is about to submit. Without a queue they are destroyed immediately, which is correct before
+ *   `initialize()` and during `shutdown` (both sit on an idle queue).
  * - WHO MAY BUILD A GEOMETRY IS THE DEVICE'S TABLE (F4). `ensureGeometry` asks `ResidencyClaims::admit` before it
  *   uploads a stream: a key this driver may build is uploaded into the cache's entry and PUBLISHED when the frame is
  *   proven complete (`FrameBuilds::publishAll`), a key another driver is building is COPIED for this frame and thrown
@@ -153,6 +155,11 @@ class VN_BACKEND_VK_API ContentCaches final {
         std::uint64_t revision{ 0 }; // The Buffer revision the bytes came from.
     };
 
+    /// @brief One built pipeline, held as a share so a frame that resolved it can keep it alive (see `borrow`).
+    struct PipelineHandle {
+        VkPipeline pipeline{ VK_NULL_HANDLE };
+    };
+
     /**
      * @brief THE CACHE'S ONE LOCK, held while a frame head resolves its content or a host verb edits the caches.
      *
@@ -200,23 +207,30 @@ class VN_BACKEND_VK_API ContentCaches final {
     };
 
     /**
-     * @brief ONE FRAME'S ADMISSIONS: the geometries it resolved, the build claims it must settle, and the temporary
-     *        copies it built instead of waiting for another driver.
+     * @brief ONE FRAME'S DEALINGS WITH RESIDENCY: what it admitted, what it built instead of waiting, and what it
+     *        BORROWS from the tables while it records.
      *
      * @details
      * - WHY THE FRAME OWNS THIS AND NOT THE CACHE. A claim is a promise that ends at a KNOWN point - the frame's
-     *   completion evidence - so its owner must be the frame; and a copy serves exactly one frame's commands and dies
-     *   with it. Keeping both here is what lets the recording path work from values and still hand everything back on
-     *   every exit path (`G3`): the destructor WITHDRAWS what was not published and DISPOSES the copies, so an
-     *   abandoned frame leaves no key `Uploading` (`P1`) and no bytes behind.
+     *   completion evidence - so its owner must be the frame; a copy serves exactly one frame's commands and dies
+     *   with it; and a BORROWED ENTRY is the entry the frame resolved, which a host may release while the frame is
+     *   still recording (`R6`). Keeping all three here is what lets the recording path work from values and still hand
+     *   everything back on every exit path (`G3`): the destructor WITHDRAWS what was not published, DISPOSES the copies
+     *   and DROPS the borrows, so an abandoned frame leaves no key `Uploading` (`P1`), no bytes behind, and no entry
+     *   the park has to keep waiting for.
+     * - THE BORROW IS THE SECOND WINDOW OF A RELEASE (ADR-2026-11-24-residency-borrowing). A release erases the table's
+     *   share and parks the objects behind `(the submission watermark, nobody still names the entry)`. `borrow` is how a
+     *   frame says "I name this entry", so a `releaseContent` that lands mid-frame destroys nothing the recording frame
+     *   is about to submit - and a frame that ends drops every share, which is what lets the park finally run.
      * - THREE ANSWERS, THREE LIFETIMES (see `ResidencyClaims::admit`). `Use` is remembered so the frame's later
      *   commands do not ask the table twice. `Build` is remembered AND its claim kept: `publishAll` publishes it when
      *   the frame completed, and a fill that FAILED never gets here - `ensureGeometry` lets the claim's own destructor
      *   return the key to `Absent`, so a refused fill can never publish itself. `Copy` is a detached entry this object
      *   owns for the rest of the frame.
-     * - IT HOLDS CLAIMS, NOT POINTERS INTO THE CACHE: a host may release a geometry while this frame is in flight
-     *   (R6 allows it), which moves the entry out of the cache's table. A claim is self-contained (a table, a key and
-     *   a token), so publishing it after such a release is a counted `stale` answer instead of a read of freed memory.
+     * - IT HOLDS CLAIMS AND SHARES, NOT POINTERS INTO THE CACHE: a host may release a geometry while this frame is in
+     *   flight (R6 allows it), which moves the entry out of the cache's table. A claim is self-contained (a table, a key
+     *   and a token), and a borrowed entry is a `shared_ptr` (see @ref borrow), so publishing after such a release is a
+     *   counted `stale` answer and reading the entry is safe - instead of a read of freed memory.
      * - A COPY IS FRAME SCRATCH AFTER IT IS BUILT. Its streams are counted in `Progress::stream_builds` (they were
      *   really uploaded) but never in the live fields: those answer "what is resident", and a copy is not. Disposing
      *   one is not a release announcement, so `stream_releases` stays unmoved.
@@ -288,6 +302,20 @@ class VN_BACKEND_VK_API ContentCaches final {
         [[nodiscard]] GeometryEntry* noteCopy(const vn::graphics::GeometryDescription& description, GeometryEntry copy);
 
         /**
+         * @brief Keeps @p entry alive until this frame ends: the frame resolved it, so a release may not destroy it.
+         *
+         * @details
+         * - ONE SHARE PER ENTRY, NOT PER DRAW (`G10`): a frame that draws one geometry two hundred times takes one
+         *   share, because the list is deduplicated by the entry's address. The entries a frame resolves are few (one
+         *   per distinct geometry, texture, instance buffer and pipeline), so the probe is a short walk.
+         * - IT TAKES A TYPE-ERASED `shared_ptr<const void>` because the four kinds of entry this backend retains have
+         *   nothing in common but their lifetime - the frame never reads one through this list, it only keeps it.
+         *
+         * @param entry The entry to keep (empty is ignored).
+         */
+        void borrow(const std::shared_ptr<const void>& entry);
+
+        /**
          * @brief Publishes every claim this frame holds: the fills they name are provably complete.
          *
          * @details
@@ -307,6 +335,7 @@ class VN_BACKEND_VK_API ContentCaches final {
         std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry*> resolved_{};
         std::vector<ResidencyClaims::Claim>                          claimed_{};
         std::vector<std::unique_ptr<GeometryEntry>>                 copies_{};
+        std::vector<std::shared_ptr<const void>>                                     borrowed_{}; // The entries this frame named (see borrow).
     };
 
     /**
@@ -588,14 +617,16 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param refusal  Receives the first reason a texture could not be served (kept when already refused).
      * @param held     The cache lock (see @ref Lock).
      * @param batch    The driver recording the uploads (see @ref ContentImages::BatchId).
+     * @param builds   This frame's book: every image entry served here is BORROWED for the frame's life.
      */
     void resolveTextures(const vn::graphics::MaterialDescription* material,
-                         VkCommandBuffer                         commands,
-                         FrameHead&                              head,
-                         FrameHead::DrawPlan&                    plan,
-                         ContentRefusal&                         refusal,
-                         const Lock&                             held,
-                         ContentImages::BatchId                  batch);
+                         VkCommandBuffer                          commands,
+                         FrameHead&                               head,
+                         FrameHead::DrawPlan&                     plan,
+                         ContentRefusal&                          refusal,
+                         const Lock&                              held,
+                         ContentImages::BatchId                   batch,
+                         FrameBuilds&                             builds);
 
     /** @brief Gets whether @p batch recorded a texture copy into a command buffer that has not been waited for yet. */
     [[nodiscard]] bool hasPendingUploads(ContentImages::BatchId batch) const;
@@ -670,14 +701,16 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param plan              Receives what was resolved.
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @param held              The cache lock (see @ref Lock).
+     * @param builds            This frame's book: the pipeline this resolves is borrowed for the frame's life.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&                draw,
-                                  const vn::graphics::PassDraw&                      pass,
+    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&              draw,
+                                  const vn::graphics::PassDraw&                pass,
                                   const vn::graphics::RenderPassCompatibility& compatibility,
-                                  FrameHead::DrawPlan&                               plan,
-                                  ContentRefusal&                                    refusal,
-                                  const Lock&                                        held);
+                                  FrameHead::DrawPlan&                         plan,
+                                  ContentRefusal&                              refusal,
+                                  const Lock&                                  held,
+                                  FrameBuilds&                                 builds);
 
   private:
     struct Impl;
