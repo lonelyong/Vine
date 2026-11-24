@@ -135,13 +135,21 @@ and every cache has a witness a test can read.**
   execution dependency), then the instance. `TargetObjects::beginPass` / `WindowTarget::beginPass` are the two call sites; the
   layout bookkeeping is theirs (see `F4` and `P15`).
 - **Two depth images, two layouts; a borrowed depth is a dependency, not an exception**: the depth ATTACHMENT and the picture
-  it resolves into carry separate records (`depth_from` / `depth_picture_from`), because `depth_sampled` moves only the
-  picture - a multisampled image may not be sampled at all, so stating the picture's layout for the sample buffer is an illegal
-  barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). On a SINGLE-SAMPLED set the two records name ONE
-  image - the attachment IS the picture - so the attachment states the sampled layout and the next pass transitions it
-  back (`VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain`). A `shareDepth` target states the LENDER's picture and the
-  depth attachment layout it is in; the barrier that follows transitions nothing and is recorded for exactly that reason - it is
-  the execution dependency between the lender's pass and the borrower's LOAD.
+  it resolves into carry separate records (`depth_from` / `depth_picture_from`), because a reader sampling the picture moves only
+  the picture - a multisampled image may not be sampled at all, so stating the picture's layout for the sample buffer is an illegal
+  barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). On a SINGLE-SAMPLED set the two names resolve to ONE
+  image, which therefore has ONE record (`TargetObjects::depthPictureLayout`), and the next pass transitions it back
+  (`VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain`). A `shareDepth` target states the LENDER's record for that
+  image - one image, one layout record, held in the lender (`TargetObjects::depth_lender`) - and the barrier that follows
+  transitions nothing and is recorded for exactly that reason: it is the execution dependency between the lender's pass and the
+  borrower's LOAD.
+- **Layouts are RECORDS, not derivations**: every image of an attachment set has one `ImageLayout`, written by the command that
+  moves it (`TargetObjects::color_layouts` / `sample_layouts` / `depth_layout` / `depth_picture_layout`, and
+  `WindowTarget`'s per-image record) and read by the barrier that states where it starts. `TargetObjects::beginPass` only picks
+  WHICH record belongs to which role - it computes nothing - so the two answers an image used to be able to acquire ("the
+  attachment is never sampled", "the picture was sampled") cannot disagree, and the shape that produced both halves of `P15`
+  is no longer expressible. `fresh` stays as the one SET-level, atomic hint ("no pass has drawn here") a reader outside the
+  frame gate may take.
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
   a new purpose is one more row, not one more inline barrier. An ATTACHMENT row states the read side of its access as well as
   the write side, because under dynamic rendering the LOAD (and a blend's destination read) has no implicit ordering.
@@ -413,7 +421,8 @@ and every cache has a witness a test can read.**
   ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared), and its
   barrier is recorded against that LENDER's image as a same-layout barrier: the dependency, not a transition. The depth
   ATTACHMENT and the depth RESOLVE PICTURE keep separate layout records, because sampling the picture does not move the sample
-  buffer.
+  buffer - and every other image has its own record too (`color_layouts` per picture, `sample_layouts` per sample buffer), which
+  is what lets a colour picture a screen draw sampled return to the attachment layout on its own.
 - **A target it cannot build is named at BUILD time**: a target with no usable extent answers `vk.target.size_unknown` and a borrowed
   depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
   announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
@@ -761,9 +770,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   seventeen `test_vk` cases red, each pointing at that VUID); a second pass that LOADs what the first wrote reads stale data
   with no message at all on a driver that does not hazard-check.
 - How to prevent it: `DynamicRendering::beginRendering` records one barrier per attachment before the instance - including one
-  between two identical states, which IS the dependency - and the LAYOUT it starts from is the owner's own record
-  (`TargetObjects::fresh` / `color_sampled` / `depth_sampled`, `WindowTarget`'s per-image record). A new caller must state its
-  layouts instead of assuming a render pass would move them.
+  between two identical states, which IS the dependency - and the LAYOUT it starts from is the record of THAT image
+  (`TargetObjects::color_layouts` / `sample_layouts` / `depth_layout` / `depth_picture_layout`, `WindowTarget`'s per-image
+  record), written by whichever command moved it. A new caller must state its layouts instead of assuming a render pass would
+  move them, and a new MOVER must write the record of the image it moved.
 - Two IMAGES are not one layout: a multisampled target's depth ATTACHMENT and the picture it resolves into part company as soon
   as the picture is sampled - the sample buffer stays an attachment (it may not be sampled at all) and the picture moves to
   `SHADER_READ_ONLY_OPTIMAL`. One record for both states a layout an image never had. How to detect: a second frame over the same
@@ -771,7 +781,11 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   is red without the split). AND ONE IMAGE CAN BE BOTH: on a single-sampled set the attachment is the picture, so a recorder
   that says "the attachment is never sampled" drops the SHADER_READ_ONLY -> depth attachment barrier, and the next frame reports
   `VUID-vkCmdBeginRendering-pRenderingInfo-09588` (MEASURED on the application's `open_demo`, 2026-11-24;
-  `VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain` is red without it).
+  `VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain` is red without it). The COLOUR HALF is the same rule on the other
+  attachment: a picture a screen draw sampled must return to the attachment layout before the next pass writes it, and answering
+  "colour attachment" for every picture reports `VUID-vkCmdBeginRendering-pRenderingInfo-09592` plus `vkCmdDraw-None-09600`
+  (MEASURED; `VkDeferredTest.TheDeferredFrameIsDrawnAgainAfterItsGbufferWasSampled` is red, at one sample and at the device's
+  maximum). One record per image is what makes both halves unrepresentable rather than fixed.
 - A BORROWED depth is a dependency, not an exception: `shareDepth`'s image belongs to the lender, its layout does not move, and
   the barrier must still be recorded - it orders the lender's write before the borrower's LOAD and depth test. NOT measured: an
   ordered implementation shows no pixel difference and this environment's validation does not report the missing hazard, so the

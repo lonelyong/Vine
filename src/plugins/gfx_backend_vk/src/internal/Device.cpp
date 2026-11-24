@@ -899,17 +899,18 @@ struct Device::Impl {
                 continue;
             }
 
-            // THE MAP IS ABOUT TO BE READ: one transition, from the attachment layout the producer left it in (or
-            // UNDEFINED when nobody wrote it yet) to the sampled one. IT IS THE PICTURE that moves - on a
-            // multisampled map that is the resolved depth image, which is also the only one a shader may sample.
+            // THE MAP IS ABOUT TO BE READ: one transition to the sampled layout, from the record of the image that
+            // actually moves. IT IS THE PICTURE that moves - on a multisampled map that is the resolved depth image,
+            // which is also the only one a shader may sample; on a SINGLE-SAMPLED one the picture IS the attachment, and
+            // `depthPictureLayout()` names that image's one record (see TargetObjects).
             TargetObjects& sampled = *map_images;
-            if (!sampled.depth_sampled) {
-                const ImageState from =
-                    stateOf(sampled.fresh.load(std::memory_order_relaxed) ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
-                const VkImageMemoryBarrier2 barrier =
-                    barrierBetween(sampled.depthPicture(), from, stateOf(ImageLayout::ShaderReadOnly), depthAspectMask(sampled.depthFormat()));
+            if (sampled.depthPictureLayout() != ImageLayout::ShaderReadOnly) {
+                const VkImageMemoryBarrier2 barrier = barrierBetween(sampled.depthPicture(),
+                                                                   stateOf(sampled.depthPictureLayout()),
+                                                                   stateOf(ImageLayout::ShaderReadOnly),
+                                                                   depthAspectMask(sampled.depthFormat()));
                 recordBarrier(device_table, commands, barrier);
-                sampled.depth_sampled = true;
+                sampled.setDepthPictureLayout(ImageLayout::ShaderReadOnly);
             }
 
             out.view                  = sampled.depthPictureView();
@@ -1524,17 +1525,23 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 continue;
             }
             const std::shared_ptr<TargetObjects> source_entry = owner.target_table.lookup(description.source);
-            if (source_entry == nullptr || !source_entry->built() || source_entry->color_sampled) {
+            if (source_entry == nullptr || !source_entry->built()) {
                 continue;
             }
+            // EVERY PICTURE THE DRAW SAMPLES MOVES, each from its OWN record: one image per colour attachment, and a
+            // readback may have moved one of them while the others stayed. The picture is `colors` in both shapes - the
+            // resolve images on a multisampled target, whose sample buffers nothing may sample.
             TargetObjects& sampled = *source_entry;
-            for (const VkImage image : sampled.colors) {
-                const ImageState from = sampled.fresh.load(std::memory_order_relaxed) ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
-                const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
-                const VkImageMemoryBarrier2 barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
-                recordBarrier(owner.device_table, commands, barrier);
+            for (std::size_t index = 0; index < sampled.colors.size(); ++index) {
+                if (sampled.color_layouts[index] == ImageLayout::ShaderReadOnly) {
+                    continue; // an earlier pass of this frame already stated it
+                }
+                const ImageState to = stateOf(ImageLayout::ShaderReadOnly);
+                recordBarrier(owner.device_table,
+                              commands,
+                              barrierBetween(sampled.colors[index], stateOf(sampled.color_layouts[index]), to, VK_IMAGE_ASPECT_COLOR_BIT));
+                sampled.color_layouts[index] = ImageLayout::ShaderReadOnly;
             }
-            sampled.color_sampled = true;
         }
 
         // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
@@ -3575,8 +3582,8 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
     }
 
     // THE COPY MECHANISM IS ReadbackStaging's (its own command pool and fence, the staging buffer, submit, wait,
-    // mapping); this function says WHAT to copy and what the bytes mean. The target's own layout state (color_sampled)
-    // is still this backend's knowledge, recorded below through the staging command buffer.
+    // mapping); this function says WHAT to copy and what the bytes mean. Where each picture is stays this backend's
+    // knowledge (the per-image `color_layouts` records), recorded below through the staging command buffer.
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
 
     ReadbackStaging staging;
@@ -3592,19 +3599,20 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
     // RECORD: colour attachment -> transfer source -> copy -> back, so the next pass into this target finds the colour
     // where it expects it (COLOR_ATTACHMENT_OPTIMAL).
 
-    // A target a SCREEN DRAW sampled is in SHADER_READ_ONLY: put every colour attachment back before this readback's
-    // own transition names COLOR_ATTACHMENT_OPTIMAL as the old layout.
-    if (images.color_sampled) {
-        for (const VkImage image : images.colors) {
-            const VkImageMemoryBarrier2 back =
-                barrierBetween(image, stateOf(ImageLayout::ShaderReadOnly), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-            recordBarrier(impl->device_table, staging.commands(), back);
+    // A PICTURE A SCREEN DRAW SAMPLED IS IN SHADER_READ_ONLY: put back the ones that are - per image, from their own
+    // records - so this readback's own transition names the layout the image it copies is really in.
+    for (std::size_t index = 0; index < images.colors.size(); ++index) {
+        if (images.color_layouts[index] != ImageLayout::ShaderReadOnly) {
+            continue;
         }
-        images.color_sampled = false;
+        const VkImageMemoryBarrier2 back =
+            barrierBetween(images.colors[index], stateOf(ImageLayout::ShaderReadOnly), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
+        recordBarrier(impl->device_table, staging.commands(), back);
+        images.color_layouts[index] = ImageLayout::ColorAttachment;
     }
 
     const VkImageMemoryBarrier2 to_transfer =
-        barrierBetween(color_image, stateOf(ImageLayout::ColorAttachment), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
+        barrierBetween(color_image, stateOf(images.color_layouts[attachment_index]), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
     recordBarrier(impl->device_table, staging.commands(), to_transfer);
 
     staging.recordCopy(color_image,
@@ -3738,16 +3746,16 @@ vn::graphics::ReadbackOutcome Device::readDepthBuffer(const vn::graphics::ImageR
 
     // RECORD: depth picture -> transfer source -> copy -> back to the layout a later pass expects (DEPTH_ATTACHMENT).
 
-    // A PASS THAT SAMPLED THIS DEPTH AS A SHADOW MAP left the picture in SHADER_READ_ONLY: put it back before this
-    // readback's own transition names DEPTH_ATTACHMENT as the old layout (the mirror of readColorBuffer's
-    // colour_sampled note, and the same stage masks executeFrame's restore records).
-    if (images.depth_sampled) {
+    // A PASS THAT SAMPLED THIS DEPTH AS A SHADOW MAP left the picture in SHADER_READ_ONLY: put it back, stating the
+    // layout of the image that actually moved - the resolve picture, or the attachment itself on a single-sampled
+    // target - before this readback's own transition begins.
+    if (images.depthPictureLayout() != ImageLayout::DepthAttachment) {
         const VkImageMemoryBarrier2 back = barrierBetween(depth_image,
-                                                         stateOf(ImageLayout::ShaderReadOnly),
+                                                         stateOf(images.depthPictureLayout()),
                                                          stateOf(ImageLayout::DepthAttachment),
                                                          depthAspectMask(images.depthFormat()));
         recordBarrier(impl->device_table, staging.commands(), back);
-        images.depth_sampled = false;
+        images.setDepthPictureLayout(ImageLayout::DepthAttachment);
     }
 
     // A BARRIER NAMES BOTH HALVES of a combined depth/stencil image (see depthAspectMask); the COPY names only the

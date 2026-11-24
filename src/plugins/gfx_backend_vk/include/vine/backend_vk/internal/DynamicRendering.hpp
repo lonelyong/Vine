@@ -22,8 +22,12 @@ VN_BACKEND_VK_NS_BEGIN
  *   is one dynamic rendering does NOT insert. This value is what those two facts need: the images, in the order the
  *   rendering info states them, and the layout each one holds.
  * - THE FIELDS SPLIT BY WHAT DECIDES THEM. `*_images` / `*_views` are the attachment set (who owns them decides the
- *   values); `*_from` are the layouts (the owner's bookkeeping decides them); nothing here allocates or survives the
+ *   values); `*_from` are the layouts (the owner's per-image records decide them); nothing here allocates or survives the
  *   call.
+ * - ONE RECORD PER IMAGE, WHICH IS WHY THE COLOUR STARTING LAYOUTS ARE A SPAN. Two colour images of one set may be in
+ *   different places - a readback moves one of them, a screen draw samples all of them - so the value that fits is
+ *   parallel to the images, not one value for the set. The owner passes its own records and stores them back after the
+ *   call; this value only carries them.
  * - A RESOLVE TARGET IS NOT AN ATTACHMENT. A multisampled set draws into sample buffers and resolves into the
  *   pictures: the picture is stated on the sample buffer's attachment info (`resolveMode` / `resolveImageView`), which
  *   is why `picture_*` are parallel to `color_*` and empty on a single-sampled set. The same holds for the depth
@@ -32,13 +36,13 @@ VN_BACKEND_VK_NS_BEGIN
  * - TWO IMAGES, TWO LAYOUTS, ON THE DEPTH SIDE TOO. A multisampled depth attachment and the picture it resolves into
  *   part company the moment a reader samples the picture: the sample buffer stays a depth attachment (it may not be
  *   sampled at all), while the picture moves to `SHADER_READ_ONLY`. That is why `depth_from` and
- *   `depth_picture_from` are two records, exactly as `color_from` and `picture_from` are - deriving one from the other
- *   states a layout for an image that never had it.
+ *   `depth_picture_from` are two records, exactly as the colour span is one entry per image - and on a SINGLE-SAMPLED
+ *   set the two names resolve to ONE image, whose owner has ONE record (see `TargetObjects::depthPictureLayout`).
  * - A BORROWED DEPTH IS AN IMAGE, NOT AN EXCEPTION. `RenderTarget::shareDepth` gives one image to two targets, so a
- *   borrowing set states the LENDER's picture and the layout it is in (the depth attachment layout, because that is
- *   where the lender's own pass left it). The barrier that follows transitions nothing - what it adds is the execution
- *   dependency between the lender's pass and this one, which is the half dynamic rendering does not insert, and the
- *   one thing a borrowing pass must not skip.
+ *   borrowing set states the LENDER's picture and the layout the LENDER records for it - not an assumed depth
+ *   attachment layout. The barrier that follows may then transition nothing - what it adds is the execution dependency
+ *   between the lender's pass and this one, which is the half dynamic rendering does not insert, and the one thing a
+ *   borrowing pass must not skip.
  */
 struct PassAttachments {
     /// The extent the rendering instance covers (the attachment set's own; there is no framebuffer to disagree with).
@@ -63,13 +67,13 @@ struct PassAttachments {
     /// The aspect a depth barrier over these images must name (`DEPTH|STENCIL` for a combined format).
     VkImageAspectFlags depth_aspect{ VK_IMAGE_ASPECT_DEPTH_BIT };
 
-    /// The layout the images rendering writes are in (colour; meaningless for an empty set).
-    ImageLayout color_from{ ImageLayout::Undefined };
-    /// The layout the resolve pictures are in (ignored when `picture_images` is empty).
-    ImageLayout picture_from{ ImageLayout::Undefined };
+    /// The layout each image rendering writes is in, PARALLEL TO `color_images` (the owner's own records).
+    std::span<const ImageLayout> color_from{};
+    /// The layout each resolve picture is in, parallel to `picture_images` (empty on a single-sampled set).
+    std::span<const ImageLayout> picture_from{};
     /// The layout the DEPTH ATTACHMENT is in. On a MULTISAMPLED set this is never `ShaderReadOnly` (the sample buffer
     /// may not be sampled at all); on a single-sampled set the attachment IS the picture, so a reader's sampling moves
-    /// it too.
+    /// it too - and the owner's ONE record reflects that.
     ImageLayout depth_from{ ImageLayout::Undefined };
     /// The layout the depth RESOLVE picture is in (ignored when `depth_resolve_image` is empty). This is the record a
     /// reader's sampling moves.
@@ -109,8 +113,11 @@ struct PassLoad {
  *   barrier between two IDENTICAL states is recorded on purpose: it is the execution dependency between this pass and
  *   the previous one into the same image, which is the half Vulkan does not insert for dynamic rendering.
  * - CALLER OWNS THE BOOKKEEPING. `color_from` / `picture_from` / `depth_from` / `depth_picture_from` are the facts the
- *   owner tracks (see `TargetObjects` and `WindowTarget`); after this call every attachment is in the rendering layout,
- *   so the owner stores exactly that.
+ *   owner tracks, one per image (see `TargetObjects` and `WindowTarget`); after this call every attachment is in the
+ *   rendering layout, so the owner stores exactly that.
+ * - THE SPANS ARE PARALLEL TO THE IMAGES. An entry past the end of a shorter span is read as `Undefined`, which is the
+ *   truthful statement for an image nobody has written - but the two producers in this backend pass their own vectors,
+ *   so the question should never arise.
  * - DRAWS FOLLOW, then @ref endRendering. Nothing may be recorded between the barrier set and the draws that needs the
  *   old layout.
  * - ONE ALLOCATION, AND WHY IT STAYS: the colour attachment info array is sized by the set's colour attachment COUNT,
@@ -120,7 +127,8 @@ struct PassLoad {
  *
  * @param table       The device's entry points (volk table).
  * @param commands    The command buffer being recorded (outside any rendering instance).
- * @param attachments The attachment set and the layouts it is in (borrowed for the call).
+ * @param attachments The attachment set and the layouts it is in (borrowed for the call; the colour spans are parallel
+ *                    to the images).
  * @param load        The pass' load policy and clear values.
  */
 void beginRendering(const VolkDeviceTable& table, VkCommandBuffer commands, const PassAttachments& attachments, const PassLoad& load);

@@ -97,9 +97,9 @@ bool TargetObjects::built() const noexcept
     // ... and a multisampled DEPTH is not built without its resolve picture either: the instance resolves into that one,
     // and it is the image a shader samples (see depthPicture).
     const bool depth_picture = !resolvesDepth() || hasDepthResolve();
-    // A BORROWED depth has no images of its own to check: what it needs is the lender's PICTURE - the image a barrier
-    // names and the view the pass attaches, resolved when this record was built (see TargetTable::ensure).
-    const bool borrowed_picture = !depth_borrowed || (borrowed_depth_image != VK_NULL_HANDLE && borrowed_depth_view != VK_NULL_HANDLE);
+    // A BORROWED depth has no images of its own to check: what it needs is the LENDER's RECORD - the image a barrier
+    // names, the view the pass attaches and the layout that image is in all belong to it (see TargetTable::ensure).
+    const bool borrowed_picture = !depth_borrowed || (depth_lender != nullptr && depth_lender->built());
     return attachments && sample_buffers && depth_picture && borrowed_picture;
 }
 
@@ -206,6 +206,12 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
     images.colors.clear();
     images.color_memory.clear();
     images.color_views.clear();
+    // THE LAYOUT RECORDS GO WITH THE IMAGES THEY DESCRIBE: the vectors are re-sized by createAttachments, and a record
+    // that outlived its image would be an answer about something that no longer exists.
+    images.sample_layouts.clear();
+    images.color_layouts.clear();
+    images.depth_layout         = ImageLayout::Undefined;
+    images.depth_picture_layout = ImageLayout::Undefined;
 }
 
 /**
@@ -321,6 +327,13 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
         }
     }
 
+    // THE LAYOUT RECORDS ARE BORN WITH THE IMAGES, one per image, all UNDEFINED (see the header: the command that moves
+    // an image is the one that writes its record, and no image has been moved yet).
+    images.color_layouts.assign(images.colors.size(), ImageLayout::Undefined);
+    images.sample_layouts.assign(images.multisample_colors.size(), ImageLayout::Undefined);
+    images.depth_layout         = ImageLayout::Undefined;
+    images.depth_picture_layout = ImageLayout::Undefined;
+
     return true;
 }
 
@@ -328,59 +341,63 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 
 void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassLoad& load)
 {
-    // THE LAYOUTS ARE THIS RECORD'S OWN BOOKKEEPING (see the header's beginPass note): `fresh` means nothing has been
-    // written yet, the sampled bits mean a reader left the picture in SHADER_READ_ONLY, and the attachment layout is the
-    // answer otherwise. The multisampled SAMPLE BUFFERS are never sampled, so they only ever go Undefined -> attachment.
-    const bool        is_fresh       = fresh.load(std::memory_order_relaxed);
-    const ImageLayout colour_now     = is_fresh ? ImageLayout::Undefined : (color_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::ColorAttachment);
-    const ImageLayout attachment_now = is_fresh ? ImageLayout::Undefined : ImageLayout::ColorAttachment;
-    // A BORROWED DEPTH IS NOT THIS SET'S TO BE FRESH: the image holds the depth the LENDER's pass wrote, so it starts
-    // from the depth attachment layout whatever `fresh` says about this set's own attachments.
-    const bool depth_fresh = !depth_borrowed && is_fresh;
-    // TWO DEPTH IMAGES, TWO LAYOUTS (see the header) - AND ONE OF THEM MAY BE BOTH. On a multisampled target the
-    // sample buffer is never sampled (Vulkan forbids sampling it), so the ATTACHMENT only ever goes Undefined ->
-    // depth attachment. On a SINGLE-SAMPLED target the attachment IS the picture, so `depth_sampled` moves it and the
-    // next pass must transition it back: that is the SHADER_READ_ONLY -> depth attachment barrier stated here.
-    const bool depth_picture_is_attachment = !isMultisampled();
-    const ImageLayout depth_now = depth_fresh ? ImageLayout::Undefined
-                                             : ((depth_picture_is_attachment && depth_sampled) ? ImageLayout::ShaderReadOnly
-                                                                                               : ImageLayout::DepthAttachment);
-    const ImageLayout depth_picture_now =
-        depth_fresh ? ImageLayout::Undefined : (depth_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::DepthAttachment);
-
+    // TRANSCRIPTION, NOT DERIVATION: every layout below is the record of the image it names. The only decisions taken
+    // here are which image plays which role, and those are shape facts (`isMultisampled`, `hasDepthResolve`).
     PassAttachments attachments{};
     attachments.extent = VkExtent2D{ static_cast<std::uint32_t>(width()), static_cast<std::uint32_t>(height()) };
     // RENDERING WRITES THE SAMPLE BUFFERS when the shape resolves; the pictures are the resolve targets then.
-    attachments.color_images = isMultisampled() ? std::span<const VkImage>(multisample_colors) : std::span<const VkImage>(colors);
-    attachments.color_views  = isMultisampled() ? std::span<const VkImageView>(multisample_color_views) : std::span<const VkImageView>(color_views);
     if (isMultisampled()) {
+        attachments.color_images   = multisample_colors;
+        attachments.color_views    = multisample_color_views;
+        attachments.color_from     = sample_layouts;
         attachments.picture_images = colors;
         attachments.picture_views  = color_views;
+        attachments.picture_from   = color_layouts;
     }
-    attachments.color_from   = isMultisampled() ? attachment_now : colour_now;
-    attachments.picture_from = colour_now;
+    else {
+        attachments.color_images = colors;
+        attachments.color_views  = color_views;
+        attachments.color_from   = color_layouts;
+    }
     attachments.depth_image         = depthAttachmentImage();
     attachments.depth_view          = depthAttachmentView();
     attachments.depth_resolve_image = depth_resolve;
     attachments.depth_resolve_view  = depth_resolve_view;
     attachments.depth_aspect        = depthAspectMask(depthFormat());
-    attachments.depth_from          = depth_now;
-    attachments.depth_picture_from  = depth_picture_now;
+    attachments.depth_from          = depthAttachmentLayout();
+    attachments.depth_picture_from  = depthPictureLayout();
 
     // A BORROWED DEPTH IS ALWAYS LOADED: the image is the LENDER's, and the depth it holds is the whole reason this
     // target borrows it - clearing it would erase another pass' depth. The pass' own policy describes THIS set's
-    // attachments, so this is the one place that overrides it; it is the same fact as `depth_fresh` above, because an
-    // image another pass wrote is never fresh here.
+    // attachments, so this is the one place that overrides it (the shape rules already make a borrowing target
+    // single-sampled, so its own depth never exists to be cleared).
     PassLoad effective = load;
     if (depth_borrowed) {
         effective.load_depth = true;
     }
 
     beginRendering(table, commands, attachments, effective);
-    // THE PASS WILL WRITE EVERY ATTACHMENT: the set is no longer fresh, and neither picture is in the sampled layout.
-    this->fresh.store(false, std::memory_order_relaxed);
-    color_sampled = false;
-    depth_sampled = false;
+    // THE PASS HAS NOW WRITTEN THEM, in command order (see the header): every image rendering writes - and every resolve
+    // target, which the instance writes through - is in the attachment layout from here on. That is one statement per
+    // IMAGE, which is why a single-sampled depth does not need a second, contradicting one.
+    for (ImageLayout& layout : sample_layouts) {
+        layout = ImageLayout::ColorAttachment;
+    }
+    for (ImageLayout& layout : color_layouts) {
+        layout = ImageLayout::ColorAttachment;
+    }
+    if (depth_borrowed) {
+        if (depth_lender != nullptr) {
+            depth_lender->setDepthPictureLayout(ImageLayout::DepthAttachment);
+        }
+    }
+    else {
+        depth_layout = ImageLayout::DepthAttachment;
+        if (hasDepthResolve()) {
+            depth_picture_layout = ImageLayout::DepthAttachment;
+        }
+    }
+    fresh.store(false, std::memory_order_relaxed);
 }
 
 void TargetObjects::endPass(const VolkDeviceTable& table, const VkCommandBuffer commands) const noexcept
@@ -401,8 +418,6 @@ bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllo
         return false;
     }
     images.fresh.store(true, std::memory_order_relaxed);
-    images.color_sampled = false;
-    images.depth_sampled = false;
     return true;
 }
 
@@ -419,8 +434,6 @@ bool resizeTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAll
         return false;
     }
     images.fresh.store(true, std::memory_order_relaxed);
-    images.color_sampled = false;
-    images.depth_sampled = false;
     return true;
 }
 
@@ -428,11 +441,9 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAl
 {
     destroyAttachments(table, device, allocator, images);
     images.depth_borrowed         = false;
-    images.borrowed_depth_image   = VK_NULL_HANDLE;
     images.borrowed_depth_view    = VK_NULL_HANDLE;
+    images.depth_lender.reset();
     images.fresh.store(true, std::memory_order_relaxed);
-    images.color_sampled          = false;
-    images.depth_sampled          = false;
     images.desc                   = vn::graphics::TargetDesc{};
 }
 

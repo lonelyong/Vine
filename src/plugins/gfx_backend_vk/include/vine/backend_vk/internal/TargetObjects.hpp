@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <vine/backend_vk/backend_vk_global.hpp>
@@ -66,12 +67,16 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  *   views are written under that one lock - and a reader that wants them takes the same lock (`TargetTable::peek`)
  *   instead of borrowing this record for a field read: the record outlives its map entry (`release` parks it, the park
  *   destroys it), so a borrow has no synchronisation to point at.
- * - THE THREE LAYOUT BITS ARE THE FRAME BODY'S. @ref fresh, @ref color_sampled and @ref depth_sampled answer where the
- *   images are, and the recording path writes them where no lock may be taken (`C3` / `C5`: @ref beginPass,
- *   `Device::resolveShadow`, the full-screen source transition) - so the FRAME GATE serialises them, not the map lock:
- *   one frame records at a time, and the claim hand-off (writer to next claimer) plus the gate (writer to a host verb;
- *   the readback verbs hold it exclusively) are what make their values current. @ref fresh is atomic as well, because
- *   the pipeline planner reads it outside the gate as a hint.
+ * - THE LAYOUT RECORDS ARE THE FRAME BODY'S, AND THERE IS ONE PER IMAGE. @ref color_layouts / @ref sample_layouts /
+ *   @ref depth_layout / @ref depth_picture_layout say where each image IS; the command that moves an image is the one
+ *   that writes its record (`C3` / `C5`: @ref beginPass, `Device::resolveShadow`, the full-screen source transition, the
+ *   two readback verbs). Nothing here derives a layout from a flag, so the two answers an image could acquire - "the
+ *   attachment is never sampled" and "the picture was sampled" - cannot disagree: on a single-sampled target the
+ *   attachment IS the picture and therefore has ONE record. The FRAME GATE serialises them, not the map lock: one frame
+ *   records at a time, and the claim hand-off (writer to next claimer) plus the gate (writer to a host verb; the
+ *   readback verbs hold it exclusively) are what make their values current. @ref fresh is the one field a reader outside
+ *   the gate touches (a readback's hint, the planner's), which is why it is atomic and why it is a SET-level fact ("no
+ *   pass has drawn here") rather than an image layout.
  * - IT IS A VALUE-LIKE RECORD with explicit build/destroy calls, because Vulkan has no destructors: `destroyTarget()`
  *   is idempotent so an error path may call it unconditionally.
  */
@@ -86,6 +91,10 @@ struct TargetObjects {
     std::vector<MemorySlice>    color_memory{};
     std::vector<VkImageView>    color_views{};
 
+    /// Where each COLOUR PICTURE is, parallel to @ref colors: `Undefined` until a pass has written it, `ColorAttachment`
+    /// after a pass (the resolve counts as one on a multisampled target), `ShaderReadOnly` while a screen draw samples it.
+    std::vector<ImageLayout>    color_layouts{};
+
     /// THE SAMPLE BUFFERS, one per colour attachment, EMPTY on a single-sampled target: the images a multisampled
     /// pass draws into, whose content the rendering instance resolves into `colors`. They carry no sampled or transfer
     /// usage because nothing reads them; the resolve is the only way out of them.
@@ -93,10 +102,20 @@ struct TargetObjects {
     std::vector<MemorySlice>    multisample_color_memory{};
     std::vector<VkImageView>    multisample_color_views{};
 
+    /// Where each colour SAMPLE BUFFER is, parallel to @ref multisample_colors (empty on a single-sampled target):
+    /// `Undefined` on first use and `ColorAttachment` afterwards - nothing samples or copies a sample buffer, so those
+    /// are the only two values it can ever hold.
+    std::vector<ImageLayout>    sample_layouts{};
+
     /// The depth attachment, created with the target's sample count and NEVER resolved (see the class note).
     VkImage        depth{ VK_NULL_HANDLE };
     MemorySlice    depth_memory{};
     VkImageView    depth_view{ VK_NULL_HANDLE };
+
+    /// Where the depth ATTACHMENT image is. On a SINGLE-SAMPLED target that image is the picture as well, so this is the
+    /// record a shader's sampling moves (`depthPictureLayout()` names it in both shapes). On a borrowed depth this field
+    /// is not the record that tracks the image - the LENDER's is (see @ref depth_lender) - and it stays `Undefined`.
+    ImageLayout    depth_layout{ ImageLayout::Undefined };
 
     /// The single-sample depth PICTURE of a multisampled target (see the class note): the rendering instance resolves
     /// the depth into it, a shader samples it and a borrower attaches it. Empty on a single-sampled target, where
@@ -105,31 +124,33 @@ struct TargetObjects {
     MemorySlice    depth_resolve_memory{};
     VkImageView    depth_resolve_view{ VK_NULL_HANDLE };
 
+    /// Where the depth RESOLVE picture is: a DIFFERENT image from @ref depth, which is why it needs a record of its own -
+    /// a reader that samples the picture does not move the sample buffer, and stating one layout for both is an illegal
+    /// barrier on whichever of them never had it. Read only when @ref hasDepthResolve is true.
+    ImageLayout    depth_picture_layout{ ImageLayout::Undefined };
+
     /// True when the depth attachment is ANOTHER target's image (see RenderTarget::shareDepth): `depth`,
     /// `depth_memory` and `depth_view` stay null and the pass attaches the lender's picture instead. The shape still
     /// states a depth format - the LENDER's, which is what a pipeline is built with - and every pass LOADs that depth,
     /// because a pass may not clear an image an earlier pass wrote.
     bool depth_borrowed{ false };
-    /// The lender's picture as it was when this one was built: the IMAGE a barrier names and the VIEW the pass attaches.
-    /// NOT owned here - the lender's record owns both, and this target is rebuilt whenever that picture moves (see
-    /// TargetTable::ensure), so neither value can outlive what it names. They are one pair because they are one image:
-    /// a barrier over this image is what orders the LENDER's pass before this one.
-    VkImage     borrowed_depth_image{ VK_NULL_HANDLE };
+    /// THE LENDER'S RECORD, and the reason the borrowed image needs no copy of itself here: the picture, its view and the
+    /// layout it is in all belong to that record. Sharing ownership is also the lifetime statement - the image this
+    /// target attaches stays alive while this target names it - so `depthAttachmentImage()` can answer from the owner
+    /// instead of from a snapshot that a lender rebuild would invalidate. The edge is ONE WAY (a borrower never lends in
+    /// return), so it cannot form a cycle.
+    std::shared_ptr<TargetObjects> depth_lender{};
+    /// The lender's picture VIEW as it was when this record was last compared (`TargetTable::ensure`): a snapshot used
+    /// only to notice that the lender rebuilt its picture. The live image and view always come from @ref depth_lender.
     VkImageView borrowed_depth_view{ VK_NULL_HANDLE };
 
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
-    /// an attachment is given CLEAR instead (loading an image nobody wrote is meaningless and invalid).
+    /// an attachment is given CLEAR instead (loading an image nobody wrote is meaningless and invalid). A SET-level
+    /// fact, distinct from the per-image layouts - it answers "has anything ever been drawn here", which is the
+    /// readback's NotReady and the load policy's question, not "where is this image now".
     /// ATOMIC because the frame body is its only writer and takes no lock (see the class note); relaxed is enough -
     /// every decision a reader outside the gate takes from it is a hint that the gate re-checks.
     std::atomic<bool> fresh{ true };
-    /// True after a full-screen draw sampled this target: its colour images (the PICTURE - the resolve images on a
-    /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the next pass moves them back before it writes
-    /// them (or before a readback reads them).
-    bool color_sampled{ false };
-    /// True after a pass sampled this target as a SHADOW MAP: its depth PICTURE (see `depthPicture`) is then in
-    /// `SHADER_READ_ONLY_OPTIMAL`, and the next pass moves it back before it writes the depth (the same rule
-    /// `color_sampled` follows, on the other attachment).
-    bool depth_sampled{ false };
 
     /** @brief Gets the target width in pixels. */
     [[nodiscard]] int width() const noexcept
@@ -199,16 +220,57 @@ struct TargetObjects {
         return depth_borrowed;
     }
 
-    /** @brief Gets the DEPTH VIEW a pass ATTACHES: the owned one, or the lender's when this target borrows. */
+    /** @brief Gets the DEPTH VIEW a pass ATTACHES: the owned one, or the lender's picture when this target borrows. */
     [[nodiscard]] VkImageView depthAttachmentView() const noexcept
     {
-        return depth_borrowed ? borrowed_depth_view : depth_view;
+        return depth_borrowed ? (depth_lender != nullptr ? depth_lender->depthPictureView() : VK_NULL_HANDLE) : depth_view;
     }
 
     /** @brief Gets the DEPTH IMAGE a pass ATTACHES: the owned one, or the lender's picture when this target borrows. */
     [[nodiscard]] VkImage depthAttachmentImage() const noexcept
     {
-        return depth_borrowed ? borrowed_depth_image : depth;
+        return depth_borrowed ? (depth_lender != nullptr ? depth_lender->depthPicture() : VK_NULL_HANDLE) : depth;
+    }
+
+    /**
+     * @brief Gets the layout the depth ATTACHMENT image is in (a borrowed target answers with the LENDER's record).
+     *
+     * @note
+     * - A BORROWED IMAGE HAS ONE RECORD, and it is the lender's: the borrower states what the lender knows instead of
+     *   assuming "a depth attachment, because that is where the lender's pass left it".
+     */
+    [[nodiscard]] ImageLayout depthAttachmentLayout() const noexcept
+    {
+        return depth_borrowed ? (depth_lender != nullptr ? depth_lender->depthPictureLayout() : ImageLayout::Undefined)
+                              : depth_layout;
+    }
+
+    /**
+     * @brief Gets the layout the depth PICTURE is in (the resolve image's on a multisampled target, the attachment's
+     *        layout otherwise).
+     *
+     * @note
+     * - SELECTS A RECORD, it does not compute one: which image is the picture is a SHAPE fact (@ref hasDepthResolve),
+     *   fixed for the record's lifetime, so there is never a second answer to keep in step.
+     */
+    [[nodiscard]] ImageLayout depthPictureLayout() const noexcept
+    {
+        return hasDepthResolve() ? depth_picture_layout : depth_layout;
+    }
+
+    /**
+     * @brief Records that the depth PICTURE is now in @p layout (the resolve image's record, or the attachment's).
+     *
+     * @param layout Where the reader left the picture (see `ImageLayout`).
+     */
+    void setDepthPictureLayout(ImageLayout layout) noexcept
+    {
+        if (hasDepthResolve()) {
+            depth_picture_layout = layout;
+        }
+        else {
+            depth_layout = layout;
+        }
     }
 
     /**
@@ -235,17 +297,22 @@ struct TargetObjects {
      * @details
      * - THE 1.3 REPLACEMENT for the render pass variant this record used to own: the attachments and their load ops are
      *   stated on the command buffer (see `DynamicRendering::beginRendering`), and the layouts it transitions FROM are
-     *   this record's own bookkeeping - `fresh` (nothing has been written yet), `color_sampled` / `depth_sampled` (a
-     *   reader sampled the picture last time, so it is in `SHADER_READ_ONLY_OPTIMAL`), the attachment layout otherwise.
-     * - IT UPDATES THAT BOOKKEEPING: after the call every attachment is in the rendering layout and has been written,
-     *   so `fresh` becomes false and both sampled bits clear. The pass is expected to end with @ref endPass.
-     * - TWO DEPTH IMAGES, TWO RECORDS. The depth attachment and the picture it resolves into are stated separately (see
-     *   `PassAttachments`): `depth_sampled` moves the PICTURE to `SHADER_READ_ONLY_OPTIMAL` while the sample buffer stays
-     *   an attachment, because a multisampled image may not be sampled at all. Stating one layout for both is an illegal
-     *   barrier on whichever of them never had it.
-     * - A BORROWED DEPTH IS NEVER "FRESH" HERE: the image holds the LENDER's pass' depth, so it starts from the depth
-     *   attachment layout whatever this set's own `fresh` says - and a pass may not clear it (see
-     *   RenderTarget::shareDepth).
+     *   the per-image records above - TRANSCRIBED, not derived. This call decides WHICH record belongs to which role
+     *   (`isMultisampled()` picks the sample buffers or the pictures; `hasDepthResolve()` picks the resolve image or the
+     *   attachment), and every mover in the backend writes the record of the image it moved.
+     * - IT UPDATES THAT BOOKKEEPING: after the call every image rendering writes - and the resolve targets it writes
+     *   through - is in the attachment layout, which is what a later pass, a sampling transition or a readback names as
+     *   its starting point. The record follows the recorded COMMANDS, not the GPU's progress: everything below is
+     *   recorded after this pass, so from here on the images ARE in the rendering layout. The pass is expected to end
+     *   with @ref endPass.
+     * - TWO DEPTH IMAGES, TWO RECORDS - OR ONE. A multisampled target's depth attachment and the picture it resolves
+     *   into are different images, so each has its own record; a single-sampled target's attachment IS its picture, so
+     *   it has ONE record and `depthPictureLayout()` names it - which is why a reader's sampling and the next pass'
+     *   transition cannot state different layouts for the same image.
+     * - A BORROWED DEPTH IS THE LENDER'S RECORD: the set states where that image really is (the lender's own layout)
+     *   and writes its new layout back to the lender's record, and the pass LOADs it (a pass may not clear an image
+     *   another pass wrote - see RenderTarget::shareDepth). Its own `depth_layout` stays `Undefined`, because it owns no
+     *   depth image.
      *
      * @param table    The device's entry points (volk table).
      * @param commands The command buffer being recorded (outside any rendering instance).

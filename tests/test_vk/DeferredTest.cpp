@@ -354,6 +354,73 @@ TEST(VkDeferredTest, TheDeferredFrameLightsTheGbuffer)
     backend->shutdown();
 }
 
+TEST(VkDeferredTest, TheDeferredFrameIsDrawnAgainAfterItsGbufferWasSampled)
+{
+    // THE ROUND TRIP THE APPLICATION RUNS EVERY FRAME, and the colour half of the rule the shadow map pins for depth:
+    // frame 1 writes the G-buffer and the lighting pass SAMPLES its four colour pictures, so those pictures are in
+    // `SHADER_READ_ONLY_OPTIMAL` when frame 2's geometry pass begins - that pass must transition each of them back, or
+    // `VUID-vkCmdBeginRendering-pRenderingInfo-09588` lands at submit. The sample count is the second axis: on a
+    // MULTISAMPLED G-buffer the images the geometry pass writes are the SAMPLE BUFFERS, which nothing sampled, while
+    // the pictures the lighting pass sampled are separate images - one record per image is what keeps the two answers
+    // (and their two barriers) apart.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> driver_messages;
+    backend->setDiagnosticSink([&driver_messages](const vn::graphics::RenderDiagnostic& diagnostic) {
+        driver_messages.push_back(diagnostic);
+    });
+
+    const std::uint32_t                max_samples = backend->capabilities().limits.max_samples;
+    std::vector<std::uint32_t>         counts{ 1U };
+    if (max_samples > 1U) {
+        counts.push_back(max_samples < 4U ? max_samples : 4U);
+    }
+
+    for (const std::uint32_t samples : counts) {
+        Scene scene = makeScene();
+        ASSERT_NE(scene.gbuffer_program, nullptr);
+        ASSERT_NE(scene.light_program, nullptr);
+        scene.gbuffer->setSamples(samples);
+
+        const PresentOutcome first_outcome = backend->executeFrame(deferredFrame(scene), nullptr);
+        EXPECT_EQ(first_outcome, PresentOutcome::Skipped) << "a target is not a surface";
+        std::vector<std::uint8_t> first;
+        ReadbackResult            why = ReadbackResult::Failed;
+        ASSERT_TRUE(backend->readColorBuffer(scene.result.get(), 0, first, &why))
+            << samples << " samples: the first frame's readback was refused: " << static_cast<int>(why);
+
+        // THE SECOND FRAME IS THE ONE THAT HAS TO STATE WHERE THE SAMPLED PICTURES ARE.
+        (void)backend->executeFrame(deferredFrame(scene), nullptr);
+        std::vector<std::uint8_t> second;
+        why = ReadbackResult::Failed;
+        ASSERT_TRUE(backend->readColorBuffer(scene.result.get(), 0, second, &why))
+            << samples << " samples: the second frame's readback was refused: " << static_cast<int>(why);
+
+        ASSERT_EQ(second.size(), first.size());
+        EXPECT_EQ(second, first) << samples
+                                 << " samples: the second frame shaded a different composite than the first - the "
+                                    "G-buffer's pictures were not transitioned back to the attachment layout";
+        // THE PIXEL IS STILL LIT, so the equality above cannot pass by both frames being empty.
+        const std::array<int, 4> centre = pixelAt(second, kTargetSize / 2, kTargetSize / 2);
+        EXPECT_GT(centre[0] + centre[1] + centre[2], 0)
+            << samples << " samples: the second frame's centre is black - the geometry pass did not write the G-buffer";
+        EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
+            << samples << " samples: a draw packet of the second frame was skipped";
+    }
+
+    for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
+        EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
+            << "the driver rejected an object of the repeated deferred frame: "
+            << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
+    }
+
+    backend->shutdown();
+}
+
 TEST(VkDeferredTest, EveryGbufferAttachmentWasWritten)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });

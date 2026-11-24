@@ -42,23 +42,30 @@ namespace
 
 void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassAttachments& attachments, const PassLoad& load)
 {
-    // THE TRANSITIONS FIRST, one barrier per image. The destination is always the rendering layout; the source is what
-    // the set states, which may be the same value - see the header's note on why that barrier is not a no-op.
-    const ImageState color_to  = stateOf(ImageLayout::ColorAttachment);
-    const ImageState depth_to  = stateOf(ImageLayout::DepthAttachment);
-    const ImageState color_now = stateOf(attachments.color_from);
-    for (const VkImage image : attachments.color_images) {
-        recordBarrier(table, commands, barrierBetween(image, color_now, color_to, VK_IMAGE_ASPECT_COLOR_BIT));
+    // THE TRANSITIONS FIRST, one barrier per image. The destination is always the rendering layout; the source is the
+    // record the owner keeps for THAT image, which may be the same value - see the header's note on why that barrier is
+    // not a no-op. A span shorter than the image list states `Undefined` for the images it does not name (see the
+    // header's precondition: both producers pass their own records).
+    const ImageState color_to = stateOf(ImageLayout::ColorAttachment);
+    const ImageState depth_to = stateOf(ImageLayout::DepthAttachment);
+    const auto       layoutAt = [](const std::span<const ImageLayout> layouts, const std::size_t index) {
+        return index < layouts.size() ? layouts[index] : ImageLayout::Undefined;
+    };
+    for (std::size_t index = 0; index < attachments.color_images.size(); ++index) {
+        recordBarrier(table,
+                      commands,
+                      barrierBetween(attachments.color_images[index], stateOf(layoutAt(attachments.color_from, index)), color_to, VK_IMAGE_ASPECT_COLOR_BIT));
     }
-    const ImageState picture_now = stateOf(attachments.picture_from);
-    for (const VkImage image : attachments.picture_images) {
-        recordBarrier(table, commands, barrierBetween(image, picture_now, color_to, VK_IMAGE_ASPECT_COLOR_BIT));
+    for (std::size_t index = 0; index < attachments.picture_images.size(); ++index) {
+        recordBarrier(table,
+                      commands,
+                      barrierBetween(attachments.picture_images[index], stateOf(layoutAt(attachments.picture_from, index)), color_to, VK_IMAGE_ASPECT_COLOR_BIT));
     }
-    // THE DEPTH PAIR: the attachment and the picture it resolves into are TWO images with TWO records (they part company
-    // as soon as a reader samples the picture - see the header), so each one names its own source. A BORROWED depth is
-    // one more case of that rule rather than an exception to it: its image is the LENDER's, the layout it states is the
-    // one the lender's pass left it in, and the barrier that follows then transitions nothing - what it adds is the
-    // EXECUTION DEPENDENCY between the lender's pass and this one, which is the half dynamic rendering does not insert.
+    // THE DEPTH PAIR: the attachment and the picture it resolves into are two images with two RECORDS - or, on a
+    // single-sampled set, one image whose owner reports the same layout for both names. A BORROWED depth is one more
+    // case of that rule rather than an exception to it: its image is the LENDER's, the layout it states is the one the
+    // lender's own record holds, and the barrier that follows then transitions nothing - what it adds is the EXECUTION
+    // DEPENDENCY between the lender's pass and this one, which is the half dynamic rendering does not insert.
     if (attachments.depth_image != VK_NULL_HANDLE) {
         recordBarrier(table,
                       commands,

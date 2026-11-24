@@ -2104,3 +2104,24 @@
   `CMakeLists.txt` all still said "Win32 待实现 / only Linux/X11 ships". A platform claim is a MEASURED fact, so it
   moves only with a run to quote - this one came with the numbers above. Deleting `vsg` is a separate criterion
   (backlog T60), not part of the switch gate.
+
+## 2026-11-24 — the layout record is per IMAGE, and that is what made two fixes stick
+
+- **What changed**: `TargetObjects` dropped `color_sampled` / `depth_sampled` for one stored `ImageLayout` per image
+  (`color_layouts`, `sample_layouts`, `depth_layout`, `depth_picture_layout`); `beginPass` now TRANSCRIBES those records
+  into `PassAttachments` instead of deriving four layouts from three flags, and every mover writes the record of the image
+  it moved (`beginPass`, `resolveShadow`, the full-screen source transition, both readbacks). `PassAttachments::color_from` /
+  `picture_from` are spans, one entry per image. `TargetObjects::fresh` stays - it is the one SET-level, atomic hint a
+  reader outside the frame gate takes.
+- **Why per image and not per role**: the two bugs of 2026-11-23/24 both came from one flag standing for two images (an
+  MSAA depth attachment + its resolve picture) or for one image in two roles (a single-sampled depth that IS the picture).
+  With a record per image neither shape has an expression left.
+- **The borrow edge now OWNS its record**: `TargetObjects::depth_lender` is a `shared_ptr<TargetObjects>`, so the borrower
+  states the lender's real layout and writes it back, and the lender's images cannot be destroyed while a borrower still
+  attaches them (a `borrowed_depth_image` handle could dangle before).
+- **Measured**: `test_vk` **188 cases / 44 suites**, `test_graphics` **642 / 82**, ten gates green.
+  `VkDeferredTest.TheDeferredFrameIsDrawnAgainAfterItsGbufferWasSampled` is the colour-half witness (one sample and the
+  device's maximum): forcing `color_from` to `ColorAttachment` turns it red with
+  `VUID-vkCmdBeginRendering-pRenderingInfo-09592` + `vkCmdDraw-None-09600`, the mirror of the depth half's 09588.
+- **Lesson (the one worth keeping)**: a *derived* record pair invites the same bug twice - first in the depth direction,
+  then in the colour one. Storing the fact next to the image it describes costs one enum per image and removes the class.

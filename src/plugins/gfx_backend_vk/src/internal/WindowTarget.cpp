@@ -553,15 +553,17 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
     const std::size_t index = impl->image_index;
 
     // THE IMAGE RENDERING WRITES is the acquired one; its colour FROM is what this image's own record says (Undefined on
-    // first use, Present after it was presented, the colour layout between two passes of one frame).
+    // first use, Present after it was presented, the colour layout between two passes of one frame). ONE IMAGE, ONE
+    // RECORD, which is why the attachment's colour starting layouts are a one-entry span (see `PassAttachments`).
     const VkImage     colour_image = impl->images[index];
     const VkImageView colour_view  = impl->views[index];
+    const ImageLayout colour_from  = impl->image_layouts[index];
 
     PassAttachments attachments{};
     attachments.extent       = VkExtent2D{ impl->extent.width, impl->extent.height };
     attachments.color_images = std::span<const VkImage>(&colour_image, 1U);
     attachments.color_views  = std::span<const VkImageView>(&colour_view, 1U);
-    attachments.color_from   = impl->image_layouts[index];
+    attachments.color_from   = std::span<const ImageLayout>(&colour_from, 1U);
     attachments.depth_image        = impl->depth;
     attachments.depth_view         = impl->depth_view;
     attachments.depth_aspect       = depthAspectMask(kDepthFormat);

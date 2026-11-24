@@ -266,9 +266,9 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     //  - the LENDER is a target THIS device has built and that has a depth - the SDK's ordering rule (the lender
     //    renders earlier in the frame) is what makes that true, and a frame that breaks it is wiring, not a capability;
     //  - both targets are EQUALLY SIZED: the lender's picture is bound into a framebuffer of the borrower's extent.
-    const vn::graphics::RenderTarget* lender       = target.depthSource();
-    VkImageView                       lender_view  = VK_NULL_HANDLE;
-    VkImage                           lender_image = VK_NULL_HANDLE;
+    const vn::graphics::RenderTarget* lender        = target.depthSource();
+    std::shared_ptr<TargetObjects>    lender_record{};
+    VkImageView                       lender_view   = VK_NULL_HANDLE;
     if (lender != nullptr) {
         if (requested_samples > 1U) {
             if (borrow_samples_report_.shouldReport()) {
@@ -318,11 +318,11 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
             return false;
         }
         borrow_extent_report_.rearm(); // equally sized: the episode is over
-        // THE LENDER'S PICTURE IS ONE IMAGE WITH TWO SPELLINGS: the view a pass attaches and the image a barrier names.
-        // Both are taken from the same build, so they move together - and the next comparison below notices either one
-        // moving (a rebuilt lender changes its picture, hence its view).
-        lender_view  = source->second->depthPictureView();
-        lender_image = source->second->depthPicture();
+        // THE LENDER'S RECORD IS WHAT THE BORROWER NAMES, not a copy of its handles: the picture, its view and the
+        // layout that image is in all belong to that record (one image, one record), and sharing ownership is what keeps
+        // the image alive while this target attaches it. `lender_view` is the snapshot `ensure` compares below.
+        lender_record = source->second;
+        lender_view   = lender_record->depthPictureView();
         // THE LENDER'S DEPTH FORMAT IS WHAT THIS TARGET'S PASS IS BUILT WITH: the borrower's own declaration is not a
         // picture anyone has, and the shape states what the attachment IS - so a lender rebuilt at another format
         // rebuilds the borrower through `planTarget`'s own comparison.
@@ -348,7 +348,8 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     // a lender whose depth picture was rebuilt - has a different framebuffer to bind. A target with no usable extent
     // still decides first, as always.
     const bool borrow_moved = images.built() && (images.borrowsDepth() != (lender != nullptr) ||
-                                                 (lender != nullptr && images.borrowed_depth_view != lender_view));
+                                                 (lender != nullptr && (images.depth_lender.get() != lender_record.get() ||
+                                                                       images.borrowed_depth_view != lender_view)));
     if (borrow_moved && !(decision.action == TargetAction::Repair && decision.reason == RepairReason::SizeUnknown)) {
         decision.action = TargetAction::Rebuild;
         decision.reason = RepairReason::None;
@@ -392,7 +393,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         destroyTarget(*device_.table, device_.device, *device_.allocator, images);
         images.desc                = wanted;
         images.depth_borrowed      = lender != nullptr;
-        images.borrowed_depth_image = lender_image;
+        images.depth_lender        = lender_record;
         images.borrowed_depth_view = lender_view;
         if (!buildTarget(*device_.table, device_.device, *device_.allocator, images)) {
             if (report_) {
