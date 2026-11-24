@@ -2300,3 +2300,19 @@
 - **Honest boundary**: no test reproduces the original null dereference deterministically; what changed is the shape.
 - Verified: `test_vk` **207**/45 green, `test_graphics` green, TSan `test_vk` 207/207 with 0 warnings, ASan+LSan focused
   PASS, eleven gates green, demo 0 error / 0 warning (session up 40 ms, `Pending -> Presenting` 183 ms).
+
+## 2026-11-24 (later) — the pass handle owns the record it draws into
+
+- **Why the `ensure` fix alone was not the whole answer**: the claim is an EXCLUSION book (`holders_`), not a hold on the
+  record. A record survived a recording frame only because three invariants happened to hold together - one frame in
+  flight, frame bodies serialised device-wide, every body waiting its fence - and no type stated it. That is `G12` debt
+  that ADR-2026-11-15's own trigger (multi-frame in flight) would turn into a use-after-free.
+- **Change**: `PassTarget::forTarget` takes the `std::shared_ptr<TargetObjects>` that `TargetTable::ensure` answered and
+  keeps it; `claimPasses` moves the record straight into the handle. The window half still borrows (the device owns the
+  window for the session). The park now dates only the SUBMITTED window, which is the one a handle cannot cover.
+- **Witness** (ASan is the instrument, a plain run cannot see it): `VkMultiSessionTest.APassHandleKeepsItsTargetAliveAfterARelease`
+  releases the target, runs frames until `retirementNumbers().pending == 0` (the park's release act really ran), then reads
+  the handle. Mutation checked: with the borrowing handle the same case is
+  `heap-use-after-free ... in vn::backend_vk::PassTarget::holdsPicture()`.
+- **Note**: a head clears its pass slots at the NEXT `beginFrame`, so a released record is held at most one frame body
+  longer than the frame that resolved it. Bounded by design, not a leak.

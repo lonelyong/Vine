@@ -5,12 +5,15 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
-PassTarget PassTarget::forTarget(TargetObjects& images) noexcept
+PassTarget PassTarget::forTarget(std::shared_ptr<TargetObjects> images) noexcept
 {
     PassTarget target;
-    target.images_        = &images;
-    target.extent_        = VkExtent2D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()) };
-    target.compatibility_ = images.compatibility();
+    if (images == nullptr) {
+        return target; // a build that answered nothing names nothing (see TargetTable::ensure)
+    }
+    target.extent_        = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
+    target.compatibility_ = images->compatibility();
+    target.images_        = std::move(images);
     return target;
 }
 

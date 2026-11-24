@@ -41,6 +41,7 @@
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/backend_vk/internal/Device.hpp>
+#include <vine/backend_vk/internal/PassTarget.hpp>
 #include <vine/backend_vk/internal/TargetObjects.hpp>
 
 #include "PlanTestSupport.hpp"
@@ -1084,6 +1085,50 @@ TEST(VkMultiSessionTest, AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATa
     const std::array<int, 4> centre = centreOf(pixels);
     EXPECT_GE(centre[0], 254) << "the frame after the race lost its picture";
     EXPECT_LE(centre[1], 1);
+
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, APassHandleKeepsItsTargetAliveAfterARelease)
+{
+    // THE HANDLE OWNS WHAT IT DRAWS INTO (see PassTarget). A release does not wait for the frames in flight (R6): it
+    // erases the entry and parks the record, and the park's release act is dated against the frames that were
+    // SUBMITTED - a frame that is still resolving has submitted nothing, so the only thing that can hold its record is
+    // the handle it took. This case lets the park run first (a later frame completes and the queue empties) and then
+    // touches the handle: with a borrowed pointer that read is a heap-use-after-free, which ASan reports.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(u8"handle_keeps_its_target");
+    const intrusive_ptr<RenderTarget>  other    = makeTarget(u8"park_driver");
+
+    std::shared_ptr<vn::backend_vk::TargetObjects> record = device->targetTable().ensure(*target);
+    ASSERT_NE(record, nullptr) << "the table did not build the target";
+    vn::backend_vk::PassTarget handle = vn::backend_vk::PassTarget::forTarget(record);
+    EXPECT_TRUE(handle.valid());
+    record.reset(); // the handle is now the only owner the host can see
+
+    device->releaseRenderTarget(target.get());
+    // LATER FRAMES' COMPLETIONS RUN THE PARK: the release act is dated one slot past the last submission, so it takes a
+    // few completed frames before the queue empties. The loop is bounded because "the park never ran" is the failure
+    // this case has to rule out.
+    for (int frame = 0; frame < 4 && device->retirementNumbers().pending != 0U; ++frame) {
+        ASSERT_EQ(backend->executeFrame(drawingFrame(other.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    }
+    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "the park never ran, so this case proves nothing";
+
+    // THE HANDLE STILL NAMES A LIVE RECORD: this read is the witness (a borrowed pointer made it ASan's
+    // heap-use-after-free), and the snapshot it was built with is untouched.
+    EXPECT_FALSE(handle.holdsPicture());
+    EXPECT_EQ(handle.extent().width, static_cast<std::uint32_t>(kTargetSize));
+    EXPECT_EQ(handle.colorCount(), 1U);
 
     backend->shutdown();
 }

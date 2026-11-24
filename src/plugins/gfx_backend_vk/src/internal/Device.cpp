@@ -1531,21 +1531,20 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
             recording.refused_pass  = true;
             continue;
         }
-        // ONE CALL, ONE ANSWER (see TargetTable::ensure): the record the build left behind IS what this pass keeps a
-        // borrowed pointer into, so a release announced while the frame records - which does not wait for it (R6) -
-        // can park that record but cannot take it away between "built" and "here it is". Resolving it with a second
-        // `lookup` was one lock late: that call answered null for exactly that release.
-        const std::shared_ptr<TargetObjects> claimed_record = owner.target_table.ensure(*draw.target);
+        // ONE CALL, ONE ANSWER, AND THE HANDLE KEEPS IT (see TargetTable::ensure and PassTarget::forTarget): the
+        // record the build left behind is what this pass draws into, and the handle shares ownership of it, so a
+        // release announced while the frame records - which does not wait for it (R6) - can park that record but
+        // cannot take it away from a frame that has already resolved it.
+        std::shared_ptr<TargetObjects> claimed_record = owner.target_table.ensure(*draw.target);
         if (claimed_record == nullptr) {
             recording.refused_pass = true;
             continue;
         }
         count_pass();
-        TargetObjects&   claimed_images = *claimed_record;
-        FrameHead::Pass& pass_head    = head.beginPass(draw.packets.size());
-        pass_head.entry               = &entry;
-        pass_head.draw                = &draw;
-        pass_head.target              = PassTarget::forTarget(claimed_images);
+        FrameHead::Pass& pass_head = head.beginPass(draw.packets.size());
+        pass_head.entry            = &entry;
+        pass_head.draw             = &draw;
+        pass_head.target           = PassTarget::forTarget(std::move(claimed_record));
     }
 
     if (head.passes().empty()) {

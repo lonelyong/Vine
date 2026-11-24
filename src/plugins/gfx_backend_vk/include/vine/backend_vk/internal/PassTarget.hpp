@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include <volk.h>
 
@@ -26,9 +27,15 @@ class WindowTarget;
  *   places only.
  * - WHY IT IS A VALUE AND NOT A BASE CLASS. `TargetObjects` is a deliberately plain record (images, memory, layout
  *   records) and `WindowTarget` already inherits the SDK's `WindowPresentTarget`; making either of them inherit an
- *   attachment-set interface would put a vtable in a value type and force one header to know both. This borrows its
- *   owner instead: a `PassTarget` IS a pass' handle on an owner that outlives it (the device's target table, or the
- *   device's window list), and a default-constructed one names nothing.
+ *   attachment-set interface would put a vtable in a value type and force one header to know both. A `PassTarget` is
+ *   therefore a pass' handle on one of those two owners, and a default-constructed one names nothing.
+ * - THE TWO OWNERS DIFFER IN LIFETIME, AND THE HANDLE SAYS SO (`G4` / `G12`). The window is the DEVICE's object: it
+ *   lives for the session, so the handle borrows it. An off-screen set is the target TABLE's, and a host may release
+ *   that target at any moment - a release does not wait for the frames in flight (R6) - so the handle KEEPS what it
+ *   draws into: the record stays alive until the pass (and with it the frame head) is cleared. The park then dates the
+ *   images' destruction against the frames that were SUBMITTED, which is the one window this handle cannot cover.
+ *   Before this the handle borrowed both and the record survived a frame only because a frame body never runs beside a
+ *   submission - an implicit mechanism no type stated.
  * - THE FACTS ARE A SNAPSHOT (`G4`). Extent and compatibility are read when the frame CLAIMS its passes, which is the
  *   same moment `FrameHead` records what the pass will draw into - so a resize that lands later belongs to the next
  *   frame, exactly as a pipeline resolved into the head does.
@@ -37,8 +44,10 @@ class WindowTarget;
  *   content belongs to the presentation engine, not to the host - and the frame records that it has written the image
  *   itself once a window pass has run (see `FrameRecording::window_written`).
  *
- * @warning The owner is borrowed MUTABLY: @ref begin / @ref end / @ref rewind write the owner's layout records, which
- *          is why this is a handle and not an immutable value.
+ * @warning @ref begin / @ref end / @ref rewind write the owner's layout records MUTABLY, which is why this is a
+ *          handle and not an immutable value. An off-screen handle is also one of the owners of its record: a copy of
+ *          it keeps the record alive, so a handle that outlives its frame delays the destruction of images the park has
+ *          already decided to drop.
  *
  * @see `DynamicRendering` (what @ref begin records), `TargetObjects::beginPass`, `WindowTarget::beginPass`.
  */
@@ -49,13 +58,16 @@ class VN_BACKEND_VK_API PassTarget final {
 
   public:
     /**
-     * @brief Builds the target an OFF-SCREEN pass draws into.
+     * @brief Builds the target an OFF-SCREEN pass draws into, KEEPING the attachment set alive.
      *
-     * @param images The attachment set (borrowed; owned by the device's target table and kept alive by the frame's
-     *               claim).
+     * @details
+     * - The record arrives as the build call's own answer (`TargetTable::ensure`), so "this pass may draw here" and
+     *   "this record is alive while it does" are one statement and neither can be made without the other.
+     *
+     * @param images The attachment set; the handle shares ownership of it for as long as the handle lives.
      * @return The target, with its extent and compatibility read now.
      */
-    [[nodiscard]] static PassTarget forTarget(TargetObjects& images) noexcept;
+    [[nodiscard]] static PassTarget forTarget(std::shared_ptr<TargetObjects> images) noexcept;
 
     /**
      * @brief Builds the target a WINDOW pass draws into.
@@ -135,7 +147,7 @@ class VN_BACKEND_VK_API PassTarget final {
     void rewind() const noexcept;
 
   private:
-    TargetObjects*                       images_{ nullptr };
+    std::shared_ptr<TargetObjects>        images_{}; ///< The off-screen attachment set this handle keeps alive.
     WindowTarget*                        window_{ nullptr };
     VkExtent2D                           extent_{};
     vn::graphics::RenderPassCompatibility compatibility_{};

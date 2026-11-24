@@ -384,10 +384,13 @@ and every cache has a witness a test can read.**
 - **Why `ensure` answers the record, not a boolean**: the borrowed pointer a pass keeps must be the record the build left behind, taken under the same map lock. A release
   does **not** wait for the frames in flight (`R6`), so it can erase the entry at any moment — a boolean answer resolved by a second `lookup` was one lock late, and that
   call answered null for exactly that release (`G4`: one call, one answer; `G10`: the window was a lifetime the caller had to re-prove). The answer is a `shared_ptr`, so a
-  release announced right after the call parks the record instead of destroying it, exactly as it does for a record a frame already resolved.
+  release announced right after the call parks the record instead of destroying it — **and the pass handle keeps it** (§2.20), so the record cannot be destroyed while a
+  frame that already resolved it is still recording.
   Witnesses: `TargetTableTest.EnsureWithoutASessionAnswersNoRecord` (the refusal is the same spelling — a null record, no entry),
-  `VkMultiSessionTest.AReleaseCannotTakeAwayTheRecordAPassHasJustResolved` (the answer is whole after an erasing release) and
-  `VkMultiSessionTest.AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATarget` (the interleaving is not forced; every interleaving must have a legal answer).
+  `VkMultiSessionTest.AReleaseCannotTakeAwayTheRecordAPassHasJustResolved` (the answer is whole after an erasing release),
+  `VkMultiSessionTest.AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATarget` (the interleaving is not forced; every interleaving must have a legal answer) and
+  `VkMultiSessionTest.APassHandleKeepsItsTargetAliveAfterARelease` (the park's release act runs first, then the handle still names a live record — ASan reports a
+  heap-use-after-free with the old borrowing handle).
 - **Why one table**: the map and the lease answer the same question — "what is this target now, and who may touch it". With two tables a release had to do half in each place
   and a test had to drive two objects at once (`G1`); merged, `release(target)` is one call ("the entry leaves the map + the record goes to the park") and `drain()` clears
   records and leases together. The lease still holds its own lock (another driver's per-pass claim must not queue behind one build).
@@ -433,7 +436,13 @@ and every cache has a witness a test can read.**
   head resolves the plans into the same slots while it holds the cache lock, and the recorder walks that one array. **A
   pass' attachment set is itself a value** (`PassTarget`): the off-screen set and the window's acquired image answer the
   same four questions - extent, pipeline compatibility, what is already in it, open and close it - through ONE handle,
-  so the frame body has no `if (window) A else B` pair left (it used to have four). The pass' RECTANGLE is a pass fact
+  so the frame body has no `if (window) A else B` pair left (it used to have four). **The handle also states who keeps
+  the set alive** (`G4` / `G12`): the window is the device's object and is borrowed for the session, while an off-screen
+  set belongs to the target table and a host may release it mid-frame (`R6`: a release does not wait), so the off-screen
+  handle SHARES OWNERSHIP of the record and the record lives as long as the head's pass slot does. The park then dates
+  only the images' destruction against the frames that were **submitted** - the one window a handle cannot cover. Before
+  this the handle borrowed both halves and a record survived a frame only because a frame body never runs beside a
+  submission: an implicit mechanism no type stated. The pass' RECTANGLE is a pass fact
   too, so it is resolved once (`ContentDraw::DrawScope`) instead of in every draw call's argument list.
 - **ONE WALKER FOR BOTH FRAME VERBS** (`FrameDriver::claimPasses`): "which passes can this device run, and which claims
   does each one take" was answered once for a recorded frame and written out again for a warm-up - and the second copy
