@@ -1123,3 +1123,152 @@ TEST(VkContentDrawTest, TwoMaterialsReadingOneTextureThroughTwoSamplersAreTwoSet
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     backend->shutdown();
 }
+
+/**
+ * @brief A PASS' ENTRY IS ONE DEPENDENCY, whatever the pass writes.
+ *
+ * WHY THIS CASE EXISTS. Vulkan describes "these attachments are ordered after what came before" as ONE dependency holding
+ * N image barriers; recording one dependency per attachment says the same thing with N commands. The count is published
+ * (`Device::recordingNumbers`) because a batching change is otherwise invisible: the picture is identical either way, so
+ * only a number can tell "one command with three barriers" from "three commands with one".
+ */
+TEST(VkContentDrawTest, APassEntryIsOneDependencyWhateverItWrites)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    // THREE COLOUR ATTACHMENTS, no depth: the pass' entry owes one barrier per attachment.
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->setName(String(u8"vk_dependency_target"));
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(kTargetSize, kTargetSize);
+
+    FrameDescription frame;
+    FrameDescription::Pass entry;
+    entry.pass        = vn::test::framePassForTest();
+    PassDraw pass;
+    pass.target       = target.get();
+    pass.clear        = ClearPolicy{};
+    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    entry.draw        = std::move(pass);
+    frame.passes.push_back(std::move(entry));
+
+    const vn::backend_vk::Device::RecordingNumbers before = device->recordingNumbers();
+    (void)backend->executeFrame(frame, nullptr);
+    const vn::backend_vk::Device::RecordingNumbers after = device->recordingNumbers();
+
+    EXPECT_EQ(after.barrier_dependencies - before.barrier_dependencies, 1U)
+        << "a pass' entry is ONE dependency, however many attachments it states";
+    EXPECT_EQ(after.barriers - before.barriers, 3U) << "that dependency carries one barrier per colour attachment";
+
+    backend->shutdown();
+}
+
+/**
+ * @brief A STATE COMMAND IS ISSUED WHEN THE STATE CHANGES, not once per draw.
+ *
+ * WHY THIS CASE EXISTS. `T54` made every state item a command (no pipeline per state change), which is right - but a draw
+ * that states what the command buffer already holds still pays a driver call. Two identical commands in one pass must
+ * therefore cost what one costs, and `state_commands` is the number that says so: the viewport and the scissor are PASS
+ * facts, so a pass with N draws used to state the same rectangle N times.
+ */
+TEST(VkContentDrawTest, ARepeatedStateIsNotARepeatedCommand)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+
+    // TWO IDENTICAL COMMANDS: same pipeline, same resolved state, same rectangle - the only difference between the two
+    // frames below is how many times the pass draws.
+    const auto frameWith = [&](const std::size_t command_count) {
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        for (std::size_t index = 0; index < command_count; ++index) {
+            DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+            command.program              = program;
+            command.program_description  = program->description();
+            command.material             = material;
+            command.material_description = material->description();
+            commands->push_back(std::move(command));
+        }
+        DrawPacket draw;
+        draw.kind        = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands    = commands;
+        return drawingFrame(target.get(), std::move(draw));
+    };
+
+    (void)backend->executeFrame(frameWith(1U), nullptr);
+    const std::uint64_t one_draw = device->recordingNumbers().state_commands;
+    EXPECT_GT(one_draw, 0U) << "a drawn frame states something";
+
+    (void)backend->executeFrame(frameWith(2U), nullptr);
+    const std::uint64_t two_draws = device->recordingNumbers().state_commands;
+
+    EXPECT_EQ(two_draws - one_draw, one_draw)
+        << "the second command of the pass states the same pipeline, rectangle and raster state, so it costs no state "
+        << "command (measured " << (two_draws - one_draw) << " against " << one_draw << ")";
+
+    backend->shutdown();
+}
+
+/**
+ * @brief THE FRAME NAMES ITSELF AND EVERY PASS to a capture tool.
+ *
+ * WHY THIS CASE EXISTS. A capture without labels is one anonymous command stream: the host's `FrameReport` names the
+ * passes and the report's timing attributes them, but the tool a developer opens to look at a frame sees neither. The
+ * names are the frame's own (`RenderPass::name`), so a label count of `passes + 1` is the whole contract - and a session
+ * without `VK_EXT_debug_utils` names nothing, which is why the case skips on the advertised answer rather than on the
+ * observation.
+ */
+TEST(VkContentDrawTest, AFrameAndItsPassesAreNamedToACaptureTool)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+    if (!device->debugMarkers()) {
+        GTEST_SKIP() << "this session did not resolve VK_EXT_debug_utils, so it names nothing to a tool";
+    }
+
+    const intrusive_ptr<RenderTarget> first  = makeTarget();
+    const intrusive_ptr<RenderTarget> second = makeTarget();
+
+    FrameDescription frame;
+    for (RenderTarget* target : { first.get(), second.get() }) {
+        FrameDescription::Pass entry;
+        entry.pass = vn::test::framePassForTest();
+        PassDraw pass;
+        pass.target       = target;
+        pass.clear        = ClearPolicy{};
+        pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        entry.draw        = std::move(pass);
+        frame.passes.push_back(std::move(entry));
+    }
+
+    const std::uint64_t before = device->recordingNumbers().debug_labels;
+    (void)backend->executeFrame(frame, nullptr);
+    const std::uint64_t after = device->recordingNumbers().debug_labels;
+
+    EXPECT_EQ(after - before, 3U) << "one region for the frame and one for each of its two passes";
+
+    backend->shutdown();
+}

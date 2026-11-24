@@ -50,6 +50,13 @@ bool requiresTransition(const ImageLayout from, const ImageLayout to) noexcept
     return from != to;
 }
 
+ImageState transferWriteState() noexcept
+{
+    return ImageState{ VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                       VK_ACCESS_2_TRANSFER_WRITE_BIT };
+}
+
 ImageState transferReadState() noexcept
 {
     return ImageState{ VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -97,13 +104,68 @@ VkImageMemoryBarrier2 barrierFor(const VkImage              image,
     return barrierBetween(image, stateOf(from), stateOf(to), aspect);
 }
 
-void recordBarrier(const VolkDeviceTable& table, const VkCommandBuffer commands, const VkImageMemoryBarrier2& barrier) noexcept
+void recordBarriers(const VolkDeviceTable&                 table,
+                    const VkCommandBuffer                  commands,
+                    const std::span<const VkImageMemoryBarrier2> barriers,
+                    RecordingTally* const                  tally) noexcept
 {
+    // ONE DEPENDENCY, N BARRIERS (see the header). An empty batch owes the queue nothing: a pass with no image to move
+    // records no command at all rather than an empty one.
+    if (barriers.empty()) {
+        return;
+    }
     VkDependencyInfo dependency{};
-    dependency.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-    dependency.imageMemoryBarrierCount  = 1U;
-    dependency.pImageMemoryBarriers     = &barrier;
+    dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.imageMemoryBarrierCount = static_cast<std::uint32_t>(barriers.size());
+    dependency.pImageMemoryBarriers    = barriers.data();
     table.vkCmdPipelineBarrier2(commands, &dependency);
+    if (tally != nullptr) {
+        ++tally->dependencies;
+        tally->barriers += barriers.size();
+    }
+}
+
+void recordBarrier(const VolkDeviceTable&       table,
+                   const VkCommandBuffer        commands,
+                   const VkImageMemoryBarrier2& barrier,
+                   RecordingTally* const        tally) noexcept
+{
+    recordBarriers(table, commands, std::span<const VkImageMemoryBarrier2>(&barrier, 1U), tally);
+}
+
+BarrierBatch::BarrierBatch(const VolkDeviceTable&              table,
+                           const VkCommandBuffer               commands,
+                           const std::span<VkImageMemoryBarrier2> storage,
+                           RecordingTally* const               tally) noexcept
+  : table_(&table)
+  , commands_(commands)
+  , storage_(storage)
+  , tally_(tally)
+{
+}
+
+bool BarrierBatch::move(const VkImage image, ImageLayout& record, const ImageLayout to, const VkImageAspectFlags aspect) noexcept
+{
+    // THE SAME RULE AS transitionImage (see there): nothing to do when the record already states the target, and nothing
+    // to state for an absent image.
+    if (record == to || image == VK_NULL_HANDLE) {
+        return false;
+    }
+    if (used_ >= storage_.size()) {
+        return false; // the caller sized the batch by the roles it states; a full batch is its defect, not the device's
+    }
+    storage_[used_++] = barrierBetween(image, stateOf(record), stateOf(to), aspect);
+    record            = to;
+    return true;
+}
+
+void BarrierBatch::flush() noexcept
+{
+    if (used_ == 0U) {
+        return;
+    }
+    recordBarriers(*table_, commands_, storage_.first(used_), tally_);
+    used_ = 0U;
 }
 
 bool transitionImage(const VolkDeviceTable& table,
@@ -111,7 +173,8 @@ bool transitionImage(const VolkDeviceTable& table,
                      const VkImage          image,
                      ImageLayout&           record,
                      const ImageLayout      to,
-                     const VkImageAspectFlags aspect) noexcept
+                     const VkImageAspectFlags aspect,
+                     RecordingTally* const  tally) noexcept
 {
     // ONE CALL FOR THE PAIR (see the header): a mover that recorded a barrier without writing the record - or wrote a
     // record the barrier did not state - is the defect this signature removes. Nothing to do when the image is already
@@ -119,7 +182,7 @@ bool transitionImage(const VolkDeviceTable& table,
     if (record == to || image == VK_NULL_HANDLE) {
         return false;
     }
-    recordBarrier(table, commands, barrierBetween(image, stateOf(record), stateOf(to), aspect));
+    recordBarrier(table, commands, barrierBetween(image, stateOf(record), stateOf(to), aspect), tally);
     record = to;
     return true;
 }

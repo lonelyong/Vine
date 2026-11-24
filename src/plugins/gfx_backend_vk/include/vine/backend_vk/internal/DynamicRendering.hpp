@@ -9,6 +9,7 @@
 
 #include <vine/graphics/DrawState.hpp>
 
+#include "BarrierPlan.hpp"
 #include "ImageLayout.hpp"
 
 VN_BACKEND_VK_NS_BEGIN
@@ -181,25 +182,35 @@ struct PassLoad {
  * @details
  * - TWO JOBS, ONE CALL SITE. A render pass did both of them implicitly: it moved every attachment from
  *   `initialLayout` to the subpass layout, and its subpass dependency ordered the pass' attachment accesses after what
- *   earlier submissions did. With dynamic rendering neither exists, so this function records one barrier per
- *   attachment - from the layout the set states to the layout rendering requires - and then opens the instance. A
- *   barrier between two IDENTICAL states is recorded on purpose: it is the execution dependency between this pass and
- *   the previous one into the same image, which is the half Vulkan does not insert for dynamic rendering.
+ *   earlier submissions did. With dynamic rendering neither exists, so this function records the attachment barriers -
+ *   from the layout the set states to the layout rendering requires - and then opens the instance. A barrier between two
+ *   IDENTICAL states is part of the batch on purpose: it is the execution dependency between this pass and the previous
+ *   one into the same image, which is the half Vulkan does not insert for dynamic rendering.
+ * - ONE DEPENDENCY, NOT ONE PER ATTACHMENT. Every attachment barrier this pass needs is stated in ONE `VkDependencyInfo`
+ *   (see `recordBarriers`): a seven-attachment multisampled set states one command, not seven. Vulkan's model is that a
+ *   dependency orders two sets of accesses; splitting it per image says the same thing more expensively, and the count
+ *   is a number this backend publishes (see `RecordingTally`).
  * - CALLER OWNS THE BOOKKEEPING. The `from` values a role carries are the facts the owner tracks, one per image (see
  *   `TargetObjects` and `WindowTarget`); after this call every attachment is in the rendering layout, so the owner
  *   stores exactly that.
  * - DRAWS FOLLOW, then @ref endRendering. Nothing may be recorded between the barrier set and the draws that needs the
  *   old layout.
- * - NO ALLOCATION (`G10`). The colour attachment info array is a stack value of `kMaxColorAttachments` entries: the
- *   specification caps `maxColorAttachments` at 8, and a shape asking for more is refused where it is built
- *   (`vk.target.too_many_colors`), so the bound is a fact the recorder may rely on instead of a silent clamp.
+ * - NO ALLOCATION (`G10`). The colour attachment info array and the barrier batch are stack values of
+ *   `kMaxColorAttachments`: the specification caps `maxColorAttachments` at 8, and a shape asking for more is refused
+ *   where it is built (`vk.target.too_many_colors`), so the bound is a fact the recorder may rely on instead of a
+ *   silent clamp.
  *
  * @param table       The device's entry points (volk table).
  * @param commands    The command buffer being recorded (outside any rendering instance).
  * @param attachments The attachment set, as roles (borrowed for the call; a role's spans are its own images' records).
  * @param load        The pass' load policy and clear values.
+ * @param tally       Receives what the entry's dependency cost (see `RecordingTally`), or null.
  */
-void beginRendering(const VolkDeviceTable& table, VkCommandBuffer commands, const PassAttachments& attachments, const PassLoad& load);
+void beginRendering(const VolkDeviceTable& table,
+                    VkCommandBuffer        commands,
+                    const PassAttachments& attachments,
+                    const PassLoad&        load,
+                    RecordingTally*        tally = nullptr);
 
 /**
  * @brief Records `vkCmdEndRendering`, closing the instance @ref beginRendering opened.

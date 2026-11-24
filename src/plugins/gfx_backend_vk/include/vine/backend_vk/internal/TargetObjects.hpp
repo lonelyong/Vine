@@ -351,9 +351,10 @@ struct TargetObjects {
      * @param table    The device's entry points (volk table).
      * @param commands The command buffer being recorded.
      * @param to       The usage the picture is about to be in.
+     * @param tally    Receives the barrier this move recorded (see `RecordingTally`), or null.
      * @return true when a barrier was recorded.
      */
-    bool transitionDepthPicture(const VolkDeviceTable& table, VkCommandBuffer commands, ImageLayout to) noexcept;
+    bool transitionDepthPicture(const VolkDeviceTable& table, VkCommandBuffer commands, ImageLayout to, RecordingTally* tally = nullptr) noexcept;
 
     /**
      * @brief Puts every layout record back to `Undefined` because the commands that would have moved them never ran.
@@ -401,8 +402,9 @@ struct TargetObjects {
      * @param table    The device's entry points (volk table).
      * @param commands The command buffer being recorded (outside any rendering instance).
      * @param load     The pass' load policy - one answer per attachment (see ClearPolicy).
+     * @param tally    Receives what the pass' entry dependency cost (see `RecordingTally`), or null.
      */
-    void beginPass(const VolkDeviceTable& table, VkCommandBuffer commands, const PassLoad& load);
+    void beginPass(const VolkDeviceTable& table, VkCommandBuffer commands, const PassLoad& load, RecordingTally* tally = nullptr);
 
     /**
      * @brief Closes the rendering instance @ref beginPass opened (see `DynamicRendering::endRendering`).

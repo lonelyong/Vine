@@ -98,16 +98,6 @@ namespace
     return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
 
-/// @brief The state an upload writes from: `TRANSFER_DST_OPTIMAL`, transfer stage, write access.
-[[nodiscard]] ImageState transferWriteState() noexcept
-{
-    ImageState state{};
-    state.layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    state.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    state.access = VK_ACCESS_TRANSFER_WRITE_BIT;
-    return state;
-}
-
 } // namespace
 
 struct ContentImages::Impl {

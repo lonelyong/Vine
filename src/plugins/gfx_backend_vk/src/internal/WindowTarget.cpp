@@ -545,7 +545,7 @@ bool WindowTarget::acquire(vn::String* why)
     return false;
 }
 
-void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& load)
+void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& load, RecordingTally* const tally)
 {
     if (impl == nullptr || !impl->image_acquired || impl->image_index >= impl->images.size()) {
         return; // nothing acquired: the caller never reaches here (see acquire), and a pass with no image is nothing
@@ -569,7 +569,7 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
 
     // `beginRendering` records the barriers before the instance: every window pass announces its own, because the
     // instance may start in a layout the presentation engine left (Present) or one an earlier pass left (colour).
-    beginRendering(*impl->device.table, commands, attachments, load);
+    beginRendering(*impl->device.table, commands, attachments, load, tally);
     impl->image_layouts[index] = ImageLayout::ColorAttachment;
     impl->depth_layout         = ImageLayout::DepthAttachment;
     impl->pass_open            = true;

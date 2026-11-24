@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **191 cases / 44 suites** (2026-11-24).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **196 cases / 44 suites** (2026-11-24).
 
 ### 1.2 Goals
 
@@ -169,10 +169,16 @@ and every cache has a witness a test can read.**
   three and not one array of structs because a full-screen draw binds the views as ONE contiguous `VkImageView` span, and
   converting per pass would allocate on the recording path.
 - **Boundary**: the table covers the FIVE purposes `ImageLayout` states (Undefined / ColorAttachment / DepthAttachment /
-  ShaderReadOnly / Present) plus the one a device verb needs (`transferReadState()`, kept out of the enum because a
-  readback or an upload is not something a pass declares); a new purpose is one more row, not one more inline barrier.
+  ShaderReadOnly / Present) plus the two a device verb needs (`transferReadState()` / `transferWriteState()`, kept out of the
+  enum because a readback or an upload is not something a pass declares); a new purpose is one more row, not one more inline barrier.
   An ATTACHMENT row states the read side of its access as well as the write side, because under dynamic rendering the
   LOAD (and a blend's destination read) has no implicit ordering.
+- **ONE DEPENDENCY PER PASS ENTRY, AND THE SUBMISSION IS 1.3 TOO**: every attachment barrier a pass needs is stated in a
+  single `VkDependencyInfo` (`recordBarriers`), so a seven-attachment multisampled set is one command with seven barriers
+  (`BarrierBatch` is the same batching for a pass' sampled-source moves). The queue follows the same rule: the frame
+  submits through `vkQueueSubmit2`, the wait stage travels on the semaphore, and no 1.0 stage mask is paired with a 1.3
+  command buffer. The clock is the one place where a stage is chosen for a REASON rather than by the table: a frame's
+  start takes no wait, every other boundary waits for `ALL_COMMANDS` (see F13 and P18).
 
 ### 2.8 Honest reporting: absent is not zero, one report per episode
 
@@ -363,7 +369,6 @@ and every cache has a witness a test can read.**
   when the frame ends.
 
 ### 2.18 The target table: objects, shapes and one holder per frame (`G1` / `G6` / `G7`)
-
 - **What it is**: the device holds one `TargetTable` — from the host's `RenderTarget*` to the `TargetObjects` it becomes (map + shape cache + build / rebuild / repair), the
   seven target-refusal episodes, and the per-frame leases (`RenderTarget* → FrameDriverId`) **are three questions of one table**; `lease(driver)` issues a frame-scoped `Lease`;
   `executeFrame` and `prepareFrame` `claim` each pass' targets **before `ensure`**. On a conflict that pass **is skipped** (the frame's other passes still run) and
@@ -380,6 +385,54 @@ and every cache has a witness a test can read.**
   window belongs to one session (`WindowOccupied`).
 - **When a conflict happens**: once two drivers are lent out by `RenderDevice::createFrameDriver()`, the conflict is exercised by a lease impersonating "another driver" and by
   `VkMultiSessionTest`'s concurrent cases; a single driver never conflicts.
+
+### 2.19 The recording path is batched, shadowed and named (`G10` / `G11`)
+
+- **What it is**: three facts that used to be conventions are mechanisms with numbers.
+  * **ONE DEPENDENCY PER PASS ENTRY** (`BarrierPlan::recordBarriers` + `BarrierBatch`): `DynamicRendering::beginRendering`
+    states every attachment barrier of a pass in ONE `VkDependencyInfo`, and a pass' sampled-source moves are one
+    dependency per source. Before this, a seven-attachment multisampled pass issued seven `vkCmdPipelineBarrier2` calls
+    that each said the same thing about a different image - the same ordering, stated expensively.
+  * **A STATE COMMAND IS ISSUED WHEN THE STATE CHANGES** (`ContentDraw::RecordedState`): viewport, scissor, line width,
+    depth bias, cull, polygon mode, depth test/write/compare and blend are diffed against what this frame's command
+    buffer already holds. The viewport and the scissor are PASS facts (they are computed from the pass' rectangle), so a
+    pass with ten draws used to state the same rectangle ten times; the shadow is invalidated on a pipeline bind,
+    because that is the one moment a pipeline's dynamic set can differ, and it is reset by `beginFrame()` because every
+    frame begins a new command buffer.
+  * **THE FRAME NAMES ITSELF** (`Device::debugMarkers`): one `VK_EXT_debug_utils` region around the frame and one around
+    each pass, named from `RenderPass::name` - so a capture tool's tree, the host's `PrepareReport` and
+    `FrameReport::timing`'s per-pass entries all use the same names.
+- **Why**: `G10` (a command is a cost, and repeating a state the buffer already holds is a cost with no meaning) + `G11`
+  (a capture without labels is one anonymous command stream, and a pass timing nobody can match to commands is a number
+  without a consumer). Both are recorded as NUMBERS rather than as claims: `Device::recordingNumbers()` answers
+  `barrier_dependencies` / `barriers` / `state_commands` / `debug_labels`, cumulative, and each case takes its delta -
+  the same rule §2.4 lays down for the ring, the set cache and the pool.
+- **Boundary**: the shadow is the recorder's and lives for one frame; it never crosses a pipeline bind. A session whose
+  loader has no `VK_EXT_debug_utils` names nothing (`debugMarkers()` answers false) rather than failing a frame, and its
+  `debug_labels` stays 0.
+- **Cases**: `VkContentDrawTest.APassEntryIsOneDependencyWhateverItWrites` (a three-attachment pass = one dependency
+  carrying three barriers), `ARepeatedStateIsNotARepeatedCommand` (two identical commands cost what one does) and
+  `AFrameAndItsPassesAreNamedToACaptureTool` (passes + 1 regions).
+
+### 2.20 One pass is one value; one frame is one command buffer (`G1` / `G6`)
+
+- **What it is**: the frame body used to keep four descriptions of "the pass about to run" - a local `Runnable` list,
+  `FrameHead::Pass`, `PassAttachments` and `PassLoad` - plus the `pass_position` / `pass_index` arithmetic that kept the
+  indexings in step, and the pass' NAME was read back from the first list after the fact. `FrameHead::Pass` now carries
+  the frame facts (`entry`, `draw`, `images`, `window`, `compatibility`): the claim loop fills them, the head resolves the
+  plans into the same slots while it holds the cache lock, and the recorder walks that one array.
+- **The frame's working set has an owner too** (`FrameRun`, the driver's): the records the frame moved, the depths it
+  lends and the clock's sample buffer were stack containers rebuilt per frame, while `FrameHead` and `FrameScratch`
+  beside them kept their capacity. They are the driver's now and `clear()`ed per frame.
+- **And so does the command buffer** (`FrameDriver::commands`): the command pool, the fence and the query pool were the
+  driver's; the buffer was allocated and freed per frame, with a failure branch (`vk.frame.command_buffer_missing`) a
+  host could do nothing about. It is created with the pool and reset by `vkBeginCommandBuffer`, and the warm-up records
+  into it under the same exclusive gate - so both frame bodies spend no allocation on it.
+- **Why**: `G1` (one concept, one definition, one owner) and `G6` (the frame machinery is listed in one object). Three
+  indexings over one list is exactly the shape that lets a report name the wrong pass, and a per-frame allocate/free pair
+  is the frame machinery's own cost paid outside the machine.
+- **Boundary**: a structure change with no behaviour - `test_vk`'s cases did not move, `FrameHead::storageGrows` still
+  answers what it did, and the clock's per-pass spans are what F13 says they are.
 
 ## 3. Features
 
@@ -565,13 +618,16 @@ and every cache has a witness a test can read.**
 ### 3.1.13 F13 Device clock
 
 - **Behaviour**: a pair of `VK_QUERY_TYPE_TIMESTAMP`s wraps a frame's command buffer, is read back after the fence and written into `FrameReport::timing`
-  (`FrameTiming::gpu_micros`); **every pass has its own pair of boundaries** (written before its uploads, so the transitions and copies it asks for count against it),
-  read back into `FrameTiming::passes` (in execution order, named from `RenderPass::name`, so the host can hold it against the plan it read); it is sampled every 30
-  frames (measured, this pair costs ~0.8 ms per frame on lavapipe), and an unsampled frame is **absent** rather than repeating the previous value.
-- **Constraints**: `C7`, `C13`.
+  (`FrameTiming::gpu_micros`); **every pass has one boundary, written at `ALL_COMMANDS` after it** (so a pass' span is the time until ITS work finished,
+  uploads and transitions included, and segment *i* is boundary *i* minus boundary *i-1*), read back into `FrameTiming::passes` (in execution order, named from
+  `RenderPass::name`, so the host can hold it against the plan it read); it is sampled every 30 frames (measured, this pair costs ~0.8 ms per frame on lavapipe),
+  and an unsampled frame is **absent** rather than repeating the previous value. The query pool holds `2 + passes` queries: the frame's start (the one boundary
+  that takes no wait), its end, and one per pass.
+- **Constraints**: `C7`, `C13`, `C14`.
 - **Acceptance**: `VkDeviceClockTest.AFrameReportsItsDeviceTime`,
   `VkPassTimingTest.TheReportAttributesTheFrameToThePassesThatSpentIt` (two passes, two entries, the names match, and the sum of the segments does not exceed the
-  whole frame).
+  whole frame) and `VkPassTimingTest.AHeavyPassReportsMoreTimeThanACheapOne` (a 512x512 clear reports more time than a 4x4 one - the property a boundary that
+  does not wait cannot state).
 - **Caveat**: `P12`.
 
 ### 3.1.14 F14 Reports and diagnostics
@@ -607,6 +663,7 @@ and every cache has a witness a test can read.**
 | `capabilities()` | reports only what is actually enabled | §2.8 |
 | `handles()` | the escape hatch's value (inside the plugin) | F15 |
 | `contentPipelines()` / `contentCacheCounters()` | the cost model's witnesses (pipeline count, ring / set) | §2.4 |
+| `recordingNumbers()` / `debugMarkers()` | the recording path's witnesses (dependencies, barriers, state commands, labels) and whether this session can label at all | §2.19 |
 | `memoryStats()` / `pipelineCacheReport()` | the pool's and the cache's witnesses; the pool's five byte figures also reach the host in `FrameReport::memory` | F10 / F12 |
 
 The full signatures and per-parameter contracts are in `include/vine/backend_vk/internal/Device.hpp`.
@@ -624,7 +681,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | Unit | Responsibility | Key contract |
 |---|---|---|
 | `Device` | session, frames, the window table, reports (the target table is `TargetTable`) | 4.1 above |
-| `ContentDraw` | content / fullscreen recording, programs and pipelines, the ring, the set cache, the pipeline cache object | F5 / F6 / F8 / F9 / F12 |
+| `ContentDraw` | content / fullscreen recording, programs and pipelines, the ring, the set cache, the pipeline cache object | F5 / F6 / F8 / F9 / F12; the state shadow and `stateCommands()` (the recording path's witness) are its |
 | `ContentImages` | texture revisions, samplers, the stand-in | F7 |
 | `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) | F4 / §2.18 |
 | `TargetObjects` | an offscreen target's attachment set: images, views and the layout each one is in (`beginPass` / `endPass`) | F4 |
@@ -633,7 +690,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `MemoryAllocator` | the device memory pool (blocks / slices / mapping) | F10 |
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |
 | `ReadbackStaging` | one readback's staging sequence | F11 |
-| `BarrierPlan.hpp` / `StateMapping` | `stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf`; `StateMapping` turns SDK state into Vulkan enums | §2.7 |
+| `BarrierPlan.hpp` / `StateMapping` | `stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf` / the clock's boundary stages; `recordBarriers` and `BarrierBatch` state a pass' moves as ONE dependency | §2.7 / §2.19 |
 | `ShaderCompiler.hpp` / `ProgramVariant` | `compileStage` + `SpirvModule` (glslang); the variant bits | F5 |
 | `Handles` (`internal/` + `support/`) | the escape hatch | F15 |
 | `ContentAbi.hpp` | the content block layout this backend packs (offsets are the SDK's ABI) | F5, `graphics-material.md` |
@@ -662,8 +719,11 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   only classification point, and no call site may classify a failure as "out of video memory" on its own (§2.12).
 - **C12 Every report carries a stable code**: a newly written `reportDiagnostic` must carry a `code` (`check_diagnostic_formats.py` sets a ceiling with the baseline and
   goes red above it); once published, a `code` is never reworded or reused (`scripts/diagnostic_codes.txt`).
-- **C13 Attribution is segmented, not the whole frame repeated**: a pass' time is the segment between it and the next boundary (including the uploads and transitions it
-  asks for), so the segments sum to ≤ the whole frame; attributing the whole frame to every pass is wrong (`VkPassTimingTest` pins it).
+- **C13 Attribution is segmented, not the whole frame repeated**: a pass' time is the segment between its boundary and the previous one (including the uploads and
+  transitions it asks for), so the segments sum to ≤ the whole frame; attributing the whole frame to every pass is wrong (`VkPassTimingTest` pins it).
+- **C14 A boundary is a wait**: a timestamp answers "when did everything before it finish", so the frame's START takes no wait (`kFrameClockStartStage`, nothing
+  before it belongs to the frame) and every other boundary - each pass' end and the frame's end - waits for `ALL_COMMANDS` (`kPassClockBoundaryStage`). A boundary
+  that does not wait measures when the command processor ARRIVED, not what the pass spent (see `P18`).
 
 ### 5.2 Requirements (R#)
 
@@ -686,6 +746,12 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **N6** After a device loss `initialized()` is false, frames are skipped and one report is made — **`VK_ERROR_DEVICE_LOST` on the allocation path takes the same route as
   on the submission path** (`noteDeviceLost`, §2.12).
 - **N7** A frame's `FrameReport.timing` either belongs to that frame or is absent; the previous frame's value is never reused.
+- **N8 One pass, one dependency**: a pass' entry states every attachment barrier in one `VkDependencyInfo`, so
+  `RecordingNumbers::barrier_dependencies` grows by one per pass entry while `barriers` grows by the attachment count
+  (`VkContentDrawTest.APassEntryIsOneDependencyWhateverItWrites`).
+- **N9 A state command is issued only when the state changes**: within one frame, a draw that repeats the previous
+  draw's pipeline, rectangle and raster state issues no state command
+  (`VkContentDrawTest.ARepeatedStateIsNotARepeatedCommand`).
 
 ## 6. Caveats and Traps
 
@@ -826,7 +892,6 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   `vkAllocateMemory` does not fail on a healthy machine, and without it these cases cannot be written.
 
 ### 6.17 P17 A frame that never reached the queue moved nothing
-
 - How it fails: the layout records are written WHILE RECORDING (that is what lets the next pass state the right
   `oldLayout`), on the premise of `C1` - one submission per frame, one fence wait. A frame that dies between its first
   `beginPass` and its `vkQueueSubmit` (a command buffer that will not end, a submit the driver refuses) has advanced
@@ -849,6 +914,19 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   cache entry whose image was never uploaded - backlog `T66`, whose fix is the same publish-on-completion rule applied to
   `ContentImages`.
 
+### 6.18 P18 A boundary that does not wait measures arrival
+
+- How it fails: a per-pass clock boundary written at `TOP_OF_PIPE` takes its timestamp when the command processor REACHES it, so a pass' span is queue latency
+  rather than the pass' work. Two passes with the same command count then report the same near-zero time whatever each one drew, and a host optimising "the slowest
+  pass" optimises nothing. The first version of F13 had exactly this shape, and the case that existed could not tell: its only quantitative assertion is "the
+  segments do not exceed the frame", which a report of zeros satisfies.
+- How to detect it: `VkPassTimingTest.AHeavyPassReportsMoreTimeThanACheapOne` - a 512x512 clear must report more time than a 4x4 one once the frame is long enough to
+  divide. **NOT distinguishable on a software rasteriser**, which executes commands in order and makes the old stage look right; the mutation that reverts the
+  boundary to `TOP_OF_PIPE` leaves every timing case green here. That is why the STAGE is pinned as a value:
+  `BarrierPlanTest.APassClockBoundaryWaitsForEveryCommand` asserts `kPassClockBoundaryStage == ALL_COMMANDS` and
+  `kFrameClockStartStage == TOP_OF_PIPE`, so the meaning does not depend on one device's execution model.
+- How to prevent it: the two stages are named constants in `BarrierPlan.hpp` (the table that owns stage vocabulary), and no call site spells a stage of its own.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -865,7 +943,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 191 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 196 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
@@ -882,7 +960,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **191 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **196 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).

@@ -29,13 +29,12 @@ vk.init.device_failed            — vkCreateDevice refused: the driver would no
 vk.init.api_version_low          — the device reports a Vulkan version below 1.3: this backend records synchronisation 2 and dynamic rendering, both core there
 vk.init.device_features_missing  — the 1.3 device does not offer the `synchronization2` / `dynamicRendering` FEATURES the backend enables (a version is not a feature)
 vk.init.dynamic_state_missing    — the device lacks VK_EXT_extended_dynamic_state3 (polygon mode, colour blend): this backend moves cull / depth / polygon / blend off the pipeline, so it cannot serve one
-vk.init.command_machinery_failed — the command pool or the frame fence could not be created: the session cannot drive frames
+vk.init.command_machinery_failed — the command pool, the frame's command buffer or the fence could not be created: the session cannot drive frames
 vk.init.memory_pool_failed       — the device memory pool could not be opened (see the memory report beside it)
 vk.init.content_pool_failed      — the content layouts / descriptor pool could not be created: this device cannot draw
 
 # --- vk backend: the frame and the warm-up (see vk-backend.md F4/F5) ---
 vk.session.not_initialized       — a frame was handed to a device that is not up: initialize it (or rebuild the lost session)
-vk.frame.command_buffer_missing  — no command buffer could be allocated: the frame was skipped
 vk.frame.begin_failed            — vkBeginCommandBuffer refused: the frame was skipped
 vk.frame.end_failed              — vkEndCommandBuffer refused: nothing that was recorded ran
 vk.frame.did_not_complete        — the submitted frame's fence did not signal and the device is not lost: the picture is incomplete

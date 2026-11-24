@@ -2,6 +2,10 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
 #include <volk.h>
 
 #include <vine/graphics/DrawState.hpp>
@@ -38,6 +42,43 @@ struct ImageState {
     VkImageLayout         layout{ VK_IMAGE_LAYOUT_UNDEFINED };         // The layout that usage requires.
     VkPipelineStageFlags2 stages{ VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT }; // The stages a barrier must synchronise.
     VkAccessFlags2        access{ 0 };                                 // The memory a barrier must make visible.
+};
+
+/**
+ * @brief The stage a PASS' clock boundary is written at: `ALL_COMMANDS`, because a timestamp answers "when did
+ *        everything before it finish".
+ *
+ * @details
+ * - WHAT IT REPLACES. The boundary used to be written at `TOP_OF_PIPE`, a stage that imposes no wait - so a pass' span
+ *   measured when the command processor ARRIVED at the boundary, not when the pass' work was done. On a device with a
+ *   command front-end that runs ahead of execution that number is queue latency; on a device that executes commands in
+ *   order (a software rasteriser) it happens to look right, which is why the meaning is pinned HERE, as a value, and
+ *   not only by a timing case: `VkPassTimingTest.AHeavyPassReportsMoreTimeThanACheapOne` states the property, this
+ *   constant states the stage, and only the second is observable on every device.
+ * - IT IS THE SAME RULE THE BARRIERS FOLLOW: a synchronisation point says what it WAITS for, and "everything" is what
+ *   the end of a pass means (see `stateOf`).
+ */
+inline constexpr VkPipelineStageFlags2 kPassClockBoundaryStage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+/** @brief The stage a frame's clock STARTS at: no wait, because nothing before it is part of the frame. */
+inline constexpr VkPipelineStageFlags2 kFrameClockStartStage = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+
+/**
+ * @brief What one recording pass asked the queue to wait for: dependencies (the driver calls) and the barriers inside
+ *        them.
+ *
+ * @details
+ * - THE WITNESS FOR "A PASS' ENTRY IS ONE DEPENDENCY" (see `BarrierBatch` and `beginRendering`). Vulkan states the
+ *   ordering of a pass' attachments as ONE `VkDependencyInfo` holding N image barriers; a recorder that issues one
+ *   `vkCmdPipelineBarrier2` per image says the same thing N times, and the number of calls is what a host pays for.
+ *   Counting both halves is also what makes a regression visible: an implementation that stops batching grows
+ *   `dependencies` without changing `barriers`.
+ * - CUMULATIVE, because it is a driver's lifetime counter (see `Device::recordingNumbers`): a test takes the delta
+ *   around a frame, exactly as it does for the ring and the set cache.
+ */
+struct RecordingTally {
+    std::uint64_t dependencies{ 0 }; ///< `vkCmdPipelineBarrier2` calls recorded.
+    std::uint64_t barriers{ 0 };     ///< Image barriers those calls carried.
 };
 
 /**
@@ -95,6 +136,18 @@ struct ImageState {
                                                VkImageAspectFlags aspect) noexcept;
 
 /**
+ * @brief Gets the state a copy WRITES to: `TRANSFER_DST_OPTIMAL` with the transfer stage and write access.
+ *
+ * @details
+ * - THE TWIN OF `transferReadState`, and the reason both live HERE: a device verb's two ends are the same table's
+ *   statement as a pass' states are, so the stage and access a copy writes with cannot drift into a second file. Before
+ *   this, the write end was a private helper inside `ContentImages.cpp` - one table in name, two in fact (`G1`).
+ *
+ * @return The transfer-destination state.
+ */
+[[nodiscard]] ImageState transferWriteState() noexcept;
+
+/**
  * @brief Gets the state a copy READS from: `TRANSFER_SRC_OPTIMAL` with the transfer stage and read access.
  *
  * @details
@@ -150,12 +203,33 @@ struct ImageState {
                                                   const VkImageSubresourceRange& range) noexcept;
 
 /**
- * @brief Records one image barrier on @p commands through synchronisation 2.
+ * @brief Records ONE dependency carrying @p barriers, counting it in @p tally when one is given.
  *
  * @details
- * - THE ONE PLACE the 1.3 command is named: every barrier this backend records goes through here, so there is no
- *   second spelling of "submit a dependency" to drift. Nothing else is set - the barrier already carries both stage
- *   masks and both access masks (see @ref ImageState).
+ * - THE BATCH IS THE POINT, NOT AN OPTIMISATION OF THE SAME STATEMENT. Vulkan describes the ordering a pass' entry
+ *   needs as one `VkDependencyInfo` with N image barriers inside it; recording N dependencies that each carry one
+ *   barrier is a different, larger command stream that says the same thing. Every engine that states a pass' entry
+ *   transitions in one call does so for that reason, and the count is observable (`RecordingTally`).
+ * - AN EMPTY BATCH RECORDS NOTHING: a pass with no image to move owes the queue no dependency.
+ * - ONE PLACE names `vkCmdPipelineBarrier2`, still (see @ref recordBarrier).
+ *
+ * @param table    The device's entry points.
+ * @param commands The command buffer being recorded.
+ * @param barriers The barriers this dependency carries (borrowed for the call).
+ * @param tally    Receives the dependency and its barrier count, or null when the caller keeps no number.
+ */
+void recordBarriers(const VolkDeviceTable&                 table,
+                    VkCommandBuffer                        commands,
+                    std::span<const VkImageMemoryBarrier2> barriers,
+                    RecordingTally*                        tally = nullptr) noexcept;
+
+/**
+ * @brief Records one image barrier through synchronisation 2.
+ *
+ * @details
+ * - THE ONE PLACE the 1.3 command is named: every barrier this backend records goes through here (or through
+ *   @ref recordBarriers, which it uses), so there is no second spelling of "submit a dependency" to drift. Nothing else
+ *   is set - the barrier already carries both stage masks and both access masks (see @ref ImageState).
  * - A barrier that names no image is still legal to record (see @ref barrierBetween); the caller decides whether it is
  *   worth recording at all - and a barrier between two IDENTICAL states is worth recording whenever something has to be
  *   ordered (see @ref requiresTransition).
@@ -163,8 +237,12 @@ struct ImageState {
  * @param table    The device table to record through.
  * @param commands The command buffer being recorded.
  * @param barrier  The barrier to record.
+ * @param tally    Receives the dependency and its barrier count, or null when the caller keeps no number.
  */
-void recordBarrier(const VolkDeviceTable& table, VkCommandBuffer commands, const VkImageMemoryBarrier2& barrier) noexcept;
+void recordBarrier(const VolkDeviceTable& table,
+                   VkCommandBuffer        commands,
+                   const VkImageMemoryBarrier2& barrier,
+                   RecordingTally*        tally = nullptr) noexcept;
 
 /**
  * @brief Gets the attachment load operation for @p op.
@@ -210,6 +288,69 @@ bool transitionImage(const VolkDeviceTable& table,
                      VkImage                image,
                      ImageLayout&           record,
                      ImageLayout            to,
-                     VkImageAspectFlags     aspect) noexcept;
+                     VkImageAspectFlags     aspect,
+                     RecordingTally*        tally = nullptr) noexcept;
+
+/**
+ * @brief ONE PASS' MOVES, appended and then recorded as ONE dependency: each move writes the record it moved.
+ *
+ * @details
+ * - WHY A BATCH AND NOT N MOVERS. A pass that samples four pictures would otherwise record four dependencies, and the
+ *   pass' entry (see `DynamicRendering::beginRendering`) would add five more - one statement, nine commands. The batch
+ *   keeps the invariant that made `transitionImage` worth having (THE COMMAND THAT MOVES AN IMAGE WRITES ITS RECORD)
+ *   while saying the ordering once.
+ * - THE STORAGE IS THE CALLER'S. A fixed array on the recording path (the bound is the roles a pass states), so this
+ *   type allocates nothing and cannot fail for want of memory; it answers `false` from @ref move when a caller sized
+ *   it wrong, which is a defect in the caller rather than a device answer.
+ * - AN ALREADY-CORRECT RECORD MOVES NOTHING: `move` answers false and appends no barrier, and the caller should not
+ *   log a rewind for it.
+ * - @ref flush is explicit (no destructor): recording a command from a destructor hides the moment a dependency reaches
+ *   the command buffer, and the one caller here has exactly one place to state it.
+ *
+ * @warning Not thread-safe: one frame at a time (the SDK's per-driver contract).
+ */
+class BarrierBatch final {
+  public:
+    /**
+     * @brief Opens a batch over @p storage, recording into @p commands when it is flushed.
+     *
+     * @param table    The device's entry points.
+     * @param commands The command buffer being recorded.
+     * @param storage  The caller's fixed array (one entry per move the caller may state).
+     * @param tally    Receives what {@ref flush} recorded, or null.
+     */
+    BarrierBatch(const VolkDeviceTable& table, VkCommandBuffer commands, std::span<VkImageMemoryBarrier2> storage, RecordingTally* tally = nullptr) noexcept;
+
+    BarrierBatch(const BarrierBatch&)            = delete;
+    BarrierBatch& operator=(const BarrierBatch&) = delete;
+
+  public:
+    /**
+     * @brief Moves @p image to @p to: appends the barrier and writes @p record.
+     *
+     * @param image  The image to move (null records nothing).
+     * @param record The layout record that describes @p image; it is read AND written.
+     * @param to     The usage the image is about to be in.
+     * @param aspect The aspect mask (colour, or depth for a depth image).
+     * @return true when a barrier was appended (i.e. @p record differed from @p to and there was room).
+     */
+    bool move(VkImage image, ImageLayout& record, ImageLayout to, VkImageAspectFlags aspect) noexcept;
+
+    /** @brief Records everything appended so far as ONE dependency, then empties the batch (idempotent). */
+    void flush() noexcept;
+
+    /** @brief Gets how many barriers are waiting for the next @ref flush. */
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+        return used_;
+    }
+
+  private:
+    const VolkDeviceTable*         table_{ nullptr };
+    VkCommandBuffer                commands_{ VK_NULL_HANDLE };
+    std::span<VkImageMemoryBarrier2> storage_{};
+    RecordingTally*                tally_{ nullptr };
+    std::size_t                    used_{ 0U };
+};
 
 VN_BACKEND_VK_NS_END

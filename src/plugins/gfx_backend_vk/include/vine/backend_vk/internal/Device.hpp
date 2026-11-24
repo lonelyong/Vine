@@ -446,8 +446,48 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] ContentCacheCounters contentCacheCounters() const noexcept;
 
     /**
-     * @brief Gets how many times the frame head's reusable storage had to GROW (see FrameHead::storageGrows).
+     * @brief WHAT THE RECORDING PATH SPENT: the dependencies it stated, the barriers inside them, the state commands it
+     *        issued and the regions it named.
      *
+     * @details
+     * - THE WITNESSES FOR THREE PROPERTIES THAT WOULD OTHERWISE BE COMMENTS (`G11`, and §2.4's "an optimisation without a
+     *   witness has not landed"):
+     *   * `barrier_dependencies` / `barriers` - a pass' entry is ONE dependency carrying its attachments (see
+     *     `RecordingTally`), so a seven-attachment pass states one command with seven barriers in it; an implementation
+     *     that stops batching grows the first number and leaves the second alone.
+     *   * `state_commands` - a state change is one command and a repeated state is none (see `ContentDraw`'s shadow), so
+     *     this number grows with distinct state, not with the draws that share one.
+     *   * `debug_labels` - the frame names itself and every pass to a capture tool (see @ref debugMarkers).
+     * - CUMULATIVE, like `contentCacheCounters()`: a case takes the delta around a frame.
+     */
+    struct RecordingNumbers {
+        std::uint64_t barrier_dependencies{ 0 }; ///< `vkCmdPipelineBarrier2` calls the frame path recorded.
+        std::uint64_t barriers{ 0 };             ///< Image barriers those calls carried.
+        std::uint64_t state_commands{ 0 };       ///< `vkCmdSet*` calls the recorder issued.
+        std::uint64_t debug_labels{ 0 };         ///< Debug-utils regions the frame path opened.
+    };
+
+    /**
+     * @brief Gets what the recording path spent (see RecordingNumbers).
+     *
+     * @return The numbers (zeros before a session is up).
+     */
+    [[nodiscard]] RecordingNumbers recordingNumbers() const noexcept;
+
+    /**
+     * @brief Answers whether this session can name its work to a capture tool.
+     *
+     * @details
+     * - `VK_EXT_debug_utils` is resolved once at `initialize()` (the same extension the validation messenger uses), so a
+     *   session that reports is exactly a session that labels. A host or a tool that wants labelled captures asks this
+     *   instead of assuming: a session without the extension names nothing rather than failing a frame.
+     *
+     * @return true when the frame path opens debug-utils regions (see `debug_labels` in @ref recordingNumbers).
+     */
+    [[nodiscard]] bool debugMarkers() const noexcept;
+
+    /**
+     * @brief Gets how many times the frame head's reusable storage had to GROW (see FrameHead::storageGrows).     *
      * @details
      * - THE WITNESS FOR "A STEADY FRAME DOES NOT REBUILD ITS STORAGE" (I-02): the head clears its pass/call slots and
      *   keeps their capacity, so a steady frame leaves this number where it was. It is exposed for the same reason

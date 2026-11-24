@@ -2175,3 +2175,35 @@
   source's own records.
 - **Measured**: `test_vk` **191 cases / 44 suites**, `test_graphics` **642 / 82**. Mutations: reverting the sampler key and
   the lender claim turns exactly the two new cases red and nothing else.
+
+## 2026-11-24 — the third design pass: what the clock measured, and the three costs nobody counted
+
+- **A boundary that does not wait measures arrival**: every per-pass clock boundary was written at `TOP_OF_PIPE`, so
+  `FrameTiming::passes` reported when the command processor reached each boundary, not what each pass spent. Boundaries
+  now wait (`ALL_COMMANDS`, one per pass, written after it), the frame's start keeps `TOP_OF_PIPE`, and the query pool
+  shrank from `2 + passes + 1` to `2 + passes`. Submission moved to `vkQueueSubmit2` in the same pass, so no 1.0 stage
+  mask survives next to a 1.3 command buffer.
+  **The trap**: a software rasteriser cannot see this difference (it executes commands in order, so the old stage looked
+  right and the mutation stayed green here) - which is why the stage is a named constant (`kPassClockBoundaryStage`,
+  `kFrameClockStartStage`) pinned by `BarrierPlanTest.APassClockBoundaryWaitsForEveryCommand`, with
+  `VkPassTimingTest.AHeavyPassReportsMoreTimeThanACheapOne` stating the property for hardware.
+- **One pass = one value**: `FrameHead::Pass` now carries `entry` / `draw` / `images` / `window` / `compatibility`, and
+  the local `Runnable` list plus the `pass_position` / `pass_index` arithmetic are gone. The frame's own working set
+  (`moved_layouts`, `lent_depths`, `stamp_values`) moved onto the driver (`FrameRun`, cleared per frame), and so did the
+  command buffer (`FrameDriver::commands`, created with the pool, reset by `vkBeginCommandBuffer`) - so the frame path
+  has no per-frame allocate/free pair and `vk.frame.command_buffer_missing` no longer exists.
+- **One pass entry = one dependency**: `BarrierPlan::recordBarriers` (and `BarrierBatch` for sampled-source moves) state
+  a pass' transitions as one `VkDependencyInfo`; a seven-attachment multisampled set is now one command with seven
+  barriers instead of seven commands.
+- **A state command is issued when the state changes**: `ContentDraw` keeps a `RecordedState` shadow (viewport, scissor,
+  line width, depth bias, cull, polygon, depth test/write/compare, blend), invalidated on a pipeline bind and reset by
+  `beginFrame()`. `T54` made state a command; this makes a REPEATED state free - the viewport and the scissor are pass
+  facts and used to be re-stated per draw.
+- **The frame names itself**: one `VK_EXT_debug_utils` region per frame and one per pass, from `RenderPass::name`, so a
+  capture tree and the per-pass timing agree. `transferWriteState()` moved next to its read twin in `BarrierPlan` (the
+  write half was a private helper in `ContentImages.cpp`: one table in name, two in fact).
+- **The witnesses are one accessor**: `Device::recordingNumbers()` answers `barrier_dependencies` / `barriers` /
+  `state_commands` / `debug_labels`, and `debugMarkers()` says whether this session can label at all.
+- **Measured**: `test_vk` **196 cases / 44 suites**, `test_graphics` **642 / 82**. Mutations: one dependency per barrier
+  turns `APassEntryIsOneDependencyWhateverItWrites` red; always re-stating the viewport turns
+  `ARepeatedStateIsNotARepeatedCommand` red (13 vs 12 state commands); reverting the clock stage turns the value pin red.

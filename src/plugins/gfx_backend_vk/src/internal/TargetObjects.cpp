@@ -344,7 +344,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 
 } // namespace
 
-void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassLoad& load)
+void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassLoad& load, RecordingTally* const tally)
 {
     // TRANSCRIPTION, NOT DERIVATION: every layout below is the record of the image it names. The only decisions taken
     // here are which image plays which role, and those are shape facts (`isMultisampled`, `hasDepth`, `hasDepthResolve`).
@@ -378,7 +378,7 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
         effective.load_depth = vn::graphics::LoadOp::Load;
     }
 
-    beginRendering(table, commands, attachments, effective);
+    beginRendering(table, commands, attachments, effective, tally);
     // THE PASS HAS NOW WRITTEN THEM, in command order (see the header): every image rendering writes - and every resolve
     // target, which the instance writes through - is in the attachment layout from here on. That is one statement per
     // IMAGE, which is why a single-sampled depth does not need a second, contradicting one.
@@ -402,7 +402,10 @@ void TargetObjects::endPass(const VolkDeviceTable& table, const VkCommandBuffer 
     endRendering(table, commands);
 }
 
-bool TargetObjects::transitionDepthPicture(const VolkDeviceTable& table, const VkCommandBuffer commands, const ImageLayout to) noexcept
+bool TargetObjects::transitionDepthPicture(const VolkDeviceTable& table,
+                                          const VkCommandBuffer  commands,
+                                          const ImageLayout      to,
+                                          RecordingTally* const  tally) noexcept
 {
     const VkImage    picture = depthPicture();
     const ImageLayout from    = depthPictureLayout();
@@ -411,7 +414,8 @@ bool TargetObjects::transitionDepthPicture(const VolkDeviceTable& table, const V
     }
     recordBarrier(table,
                   commands,
-                  barrierBetween(picture, stateOf(from), stateOf(to), depthAspectMask(depthFormat())));
+                  barrierBetween(picture, stateOf(from), stateOf(to), depthAspectMask(depthFormat())),
+                  tally);
     setDepthPictureLayout(to);
     return true;
 }

@@ -42,12 +42,12 @@ namespace
 
 constexpr int kTargetSize = 32;
 
-[[nodiscard]] intrusive_ptr<RenderTarget> makeTarget(const char8_t* name)
+[[nodiscard]] intrusive_ptr<RenderTarget> makeTarget(const char8_t* name, const int size = kTargetSize)
 {
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     target->setName(String(name));
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
-    target->setSize(kTargetSize, kTargetSize);
+    target->setSize(size, size);
     return target;
 }
 
@@ -128,6 +128,55 @@ TEST(VkPassTimingTest, TheReportAttributesTheFrameToThePassesThatSpentIt)
         sum += entry.gpu_micros;
     }
     EXPECT_LE(sum, report.timing->gpu_micros + 1000U) << "the per-pass spans add up to more than the frame they split";
+
+    backend->shutdown();
+}
+
+/**
+ * @brief THE BOUNDARY WAITS: a pass that writes a large attachment reports more time than one that writes a few bytes.
+ *
+ * WHY THIS CASE EXISTS. The first version of this feature wrote both ends of a pass' span at `TOP_OF_PIPE`, a stage that
+ * imposes no wait - so a timestamp measured when the command processor REACHED the boundary, not when the pass had
+ * finished. Two passes with the same number of commands therefore reported the same (near-zero) time whatever each one
+ * drew, and `TheReportAttributesTheFrameToThePassesThatSpentIt` could not tell: its only quantitative assertion is
+ * "the segments do not exceed the frame", which a report of zeros satisfies. The witness that a boundary MEANS
+ * something is a difference in what the passes actually cost: one clears a large target, the other a tiny one, and the
+ * large one must come out slower.
+ */
+TEST(VkPassTimingTest, AHeavyPassReportsMoreTimeThanACheapOne)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    if (!backend->capabilities().features.supports(vn::graphics::Features::Feature::GpuTimings)) {
+        GTEST_SKIP() << "this device cannot write timestamps, so there is no attribution to compare";
+    }
+
+    // 512x512 RGBA8 is 1 MiB of clear: enough that a device which really waits sees it, small enough to stay a test.
+    const intrusive_ptr<RenderTarget> heavy_target = makeTarget(u8"vk_timing_heavy_target", 512);
+    const intrusive_ptr<RenderTarget> light_target = makeTarget(u8"vk_timing_light_target", 4);
+    const intrusive_ptr<RenderPass>   heavy_pass   = makePass(u8"vk_timing_heavy_pass");
+    const intrusive_ptr<RenderPass>   light_pass   = makePass(u8"vk_timing_light_pass");
+
+    // THE FIRST FRAME OF A SESSION IS A SAMPLED ONE (see kTimestampSampleFrames).
+    (void)backend->executeFrame(twoPassFrame(heavy_pass, heavy_target.get(), light_pass, light_target.get()), nullptr);
+
+    const vn::graphics::FrameReport report = backend->executor().frameReport();
+    ASSERT_TRUE(report.timing.has_value());
+    ASSERT_EQ(report.timing->passes.size(), 2U);
+
+    // A FRAME TOO SHORT TO DIVIDE is not evidence either way: report 0 microseconds for both and the case would be
+    // asserting on quantisation noise. The skip is on the FRAME's total, not on the observation the case makes.
+    if (report.timing->gpu_micros < 50U) {
+        GTEST_SKIP() << "this device finished the frame too fast to attribute (" << report.timing->gpu_micros << " us)";
+    }
+
+    EXPECT_GT(report.timing->passes[0].gpu_micros, report.timing->passes[1].gpu_micros)
+        << "the pass that cleared 512x512 reported no more time than the one that cleared 4x4 (" << report.timing->passes[0].gpu_micros
+        << " vs " << report.timing->passes[1].gpu_micros
+        << " us) - a boundary that does not wait measures arrival, not work";
 
     backend->shutdown();
 }

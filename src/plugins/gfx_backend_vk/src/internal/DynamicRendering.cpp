@@ -42,26 +42,33 @@ namespace
 
 } // namespace
 
-void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassAttachments& attachments, const PassLoad& load)
+void beginRendering(const VolkDeviceTable& table,
+                    const VkCommandBuffer  commands,
+                    const PassAttachments& attachments,
+                    const PassLoad&        load,
+                    RecordingTally* const  tally)
 {
-    // THE TRANSITIONS FIRST, one barrier per image. The destination is always the rendering layout; the source is the
-    // record the owner keeps for THAT image, which may be the same value - see the header's note on why that barrier is
-    // not a no-op. A role's three spans are the same length in the same order (see PassRole), so one index names the
-    // image, its view and its record.
-    const ImageState color_to = stateOf(ImageLayout::ColorAttachment);
-    const ImageState depth_to = stateOf(ImageLayout::DepthAttachment);
+    // THE TRANSITIONS FIRST, ONE DEPENDENCY FOR THE WHOLE PASS (see the header). The destination is always the rendering
+    // layout; the source is the record the owner keeps for THAT image, which may be the same value - see the header's
+    // note on why that barrier is not a no-op. A role's three spans are the same length in the same order (see
+    // PassRole), so one index names the image, its view and its record. The batch is a stack array sized by the API's
+    // own attachment cap, and every role together fits: (colour + picture) attachments, plus depth and its picture.
+    std::array<VkImageMemoryBarrier2, kMaxColorAttachments * 2U + 2U> barriers{};
+    std::size_t                                                      barrier_count = 0U;
+    const auto append = [&barriers, &barrier_count](const VkImage image,
+                                                    const ImageLayout from,
+                                                    const ImageLayout to,
+                                                    const VkImageAspectFlags aspect) {
+        if (image == VK_NULL_HANDLE) {
+            return;
+        }
+        barriers[barrier_count++] = barrierBetween(image, stateOf(from), stateOf(to), aspect);
+    };
     for (std::size_t index = 0; index < attachments.color.size(); ++index) {
-        recordBarrier(table,
-                      commands,
-                      barrierBetween(attachments.color.images[index], stateOf(attachments.color.from[index]), color_to, VK_IMAGE_ASPECT_COLOR_BIT));
+        append(attachments.color.images[index], attachments.color.from[index], ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT);
     }
     for (std::size_t index = 0; index < attachments.picture.size(); ++index) {
-        recordBarrier(table,
-                      commands,
-                      barrierBetween(attachments.picture.images[index],
-                                     stateOf(attachments.picture.from[index]),
-                                     color_to,
-                                     VK_IMAGE_ASPECT_COLOR_BIT));
+        append(attachments.picture.images[index], attachments.picture.from[index], ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT);
     }
     // THE DEPTH PAIR: the attachment and the picture it resolves into are two images with two RECORDS - or, on a
     // single-sampled set, one image whose owner reports the same layout for both names, and then `depth_picture` names
@@ -70,18 +77,12 @@ void beginRendering(const VolkDeviceTable& table, const VkCommandBuffer commands
     // transitions nothing - what it adds is the EXECUTION DEPENDENCY between the lender's pass and this one, which is
     // the half dynamic rendering does not insert.
     if (attachments.depth.present()) {
-        recordBarrier(table,
-                      commands,
-                      barrierBetween(attachments.depth.image, stateOf(attachments.depth.from), depth_to, attachments.depth_aspect));
+        append(attachments.depth.image, attachments.depth.from, ImageLayout::DepthAttachment, attachments.depth_aspect);
     }
     if (attachments.depth_picture.present()) {
-        recordBarrier(table,
-                      commands,
-                      barrierBetween(attachments.depth_picture.image,
-                                     stateOf(attachments.depth_picture.from),
-                                     depth_to,
-                                     attachments.depth_aspect));
+        append(attachments.depth_picture.image, attachments.depth_picture.from, ImageLayout::DepthAttachment, attachments.depth_aspect);
     }
+    recordBarriers(table, commands, std::span<const VkImageMemoryBarrier2>(barriers.data(), barrier_count), tally);
 
     // THE INSTANCE: one attachment per colour output location, and the depth attachment when the set has one.
     //

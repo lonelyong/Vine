@@ -116,6 +116,27 @@ class VN_BACKEND_VK_API ContentDraw final {
 
   public:
     /**
+     * @brief Opens one recording run: forgets what the last frame left in its command buffer.
+     *
+     * @details
+     * - DYNAMIC STATE IS COMMAND BUFFER STATE, and every frame begins a NEW command buffer (see `Device::FrameDriver`),
+     *   so what the last frame set is not a fact about this one. This call is where that boundary is stated, and it is
+     *   why the recorder can skip a state command that has not changed.
+     */
+    void beginFrame() noexcept;
+
+    /**
+     * @brief Gets how many `vkCmdSet*` commands this recorder issued over its lifetime.
+     *
+     * @details
+     * - THE WITNESS FOR "A STATE CHANGE IS ONE COMMAND, A REPEATED STATE IS NONE": the number grows with distinct state
+     *   changes, not with the draws that share one - which is what makes `T54`'s "state is a command" a cost model
+     *   rather than a comment. `Device::recordingNumbers` publishes it.
+     *
+     * @return The cumulative count (0 before the first draw).
+     */
+    [[nodiscard]] std::uint64_t stateCommands() const noexcept;
+    /**
      * @brief Records one CONTENT draw description's commands into @p commands.
      *
      * @details
@@ -202,6 +223,73 @@ class VN_BACKEND_VK_API ContentDraw final {
 
   private:
     /**
+     * @brief WHAT THE LAST COMMANDS LEFT BOUND in this frame's command buffer: the shadow behind "state is a command
+     *        WHEN IT CHANGES".
+     *
+     * @details
+     * - `T54` made every state item a COMMAND rather than a pipeline variant, which is right - but a command that
+     *   states what is already stated costs a driver call per draw. The viewport and the scissor are PASS facts (they
+     *   are computed from the pass' rectangle), so a pass with ten draws used to state the same rectangle ten times.
+     * - IT IS INVALIDATED ON A PIPELINE BIND, because a pipeline may declare a different set of DYNAMIC states: what is
+     *   in the buffer then is a value the next draw cannot assume this pipeline carries. Nothing else invalidates it -
+     *   dynamic state is command buffer state, and every other boundary (a new pass) states the same values anyway.
+     * - The stored values are the VULKAN ones, not the seam's: this shadow answers "would the call be redundant", not
+     *   "what did the host ask for".
+     */
+    struct RecordedState {
+        VkPipeline pipeline{ VK_NULL_HANDLE };
+        bool       viewport_set{ false };
+        VkViewport viewport{};
+        bool       scissor_set{ false };
+        VkRect2D   scissor{};
+        bool       line_width_set{ false };
+        float      line_width{ 0.0F };
+        bool       depth_bias_set{ false };
+        float      depth_bias_units{ 0.0F };
+        float      depth_bias_factor{ 0.0F };
+        bool       raster_set{ false };
+        VkPolygonMode      polygon{ VK_POLYGON_MODE_FILL };
+        VkCullModeFlags    cull{ VK_CULL_MODE_NONE };
+        VkBool32           depth_test{ VK_FALSE };
+        VkBool32           depth_write{ VK_FALSE };
+        VkCompareOp        depth_compare{ VK_COMPARE_OP_ALWAYS };
+        bool               blend_set{ false };
+        VkBool32           blend_enabled{ VK_FALSE };
+        VkBlendFactor      blend_src{ VK_BLEND_FACTOR_ONE };
+        VkBlendFactor      blend_dst{ VK_BLEND_FACTOR_ZERO };
+        std::uint32_t      blend_attachments{ 0U };
+    };
+
+    /**
+     * @brief Binds @p pipeline unless it is the one already bound, and forgets the state shadow when it changes.
+     *
+     * @param commands The command buffer being recorded.
+     * @param pipeline The pipeline this draw needs.
+     */
+    void bindPipeline(VkCommandBuffer commands, VkPipeline pipeline) noexcept;
+
+    /**
+     * @brief States the ONE viewport, scissor, line width, depth bias and raster state a draw needs - skipping what the
+     *        command buffer already holds.
+     *
+     * @param commands          The command buffer being recorded.
+     * @param viewport          The pass' rectangle (or the whole target).
+     * @param scissor           The same rectangle as a scissor.
+     * @param resolved          The command's resolved state (cull, polygon, depth, blend, dynamic half).
+     * @param color_attachments How many colour attachments the pass writes (0 = depth-only: no blend).
+     * @param depth_bias_units  The depth bias this call states (`DynamicState`'s, or zero for a full-screen draw).
+     * @param depth_bias_factor The factor that goes with it.
+     */
+    void recordCallState(VkCommandBuffer                            commands,
+                         const VkViewport&                          viewport,
+                         const VkRect2D&                            scissor,
+                         const vn::graphics::ResolvedCommandState&  resolved,
+                         std::uint32_t                              color_attachments,
+                         float                                      depth_bias_units,
+                         float                                      depth_bias_factor) noexcept;
+
+  private:
+    /**
      * @brief Writes one call's four blocks into @p slice at the offsets the scratch states.
      *
      * @param slice    The slice's byte offset (see FrameScratch::reserveSlice).
@@ -219,6 +307,10 @@ class VN_BACKEND_VK_API ContentDraw final {
   private:
     ContentCaches& caches;
     FrameScratch&  scratch;
+    /// What the last commands left bound (see RecordedState); reset by @ref beginFrame and by a pipeline change.
+    RecordedState  recorded{};
+    /// How many state commands this recorder issued (see @ref stateCommands).
+    std::uint64_t  state_commands_{ 0U };
 };
 
 VN_BACKEND_VK_NS_END

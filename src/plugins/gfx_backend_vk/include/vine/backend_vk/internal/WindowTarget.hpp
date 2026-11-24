@@ -134,10 +134,11 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      *
      * @param commands The command buffer being recorded (outside any rendering instance).
      * @param load     The pass' load policy and clear values (one colour attachment, one depth attachment).
+     * @param tally    Receives what the pass' entry dependency cost (see `RecordingTally`), or null.
      *
      * @warning The caller acquired an image first (@ref acquire) and ends the pass with @ref endPass.
      */
-    void beginPass(VkCommandBuffer commands, const PassLoad& load);
+    void beginPass(VkCommandBuffer commands, const PassLoad& load, RecordingTally* tally = nullptr);
 
     /**
      * @brief Closes the rendering instance @ref beginPass opened.

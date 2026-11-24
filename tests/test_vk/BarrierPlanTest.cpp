@@ -120,6 +120,17 @@ TEST(BarrierPlanTest, UndefinedDiscardsAndPresentOwnsNothing)
     EXPECT_EQ(present.stages, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 }
 
+TEST(BarrierPlanTest, APassClockBoundaryWaitsForEveryCommand)
+{
+    // THE STAGE IS THE MEANING (see kPassClockBoundaryStage). A timestamp answers "when did everything before it
+    // finish", so a pass' boundary must wait for every command the pass recorded; `TOP_OF_PIPE` records the ARRIVAL
+    // instead, which is queue latency rather than the pass. A software rasteriser executes commands in order and makes
+    // either value look plausible, so the stage itself is pinned here rather than observed from a timing.
+    EXPECT_EQ(vn::backend_vk::kPassClockBoundaryStage, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+    // AND THE FRAME'S START IS THE ONE BOUNDARY THAT MUST NOT WAIT: nothing before it belongs to this frame.
+    EXPECT_EQ(vn::backend_vk::kFrameClockStartStage, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+}
+
 TEST(BarrierPlanTest, LoadAndStoreOperationsMapOneToOne)
 {
     EXPECT_EQ(loadOpOf(LoadOp::Load), VK_ATTACHMENT_LOAD_OP_LOAD);

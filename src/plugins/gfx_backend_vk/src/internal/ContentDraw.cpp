@@ -39,56 +39,29 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 }
 
 /**
- * @brief Records the dynamic state one draw's resolved state asks for (see ContentCaches' dynamic-state list).
+ * @brief Answers whether two viewports state the same rectangle and depth range.
  *
- * @details
- * - ONE PLACE, TWO CALLERS: the content path and the full-screen path issue the same nine commands. `T54` is what
- *   moved them here - on a Vulkan 1.2 device cull, polygon mode, depth test/write/compare and blend were baked into
- *   the pipeline, so two passes with different states compiled twice; now they are commands, and a state change
- *   neither compiles nor enters a cache (`G10`).
- * - THE MULTI-ATTACHMENT RULE STAYS ONE RULE: blend is enabled only for a single colour attachment, because an MRT
- *   target's attachments hold data, not a surface (see BlendState). It lives here now that blend is a command.
- * - NOTHING IS ALLOCATED: the per-attachment arrays are fixed-size (the record path's allocation ceiling says so),
- *   and a target wider than one chunk loops.
- *
- * @param table             The device table to record through.
- * @param commands          The command buffer being recorded (inside the rendering instance).
- * @param state             The state `resolveRenderState` produced for this draw.
- * @param color_attachments How many colour attachments the pass writes (0 for a depth-only pass).
+ * @param left  One viewport.
+ * @param right The other.
+ * @return true when recording either one would leave the command buffer in the same state.
  */
-void recordRasterState(const VolkDeviceTable&                   table,
-                       VkCommandBuffer                          commands,
-                       const vn::graphics::ResolvedRenderState& state,
-                       std::uint32_t                            color_attachments) noexcept
+[[nodiscard]] bool sameViewport(const VkViewport& left, const VkViewport& right) noexcept
 {
-    table.vkCmdSetPolygonModeEXT(commands, StateMapping::polygonMode(state.polygonMode));
-    table.vkCmdSetCullMode(commands, StateMapping::cullMode(state.cullMode));
-    table.vkCmdSetDepthTestEnable(commands, state.depth.test ? VK_TRUE : VK_FALSE);
-    table.vkCmdSetDepthWriteEnable(commands, state.depth.write ? VK_TRUE : VK_FALSE);
-    table.vkCmdSetDepthCompareOp(commands, StateMapping::compareOp(state.depth.compare));
-    if (color_attachments == 0U) {
-        return; // a depth-only pass has no attachment to blend into
-    }
-    constexpr std::uint32_t kChunk = 8U;
-    VkColorBlendEquationEXT equations[kChunk]{};
-    for (VkColorBlendEquationEXT& equation : equations) {
-        equation.srcColorBlendFactor = StateMapping::blendFactor(state.blend.src);
-        equation.dstColorBlendFactor = StateMapping::blendFactor(state.blend.dst);
-        equation.colorBlendOp        = VK_BLEND_OP_ADD;
-        equation.srcAlphaBlendFactor = StateMapping::blendFactor(state.blend.src);
-        equation.dstAlphaBlendFactor = StateMapping::blendFactor(state.blend.dst);
-        equation.alphaBlendOp        = VK_BLEND_OP_ADD;
-    }
-    const VkBool32 blend_enabled = color_attachments == 1U && state.blend.enabled ? VK_TRUE : VK_FALSE;
-    for (std::uint32_t first = 0; first < color_attachments; first += kChunk) {
-        const std::uint32_t count = std::min(kChunk, color_attachments - first);
-        VkBool32            flags[kChunk]{};
-        for (std::uint32_t index = 0; index < count; ++index) {
-            flags[index] = blend_enabled;
-        }
-        table.vkCmdSetColorBlendEnableEXT(commands, first, count, flags);
-        table.vkCmdSetColorBlendEquationEXT(commands, first, count, equations);
-    }
+    return left.x == right.x && left.y == right.y && left.width == right.width && left.height == right.height &&
+           left.minDepth == right.minDepth && left.maxDepth == right.maxDepth;
+}
+
+/**
+ * @brief Answers whether two scissors state the same rectangle.
+ *
+ * @param left  One scissor.
+ * @param right The other.
+ * @return true when recording either one would leave the command buffer in the same state.
+ */
+[[nodiscard]] bool sameScissor(const VkRect2D& left, const VkRect2D& right) noexcept
+{
+    return left.offset.x == right.offset.x && left.offset.y == right.offset.y && left.extent.width == right.extent.width &&
+           left.extent.height == right.extent.height;
 }
 
 /**
@@ -198,6 +171,145 @@ ContentDraw::ContentDraw(ContentCaches& device_caches, FrameScratch& frame_scrat
 {
 }
 
+void ContentDraw::beginFrame() noexcept
+{
+    // A NEW COMMAND BUFFER HOLDS NOTHING (see the header): what the last frame set is not a fact about this one.
+    recorded = RecordedState{};
+}
+
+std::uint64_t ContentDraw::stateCommands() const noexcept
+{
+    return state_commands_;
+}
+
+void ContentDraw::bindPipeline(const VkCommandBuffer commands, const VkPipeline pipeline) noexcept
+{
+    if (recorded.pipeline == pipeline) {
+        return;
+    }
+    caches.table().vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    ++state_commands_;
+    // A PIPELINE MAY DECLARE A DIFFERENT DYNAMIC SET, so nothing the last call left is a value this draw may assume.
+    recorded          = RecordedState{};
+    recorded.pipeline = pipeline;
+}
+
+void ContentDraw::recordCallState(const VkCommandBuffer                          commands,
+                                  const VkViewport&                              viewport,
+                                  const VkRect2D&                                scissor,
+                                  const vn::graphics::ResolvedCommandState&      resolved,
+                                  const std::uint32_t                            color_attachments,
+                                  const float                                    depth_bias_units,
+                                  const float                                    depth_bias_factor) noexcept
+{
+    const VolkDeviceTable& table = caches.table();
+
+    // THE RECTANGLE IS A PASS FACT (it is computed from the pass' draw size), so a pass with N draws used to state it N
+    // times. Now it is stated when it differs - which, inside one pass, is never after the first draw.
+    if (!recorded.viewport_set || !sameViewport(recorded.viewport, viewport)) {
+        table.vkCmdSetViewport(commands, 0U, 1U, &viewport);
+        recorded.viewport     = viewport;
+        recorded.viewport_set = true;
+        ++state_commands_;
+    }
+    if (!recorded.scissor_set || !sameScissor(recorded.scissor, scissor)) {
+        table.vkCmdSetScissor(commands, 0U, 1U, &scissor);
+        recorded.scissor     = scissor;
+        recorded.scissor_set = true;
+        ++state_commands_;
+    }
+
+    // THE DYNAMIC HALF IS THE SEAM'S VALUE (`DynamicState`), so a change to it lands in one place; the device's range is
+    // this layer's clamp (a width above it is an invalid command).
+    const vn::graphics::DynamicState dynamic    = vn::graphics::resolveDynamicState(resolved);
+    const float                     line_width = std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit());
+    if (!recorded.line_width_set || recorded.line_width != line_width) {
+        table.vkCmdSetLineWidth(commands, line_width);
+        recorded.line_width     = line_width;
+        recorded.line_width_set = true;
+        ++state_commands_;
+    }
+    if (!recorded.depth_bias_set || recorded.depth_bias_units != depth_bias_units || recorded.depth_bias_factor != depth_bias_factor) {
+        table.vkCmdSetDepthBias(commands, depth_bias_units, 0.0F, depth_bias_factor);
+        recorded.depth_bias_units  = depth_bias_units;
+        recorded.depth_bias_factor = depth_bias_factor;
+        recorded.depth_bias_set    = true;
+        ++state_commands_;
+    }
+
+    // THE RASTER HALF: cull, polygon mode, depth test/write/compare and blend - commands since `T54`, and each stated only
+    // when it differs from what the buffer already holds.
+    const VkPolygonMode polygon = StateMapping::polygonMode(resolved.state.polygonMode);
+    if (!recorded.raster_set || recorded.polygon != polygon) {
+        table.vkCmdSetPolygonModeEXT(commands, polygon);
+        recorded.polygon = polygon;
+        ++state_commands_;
+    }
+    const VkCullModeFlags cull = StateMapping::cullMode(resolved.state.cullMode);
+    if (!recorded.raster_set || recorded.cull != cull) {
+        table.vkCmdSetCullMode(commands, cull);
+        recorded.cull = cull;
+        ++state_commands_;
+    }
+    const VkBool32 depth_test = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
+    if (!recorded.raster_set || recorded.depth_test != depth_test) {
+        table.vkCmdSetDepthTestEnable(commands, depth_test);
+        recorded.depth_test = depth_test;
+        ++state_commands_;
+    }
+    const VkBool32 depth_write = resolved.state.depth.write ? VK_TRUE : VK_FALSE;
+    if (!recorded.raster_set || recorded.depth_write != depth_write) {
+        table.vkCmdSetDepthWriteEnable(commands, depth_write);
+        recorded.depth_write = depth_write;
+        ++state_commands_;
+    }
+    const VkCompareOp depth_compare = StateMapping::compareOp(resolved.state.depth.compare);
+    if (!recorded.raster_set || recorded.depth_compare != depth_compare) {
+        table.vkCmdSetDepthCompareOp(commands, depth_compare);
+        recorded.depth_compare = depth_compare;
+        ++state_commands_;
+    }
+    recorded.raster_set = true;
+
+    // A DEPTH-ONLY PASS HAS NO ATTACHMENT TO BLEND INTO, so it states no blend at all - the content rule for an MRT
+    // target too (its attachments hold data, not a surface), which is why "enabled" is decided here rather than sent.
+    if (color_attachments == 0U) {
+        return;
+    }
+    const VkBool32      blend_enabled = color_attachments == 1U && resolved.state.blend.enabled ? VK_TRUE : VK_FALSE;
+    const VkBlendFactor blend_src     = StateMapping::blendFactor(resolved.state.blend.src);
+    const VkBlendFactor blend_dst     = StateMapping::blendFactor(resolved.state.blend.dst);
+    if (recorded.blend_set && recorded.blend_enabled == blend_enabled && recorded.blend_src == blend_src && recorded.blend_dst == blend_dst &&
+        recorded.blend_attachments == color_attachments) {
+        return;
+    }
+    constexpr std::uint32_t kChunk = 8U;
+    VkColorBlendEquationEXT equations[kChunk]{};
+    for (VkColorBlendEquationEXT& equation : equations) {
+        equation.srcColorBlendFactor = blend_src;
+        equation.dstColorBlendFactor = blend_dst;
+        equation.colorBlendOp        = VK_BLEND_OP_ADD;
+        equation.srcAlphaBlendFactor = blend_src;
+        equation.dstAlphaBlendFactor = blend_dst;
+        equation.alphaBlendOp        = VK_BLEND_OP_ADD;
+    }
+    for (std::uint32_t first = 0; first < color_attachments; first += kChunk) {
+        const std::uint32_t count = std::min(kChunk, color_attachments - first);
+        VkBool32            flags[kChunk]{};
+        for (std::uint32_t index = 0; index < count; ++index) {
+            flags[index] = blend_enabled;
+        }
+        table.vkCmdSetColorBlendEnableEXT(commands, first, count, flags);
+        table.vkCmdSetColorBlendEquationEXT(commands, first, count, equations);
+        state_commands_ += 2U;
+    }
+    recorded.blend_enabled     = blend_enabled;
+    recorded.blend_src         = blend_src;
+    recorded.blend_dst         = blend_dst;
+    recorded.blend_attachments = color_attachments;
+    recorded.blend_set         = true;
+}
+
 void ContentDraw::writeSlice(const VkDeviceSize                    slice,
                              const vn::graphics::VineMaterialBlock& material,
                              const vn::graphics::VineLightsBlock&   lights,
@@ -293,7 +405,6 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     }
 
     std::uint64_t recorded       = 0;
-    VkPipeline    bound_pipeline = VK_NULL_HANDLE;
 
     const auto refuse = [&out](vn::graphics::DiagnosticCategory kind, const char8_t* const code, vn::String text) {
         out.refuse(kind, code, std::move(text));
@@ -373,23 +484,18 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
             continue;
         }
 
-        if (plan.pipeline != bound_pipeline) {
-            caches.table().vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, plan.pipeline);
-            bound_pipeline = plan.pipeline;
-        }
-        caches.table().vkCmdSetViewport(commands, 0U, 1U, &viewport);
-        caches.table().vkCmdSetScissor(commands, 0U, 1U, &scissor);
-        // A PASS' LINE-WIDTH SWITCH IS A REQUEST (see PassRenderState::lineWidth): the device's range is the answer,
-        // and above it the command itself would be invalid.
-        // THE DYNAMIC HALF IS THE SEAM'S VALUE (`DynamicState` / `resolveDynamicState`): a change to it lands in one
-        // place. What stays device-specific is the range: a line width above `lineWidthRange` is refused by the API,
-        // so this layer clamps it (see Capabilities::limits).
+        bindPipeline(commands, plan.pipeline);
+        // THE STATE, ONE SHADOW DIFF (see recordCallState): the pass' rectangle, the dynamic half and the raster half are
+        // each stated when they differ from what this command buffer already holds - so a pass with N draws that share a
+        // state states it once, and a pass whose draws differ pays exactly for the differences.
         const vn::graphics::DynamicState dynamic = vn::graphics::resolveDynamicState(resolved);
-        caches.table().vkCmdSetLineWidth(commands, std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit()));
-        caches.table().vkCmdSetDepthBias(commands, dynamic.polygon_offset.units, 0.0F, dynamic.polygon_offset.factor);
-        // The rest of the resolved state: cull, polygon mode, depth test/write/compare and blend. These used to be
-        // pipeline VARIANT bits on a 1.2 device; they are commands now (T54), so a state change compiles nothing.
-        recordRasterState(caches.table(), commands, plan.resolved.state, plan.color_attachments);
+        recordCallState(commands,
+                        viewport,
+                        scissor,
+                        resolved,
+                        plan.color_attachments,
+                        dynamic.polygon_offset.units,
+                        dynamic.polygon_offset.factor);
         const VkDescriptorSet sets[2]{ content_set, draw_set };
         // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets: material (0), lights
         // (6) and the shadow block (8) of set 0, then the draw block (0) of set 1.
@@ -559,19 +665,10 @@ std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                     
         return 0;
     }
 
-    caches.table().vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    caches.table().vkCmdSetViewport(commands, 0U, 1U, &viewport);
-    caches.table().vkCmdSetScissor(commands, 0U, 1U, &scissor);
-    // The line width comes from the same seam value the content path writes (see resolveDynamicState); the device's
-    // range is this layer's clamp.
-    const vn::graphics::DynamicState dynamic = vn::graphics::resolveDynamicState(resolved);
-    caches.table().vkCmdSetLineWidth(commands, std::clamp(dynamic.line_width, 1.0F, caches.lineWidthLimit()));
-    // The pipeline states depth bias as DYNAMIC (the content path does the same), so a full-screen draw owes the
-    // command buffer the values too - zero is "no offset", whatever the pass' state says: this draw is the
-    // canonical triangle at the far plane.
-    caches.table().vkCmdSetDepthBias(commands, 0.0F, 0.0F, 0.0F);
-    // The same nine state commands the content path issues, from the plan's resolved state (T54).
-    recordRasterState(caches.table(), commands, plan.resolved.state, plan.color_attachments);
+    bindPipeline(commands, pipeline);
+    // THE SAME STATE PATH AS THE CONTENT DRAW (see recordCallState), except the bias: this draw is the canonical triangle
+    // at the far plane, so it states zero rather than the pass' polygon offset.
+    recordCallState(commands, viewport, scissor, resolved, plan.color_attachments, 0.0F, 0.0F);
     // The screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
     const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + scratch.lightsOffset()),
                                      static_cast<std::uint32_t>(slice + scratch.shadowOffset()) };

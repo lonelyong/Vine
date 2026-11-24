@@ -12,11 +12,15 @@
 
 #include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/StateResolution.hpp>
+#include <vine/graphics/DrawState.hpp>
+#include <vine/graphics/FrameDescription.hpp>
 #include <vine/backend_vk/internal/ContentAbi.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
+
+struct TargetObjects;
 
 /**
  * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per draw packet, and the frame-level texture facts every call binds.
@@ -117,15 +121,32 @@ class FrameHead final {
 
     /// @brief ONE PASS of the frame, in the order the frame states them.
     struct Pass {
+        /// The pass' facts, filled where the frame CLAIMS what it will run (see Device::FrameDriver::executeFrame):
+        /// the frame entry (its name and declared inputs), the draw it carries, the attachment set it writes and
+        /// whether it writes the window's acquired image instead. ONE PASS, ONE SLOT - the plan half below is what the
+        /// head resolves INTO it, so the pass is one value here and not a second list beside it (`G1`).
+        const vn::graphics::FrameDescription::Pass* entry{ nullptr };
+        const vn::graphics::PassDraw*               draw{ nullptr };
+        TargetObjects*                              images{ nullptr }; ///< Null for a window pass.
+        bool                                        window{ false };
+        /// The attachment set's pipeline compatibility: the formats and colour count a pipeline and its rendering
+        /// instance are both stated from.
+        vn::graphics::RenderPassCompatibility compatibility{};
+
         std::vector<Call> draws{};
 
-        /** @brief Releases every draw packet; the vector keeps its capacity. */
+        /** @brief Releases every draw packet and the pass' facts; the vector keeps its capacity. */
         void clear() noexcept
         {
             for (Call& call : draws) {
                 call.clear();
             }
             draws.clear();
+            entry         = nullptr;
+            draw          = nullptr;
+            images        = nullptr;
+            window        = false;
+            compatibility = {};
         }
     };
 
@@ -201,6 +222,22 @@ class FrameHead final {
     [[nodiscard]] std::span<const Pass> passes() const noexcept
     {
         return std::span<const Pass>(passes_.data(), used_);
+    }
+
+    /**
+     * @brief Gets the passes this frame claimed, for the HEAD to resolve the plans into.
+     *
+     * @details
+     * - THE TWO PHASES OF ONE CONTAINER: the frame body CLAIMS a pass (facts, draw packets) before it touches the
+     *   caches, and then resolves every draw packet's plan into the same slot while it holds the cache lock. The
+     *   recorder afterwards reads the const view. A second list would let the two disagree about which pass is which,
+     *   which is why there is only this one.
+     *
+     * @return The claimed slots, in the frame's order (empty before the first beginPass).
+     */
+    [[nodiscard]] std::span<Pass> passes() noexcept
+    {
+        return std::span<Pass>(passes_.data(), used_);
     }
 
     /** @brief Forgets every pass and every frame-level fact (a teardown, or a frame that will not record). */
