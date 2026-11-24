@@ -67,7 +67,9 @@ struct PassAttachments {
     ImageLayout color_from{ ImageLayout::Undefined };
     /// The layout the resolve pictures are in (ignored when `picture_images` is empty).
     ImageLayout picture_from{ ImageLayout::Undefined };
-    /// The layout the DEPTH ATTACHMENT is in. Never `ShaderReadOnly`: a multisampled depth may not be sampled at all.
+    /// The layout the DEPTH ATTACHMENT is in. On a MULTISAMPLED set this is never `ShaderReadOnly` (the sample buffer
+    /// may not be sampled at all); on a single-sampled set the attachment IS the picture, so a reader's sampling moves
+    /// it too.
     ImageLayout depth_from{ ImageLayout::Undefined };
     /// The layout the depth RESOLVE picture is in (ignored when `depth_resolve_image` is empty). This is the record a
     /// reader's sampling moves.

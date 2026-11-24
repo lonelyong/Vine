@@ -137,7 +137,9 @@ and every cache has a witness a test can read.**
 - **Two depth images, two layouts; a borrowed depth is a dependency, not an exception**: the depth ATTACHMENT and the picture
   it resolves into carry separate records (`depth_from` / `depth_picture_from`), because `depth_sampled` moves only the
   picture - a multisampled image may not be sampled at all, so stating the picture's layout for the sample buffer is an illegal
-  barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). A `shareDepth` target states the LENDER's picture and the
+  barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). On a SINGLE-SAMPLED set the two records name ONE
+  image - the attachment IS the picture - so the attachment states the sampled layout and the next pass transitions it
+  back (`VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain`). A `shareDepth` target states the LENDER's picture and the
   depth attachment layout it is in; the barrier that follows transitions nothing and is recorded for exactly that reason - it is
   the execution dependency between the lender's pass and the borrower's LOAD.
 - **Boundary**: the table covers the purposes this backend produces (Undefined / ColorAttachment / DepthAttachment / ShaderReadOnly / TransferSrc / TransferDst / PresentSrc);
@@ -766,7 +768,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   as the picture is sampled - the sample buffer stays an attachment (it may not be sampled at all) and the picture moves to
   `SHADER_READ_ONLY_OPTIMAL`. One record for both states a layout an image never had. How to detect: a second frame over the same
   multisampled map reports `VUID-VkImageMemoryBarrier2-oldLayout-01211` (MEASURED; `VkShadowTest.AMultisampledMapDrawnAgainStatesBothDepthImages`
-  is red without the split).
+  is red without the split). AND ONE IMAGE CAN BE BOTH: on a single-sampled set the attachment is the picture, so a recorder
+  that says "the attachment is never sampled" drops the SHADER_READ_ONLY -> depth attachment barrier, and the next frame reports
+  `VUID-vkCmdBeginRendering-pRenderingInfo-09588` (MEASURED on the application's `open_demo`, 2026-11-24;
+  `VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain` is red without it).
 - A BORROWED depth is a dependency, not an exception: `shareDepth`'s image belongs to the lender, its layout does not move, and
   the barrier must still be recorded - it orders the lender's write before the borrower's LOAD and depth test. NOT measured: an
   ordered implementation shows no pixel difference and this environment's validation does not report the missing hazard, so the

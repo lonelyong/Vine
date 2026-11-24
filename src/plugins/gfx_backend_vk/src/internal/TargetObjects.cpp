@@ -337,10 +337,14 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
     // A BORROWED DEPTH IS NOT THIS SET'S TO BE FRESH: the image holds the depth the LENDER's pass wrote, so it starts
     // from the depth attachment layout whatever `fresh` says about this set's own attachments.
     const bool depth_fresh = !depth_borrowed && is_fresh;
-    // TWO DEPTH IMAGES, TWO LAYOUTS (see the header): the ATTACHMENT is only ever Undefined or a depth attachment -
-    // nothing samples it, because a multisampled image may not be sampled at all - while `depth_sampled` is the
-    // PICTURE's bit, and the picture is the one image a reader moves.
-    const ImageLayout depth_now = depth_fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment;
+    // TWO DEPTH IMAGES, TWO LAYOUTS (see the header) - AND ONE OF THEM MAY BE BOTH. On a multisampled target the
+    // sample buffer is never sampled (Vulkan forbids sampling it), so the ATTACHMENT only ever goes Undefined ->
+    // depth attachment. On a SINGLE-SAMPLED target the attachment IS the picture, so `depth_sampled` moves it and the
+    // next pass must transition it back: that is the SHADER_READ_ONLY -> depth attachment barrier stated here.
+    const bool depth_picture_is_attachment = !isMultisampled();
+    const ImageLayout depth_now = depth_fresh ? ImageLayout::Undefined
+                                             : ((depth_picture_is_attachment && depth_sampled) ? ImageLayout::ShaderReadOnly
+                                                                                               : ImageLayout::DepthAttachment);
     const ImageLayout depth_picture_now =
         depth_fresh ? ImageLayout::Undefined : (depth_sampled ? ImageLayout::ShaderReadOnly : ImageLayout::DepthAttachment);
 

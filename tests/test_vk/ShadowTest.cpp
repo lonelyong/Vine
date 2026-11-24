@@ -566,6 +566,39 @@ TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
     backend->shutdown();
 }
 
+TEST(VkShadowTest, ASingleSampledMapDrawnAgainStatesItsDepthAgain)
+{
+    // THE OTHER SHAPE OF THE SAME FACT. A single-sampled map's depth image is its ATTACHMENT and its PICTURE at once:
+    // the shading pass samples it (SHADER_READ_ONLY) and the next frame's map pass attaches it again, so the barrier
+    // back to the depth attachment layout is the attachment's own. A recorder that states the picture's layout only
+    // for a RESOLVE image - which does not exist here - leaves that barrier out, and validation names
+    // `VUID-vkCmdBeginRendering-pRenderingInfo-09588` at the second frame's submit.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> driver_messages;
+    backend->setDiagnosticSink([&driver_messages](const vn::graphics::RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
+
+    Scene scene = makeScene();
+    ASSERT_NE(scene.program, nullptr);
+
+    const std::vector<std::uint8_t> first = runAndRead(*backend, shadowFrame(scene, /*declare*/ true, /*casting*/ true), scene.target.get());
+    const std::vector<std::uint8_t> second = runAndRead(*backend, shadowFrame(scene, /*declare*/ true, /*casting*/ true), scene.target.get());
+
+    EXPECT_EQ(second, first) << "the second frame's map is not the picture the first one resolved";
+    EXPECT_LT(lumAt(second, 16, kTargetSize / 2), lumAt(second, 48, kTargetSize / 2)) << "the second frame lost its shadow";
+    for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
+        EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
+            << "the driver rejected an object of the map's second frame: "
+            << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
+    }
+
+    backend->shutdown();
+}
+
 TEST(VkShadowTest, AMultisampledMapDrawnAgainStatesBothDepthImages)
 {
     // TWO FRAMES, ONE MAP. The first frame writes the map's multisampled depth and then SAMPLES its resolved picture, so
