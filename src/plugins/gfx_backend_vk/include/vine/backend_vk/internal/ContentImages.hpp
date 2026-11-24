@@ -31,8 +31,13 @@ VN_BACKEND_VK_NS_BEGIN
  *   command buffer a warm-up submits of its own (see `RenderFrameExecutor::prepareFrame`). Staging buffers therefore
  *   stay alive until the command buffer that recorded them has completed - and each driver's are grouped in its own
  *   batch (@ref BatchId), so the frame that ends first never frees the staging of the frame that is still recording.
- *   @ref releaseFrame also lets go of the images that driver's revisions replaced, PARKED against the device watermark
- *   because another driver's frame may still be sampling them.
+ * - AN IMAGE BECOMES RESIDENT WHEN ITS COPY IS PROVEN, NOT WHEN ITS COPY IS RECORDED (`G6` / `G10`). The two kinds of
+ *   content this backend fills from GPU work follow ONE rule: a geometry publishes on the frame's fence
+ *   (`ContentCaches::FrameBuilds`), and a texture is PENDING in the batch that recorded it until that batch completes
+ *   (@ref batchCompleted). Recording is not evidence - a frame whose submit failed would otherwise leave a resident
+ *   entry whose image is still `UNDEFINED` and never re-uploaded (`T66`), and another driver's frame head would bind a
+ *   view whose copy had not even been submitted. A competitor that wants the texture meanwhile copies it for itself,
+ *   exactly as it does for a geometry (`ContentCaches::FrameBuilds`).
  * - WHAT "ABSENT" MEANS. A slot whose texture is null, empty or incomplete is not uploaded; the caller binds
  *   @ref fallbackView with @ref fallbackSampler and clears the material's slot bit, so the shader never reads a
  *   binding nobody wrote (the slot bits are the shading's own switch - see ShaderAbi.hpp).
@@ -57,10 +62,11 @@ class VN_BACKEND_VK_API ContentImages final {
      * @brief One driver's upload bookkeeping: the staging buffers it recorded and the images its revisions replaced.
      *
      * @details
-     * - A BATCH IS A FRAME DRIVER (`C2`): the staging buffer of one driver's uploads may be destroyed the moment THAT
-     *   driver's command buffer completed, and no sooner - releasing it with another driver's frame end is the
-     *   use-after-free two concurrent frames would otherwise hand the driver.
-     * - Batch 0 is the warm-up's (its transfer batch has its own fence); a frame driver passes its own id.
+     * - A BATCH IS A FRAME DRIVER (`C2`), and a frame and its warm-up are the same driver: the staging buffer of one
+     *   driver's uploads may be destroyed the moment THAT driver's submission completed, and no sooner - releasing it
+     *   with another driver's frame end is the use-after-free two concurrent frames would otherwise hand the driver.
+     * - 0 IS "NOBODY": a driver's id comes from the device (see `Device::FrameDriver::uploadBatch`), so a real batch is
+     *   never 0.
      */
     using BatchId = std::uint64_t;
 
@@ -113,34 +119,40 @@ class VN_BACKEND_VK_API ContentImages final {
     void setRetirement(ParkFn park);
 
     /**
-     * @brief Destroys what ONE driver's previous frame left behind: its staging buffers and the images it replaced.
+     * @brief Marks one driver's upload batch COMPLETE: every copy its command buffer recorded becomes resident.
      *
      * @details
-     * - Called by the driver after ITS OWN queue submission has been waited for, which is what makes "the command
-     *   buffer that copied this texture has finished" true for the objects of `batch`. Another driver's batch is
-     *   untouched: its command buffer may still be recording.
+     * - THE ONE PUBLICATION POINT (see the class note), and it is the driver's own fence that earns it: called after
+     *   the submission was waited for, so "the command buffer that copied this texture has finished" is true.
+     * - WHAT IT DOES, in one pass over the batch: promotes its PENDING entries into the table, parks the resident entry
+     *   each promotion replaces (a revision replacement), destroys the staging buffers the copies read, and parks the
+     *   images an earlier replacement retired. Another driver's batch is untouched - its command buffer may still be
+     *   recording.
+     * - A SECOND DRIVER THAT COPIED THE SAME REVISION WHILE THIS ONE WAS IN FLIGHT promotes its own copy later, and the
+     *   first one is parked then: two copies, one survivor, which is the cost the alternative (waiting for another
+     *   driver's frame) would charge every time.
      *
-     * @param batch The driver whose uploads completed (see @ref BatchId).
+     * @param batch The driver whose submission completed (see @ref BatchId).
      */
-    void releaseFrame(BatchId batch) noexcept;
+    void batchCompleted(BatchId batch) noexcept;
 
     /**
-     * @brief Destroys the staging buffers of every upload recorded SO FAR, leaving the images they fed resident.
+     * @brief Marks one driver's upload batch ABANDONED: nothing it recorded is published.
      *
      * @details
-     * - WHAT IT RELEASES: `staging` (the material textures) and `fallback_staging` (the 1x1 stand-in), and nothing
-     *   else - the images stay, because they are what the copies were for.
-     * - WHY THE SPLIT FROM @ref releaseFrame: the frame path and the prepare path record the same copies on different
-     *   command buffers, so each has to let go at the moment ITS buffer completed. A warm-up calls this right after
-     *   its own fence wait; a frame reaches it through @ref releaseFrame, after the queue is idle.
+     * - A FRAME THAT NEVER REACHED THE QUEUE FILLED NOTHING, so its pending entries must not become resident: each
+     *   one's image is still in `UNDEFINED` and no copy will ever write it. This is the fix for the class of defect
+     *   `T66` records - a texture that read as resident while it was black, and never re-uploaded because its revision
+     *   matched.
+     * - THE RESIDENT ENTRY IT WOULD HAVE REPLACED STAYS: that revision is the last one proven complete, so the next
+     *   frame that samples the texture uses it.
+     * - THE OBJECTS ARE PARKED, NOT DESTROYED: a submit that failed may still have executed part of the command buffer
+     *   (the safe reading `P17` takes for layout records too), so what the driver could still name waits for the
+     *   device's watermark.
      *
-     * @warning
-     * - Precondition: the command buffer that recorded those copies has completed. Destroying a staging buffer a
-     *   pending copy still reads is a use-after-free the driver cannot catch.
-     *
-     * @param batch The driver whose uploads completed (see @ref BatchId).
+     * @param batch The driver whose submission did not complete (see @ref BatchId).
      */
-    void releaseUploadStaging(BatchId batch) noexcept;
+    void batchAbandoned(BatchId batch) noexcept;
 
     /**
      * @brief Gets whether a copy has been recorded into a command buffer that has not been waited for yet.
@@ -150,8 +162,10 @@ class VN_BACKEND_VK_API ContentImages final {
      *   when that copy completed, so "one is alive" and "an upload is in flight" are the same fact. This is what
      *   lets a caller answer "is there anything to submit?" without opening a command buffer first (see
      *   `RenderFrameExecutor::prepareFrame`: no work means no submit).
+     * - A BATCH'S PENDING ENTRIES ARE THE SAME FACT SPELLED AS "what is not published yet", which is why this asks
+     *   them too: a promotion leaves both empty in the same call.
      *
-     * @return true when a recorded upload has not been released yet.
+     * @return true when a recorded upload has not been published yet.
      *
      * @param batch The driver to ask about (see @ref BatchId).
      */
@@ -161,18 +175,23 @@ class VN_BACKEND_VK_API ContentImages final {
      * @brief What this cache has built, what it let go and what it holds now.
      *
      * @details
-     * - CUMULATIVE, EXCEPT THE TWO `live` FIELDS: the frame's own numbers are the difference of two cumulative ones
-     *   (see FrameUploads), while residency is a question about NOW (see ResidencyLedger).
+     * - CUMULATIVE, EXCEPT THE `live` AND `pending` PAIRS: the frame's own numbers are the difference of two
+     *   cumulative ones (see FrameUploads), while residency is a question about NOW (see ResidencyLedger).
      * - A REVISION THE NEW ONE REPLACED IS A REBUILD, NOT A RELEASE: it leaves `live_bytes` and adds to `builds`,
      *   because the entry never stopped being resident - it was replaced. `releases` counts entries a HOST release
      *   let go, which is the same rule the stream table follows.
+     * - `PENDING` IS THE OTHER HALF OF THE PUBLICATION RULE and it is deliberately NOT in `live`: a copy recorded by a
+     *   frame whose fence has not been waited for is not resident yet, and a residency report that counted it would be
+     *   the number `T66` was about.
      */
     struct Progress {
-        std::uint64_t builds{ 0 };     ///< Texture images built over this cache's lifetime.
-        std::uint64_t bytes{ 0 };      ///< Bytes those images copied over its lifetime.
-        std::uint64_t releases{ 0 };   ///< Entries a host release let go (see the class note).
-        std::uint32_t live{ 0 };       ///< Texture images resident NOW.
-        std::uint64_t live_bytes{ 0 }; ///< GPU bytes those images occupy NOW (the bytes they were uploaded from).
+        std::uint64_t builds{ 0 };        ///< Texture images built over this cache's lifetime.
+        std::uint64_t bytes{ 0 };         ///< Bytes those images copied over its lifetime.
+        std::uint64_t releases{ 0 };      ///< Entries a host release or a replaced revision let go.
+        std::uint32_t live{ 0 };          ///< Texture images RESIDENT now (their copy is proven complete).
+        std::uint64_t live_bytes{ 0 };    ///< GPU bytes those images occupy now (the bytes they were uploaded from).
+        std::uint32_t pending{ 0 };       ///< Copies recorded and NOT proven yet (see @ref batchCompleted).
+        std::uint64_t pending_bytes{ 0 }; ///< The bytes those pending images were uploaded from.
     };
 
     /** @brief Gets the numbers (see Progress). */
@@ -200,7 +219,9 @@ class VN_BACKEND_VK_API ContentImages final {
      * - The texture must be complete (see `Texture::isComplete`); an incomplete one, or one whose pixel format has no
      *   Vulkan colour spelling, answers null and sets @p why.
      * - The upload is recorded on the frame's command buffer before the draw that samples it; the image is left in
-     *   `SHADER_READ_ONLY_OPTIMAL`.
+     *   `SHADER_READ_ONLY_OPTIMAL` BY THAT COMMAND BUFFER. The entry is PENDING in @p batch until it completes (see
+     *   @ref batchCompleted): the view serves the frame that recorded it, and no other driver until the copy is
+     *   proven - a competitor records its own copy, which is the cost of never binding an image nobody filled.
      *
      * @param texture  The texture to sample.
      * @param commands The command buffer the current frame is being recorded into.
@@ -231,7 +252,15 @@ class VN_BACKEND_VK_API ContentImages final {
      */
     [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, BatchId batch, vn::String* why);
 
-    /** @brief Gets the 1x1 white view every absent slot is bound to (null until @ref ensureFallback succeeded). */
+    /**
+     * @brief Gets the 1x1 white view every absent slot is bound to (null until @ref ensureFallback succeeded).
+     *
+     * @note
+     * - THE STAND-IN IS A SHARED CONSTANT, NOT AN ASSET: it is the same one pixel for every pass of every driver, so a
+     *   frame that finds it mid-fill binds it anyway rather than dropping every draw that needs it. The one thing that
+     *   is NOT shared is its failure: a batch that never ran drops the stand-in so the next frame makes a fresh one
+     *   (see @ref batchAbandoned), which is what keeps a black stand-in from outliving the frame that failed to fill it.
+     */
     [[nodiscard]] VkImageView fallbackView() const noexcept;
 
     /** @brief Gets the sampler the fallback and absent slots are read with. */

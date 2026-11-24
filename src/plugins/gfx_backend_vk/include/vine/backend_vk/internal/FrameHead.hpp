@@ -16,11 +16,10 @@
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/backend_vk/internal/ContentAbi.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
+#include <vine/backend_vk/internal/PassTarget.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
-
-struct TargetObjects;
 
 /**
  * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per draw packet, and the frame-level texture facts every call binds.
@@ -41,7 +40,7 @@ struct TargetObjects;
  * - WHAT IT IS NOT. It is not a cache (see `ContentCaches`), and it is not the frame's scratch (see `FrameScratch`):
  *   a head lives for one frame, belongs to one frame driver, and is discarded with it.
  *
- * @see `ContentCaches::planDraw` (what fills a plan), `ContentDraw` (the recorder that reads it).
+ * @see `ContentCaches::planCommand` / `planScreen` (what fills a plan), `ContentDraw` (the recorder that reads it).
  */
 class FrameHead final {
   public:
@@ -63,7 +62,7 @@ class FrameHead final {
      *   call uses beside its slots, which is why they are the common half of this value.
      * - THE SLOTS ARE RESOLVED BEFORE THE RENDERING INSTANCE BEGINS, because a texture upload records a
      *   buffer-to-image copy and an image barrier, neither of which is legal inside a rendering instance (the same rule
-     *   `ContentCaches::preparePass` states for the warm-up path). The copies land on the frame's own command buffer,
+     *   `ContentCaches::resolveTextures` states for both frame verbs). The copies land on the frame's own command buffer,
      *   ahead of every pass.
      */
     struct DrawPlan {
@@ -121,17 +120,16 @@ class FrameHead final {
 
     /// @brief ONE PASS of the frame, in the order the frame states them.
     struct Pass {
-        /// The pass' facts, filled where the frame CLAIMS what it will run (see Device::FrameDriver::executeFrame):
-        /// the frame entry (its name and declared inputs), the draw it carries, the attachment set it writes and
-        /// whether it writes the window's acquired image instead. ONE PASS, ONE SLOT - the plan half below is what the
-        /// head resolves INTO it, so the pass is one value here and not a second list beside it (`G1`).
+        /// The pass' facts, filled where the frame CLAIMS what it will run (see Device::FrameDriver::claimPasses): the
+        /// frame entry (its name and declared inputs), the draw it carries, and WHERE IT DRAWS as one value. ONE PASS,
+        /// ONE SLOT - the plan half below is what the head resolves INTO it, so the pass is one value here and not a
+        /// second list beside it (`G1`).
         const vn::graphics::FrameDescription::Pass* entry{ nullptr };
         const vn::graphics::PassDraw*               draw{ nullptr };
-        TargetObjects*                              images{ nullptr }; ///< Null for a window pass.
-        bool                                        window{ false };
-        /// The attachment set's pipeline compatibility: the formats and colour count a pipeline and its rendering
-        /// instance are both stated from.
-        vn::graphics::RenderPassCompatibility compatibility{};
+        /// The attachment set this pass opens (an off-screen target, or the window's acquired image) and the facts a
+        /// pass needs from it - extent, compatibility, whether it already holds a picture, and the verbs (see
+        /// PassTarget). Read once per pass; a resize after the claim belongs to the next frame.
+        PassTarget target{};
 
         std::vector<Call> draws{};
 
@@ -142,11 +140,9 @@ class FrameHead final {
                 call.clear();
             }
             draws.clear();
-            entry         = nullptr;
-            draw          = nullptr;
-            images        = nullptr;
-            window        = false;
-            compatibility = {};
+            entry  = nullptr;
+            draw   = nullptr;
+            target = PassTarget{};
         }
     };
 

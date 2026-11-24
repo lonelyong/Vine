@@ -178,9 +178,9 @@ Upload staging **has no entry point**: it reclaims itself at the frame boundary 
 
 | Interface | Purpose |
 |---|---|
-| `ContentImages::releaseTexture()` / `viewFor()` / `releaseFrame()` / `progress()` | Texture cache and upload batches (lifetime reads the declarations + the textures imported that frame + the entry's own revision) |
+| `ContentImages::releaseTexture()` / `viewFor()` / `batchCompleted()` / `batchAbandoned()` / `progress()` | Texture cache and upload batches (lifetime reads the declarations + the textures imported that frame + the entry's own revision); a recorded copy is PENDING until its batch's fence was waited |
 | `FrameScratch::beginFrame()` / `reserveSlice()` / `slice()` | The frame's constant ring and descriptor pool (written per frame, owned by the frame's driver) |
-| `ContentCaches::ensureContentPipeline()` / `planDraw()` / `resolveTextures()` / `releaseGeometry()` | Identity-keyed caches (geometry / program / pipeline / material / texture), resolved at the frame head |
+| `ContentCaches::ensureContentPipeline()` / `planCommand()` / `planScreen()` / `resolveTextures()` / `releaseGeometry()` | Identity-keyed caches (geometry / program / pipeline / material / texture), resolved at the frame head |
 | `ResidencyClaims::admit()` / `publish()` / `forget()` | Who may BUILD a key: `Use` (published), `Build` (this claimant), `Copy` (a competitor is filling it) |
 | `ReadbackStaging::open()` / `recordCopy()` / `run()` | One readback's own command pool, staging buffer and fence |
 | `TargetTable::ensure()` / `claim()` / `lease()` / `peek()` | The target's object (map + shape + build/rebuild/repair) and who may draw it this frame |

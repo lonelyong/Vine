@@ -24,6 +24,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/Device.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameReport.hpp>
@@ -323,6 +324,65 @@ TEST(VkPrepareUploadTest, ASecondPrepareSubmitsNothing)
     EXPECT_EQ(after_both.progress->submitted, 0U);
     EXPECT_EQ(after_both.progress->presented, 0U);
     EXPECT_FALSE(after_both.uploads.has_value()) << "no frame has run, so no frame's upload numbers exist";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}
+
+TEST(VkPrepareUploadTest, APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain)
+{
+    // T66 AT BOTH HALVES OF THE PUBLICATION RULE: a texture becomes RESIDENT when its copy is PROVEN, not when its
+    // copy is recorded (see ContentImages: batchCompleted / batchAbandoned). A submission that fails between the two:
+    //   - must leave the image table as it was, or the next frame finds a revision it believes is resident, binds an
+    //     image nobody filled, and never uploads it again (the defect T66 records);
+    //   - must leave the frame's LAYOUT RECORDS where the last executed frame left them (P17), so a readback answers
+    //     NotReady instead of a picture nobody can vouch for - and the frame after it draws normally.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    const TexturedScene scene = makeTexturedScene();
+
+    // THE SUBMISSION IS REFUSED (see Device::refuseNextSubmit): the batch records three copies and runs none.
+    device->refuseNextSubmit();
+    const PrepareReport refused = backend->prepareFrame(scene.frame);
+    EXPECT_TRUE(refused.prepared()) << "a queue that refused the batch is not a preparation defect";
+    EXPECT_EQ(refused.uploads, 3U) << "what the call BUILT is still what it reports (2 streams + the texture)";
+
+    // THE FRAME THAT FOLLOWS OWNS EVERY UPLOAD: nothing the failed batch copied became resident.
+    ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
+    const FrameReport ran = backend->frameReport();
+    ASSERT_TRUE(ran.uploads.has_value()) << "a frame ran, so this device has numbers for it";
+    // A GEOMETRY STREAM IS FILLED BY THE HOST (host-visible coherent memory), so its bytes are there whether or not a
+    // submission ran - the fence decides who may RELY on them, not whether they exist. A TEXTURE is the other kind: its
+    // image is filled by a copy the GPU records, so a batch that never ran leaves nothing to sample.
+    EXPECT_EQ(ran.uploads->stream_uploads, 0U) << "a host-filled stream does not wait for a submission";
+    EXPECT_EQ(ran.uploads->texture_uploads, 1U) << "a texture the failed batch never filled was published as resident";
+
+    // AND THE PICTURE IS THE TEXTURE'S: the upload the frame recorded itself ran.
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(scene.target.get(), 0, pixels));
+    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), kTextureColour)
+        << "the frame sampled a texture the failed preparation believed it had filled";
+
+    // NOW A FRAME THAT NEVER REACHES THE QUEUE (P17): its commands are dropped, and the records it advanced go back to
+    // `Undefined` - which the readback's NotReady hint is the one observable form of.
+    device->refuseNextSubmit();
+    ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
+    std::vector<std::uint8_t> refused_pixels;
+    const vn::graphics::ReadbackOutcome after_refusal = backend->readColorBuffer(scene.target.get(), 0, refused_pixels);
+    EXPECT_FALSE(after_refusal.ok()) << "a frame that never ran left a picture a reader can vouch for";
+    EXPECT_EQ(after_refusal.result, vn::graphics::ReadbackResult::NotReady);
+
+    // AND THE SAME FRAME RUNS AGAIN, CLEARING WHAT THE REWOUND RECORD SAYS IS UNDEFINED.
+    ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
+    ASSERT_TRUE(backend->readColorBuffer(scene.target.get(), 0, pixels));
+    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), kTextureColour)
+        << "the frame after the rewound one did not draw again";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     backend->shutdown();

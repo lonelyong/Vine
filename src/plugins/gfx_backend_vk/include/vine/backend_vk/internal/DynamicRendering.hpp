@@ -8,6 +8,7 @@
 #include <volk.h>
 
 #include <vine/graphics/DrawState.hpp>
+#include <vine/graphics/FrameDescription.hpp>
 
 #include "BarrierPlan.hpp"
 #include "ImageLayout.hpp"
@@ -175,6 +176,35 @@ struct PassLoad {
     /// The clear value of the depth attachment.
     VkClearValue depth{};
 };
+
+/**
+ * @brief DECIDES a pass' load and clear values from ONE question: does the attachment already hold a picture to keep?
+ *
+ * @details
+ * - THE RULE HAS ONE HOME (`G1`). A pass loads when the set already holds a picture worth keeping AND the pass does not
+ *   ask to reset that attachment; `ClearPolicy`'s two dimensions are independent (a HUD keeps the colour and owns the
+ *   depth). Both halves of the backend - the off-screen set and the window - used to spell the same expression, with
+ *   only the INPUT differing; that input is now the only thing a caller states.
+ * - WHAT THE INPUT IS NOT. It is not "is this target fresh": it is "may a later pass load what is there" - a window's
+ *   acquired image answers false however many frames have presented through it (see `PassTarget::holdsPicture`).
+ * - THE CLEAR VALUES ARE FILLED IN OUTPUT-LOCATION ORDER: attachment 0 takes the policy's colour, 1..N-1 its extra
+ *   colours, an absent entry is transparent black (an auxiliary attachment's "nothing here"), and a load op of `Load`
+ *   ignores the value it sits beside. A DEPTH-ONLY pass has no colour slot, which is why the depth value is a field.
+ * - REVERSE-Z: depth is cleared to this camera convention's far plane, 0 - the policy states WHETHER, never to what.
+ * - STORE IS `Store`: this backend keeps what a pass wrote; `beginRendering` alone may DOWNGRADE a resolved role to
+ *   `DontCare`, because only it knows whether a resolve consumes the images.
+ *
+ * @param preserve_previous Whether an earlier pass (or frame) put a picture in these attachments that may be kept.
+ * @param clear             The pass' clear policy, or null when the pass announced none (both attachments clear).
+ * @param color_clears      Storage for one value per colour attachment (the caller's array; left alone past
+ *                          @p color_count).
+ * @param color_count       How many colour attachments the set has (see `PassTarget::colorCount`).
+ * @return The pass' load policy, with `color_clears` filled.
+ */
+[[nodiscard]] PassLoad decidePassLoad(bool                            preserve_previous,
+                                     const vn::graphics::ClearPolicy* clear,
+                                     std::span<VkClearValue>         color_clears,
+                                     std::size_t                     color_count) noexcept;
 
 /**
  * @brief Records the attachment transitions a pass needs, then `vkCmdBeginRendering`.

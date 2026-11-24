@@ -346,7 +346,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @details
      * - THE SAME VALUE `executeFrame` takes, walked to the same identities: this device resolves each pass' target,
      *   each command's program and geometry and the pipeline its state selects (see `ContentDraw::prepare`), and it
-     *   records the pass' texture uploads and the 1x1 stand-in (see `ContentDraw::preparePass`), so a later frame of
+     *   records the pass' texture uploads and the 1x1 stand-in (see `ContentCaches::resolveTextures`), so a later frame of
      *   the same declarations builds nothing (its upload/compile deltas are zero).
      * - WHAT IT DELIBERATELY DOES NOT DO. No swapchain image is acquired, no window is resized, no rendering instance
      *   is opened, nothing is drawn or presented, and `FrameProgress`'s `submitted` / `presented` do not move: those
@@ -618,6 +618,24 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @param creator The block creator, or empty for `vkAllocateMemory` through the device table.
      */
     void setMemoryBlockCreator(MemoryBlockCreator creator);
+
+    /**
+     * @brief Makes the NEXT queue submission answer a plain failure, so the classes of a frame that never ran are
+     *        reachable from a test.
+     *
+     * @details
+     * - WHY A DOOR EXISTS, for the reason `setMemoryBlockCreator` states: "the queue refused the submit" and "the
+     *   fence never signalled" are unreachable on a healthy device, and the answers this backend owes them are REAL
+     *   contracts a host depends on - a frame that never reached the queue publishes nothing (`T66`), moves nothing
+     *   (`P17`), and leaves the last proven content in place. A test that cannot make a submission fail cannot pin any
+     *   of those, so it asks here instead of faking a driver.
+     * - THE FAILURE IS NOT A LOSS: the answer is `VK_ERROR_OUT_OF_HOST_MEMORY`, which `noteDeviceLost` does not
+     *   classify as a lost session - so the device stays up, the next frame runs normally, and the test can see what
+     *   the failed one did to residency and layout.
+     * - It is consumed by ONE submission (a frame's, or a warm-up's transfer batch): a test calls it immediately before
+     *   the call it wants to fail.
+     */
+    void refuseNextSubmit() noexcept;
 
   private:
     /**

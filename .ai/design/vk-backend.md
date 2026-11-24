@@ -22,7 +22,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **196 cases / 44 suites** (2026-11-24).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **197 cases / 44 suites** (2026-11-24).
 
 ### 1.2 Goals
 
@@ -331,7 +331,7 @@ and every cache has a witness a test can read.**
   rather than by a lock: it belongs to its own driver.
 - **Cost (honestly)**: `ContentDraw`'s `record` pays one more pointer indirection per frame (two borrowed references), and what it buys is that "who owns in-frame state" can
   point at one object in one line.
-- **Lock and frame-head snapshot**: `ContentCaches` has **its own lock** (`ContentCaches::Lock`, non-reentrant) and a frame takes it **once, at the frame head**: `planDraw`
+- **Lock and frame-head snapshot**: `ContentCaches` has **its own lock** (`ContentCaches::Lock`, non-reentrant) and a frame takes it **once, at the frame head**: `planCommand` / `planScreen`
   (both overloads) / `resolveTextures` write what each draw call needs (pipeline, vertex / index / instance buffer handles, material, texture view / sampler, shadow sampler)
   **by value** into `FrameHead::DrawPlan` (the frame-level texture / sampler facts hang off `FrameHead`), and texture uploads are recorded into the frame's own command buffer
   at the frame head (outside a render pass, the only legal place). **The recording path afterwards takes no lock and touches no cache entry**; when an entry is replaced or
@@ -347,7 +347,7 @@ and every cache has a witness a test can read.**
 - **Frame-head storage reuse and its witness (I-02)**: `FrameHead`'s pass / call slots are `clear()`ed rather than rebuilt (`storageGrows()` increases only when capacity is
   short); `Device::frameHeadStorageGrows()` exposes it to tests, and `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage` pins it with "3 warm-up frames, then 5
   unchanged". **It proves the head's storage reuse only**, not a whole frame allocating nothing (pipeline keys and content caches have their own allocations, which this page
-  neither claims nor measures). `planDraw` clears with `plan.clear()` rather than releasing and rebuilding the reused vector per command.
+  neither claims nor measures). `planCommand` clears with `plan.clear()` rather than releasing and rebuilding the reused vector per command.
 
 ### 2.17 Residency's three states: one key has one publisher (`G1` / `G4` / `G10`)
 
@@ -414,25 +414,59 @@ and every cache has a witness a test can read.**
   carrying three barriers), `ARepeatedStateIsNotARepeatedCommand` (two identical commands cost what one does) and
   `AFrameAndItsPassesAreNamedToACaptureTool` (passes + 1 regions).
 
-### 2.20 One pass is one value; one frame is one command buffer (`G1` / `G6`)
+### 2.20 One pass is one value; one frame is one command buffer (`G1` / `G5` / `G6`)
 
 - **What it is**: the frame body used to keep four descriptions of "the pass about to run" - a local `Runnable` list,
   `FrameHead::Pass`, `PassAttachments` and `PassLoad` - plus the `pass_position` / `pass_index` arithmetic that kept the
-  indexings in step, and the pass' NAME was read back from the first list after the fact. `FrameHead::Pass` now carries
-  the frame facts (`entry`, `draw`, `images`, `window`, `compatibility`): the claim loop fills them, the head resolves the
-  plans into the same slots while it holds the cache lock, and the recorder walks that one array.
-- **The frame's working set has an owner too** (`FrameRun`, the driver's): the records the frame moved, the depths it
-  lends and the clock's sample buffer were stack containers rebuilt per frame, while `FrameHead` and `FrameScratch`
-  beside them kept their capacity. They are the driver's now and `clear()`ed per frame.
+  indexings in step. `FrameHead::Pass` now carries the frame facts (`entry`, `draw`, `target`): the walk claims them, the
+  head resolves the plans into the same slots while it holds the cache lock, and the recorder walks that one array. **A
+  pass' attachment set is itself a value** (`PassTarget`): the off-screen set and the window's acquired image answer the
+  same four questions - extent, pipeline compatibility, what is already in it, open and close it - through ONE handle,
+  so the frame body has no `if (window) A else B` pair left (it used to have four). The pass' RECTANGLE is a pass fact
+  too, so it is resolved once (`ContentDraw::DrawScope`) instead of in every draw call's argument list.
+- **ONE WALKER FOR BOTH FRAME VERBS** (`FrameDriver::claimPasses`): "which passes can this device run, and which claims
+  does each one take" was answered once for a recorded frame and written out again for a warm-up - and the second copy
+  had already lost three of the four claims (the depth LENDER, a full-screen source, a declared input; §2.18). It is one
+  walk with one rule, and `PassMode` states only what the walker does with its answer: a recorded frame acquires the
+  window's image and counts what it ran, a warm-up does neither. The resolution is one function too
+  (`resolveFrameHead`), so the warm-up's separate texture path is gone and a prepared texture is found resident by the
+  frame that samples it (§2.21).
+- **The frame's own state has an owner** (`FrameRecording`, the driver's): what it claimed, the depths it lends, the
+  records it moved, the clock's sample buffer, its counters and its labels. Those were a dozen locals in one long
+  function and, in part, stack containers rebuilt per frame; they are one value the frame's phases read and write,
+  `clear()`ed per frame with its capacity kept.
 - **And so does the command buffer** (`FrameDriver::commands`): the command pool, the fence and the query pool were the
   driver's; the buffer was allocated and freed per frame, with a failure branch (`vk.frame.command_buffer_missing`) a
   host could do nothing about. It is created with the pool and reset by `vkBeginCommandBuffer`, and the warm-up records
   into it under the same exclusive gate - so both frame bodies spend no allocation on it.
-- **Why**: `G1` (one concept, one definition, one owner) and `G6` (the frame machinery is listed in one object). Three
-  indexings over one list is exactly the shape that lets a report name the wrong pass, and a per-frame allocate/free pair
-  is the frame machinery's own cost paid outside the machine.
-- **Boundary**: a structure change with no behaviour - `test_vk`'s cases did not move, `FrameHead::storageGrows` still
-  answers what it did, and the clock's per-pass spans are what F13 says they are.
+- **Why**: `G1` (one concept, one definition, one owner), `G5` (the expected change - "the warm-up must prepare what the
+  frame will run" - stays inside the walker rather than being re-derived in a second function) and `G6` (the frame
+  machinery is listed in one object). Three indexings over one list is exactly the shape that lets a report name the
+  wrong pass, and a per-frame allocate/free pair is the frame machinery's own cost paid outside the machine.
+- **Boundary**: a structure change with no behaviour - the 197 `test_vk` cases did not move, `FrameHead::storageGrows`
+  still answers what it did, and the clock's per-pass spans are what F13 says they are.
+
+### 2.21 Content becomes resident when its fill is PROVEN (`G6` / `G10`)
+
+- **What it is**: this backend fills content from two sources, and only one of them used to follow the rule. A geometry
+  stream is written by the HOST into host-visible memory, so its bytes exist the moment they are copied - the fence
+  decides who may RELY on them (`ContentCaches::FrameBuilds`, §2.17). A texture's image is filled by a COPY THE GPU
+  records, so between "recorded" and "the fence reported" it is in `UNDEFINED` and no descriptor may claim it.
+  `ContentImages` therefore keeps a recorded copy PENDING in the batch that recorded it and promotes it into the table in
+  `batchCompleted`, which runs exactly where the fence was waited; `batchAbandoned` parks it instead, so a frame that
+  never reached the queue leaves the LAST PROVEN revision in place. A batch is a DRIVER (`BatchId`), because a frame and
+  its warm-up share one command buffer and one fence.
+- **What that fixes**: `T66` - a failed submit used to leave a resident entry whose image nobody had filled, and the
+  next frame found its revision, bound it and never uploaded it again. The same rule closes the half nobody had written
+  down: another driver's frame head used to find that entry before its copy was even submitted.
+- **Why**: `G6` (one resource-lifecycle rule for both kinds of content, stated once) + `G10` (a competitor that wants the
+  texture meanwhile records its own copy, which is the bounded cost the alternative - waiting for another driver's frame -
+  would charge every time).
+- **Boundary**: the 1x1 stand-in is a SHARED CONSTANT, not an asset (§6.19 P19): a frame that finds it mid-fill binds it
+  rather than dropping every draw that needs it, and the one thing not shared is its failure - a batch that never ran
+  drops it, so the next frame makes a fresh one. `ContentImages::Progress::pending` / `pending_bytes` say what is
+  recorded and not yet proven, and they are deliberately NOT part of `live`.
+- **Cases**: `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` (§8 T10).
 
 ## 3. Features
 
@@ -665,6 +699,7 @@ and every cache has a witness a test can read.**
 | `contentPipelines()` / `contentCacheCounters()` | the cost model's witnesses (pipeline count, ring / set) | §2.4 |
 | `recordingNumbers()` / `debugMarkers()` | the recording path's witnesses (dependencies, barriers, state commands, labels) and whether this session can label at all | §2.19 |
 | `memoryStats()` / `pipelineCacheReport()` | the pool's and the cache's witnesses; the pool's five byte figures also reach the host in `FrameReport::memory` | F10 / F12 |
+| `setMemoryBlockCreator(...)` / `refuseNextSubmit()` | the two TEST DOORS: make an allocation, or the next queue submission, answer a failure the failure contracts are about (§6.16 / §6.19) | §2.12 / §2.21 |
 
 The full signatures and per-parameter contracts are in `include/vine/backend_vk/internal/Device.hpp`.
 
@@ -681,11 +716,12 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | Unit | Responsibility | Key contract |
 |---|---|---|
 | `Device` | session, frames, the window table, reports (the target table is `TargetTable`) | 4.1 above |
-| `ContentDraw` | content / fullscreen recording, programs and pipelines, the ring, the set cache, the pipeline cache object | F5 / F6 / F8 / F9 / F12; the state shadow and `stateCommands()` (the recording path's witness) are its |
-| `ContentImages` | texture revisions, samplers, the stand-in | F7 |
+| `ContentDraw` | content / fullscreen recording, programs and pipelines, the ring, the set cache, the pipeline cache object | F5 / F6 / F8 / F9 / F12; the state shadow and `stateCommands()` (the recording path's witness) are its; `DrawScope` is what one pass records with (§2.20) |
+| `ContentImages` | texture revisions, samplers, the stand-in, the per-driver upload batch and its two outcomes (`batchCompleted` / `batchAbandoned`) | F7 / §2.21 |
+| `PassTarget` | WHERE one pass draws: an off-screen set or the window's acquired image, as one value with the facts and the verbs a pass needs | §2.20 |
 | `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) | F4 / §2.18 |
 | `TargetObjects` | an offscreen target's attachment set: images, views and the layout each one is in (`beginPass` / `endPass`) | F4 |
-| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields | F4 / §2.7 |
+| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `decidePassLoad` (the pass' load rule, one place) | F4 / §2.7 |
 | `WindowTarget` / `WindowSystem` | the swap chain and the surface (per-image layout record, `beginPass` / `endPass`) | F3 |
 | `MemoryAllocator` | the device memory pool (blocks / slices / mapping) | F10 |
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |
@@ -787,7 +823,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - How it fails: `vkCmdCopyBufferToImage` and some barriers are illegal inside a rendering instance (and `vkCmdBeginRendering`)
   may not be followed by one).
 - How to detect it: validation reports it directly; or the texture stays in TRANSFER_DST for ever.
-- How to prevent it: `preparePass` runs before `vkCmdBeginRenderPass`; `ContentImages`' "not prepared" gives an explicit `why`.
+- How to prevent it: the head records every upload before the first rendering instance begins (`resolveTextures`, called from `resolveFrameHead`); `ContentImages`' "not prepared" gives an explicit `why`.
 
 ### 6.6 P6 The ring grows only between frames
 
@@ -909,10 +945,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   nothing can reproduce (a wholesale reset there would discard a baked target); and `WindowTarget::abandonFrame()` rebuilds
   the swapchain, which returns the acquired image and starts every window record at `Undefined`. Only what THIS frame moved
   is touched, so another driver's targets are never rewritten.
-- NOT covered: a texture the frame uploaded is committed to the image cache when its copy is RECORDED (a geometry already
-  publishes on the fence, `ResidencyClaims` rule 2; a texture does not). A frame whose submit fails therefore leaves a
-  cache entry whose image was never uploaded - backlog `T66`, whose fix is the same publish-on-completion rule applied to
-  `ContentImages`.
+- NOW COVERED, including the texture half: a recorded texture copy is PENDING in its batch and is promoted only by
+  `ContentImages::batchCompleted` (the fence was waited) or parked by `batchAbandoned` - so a frame that never reached
+  the queue publishes no image nobody filled (§2.21, §6.19).
 
 ### 6.18 P18 A boundary that does not wait measures arrival
 
@@ -927,6 +962,20 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   `kFrameClockStartStage == TOP_OF_PIPE`, so the meaning does not depend on one device's execution model.
 - How to prevent it: the two stages are named constants in `BarrierPlan.hpp` (the table that owns stage vocabulary), and no call site spells a stage of its own.
 
+### 6.19 P19 A copy that never ran must not become resident
+
+- How it fails: an image published at RECORD time is resident while still `UNDEFINED`. A later frame finds its revision,
+  binds it (its descriptor names `SHADER_READ_ONLY_OPTIMAL`) and samples an image the driver never wrote: black pixels, a
+  layout VUID, and no re-upload, because the revision matches. The second form is quieter: with two drivers, the other
+  one's frame head finds the entry before its copy was even submitted.
+- How to detect it: `ContentImages::Progress::live` must not move until the batch's fence was waited, and
+  `Progress::pending` must be back to 0 once the verb that recorded it returned. A refusal the device honours
+  (`Device::refuseNextSubmit`, a test door) makes the failure reachable: the case then asserts that the NEXT frame
+  uploads the texture itself and draws its colour, instead of binding the entry the failed batch left behind.
+- How to prevent it: publish in `batchCompleted`, abandon in `batchAbandoned`, and keep the pending entry in the batch's
+  own book (`ContentImages`). A HOST-FILLED stream is the other kind and keeps the `FrameBuilds` rule (§2.17): its bytes
+  exist immediately, so only the claim/publish half applies to it.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -938,12 +987,13 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | D5 | putting the cache file format into the SDK | `G1`: the SDK does not know Vulkan; the right seam is "the host gives the location, the backend the format" (§2.9) | — |
 | D6 | implementing several frames in flight directly | `G4`: changing the "read when drawn" contract needs a decision document first; the measured ceiling is about 10% (the device is 90%) | `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` |
 | D7 | splitting the device and the session objects right away | `G8`: the contract is one frame in flight, one at a time, and a split would only add a layer of forwarding; because concurrent frames are clearly wanted it lands in **two steps** (the gate + the contract first, then the split) rather than in one go | `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` |
+| D8 | an attachment-set base class for `TargetObjects` / `WindowTarget` | `G10` / `G12`: a vtable in a value type, and one header that would have to know both; a `PassTarget` VALUE (owner pointer + four answers) gives the frame body one shape without either cost (§2.20) | — |
 
 ## 8. Tests and Acceptance
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 196 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 197 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
@@ -952,6 +1002,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T7 | documentation and gates | `python3 scripts/check_ai_docs.py --strict` + §5.2 R5's scripts |
 | T8 | mutations are load-bearing | recorded in `../memory/graphics.md`: the ring / set, pool and cache-file mutations each turn only their own cases red |
 | T9 | readback | `OffscreenClearTest`, `ContentTargetTest`, `VkMemoryPoolTest.AReadbackGivesItsStagingBytesBack` |
+| T10 | content is resident only when its fill is proven | `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` (a refused submit through `Device::refuseNextSubmit`; the mutation that publishes at record time turns it red - §2.21, §6.19) |
 
 ## 9. Status and Evolution
 
@@ -960,7 +1011,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **196 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **197 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).

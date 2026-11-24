@@ -46,7 +46,7 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT IS NOT. Nothing of the frame: no ring, no descriptor pool, no per-frame counters - those are
  *   `FrameScratch`'s, one per driver, because mixing two frames' slices is a correctness problem while sharing a
  *   compiled pipeline is the point (see `.ai/design/graphics-sessions.md` §3.1.3).
- * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planDraw` answers what a draw packet builds with (program, streams,
+ * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planCommand` / `planScreen` answer what a draw builds with (program, streams,
  *   pipeline, resolved state, texture slots) and nothing else: the warm-up and the frame head run the SAME
  *   resolution, so a frame cannot ask for something the warm-up would not have built - and the answers CROSS the seam
  *   as values (`FrameHead`), which is what lets the recording path take no lock.
@@ -161,7 +161,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      *   `Lock&`, so "I am holding the cache lock" is enforced by the compiler at the call site instead of by a
      *   comment (`G4`). The lock is acquired through @ref lock, which counts the acquisition - the witness a test uses
      *   to show that a frame's cost does not grow with its draw packets.
-     * - A FRAME HOLDS IT ONCE, at its head: `planDraw` / `resolveTextures` run there, and everything
+     * - A FRAME HOLDS IT ONCE, at its head: `planCommand` / `planScreen` / `resolveTextures` run there, and everything
      *   the recording path needs afterwards is a value (see `FrameHead`).
      * - HOST VERBS (release, progress, `endFrame`) take it internally: they are announcements, not frame work.
      *
@@ -570,22 +570,6 @@ class VN_BACKEND_VK_API ContentCaches final {
     std::size_t releaseStreams(const void* buffer);
 
     /**
-     * @brief Prepares the textures one pass' draws sample, BEFORE the pass' rendering instance begins.
-     *
-     * @details
-     * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a rendering
-     *   instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The WARM-UP calls this
-     *   once per pass on its transfer-only batch; the frame path does the same work at its head, through
-     *   @ref resolveTextures, on the frame's own command buffer.
-     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first preparation that needs it.
-     *
-     * @param commands The command buffer being recorded (outside any rendering instance).
-     * @param draws    The pass' draw packets (borrowed for the call).
-     * @param held     The cache lock (see @ref Lock).
-     */
-    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawPacket> draws, const Lock& held);
-
-    /**
      * @brief Resolves one draw packet's texture bindings into @p plan, recording every upload that is missing on
      *        @p commands; the frame-level stand-in facts land on @p head.
      *
@@ -613,22 +597,8 @@ class VN_BACKEND_VK_API ContentCaches final {
                          const Lock&                             held,
                          ContentImages::BatchId                  batch);
 
-    /**
-     * @brief Creates (or answers) the 1x1 white image every absent texture slot binds.
-     *
-     * @param commands The command buffer that records its copy (null answers whether one already exists).
-     * @param held     The cache lock (see @ref Lock).
-     * @param why      Receives the reason when the stand-in cannot be built, or null to ignore.
-     * @param batch    The driver recording the copy (see @ref ContentImages::BatchId).
-     * @return true when a fallback view is available.
-     */
-    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, const Lock& held, vn::String* why, ContentImages::BatchId batch);
-
     /** @brief Gets whether @p batch recorded a texture copy into a command buffer that has not been waited for yet. */
     [[nodiscard]] bool hasPendingUploads(ContentImages::BatchId batch) const;
-
-    /** @brief Destroys the staging buffers @p batch recorded so far, leaving the images they fed resident. */
-    void releaseUploadStaging(ContentImages::BatchId batch) noexcept;
 
     /**
      * @brief Drops @p texture's uploaded image (see ContentImages::releaseTexture).
@@ -638,16 +608,29 @@ class VN_BACKEND_VK_API ContentCaches final {
      */
     [[nodiscard]] bool releaseTexture(const vn::graphics::Texture& texture);
 
-    /** @brief Releases the retired texture uploads recorded by @p batch (see @ref ContentImages::releaseFrame). */
-    void endFrame(const ContentImages::BatchId batch) noexcept;
+    /**
+     * @brief Closes one driver's texture-upload batch, with the outcome its fence reported.
+     *
+     * @details
+     * - THE ONE PLACE THE TWO OUTCOMES MEET (see `ContentImages::batchCompleted` / `batchAbandoned`): a batch whose
+     *   submission completed publishes what it copied; a batch that never reached the queue publishes nothing and its
+     *   pending entries are parked. Both take this cache's lock, because the image table is part of it.
+     * - THE CALLER ALWAYS CLOSES ITS BATCH, on every path out of a frame or a warm-up: a batch left open keeps its
+     *   pending entries invisible to every other driver and its staging buffers alive.
+     *
+     * @param batch     The driver whose command buffer was recorded (see ContentImages::BatchId).
+     * @param completed Whether that command buffer ran to completion.
+     */
+    void endFrame(const ContentImages::BatchId batch, bool completed) noexcept;
 
     /**
      * @brief Resolves ONE CONTENT COMMAND into @p plan: its program, streams, pipeline and resolved state, building
      *        each on a miss.
      *
      * @details
-     * - ONE VERB, TWO INPUT SHAPES (see the screen overload): both answers are a `FrameHead::DrawPlan`, because the
-     *   recording path reads one shape - the plan's `kind` says which payload is filled.
+     * - ONE PLAN PER COMMAND, and its twin @ref planScreen resolves a full-screen packet as a whole: the two differ in
+     *   what they TAKE (a command that draws geometry, a packet that draws one triangle), which is why they are two
+     *   names rather than one overloaded verb a reader has to disambiguate by parameter type (`G4`).
      * - THE ONE RESOLUTION the recorder and the warm-up share: "what does this command draw with" is answered here
      *   once, so a warm-up cannot build something the frame would not ask for (and vice versa).
      *
@@ -662,22 +645,22 @@ class VN_BACKEND_VK_API ContentCaches final {
      *                          and a key another driver is building is copied instead of waited for.
      * @return true when the command can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawItem&                     command,
-                                const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::ShaderProgramDescription*          default_program,
-                                const vn::graphics::RenderPassCompatibility&  compatibility,
-                                FrameHead::DrawPlan&                                   plan,
-                                ContentRefusal&                                        refusal,
-                                const Lock&                                            held,
-                                FrameBuilds&                                           builds);
+    [[nodiscard]] bool planCommand(const vn::graphics::DrawItem&                  command,
+                                   const vn::graphics::PassDraw&                       pass,
+                                   const vn::graphics::ShaderProgramDescription*       default_program,
+                                   const vn::graphics::RenderPassCompatibility& compatibility,
+                                   FrameHead::DrawPlan&                                plan,
+                                   ContentRefusal&                                     refusal,
+                                   const Lock&                                         held,
+                                   FrameBuilds&                                        builds);
 
     /**
      * @brief Resolves ONE SCREEN DRAW into @p plan: its fragment program, pipeline and resolved state.
      *
      * @details
-     * - THE SAME VERB AS THE CONTENT OVERLOAD (one entry, two input shapes): a full-screen packet has no geometry,
-     *   material or streams, so its plan fills the shared half (pipeline, resolved state) and leaves the content
-     *   payload empty.
+     * - THE PACKET IS THE UNIT here (a full-screen draw has no geometry, material or streams), so this fills the plan's
+     *   shared half - pipeline and resolved state - and leaves the content payload empty. It is the twin of
+     *   @ref planCommand, not an overload of it: the two answer different questions about different grains.
      * - THE DEPTH POLICY IS FORCED OFF for this kind (see the implementation): a full-screen triangle is at the far
      *   plane under reverse-Z, and the destination's depth is not the content's business.
      *
@@ -689,12 +672,12 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param held              The cache lock (see @ref Lock).
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawPacket&                  draw,
-                                const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::RenderPassCompatibility&  compatibility,
-                                FrameHead::DrawPlan&                                   plan,
-                                ContentRefusal&                                        refusal,
-                                const Lock&                                            held);
+    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&                draw,
+                                  const vn::graphics::PassDraw&                      pass,
+                                  const vn::graphics::RenderPassCompatibility& compatibility,
+                                  FrameHead::DrawPlan&                               plan,
+                                  ContentRefusal&                                    refusal,
+                                  const Lock&                                        held);
 
   private:
     struct Impl;

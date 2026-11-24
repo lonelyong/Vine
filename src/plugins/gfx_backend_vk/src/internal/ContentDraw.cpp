@@ -1,5 +1,6 @@
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -328,32 +329,67 @@ void ContentDraw::writeSlice(const VkDeviceSize                    slice,
     std::memcpy(bytes + scratch.shadowOffset(), &shadow, sizeof(shadow));
 }
 
-std::uint64_t ContentDraw::record(VkCommandBuffer                              commands,
-                                  int                                          width,
-                                  int                                          height,
-                                  const vn::graphics::DrawPacket&         draw,
-                                  const vn::graphics::PassDraw&                pass,
-                                  const std::span<const FrameHead::DrawPlan>   plans,
-                                  const FrameHead&                             head,
-                                  ShadowSource                                 shadow,
-                                  ContentRefusal* const                        refusal)
+ContentDraw::DrawScope ContentDraw::DrawScope::forPass(const VkCommandBuffer         commands,
+                                                      const VkExtent2D              extent,
+                                                      const FrameHead&              head,
+                                                      const ShadowSource            shadow,
+                                                      const vn::graphics::PassDraw& pass) noexcept
+{
+    DrawScope scope;
+    scope.commands = commands;
+    scope.head     = &head;
+    scope.shadow   = shadow;
+    // THE PASS' RECTANGLE, OR THE WHOLE TARGET (a pass without a viewport draws all of it) - computed ONCE for the
+    // pass instead of once per draw (see the header: it is a pass fact, `T54`).
+    if (pass.viewport.has_value() && pass.viewport->isValid()) {
+        scope.viewport.x      = static_cast<float>(pass.viewport->x);
+        scope.viewport.y      = static_cast<float>(pass.viewport->y);
+        scope.viewport.width  = static_cast<float>(pass.viewport->width);
+        scope.viewport.height = static_cast<float>(pass.viewport->height);
+        scope.scissor.offset  = VkOffset2D{ pass.viewport->x, pass.viewport->y };
+        scope.scissor.extent  = VkExtent2D{ static_cast<std::uint32_t>(pass.viewport->width), static_cast<std::uint32_t>(pass.viewport->height) };
+    }
+    else {
+        scope.viewport.x      = 0.0F;
+        scope.viewport.y      = 0.0F;
+        scope.viewport.width  = static_cast<float>(extent.width);
+        scope.viewport.height = static_cast<float>(extent.height);
+        scope.scissor.offset  = VkOffset2D{ 0, 0 };
+        scope.scissor.extent  = extent;
+    }
+    scope.viewport.minDepth = 0.0F;
+    scope.viewport.maxDepth = 1.0F;
+    if (pass.depth_range.has_value() && pass.depth_range->isValid()) {
+        // The pass' depth BAND: min is the far end, max the near end (see DepthRange), which is exactly Vulkan's
+        // minDepth/maxDepth pair under reverse-Z.
+        const std::pair<float, float> depth = StateMapping::viewportDepth(pass.depth_range);
+        scope.viewport.minDepth            = depth.first;
+        scope.viewport.maxDepth            = depth.second;
+    }
+    return scope;
+}
+
+void ContentDraw::record(const DrawScope&                         scope,
+                         const vn::graphics::DrawPacket&          draw,
+                         const std::span<const FrameHead::DrawPlan> plans,
+                         ContentRefusal* const                    refusal)
 {
     ContentRefusal  local;
     ContentRefusal& out = refusal != nullptr ? *refusal : local;
     out.clear();
 
-    if (!caches.ready() || !scratch.ready() || draw.commands == nullptr) {
-        return 0;
+    if (!caches.ready() || !scratch.ready() || scope.head == nullptr || scope.commands == VK_NULL_HANDLE || draw.commands == nullptr) {
+        return;
     }
     // NO CAMERA MEANS NO DRAW (see DrawPacket::camera): the pass issues nothing, and that is not a failure.
     if (!draw.view.camera.present) {
-        return 0;
+        return;
     }
     if (draw.kind != vn::graphics::DrawKind::Scene) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::WrongPath),
                    vn::String(u8"vk: a full-screen draw reached the content path (it has its own recordFullscreen)"));
-        return 0;
+        return;
     }
     // ONE PLAN PER COMMAND IS THE FRAME HEAD'S CONTRACT (see FrameHead::DrawPlan): a caller that resolved only
     // some of them would record a draw nobody resolved, so this call refuses rather than guessing.
@@ -361,50 +397,26 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::PlanMissing),
                    vn::String(u8"vk: the frame head did not resolve every command of this draw packet"));
-        return 0;
+        return;
     }
     // THE 1x1 WHITE STAND-IN was made at the frame head (see ContentCaches::resolveTextures), outside the render
     // pass - the only place its copy is legal. A frame without one binds nothing, so it records nothing.
     if (draw.commands->empty()) {
-        return 0; // nothing named, nothing drawn (not a refusal: the call is simply empty)
+        return; // nothing named, nothing drawn (not a refusal: the call is simply empty)
     }
-    if (head.fallback_view == VK_NULL_HANDLE) {
+    if (scope.head->fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::StandInMissing),
                    vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
-        return 0;
+        return;
     }
 
-    // The rectangle the pass states, or the whole target (a pass without a viewport draws all of it).
-    VkViewport viewport{};
-    VkRect2D   scissor{};
-    if (pass.viewport.has_value() && pass.viewport->isValid()) {
-        viewport.x        = static_cast<float>(pass.viewport->x);
-        viewport.y        = static_cast<float>(pass.viewport->y);
-        viewport.width    = static_cast<float>(pass.viewport->width);
-        viewport.height   = static_cast<float>(pass.viewport->height);
-        scissor.offset    = VkOffset2D{ pass.viewport->x, pass.viewport->y };
-        scissor.extent    = VkExtent2D{ static_cast<std::uint32_t>(pass.viewport->width), static_cast<std::uint32_t>(pass.viewport->height) };
-    }
-    else {
-        viewport.x      = 0.0F;
-        viewport.y      = 0.0F;
-        viewport.width  = static_cast<float>(width);
-        viewport.height = static_cast<float>(height);
-        scissor.offset  = VkOffset2D{ 0, 0 };
-        scissor.extent  = VkExtent2D{ static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) };
-    }
-    viewport.minDepth = 0.0F;
-    viewport.maxDepth = 1.0F;
-    if (pass.depth_range.has_value() && pass.depth_range->isValid()) {
-        // The pass' depth BAND: min is the far end, max the near end (see DepthRange), which is exactly Vulkan's
-        // minDepth/maxDepth pair under reverse-Z.
-        const std::pair<float, float> depth = StateMapping::viewportDepth(pass.depth_range);
-        viewport.minDepth                  = depth.first;
-        viewport.maxDepth                  = depth.second;
-    }
-
-    std::uint64_t recorded       = 0;
+    // THE PASS' RECTANGLE comes with the scope (see DrawScope::forPass): it is a pass fact, resolved once.
+    const VkCommandBuffer commands = scope.commands;
+    const FrameHead&      head     = *scope.head;
+    const ShadowSource    shadow   = scope.shadow;
+    const VkViewport&     viewport = scope.viewport;
+    const VkRect2D&       scissor  = scope.scissor;
 
     const auto refuse = [&out](vn::graphics::DiagnosticCategory kind, const char8_t* const code, vn::String text) {
         out.refuse(kind, code, std::move(text));
@@ -413,7 +425,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     for (std::size_t command_index = 0; command_index < draw.commands->size(); ++command_index) {
         const vn::graphics::DrawItem& command = (*draw.commands)[command_index];
         const FrameHead::DrawPlan&         plan    = plans[command_index];
-        // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planDraw): the
+        // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planCommand): the
         // draw packet's refusal carries that reason, and a later command still records.
         if (plan.pipeline == VK_NULL_HANDLE) {
             continue;
@@ -543,11 +555,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         if (plan.index_buffer != VK_NULL_HANDLE) {
             caches.table().vkCmdBindIndexBuffer(commands, plan.index_buffer, 0U, VK_INDEX_TYPE_UINT32);
             caches.table().vkCmdDrawIndexed(commands, plan.index_count, instance_count, 0U, 0, first_instance);
-            ++recorded;
         }
         else if (plan.vertex_count > 0U) {
             caches.table().vkCmdDraw(commands, plan.vertex_count, instance_count, 0U, first_instance);
-            ++recorded;
         }
         else {
             refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
@@ -555,71 +565,51 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
                    vn::String(u8"vk: a draw named neither an index stream nor vertices"));
         }
     }
-    return recorded;
 }
 
-std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                            commands,
-                                        int                                        width,
-                                        int                                        height,
-                                        const vn::graphics::DrawPacket&       draw,
-                                        const vn::graphics::PassDraw&              pass,
-                                        const FrameHead::DrawPlan&                 plan,
-                                        const FrameHead&                           head,
-                                        ScreenSource                               source,
-                                        ShadowSource                               shadow,
-                                        ContentRefusal* const                      refusal)
+void ContentDraw::recordFullscreen(const DrawScope&                        scope,
+                                   const vn::graphics::DrawPacket&         draw,
+                                   const FrameHead::DrawPlan&                plan,
+                                   const ScreenSource                        source,
+                                   ContentRefusal* const                     refusal)
 {
     ContentRefusal  local;
     ContentRefusal& out = refusal != nullptr ? *refusal : local;
     out.clear();
 
-    if (!caches.ready() || !scratch.ready() || commands == VK_NULL_HANDLE) {
-        return 0;
+    if (!caches.ready() || !scratch.ready() || scope.head == nullptr || scope.commands == VK_NULL_HANDLE) {
+        return;
     }
     // The same contract a content draw follows: no camera names no picture.
     if (!draw.view.camera.present) {
-        return 0;
+        return;
     }
     if (source.views.empty()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::ScreenNoSource),
                    vn::String(u8"vk: a full-screen draw named no source target, so there is nothing to sample"));
-        return 0;
+        return;
     }
-    if (head.fallback_view == VK_NULL_HANDLE) {
+    if (scope.head->fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::StandInMissing),
                    vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
-        return 0;
+        return;
     }
     // THE HEAD'S REFUSAL IS THE DRAW'S REFUSAL: a plan without a pipeline was already reported by the frame loop.
     if (plan.pipeline == VK_NULL_HANDLE) {
-        return 0;
+        return;
     }
     const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
     const VkPipeline                          pipeline = plan.pipeline;
 
-    // The rectangle the pass states, or the whole destination (a pass without a viewport draws all of it).
-    VkViewport viewport{};
-    VkRect2D   scissor{};
-    if (pass.viewport.has_value() && pass.viewport->isValid()) {
-        viewport.x      = static_cast<float>(pass.viewport->x);
-        viewport.y      = static_cast<float>(pass.viewport->y);
-        viewport.width  = static_cast<float>(pass.viewport->width);
-        viewport.height = static_cast<float>(pass.viewport->height);
-        scissor.offset  = VkOffset2D{ pass.viewport->x, pass.viewport->y };
-        scissor.extent  = VkExtent2D{ static_cast<std::uint32_t>(pass.viewport->width), static_cast<std::uint32_t>(pass.viewport->height) };
-    }
-    else {
-        viewport.x      = 0.0F;
-        viewport.y      = 0.0F;
-        viewport.width  = static_cast<float>(width);
-        viewport.height = static_cast<float>(height);
-        scissor.offset  = VkOffset2D{ 0, 0 };
-        scissor.extent  = VkExtent2D{ static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) };
-    }
-    viewport.minDepth = 0.0F;
-    viewport.maxDepth = 1.0F;
+    // THE SCOPE'S FACTS, NAMED ONCE (see DrawScope): the same command buffer, head, map and rectangle for every call
+    // of the pass - the rectangle included, because it is a PASS fact.
+    const VkCommandBuffer commands = scope.commands;
+    const FrameHead&      head     = *scope.head;
+    const ShadowSource    shadow   = scope.shadow;
+    const VkViewport&     viewport = scope.viewport;
+    const VkRect2D&       scissor  = scope.scissor;
 
     // THE SLOTS: binding N is the source's attachment N; a binding past the source's count reads the fallback (a
     // screen program only declares the bindings its own ABI states, so nothing reads them).
@@ -651,7 +641,7 @@ std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                     
                    contentRefusalCode(ContentRefusalCause::UniformRingFull),
                    vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the "
                               u8"next frame"));
-        return 0;
+        return;
     }
     writeSlice(slice, vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block);
 
@@ -662,7 +652,7 @@ std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                     
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::DescriptorSetMissing),
                    vn::String(u8"vk: the descriptor cache could not hand out a set"));
-        return 0;
+        return;
     }
 
     bindPipeline(commands, pipeline);
@@ -682,7 +672,6 @@ std::uint64_t ContentDraw::recordFullscreen(VkCommandBuffer                     
                                          offsets);
     // The full-screen triangle: three vertices generated from gl_VertexIndex, no buffer, no index stream.
     caches.table().vkCmdDraw(commands, 3U, 1U, 0U, 0U);
-    return 1;
 }
 
 VN_BACKEND_VK_NS_END

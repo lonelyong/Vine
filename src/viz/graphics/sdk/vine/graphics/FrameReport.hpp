@@ -117,6 +117,9 @@ struct VN_GRAPHICS_API FrameUploads {
  *   ENDED, like FrameCounters - never a running average.
  * - ABSENT IS NOT ZERO: a backend that keeps no device clock leaves `FrameReport::timing` disengaged rather than
  *   answering 0, which would read as a frame that took no time at all (the rule FrameReport states for every part).
+ *   **A backend may also SAMPLE**: one that pays for timestamps only every Nth frame leaves the part disengaged on the
+ *   frames it did not measure, so a host reads `timing` as "this frame was measured" and takes an average over the
+ *   frames that answer, never as "the device has no clock" - the per-pass rows below come and go with it.
  */
 /**
  * @brief What ONE pass cost on the device (see FrameTiming::passes).

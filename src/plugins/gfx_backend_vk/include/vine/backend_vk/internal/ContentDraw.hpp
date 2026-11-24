@@ -101,6 +101,44 @@ class VN_BACKEND_VK_API ContentDraw final {
         const void*     light{ nullptr };             // Whose map it is (a `Light`'s identity; nullptr = not a map).
     };
 
+    /**
+     * @brief WHAT ONE PASS RECORDS WITH: its command buffer, its rectangle, the frame's head and the shadow it resolved.
+     *
+     * @details
+     * - ONE VALUE FOR THE PASS-VARYING FACTS (`G1` / `G4`). Every call of a pass shares the command buffer, the pass'
+     *   rectangle and the frame head, and every call of the pass samples the same map - so those are stated once per
+     *   pass instead of in every draw call's argument list (which used to be nine arguments, four of them the same
+     *   value for the whole pass).
+     * - THE RECTANGLE IS A PASS FACT AND IS COMPUTED ONCE (`T54`): the viewport is the pass' own rectangle or the whole
+     *   target, its depth band comes from `DepthRange` under reverse-Z, and the scissor is the same rectangle. The
+     *   recorder states them only when they differ from what the command buffer already holds (see RecordedState).
+     * - IT IS A VALUE, NOT AN OWNER: the head and the command buffer are borrowed for the pass; `forPass` copies what
+     *   it needs and writes nothing.
+     */
+    struct DrawScope {
+        VkCommandBuffer  commands{ VK_NULL_HANDLE }; ///< The command buffer being recorded (inside the rendering instance).
+        const FrameHead* head{ nullptr };            ///< The frame's head (stand-in and shadow sampler).
+        ShadowSource     shadow{};                   ///< The map this pass samples, or an empty one.
+        VkViewport       viewport{};                 ///< The pass' rectangle, translated for Vulkan.
+        VkRect2D         scissor{};                  ///< The same rectangle, as a scissor.
+
+        /**
+         * @brief Builds the scope of one pass: the rectangle from @p pass (or the whole of @p extent) and the rest as given.
+         *
+         * @param commands The command buffer the pass is being recorded into.
+         * @param extent   The attachment set's extent (the whole-rectangle fallback).
+         * @param head     The frame's head (borrowed for the pass).
+         * @param shadow   The shadow map the pass resolved (see ShadowSource), or an empty one.
+         * @param pass     The pass being recorded (its viewport and depth band are read).
+         * @return The scope, with the viewport and the scissor already resolved.
+         */
+        [[nodiscard]] static DrawScope forPass(VkCommandBuffer               commands,
+                                              VkExtent2D                    extent,
+                                              const FrameHead&              head,
+                                              ShadowSource                  shadow,
+                                              const vn::graphics::PassDraw& pass) noexcept;
+    };
+
   public:
     /**
      * @brief Builds a recorder over the device's caches and one frame driver's scratch.
@@ -158,27 +196,16 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - THE CONSTANTS GO INTO THE DRIVER'S RING (see FrameScratch): one slice per call, bound as dynamic offsets, and
      *   a full ring skips the draw and grows before the next frame rather than growing in place.
      *
-     * @param commands        The command buffer being recorded (inside a rendering instance).
-     * @param width           The target's width in pixels.
-     * @param height          The target's height in pixels.
-     * @param draw            The draw to record (borrowed for the call).
-     * @param pass            The pass drawing it (its override, state and viewport are read; borrowed).
-     * @param plans           One resolved plan per command of @p draw, from the frame head (same order).
-     * @param head            The frame's head: the stand-in view/sampler and the shadow sampler every call reads.
-     * @param shadow          The shadow map this pass samples (see ShadowSource), or an empty one for none.
-     * @param refusal         Receives the first reason a command was skipped (cleared on entry; empty when every
-     *                        command was recorded), or null.
-     * @return How many draw packets were recorded.
+     * @param scope   The pass' recording scope (see DrawScope): command buffer, rectangle, head and shadow.
+     * @param draw    The draw to record (borrowed for the call).
+     * @param plans   One resolved plan per command of @p draw, from the frame head (same order).
+     * @param refusal Receives the first reason a command was skipped (cleared on entry; empty when every
+     *                command was recorded), or null.
      */
-    std::uint64_t record(VkCommandBuffer                           commands,
-                         int                                       width,
-                         int                                       height,
-                         const vn::graphics::DrawPacket&      draw,
-                         const vn::graphics::PassDraw&             pass,
-                         std::span<const FrameHead::DrawPlan>      plans,
-                         const FrameHead&                          head,
-                         ShadowSource                              shadow,
-                         ContentRefusal*                           refusal = nullptr);
+    void record(const DrawScope&                         scope,
+                const vn::graphics::DrawPacket&          draw,
+                std::span<const FrameHead::DrawPlan>      plans,
+                ContentRefusal*                           refusal = nullptr);
 
     /**
      * @brief Records one SCREEN draw description: a full-screen triangle sampling @p source.
@@ -198,28 +225,17 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - The source's images must already be in `SHADER_READ_ONLY_OPTIMAL`: the device records that transition before
      *   the destination's rendering instance begins, where an image barrier is unambiguously allowed.
      *
-     * @param commands          The command buffer being recorded (inside the destination's rendering instance).
-     * @param width             The destination's width in pixels.
-     * @param height            The destination's height in pixels.
-     * @param draw              The full-screen draw (its fragment program and camera are read; borrowed).
-     * @param pass              The pass drawing it (state and viewport; borrowed).
-     * @param plan              The resolved program and state, from the frame head.
-     * @param head              The frame's head: the fallback view/sampler and the shadow sampler.
-     * @param source            The source target's views (see ScreenSource), in attachment order.
-     * @param shadow            The map this pass resolved (see ShadowSource), or an empty one for none.
-     * @param refusal           Receives the reason when the draw was skipped (cleared on entry), or null.
-     * @return 1 when the full-screen draw was recorded, 0 otherwise.
+     * @param scope   The pass' recording scope (see DrawScope): command buffer, rectangle, head and shadow.
+     * @param draw    The full-screen draw (its fragment program and camera are read; borrowed).
+     * @param plan    The resolved program and state, from the frame head.
+     * @param source  The source target's views (see ScreenSource), in attachment order.
+     * @param refusal Receives the reason when the draw was skipped (cleared on entry), or null.
      */
-    std::uint64_t recordFullscreen(VkCommandBuffer                               commands,
-                               int                                           width,
-                               int                                           height,
-                               const vn::graphics::DrawPacket&          draw,
-                               const vn::graphics::PassDraw&                 pass,
-                               const FrameHead::DrawPlan&                    plan,
-                               const FrameHead&                              head,
-                               ScreenSource                                  source,
-                               ShadowSource                                  shadow,
-                               ContentRefusal*                               refusal = nullptr);
+    void recordFullscreen(const DrawScope&                        scope,
+                          const vn::graphics::DrawPacket&         draw,
+                          const FrameHead::DrawPlan&                plan,
+                          ScreenSource                              source,
+                          ContentRefusal*                           refusal = nullptr);
 
   private:
     /**

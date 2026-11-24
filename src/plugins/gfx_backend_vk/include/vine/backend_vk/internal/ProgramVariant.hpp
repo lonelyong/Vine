@@ -35,7 +35,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   - `VN_INSTANCED` - the draw packet reads an instance stream (locations 12-15), which is a fact of the COMMAND.
  * - WHERE IT LIVES. In the program cache's key (a variant is one compile of the text), in the pipeline key (the
  *   rendered result differs), and in the draw: `variantOf` is the one place those bits are derived, so a warm-up and
- *   the frame that follows it cannot disagree about what to build (see ContentCaches' `planDraw`).
+ *   the frame that follows it cannot disagree about what to build (see ContentCaches' `planCommand`).
  */
 struct VN_BACKEND_VK_API ProgramVariant {
     bool textured{ false };      // `VN_TEXTURED`: the material carries at least one texture slot.

@@ -1,6 +1,8 @@
 #include <vine/backend_vk/internal/DynamicRendering.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 
@@ -41,6 +43,41 @@ namespace
 }
 
 } // namespace
+
+PassLoad decidePassLoad(const bool                            preserve_previous,
+                        const vn::graphics::ClearPolicy* const clear,
+                        const std::span<VkClearValue>          color_clears,
+                        const std::size_t                      color_count) noexcept
+{
+    // ONE RULE, TWO CALLERS (see the header): a pass LOADs an attachment when the set already holds a picture worth
+    // keeping and the pass does not ask to reset that attachment. `ClearPolicy`'s two dimensions are independent.
+    const bool clear_color = clear == nullptr || clear->clear_color;
+    const bool clear_depth = clear == nullptr || clear->clear_depth;
+
+    PassLoad load{};
+    load.load_color  = preserve_previous && !clear_color ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear;
+    load.load_depth  = preserve_previous && !clear_depth ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear;
+    load.store_color = vn::graphics::StoreOp::Store;
+    load.store_depth = vn::graphics::StoreOp::Store;
+
+    // THE CLEAR VALUES, in output-location order (see the header): attachment 0 takes the policy's colour and 1..N-1
+    // its extra colours, an absent entry being transparent black; a value beside a `Load` is never read.
+    const std::size_t filled = std::min(color_count, color_clears.size());
+    if (filled != 0U) {
+        const Colorf colour = clear != nullptr ? clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        color_clears[0].color = { { colour.r, colour.g, colour.b, colour.a } };
+        for (std::size_t index = 1; index < filled; ++index) {
+            const Colorf extra = clear != nullptr && index - 1U < clear->extra_colors.size()
+                                     ? clear->extra_colors[index - 1U]
+                                     : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+            color_clears[index].color = { { extra.r, extra.g, extra.b, extra.a } };
+        }
+    }
+    load.color_clears = color_clears.first(filled);
+    // Reverse-Z: this camera convention's far plane is 0, and the policy states WHETHER, never to what.
+    load.depth.depthStencil = { 0.0F, 0U };
+    return load;
+}
 
 void beginRendering(const VolkDeviceTable& table,
                     const VkCommandBuffer  commands,

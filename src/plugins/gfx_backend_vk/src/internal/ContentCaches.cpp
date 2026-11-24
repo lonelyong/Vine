@@ -101,7 +101,7 @@ struct ContentCaches::Impl {
      *   (`depth_sampleable`, `sampled_color_count`, `sampled_depth_count`): it builds one set layout for content and
      *   one for the full-screen ABI, so those counts cannot split an identity.
      * - THE VERTEX LAYOUT IS `identity.vertex_layout` AND NOTHING ELSE: one slot per declared attribute, IN THE
-     *   ORDER `planDraw` hands the streams to `vkCmdBindVertexBuffers` (binding N is slot N).
+     *   ORDER `planCommand` hands the streams to `vkCmdBindVertexBuffers` (binding N is slot N).
      */
     struct ContentPipelineKey {
         vn::graphics::PipelineKey identity{};
@@ -1018,7 +1018,7 @@ struct ContentCaches::Impl {
     /**
      * @brief Resolves one scene command's program, streams and pipeline (building each on a miss).
      *
-     * @param command           The draw packet to resolve.
+     * @param command           The command to resolve.
      * @param pass              The pass drawing it (its program override and state are read).
      * @param default_program   The program content without one of its own is drawn with, or null.
      * @param compatibility     The target's pipeline compatibility (the attachment formats AND colour count).
@@ -1027,13 +1027,13 @@ struct ContentCaches::Impl {
      * @param builds            This frame's admissions (see FrameBuilds).
      * @return true when the command can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawItem&                     command,
-                                const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::ShaderProgramDescription*          default_program,
-                                const vn::graphics::RenderPassCompatibility&  compatibility,
-                                FrameHead::DrawPlan&                                   plan,
-                                ContentRefusal&                                        refusal,
-                                FrameBuilds&                                           builds)
+    [[nodiscard]] bool planCommand(const vn::graphics::DrawItem&                  command,
+                                   const vn::graphics::PassDraw&                       pass,
+                                   const vn::graphics::ShaderProgramDescription*       default_program,
+                                   const vn::graphics::RenderPassCompatibility& compatibility,
+                                   FrameHead::DrawPlan&                                plan,
+                                   ContentRefusal&                                     refusal,
+                                   FrameBuilds&                                        builds)
     {
         // A FAILURE LEAVES AN EMPTY PLAN (`pipeline == VK_NULL_HANDLE` is what the recorder skips) - via `clear()`, NOT
         // a fresh DrawPlan: the plan's stream vector lives in the frame head's reused storage, and assigning over it
@@ -1139,7 +1139,7 @@ struct ContentCaches::Impl {
     }
 
     /**
-     * @brief Resolves one full-screen draw's fragment program and pipeline (see @ref planDraw for the shared idea).
+     * @brief Resolves one full-screen draw's fragment program and pipeline (see @ref planCommand for the shared idea).
      *
      * @param draw              The full-screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
@@ -1148,13 +1148,13 @@ struct ContentCaches::Impl {
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planDraw(const vn::graphics::DrawPacket&                  draw,
-                                const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::RenderPassCompatibility&  compatibility,
-                                FrameHead::DrawPlan&                                   plan,
-                                ContentRefusal&                                        refusal)
+    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&                draw,
+                                  const vn::graphics::PassDraw&                      pass,
+                                  const vn::graphics::RenderPassCompatibility& compatibility,
+                                  FrameHead::DrawPlan&                               plan,
+                                  ContentRefusal&                                    refusal)
     {
-        plan      = FrameHead::DrawPlan{}; // see planDraw(DrawItem): an empty plan is "this draw records nothing"
+        plan      = FrameHead::DrawPlan{}; // see planCommand(DrawItem): an empty plan is "this draw records nothing"
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
         if (fragment_description == nullptr && draw.program != nullptr) {
@@ -1664,28 +1664,28 @@ VkPipelineLayout ContentCaches::screenPipelineLayout() const noexcept
     return impl->screen_pipeline_layout;
 }
 
-bool ContentCaches::planDraw(const vn::graphics::DrawItem&                     command,
-                             const vn::graphics::PassDraw&                          pass,
-                             const vn::graphics::ShaderProgramDescription*          default_program,
-                             const vn::graphics::RenderPassCompatibility&  compatibility,
-                             FrameHead::DrawPlan&                                   plan,
-                             ContentRefusal&                                        refusal,
-                             const Lock&                                            held,
-                             FrameBuilds&                                           builds)
+bool ContentCaches::planCommand(const vn::graphics::DrawItem&                  command,
+                                  const vn::graphics::PassDraw&                       pass,
+                                  const vn::graphics::ShaderProgramDescription*       default_program,
+                                  const vn::graphics::RenderPassCompatibility& compatibility,
+                                  FrameHead::DrawPlan&                                plan,
+                                  ContentRefusal&                                     refusal,
+                                  const Lock&                                         held,
+                                  FrameBuilds&                                        builds)
 {
     (void)held; // the type is the proof; an unheld lock cannot be built outside this class (see Lock)
-    return impl->planDraw(command, pass, default_program, compatibility, plan, refusal, builds);
+    return impl->planCommand(command, pass, default_program, compatibility, plan, refusal, builds);
 }
 
-bool ContentCaches::planDraw(const vn::graphics::DrawPacket&                  draw,
-                             const vn::graphics::PassDraw&                          pass,
-                             const vn::graphics::RenderPassCompatibility&  compatibility,
-                             FrameHead::DrawPlan&                                   plan,
-                             ContentRefusal&                                        refusal,
-                             const Lock&                                            held)
+bool ContentCaches::planScreen(const vn::graphics::DrawPacket&                draw,
+                                 const vn::graphics::PassDraw&                      pass,
+                                 const vn::graphics::RenderPassCompatibility& compatibility,
+                                 FrameHead::DrawPlan&                               plan,
+                                 ContentRefusal&                                    refusal,
+                                 const Lock&                                        held)
 {
-    (void)held; // see the content overload
-    return impl->planDraw(draw, pass, compatibility, plan, refusal);
+    (void)held; // see planCommand
+    return impl->planScreen(draw, pass, compatibility, plan, refusal);
 }
 
 ContentCaches::Lock ContentCaches::lock() const
@@ -1807,12 +1807,6 @@ bool ContentCaches::hasPendingUploads(const ContentImages::BatchId batch) const
 {
     const Lock held = lock();
     return impl->images.hasPendingUploads(batch);
-}
-
-void ContentCaches::releaseUploadStaging(const ContentImages::BatchId batch) noexcept
-{
-    const Lock held = lock();
-    impl->images.releaseUploadStaging(batch);
 }
 
 bool ContentCaches::releaseTexture(const vn::graphics::Texture& texture)
@@ -1970,43 +1964,6 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     return dropped;
 }
 
-void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawPacket> draws, const Lock& held)
-{
-    (void)held; // see Lock: the caller's hold is the precondition
-    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
-        return;
-    }
-    vn::String why;
-    if (!impl->images.ensureFallback(commands, 0, &why)) {
-        return; // reported when a draw finds no fallback view
-    }
-    for (const vn::graphics::DrawPacket& draw : draws) {
-        if (draw.kind != vn::graphics::DrawKind::Scene || draw.commands == nullptr) {
-            continue;
-        }
-        for (const vn::graphics::DrawItem& command : *draw.commands) {
-            vn::graphics::MaterialDescriptionPtr description = command.material_description;
-            if (description == nullptr && command.material != nullptr) {
-                description = command.material->description();
-            }
-            if (description == nullptr) {
-                continue;
-            }
-            for (const vn::graphics::TextureSlotBinding& slot : description->values().textures) {
-                if (slot.texture != nullptr && slot.texture->isComplete()) {
-                    (void)impl->images.viewFor(*slot.texture, commands, 0, &why);
-                }
-            }
-        }
-    }
-}
-
-bool ContentCaches::ensureFallback(const VkCommandBuffer commands, const Lock& held, vn::String* const why, const ContentImages::BatchId batch)
-{
-    (void)held;
-    return impl->images.ensureFallback(commands, batch, why);
-}
-
 void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* const material,
                                     const VkCommandBuffer                          commands,
                                     FrameHead&                                     head,
@@ -2018,7 +1975,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
     (void)held;
     plan.slots = {};
     // THE STAND-IN FIRST: it is what an absent slot binds, and its own copy has to be recorded before any rendering
-    // begins - which is where this runs (the frame head, or a warm-up's transfer batch for preparePass). The stand-in
+    // begins - which is where this runs (the frame head, or a warm-up's transfer batch). The stand-in
     // and the two samplers are the same for every call of one frame, so they land on the HEAD, not on the plan.
     vn::String why;
     if (commands != VK_NULL_HANDLE) {
@@ -2060,11 +2017,18 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
     }
 }
 
-void ContentCaches::endFrame(const ContentImages::BatchId batch) noexcept
+void ContentCaches::endFrame(const ContentImages::BatchId batch, const bool completed) noexcept
 {
     const Lock held = lock();
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
-        impl->images.releaseFrame(batch);
+        // TWO OUTCOMES, ONE PLACE THEY MEET (see the header): a batch whose fence was waited on publishes what it
+        // copied, a batch that never reached the queue publishes nothing.
+        if (completed) {
+            impl->images.batchCompleted(batch);
+        }
+        else {
+            impl->images.batchAbandoned(batch);
+        }
     }
 }
 

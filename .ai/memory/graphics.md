@@ -2207,3 +2207,40 @@
 - **Measured**: `test_vk` **196 cases / 44 suites**, `test_graphics` **642 / 82**. Mutations: one dependency per barrier
   turns `APassEntryIsOneDependencyWhateverItWrites` red; always re-stating the viewport turns
   `ARepeatedStateIsNotARepeatedCommand` red (13 vs 12 state commands); reverting the clock stage turns the value pin red.
+
+## 2026-11-24 — the fourth pass: residency waits for the fence, and the frame has one walker
+
+- **A texture is resident when its fill is PROVEN** (`T66`, closed): `ContentImages` keeps a recorded copy PENDING in the
+  batch that recorded it and promotes it in `batchCompleted`, which is called exactly where the fence was waited;
+  `batchAbandoned` parks it instead, so the last proven revision stays. The second half nobody had written down:
+  another driver's frame head used to find the entry before its copy was even submitted. `Progress::pending` /
+  `pending_bytes` say what is recorded and not proven, and they are deliberately NOT part of `live`.
+  A batch is a DRIVER (a frame and its warm-up share one command buffer and one fence), so `endFrame(batch, completed)`
+  replaced both `releaseFrame` and `releaseUploadStaging` - and a warm-up's replaced revisions are now parked instead of
+  sitting in a batch nobody closed.
+- **The 1x1 stand-in is a SHARED CONSTANT, not an asset**: a frame that finds it mid-fill binds it rather than refusing
+  every draw that needs it (the first attempt - per-batch visibility - turned the two-driver race case black). Its
+  failure is not shared: a batch that never ran drops it, so a black stand-in cannot outlive the frame that failed.
+- **ONE WALKER for both frame verbs**: `FrameDriver::claimPasses` (Record / Prepare) is the one place "which passes can
+  this device run, and which claims does each take"; the warm-up's copy had already lost the depth LENDER, a full-screen
+  source and a declared input. `resolveFrameHead` is the one resolution, which deleted `ContentCaches::preparePass`
+  (the warm-up now records the same uploads a frame would, and the frame finds them resident).
+- **A pass' attachment set is a value** (`PassTarget`): extent, compatibility, `holdsPicture()`, `begin` / `end` /
+  `rewind` over an off-screen set or the window's acquired image - the four `if (window) A else B` pairs in the frame
+  body are gone. The load rule moved to `DynamicRendering::decidePassLoad(...)`: it was the same expression written
+  twice, with only "does the attachment already hold a picture" differing. The pass' rectangle moved to
+  `ContentDraw::DrawScope` (computed once per pass, not once per draw).
+- **The frame is one value** (`FrameRecording`) and the command buffer is the driver's: the frame body's dozen locals
+  became one value with capacity kept, and `record` / `recordFullscreen` lost four arguments each (nine to five, ten to
+  six) and answer nothing now (nobody read the count).
+- **Smaller**: `surfaces_mutex` deleted (the body gate is the protection - `prepareFrame` proved it by reading the list
+  without it), `lent_depths` is a small vector (an `unordered_set` allocated a node per entry in the path that promises
+  "a steady frame allocates nothing"), `planDraw` split back into `planCommand` / `planScreen`, and the test door
+  `Device::refuseNextSubmit()` makes the failed-submission classes reachable.
+- **Measured**: `test_vk` **197 cases / 44 suites**, `test_graphics` **642 / 82**. The new case
+  `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` goes red when `viewFor`
+  publishes at record time (verified by mutation), and it also pins P17's rewind: a refused frame leaves the target's
+  record `Undefined`, so the readback answers `NotReady`.
+- **Trap**: `endFrame`'s batch id must be the DRIVER's (`uploadBatch()`), not a hard-coded 0. The warm-up and the frame
+  record the same batch, and a mismatched id means `hasPendingUploads(0)` answers false, so the batch is never submitted
+  (measured: a prepared texture samples black).
