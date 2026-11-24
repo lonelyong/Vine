@@ -8370,14 +8370,19 @@ TEST(PluginLifecycleTest, RescanFindsANewRegistrationWithoutALoad)
 
     BuiltInPluginDirectoryScope hidden(std::filesystem::temp_directory_path() / "vn_plugin_rescan_empty");
 
+    // findPluginEntry() 返回的是指向容器内部的指针，所以快照必须先落到具名变量上：
+    // 直接把 pm->pluginEntries() 传给它是把指针指进一个临时 vector，整条表达式结束就悬垂，
+    // 之后读到的 entry->loaded 是堆上的残留字节（Debug 堆填空是 0xDD，于是恒为 true）。
     pm->rescan();
-    EXPECT_EQ(findPluginEntry(pm->pluginEntries(), u8"test_plugin"), nullptr) << "还没登记的位置不该被发现";
+    const auto first_scan = pm->pluginEntries();
+    EXPECT_EQ(findPluginEntry(first_scan, u8"test_plugin"), nullptr) << "还没登记的位置不该被发现";
 
     const vn::String id = pm->installPlugin(vn::String(dir.u8string()), vn::appfw::PluginScope::User);
     ASSERT_FALSE(id.empty());
 
     pm->rescan();
-    const auto* entry = findPluginEntry(pm->pluginEntries(), u8"test_plugin");
+    const auto  refreshed = pm->pluginEntries();
+    const auto* entry     = findPluginEntry(refreshed, u8"test_plugin");
     ASSERT_NE(entry, nullptr) << "重扫必须看到刚登记的插件，否则 Refresh 就是空按钮";
     EXPECT_FALSE(entry->loaded) << "重扫只发现，不加载";
 
