@@ -203,9 +203,11 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
   own attachment transitions (one barrier per attachment, from the layout its owner tracks to the rendering layout),
   and a barrier between two identical states is deliberate - it is the execution dependency a render pass used to
   provide. The trap, its VUID and the mutation that proves the transitions load-bearing are `vk-backend.md` `P15`.
-- What it bought: one load policy per attachment instead of a render-pass variant, so the HUD case (keep the picture,
-  clear only the depth inside its rectangle) and the MSAA resolve pair are values rather than structures - and the last
-  legacy creation call in the backend is gone.
+- What it bought: one load/store pair per attachment instead of a render-pass variant, so the HUD case (keep the
+  picture, clear only the depth inside its rectangle), the "clear one attachment, load another, discard a third" case
+  (2026-11-24: `ClearPolicy::color_ops` / `depth_op`, authored through `PassDesc`) and the MSAA resolve pair are values
+  rather than structures - and the last legacy creation call in the backend is gone. The backend resolves the one fact
+  the engine cannot know: a stated `Load` on a set with no picture becomes `Clear` (`decidePassLoad`).
 
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):

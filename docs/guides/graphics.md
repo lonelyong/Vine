@@ -1064,6 +1064,9 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
   （`Fullscreen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
 - **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序）。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
   法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
+- **每个附件可以各自 load / store**：`clear_enabled` / `clear_depth` 只回答“洗不洗”；要“这个附件保留、那个附件丢弃”就在
+  `PassDesc::color_ops` 里按附件顺序写 `AttachmentLoadStore{ load, store }`（深度用 `depth_op`）。没写到的附件仍按
+  `clear_enabled` / `clear_depth` 走；target 上没有旧内容时，写 `Load` 会被后端退化成 `Clear`（没有东西可留）。
 - **返回的是结点**：`applyPlan` 是唯一的注册入口；要拿已注册的执行结点按名字回读（`engine->pass(desc.name)`），
   于是"我声明了什么"与"我接下来要调什么"是同一个对象。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。

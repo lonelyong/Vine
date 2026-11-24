@@ -371,6 +371,52 @@ TEST(VkContentTargetTest, EveryColourAttachmentIsClearedAndWrittenOnItsOwn)
     backend->shutdown();
 }
 
+TEST(VkContentTargetTest, EachColourAttachmentLoadsOrClearsOnItsOwn)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    ASSERT_GE(backend->capabilities().limits.max_color_attachments, 3U) << "this case states three attachments";
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(3);
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(kMrFragment);
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
+
+    // FIRST FRAME: every attachment holds a distinct colour, so a later LOAD has something visible to keep.
+    ClearPolicy first;
+    first.color        = Colorf(0.25F, 0.5F, 0.75F, 1.0F);
+    first.extra_colors = { Colorf(0.1F, 0.2F, 0.3F, 1.0F), Colorf(0.4F, 0.5F, 0.6F, 1.0F) };
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), first, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped);
+
+    // SECOND FRAME: ONE pass, THREE answers - attachment 0 clears, attachment 1 keeps frame one's picture, attachment 2
+    // is discarded (see ClearPolicy::color_ops). A per-role pair could not express this.
+    ClearPolicy second;
+    second.color     = Colorf(1.0F, 0.0F, 1.0F, 1.0F);
+    second.color_ops = {
+        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Clear,    vn::graphics::StoreOp::Store    },
+        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Load,     vn::graphics::StoreOp::Store    },
+        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::DontCare, vn::graphics::StoreOp::DontCare }
+    };
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), second, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped);
+
+    // THE CORNER: the triangle never reaches it, so it shows only what the load/clear did. Attachment 0 is magenta;
+    // attachment 1 still holds frame one's own clear; attachment 2's contents are undefined and are not asserted.
+    std::vector<std::uint8_t> pixels;
+    ReadbackResult            why = ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "attachment 0 refused: " << static_cast<int>(why);
+    expectPixel(pixels, 64, 2, 2, { 255, 0, 255, 255 }, "attachment 0's own Clear");
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 1, pixels, &why)) << "attachment 1 refused: " << static_cast<int>(why);
+    expectPixel(pixels, 64, 2, 2, { byteOf(0.1F), byteOf(0.2F), byteOf(0.3F), 255 }, "attachment 1's Load of frame one");
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}
+
 TEST(VkContentTargetTest, AResizeKeepsThePipelinesAndAShapeChangeRebuildsThem)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
@@ -694,7 +740,10 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
     lender_clear.clear_depth = true;
     ClearPolicy borrower_clear;
     borrower_clear.color = Colorf(0.0F, 0.0F, 1.0F, 1.0F); // BLUE: what a REJECTED fragment leaves behind
-    borrower_clear.clear_depth = false;                          // it never clears the depth it borrows
+    // A BORROWER MAY NEITHER CLEAR NOR DISCARD THE LENDER'S IMAGE. The worst pair an author can state is the one that
+    // proves both overrides: if the load were honoured, the lender's depth would be gone and the fragment would win;
+    // if the store were honoured, the depth the lender still needs would be discarded.
+    borrower_clear.depth_op = vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::DontCare, vn::graphics::StoreOp::DontCare };
 
     const auto passOf = [](RenderTarget* target,
                            const ClearPolicy& clear,

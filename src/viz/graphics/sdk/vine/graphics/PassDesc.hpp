@@ -14,6 +14,7 @@
 #include "DepthPolicy.hpp"
 #include "DepthRange.hpp"
 #include "DrawKind.hpp"
+#include "DrawState.hpp"
 #include "ImageSource.hpp"
 #include "Output.hpp"
 #include "PassStage.hpp"
@@ -108,6 +109,13 @@ struct VN_GRAPHICS_API PassDesc {
     /// depth either unless it says so here. `clear_enabled = false` + `clear_depth = true` is therefore a DEPTH-ONLY
     /// clear, applied inside the pass' viewport (see ClearPolicy for what each target can express).
     std::optional<bool> clear_depth;
+    /// Per-attachment load/store for the colour attachments, in attachment order (see ClearPolicy::color_ops).
+    ///
+    /// EMPTY keeps the group spelling: @ref clear_enabled chooses Clear-or-Load and every attachment stores its
+    /// result. A pass that states one entry for attachment 1 overrides the group for that attachment only.
+    std::vector<AttachmentLoadStore> color_ops;
+    /// Per-attachment load/store for the depth attachment (see ClearPolicy::depth_op). Unset keeps @ref clear_depth.
+    std::optional<AttachmentLoadStore> depth_op;
 
     /// A sub-rectangle of the target to draw into (unset = the whole of it).
     std::optional<Viewport> viewport;

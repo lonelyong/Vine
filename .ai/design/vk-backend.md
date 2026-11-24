@@ -158,11 +158,13 @@ and every cache has a witness a test can read.**
   then `record = to`), which is the shape that shipped VUID 09588 and 09592: the barrier and the record drifted and the
   next pass stated a layout the image had never been in. A new mover calls one of those two verbs; a caller that needs a
   same-layout dependency (two passes into one attachment) is `beginRendering`'s job, not theirs.
-- **THE STORE IS DERIVED WHERE THE RESOLVE IS KNOWN**: `PassLoad` carries the seam's `LoadOp` / `StoreOp` (what every API
-  family has a spelling for), and `beginRendering` DOWNGRADES a resolved role to `DontCare` - a multisampled pass'
-  sample buffers, and a depth that resolves, are content nobody can read afterwards, so keeping them is bandwidth nobody
-  buys. The neutral ops are mapped by the table's `loadOpOf` / `storeOpOf`, which is what makes those two rows live
-  instead of a second conditional inside the recorder.
+- **LOAD AND STORE ARE PER ATTACHMENT, AND THE STORE IS DERIVED WHERE THE RESOLVE IS KNOWN**: `PassLoad` carries one
+  `PassAttachment` (the seam's `LoadOp` / `StoreOp` plus the clear value) for EACH colour attachment and one for depth,
+  and `beginRendering` DOWNGRADES a resolved role to `DontCare` - a multisampled pass' sample buffers, and a depth that
+  resolves, are content nobody can read afterwards, so keeping them is bandwidth nobody buys. `decidePassLoad` is the
+  one rule that turns `ClearPolicy` (the group flags, plus the per-attachment `color_ops` / `depth_op` an author states)
+  into those entries; the neutral ops are mapped by the table's `loadOpOf` / `storeOpOf`, which is what makes those two
+  rows live instead of a second conditional inside the recorder.
 - **A pass states four ROLES, not thirteen fields**: `PassAttachments` is `color` (the images rendering writes), `picture`
   (their resolve targets), `depth` and `depth_picture` (`DynamicRendering.hpp`). A role with one image is a `PassImage`
   value (image + view + its record), a role with one image per colour attachment is a `PassRole` of three parallel spans -
@@ -519,13 +521,14 @@ and every cache has a witness a test can read.**
 
 - **Behaviour**: `TargetObjects` holds the colour / sample buffer / depth / depth-resolve images and views, and the layout each
   one is in; a pass opens a **dynamic-rendering instance** over them (`beginPass` / `endPass`, and `DynamicRendering`), stating
-  ONE load answer per attachment - so the HUD case (keep the picture, own the depth inside its rectangle) is two fields of one
+  ONE load/store answer PER ATTACHMENT (`ClearPolicy::color_ops` / `depth_op`; a stated op overrides the group spelling) - so the HUD case (keep the picture, own the depth inside its rectangle) is two fields of one
   `VkRenderingAttachmentInfo` instead of a fourth render pass. The WINDOW owns the same pair (`WindowTarget::beginPass`), with
   a PER-IMAGE layout record: a swapchain image is `UNDEFINED` on its first use, `PRESENT_SRC_KHR` after it was presented, and
   the colour layout between two passes of one frame. An MSAA target draws into the sample buffers and resolves colour with
   `AVERAGE` and depth with `SAMPLE_ZERO` in the attachment info (`resolveMode` / `resolveImageView`, core 1.3 - no
   `vkCreateRenderPass2`); a depth-only target is a shadow map; a `shareDepth` target attaches the lender's depth picture and
-  ALWAYS loads it (`TargetObjects::beginPass` overrides the policy - another target's image may never be cleared), and its
+  ALWAYS loads AND stores it (`TargetObjects::beginPass` overrides both halves - another target's image may never be
+  cleared or discarded), and its
   barrier is recorded against that LENDER's image as a same-layout barrier: the dependency, not a transition. The borrow
   edge is also a CLAIM: a frame takes the LENDER as well as the borrower, so two drivers cannot write one depth image (and
   its ONE record) at once - a contended lender skips the pass and reports `vk.target.claim_conflict`, exactly like a
@@ -721,7 +724,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `PassTarget` | WHERE one pass draws: an off-screen set or the window's acquired image, as one value with the facts and the verbs a pass needs | §2.20 |
 | `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) | F4 / §2.18 |
 | `TargetObjects` | an offscreen target's attachment set: images, views and the layout each one is in (`beginPass` / `endPass`) | F4 |
-| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `decidePassLoad` (the pass' load rule, one place) | F4 / §2.7 |
+| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `decidePassLoad` (the per-attachment load/store rule, one place) | F4 / §2.7 |
 | `WindowTarget` / `WindowSystem` | the swap chain and the surface (per-image layout record, `beginPass` / `endPass`) | F3 |
 | `MemoryAllocator` | the device memory pool (blocks / slices / mapping) | F10 |
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |

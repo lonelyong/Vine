@@ -394,8 +394,8 @@ struct TargetObjects {
      *   transition cannot state different layouts for the same image.
      * - A BORROWED DEPTH IS THE LENDER'S RECORD: the accessors above answer with the lender's layout and write the new one
      *   back to it, so this function has no borrowing branch - it states "the pass left this set's depth in the attachment
-     *   layout" and the record that fact belongs to is the one that receives it. The pass LOADs that depth (a pass may
-     *   not clear an image another pass wrote - see RenderTarget::shareDepth).
+     *   layout" and the record that fact belongs to is the one that receives it. The pass LOADs AND STOREs that depth (a
+     *   pass may neither clear nor discard an image another pass wrote - see RenderTarget::shareDepth).
      * - A SET WITH NO DEPTH WRITES NO DEPTH RECORD: a colour-only target leaves `depth_layout` and
      *   `depth_picture_layout` `Undefined`, which is the truth about an image it does not have.
      *

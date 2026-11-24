@@ -44,38 +44,48 @@ namespace
 
 } // namespace
 
-PassLoad decidePassLoad(const bool                            preserve_previous,
+PassLoad decidePassLoad(const bool                             preserve_previous,
                         const vn::graphics::ClearPolicy* const clear,
-                        const std::span<VkClearValue>          color_clears,
+                        const std::span<PassAttachment>        color_storage,
                         const std::size_t                      color_count) noexcept
 {
-    // ONE RULE, TWO CALLERS (see the header): a pass LOADs an attachment when the set already holds a picture worth
-    // keeping and the pass does not ask to reset that attachment. `ClearPolicy`'s two dimensions are independent.
+    // THE GROUP SPELLING IS THE DEFAULT, and a stated per-attachment op overrides it for its own attachment.
+    // `ClearPolicy`'s two group dimensions stay independent (a HUD keeps the colour and owns the depth).
     const bool clear_color = clear == nullptr || clear->clear_color;
     const bool clear_depth = clear == nullptr || clear->clear_depth;
 
     PassLoad load{};
-    load.load_color  = preserve_previous && !clear_color ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear;
-    load.load_depth  = preserve_previous && !clear_depth ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear;
-    load.store_color = vn::graphics::StoreOp::Store;
-    load.store_depth = vn::graphics::StoreOp::Store;
-
-    // THE CLEAR VALUES, in output-location order (see the header): attachment 0 takes the policy's colour and 1..N-1
-    // its extra colours, an absent entry being transparent black; a value beside a `Load` is never read.
-    const std::size_t filled = std::min(color_count, color_clears.size());
-    if (filled != 0U) {
-        const Colorf colour = clear != nullptr ? clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-        color_clears[0].color = { { colour.r, colour.g, colour.b, colour.a } };
-        for (std::size_t index = 1; index < filled; ++index) {
-            const Colorf extra = clear != nullptr && index - 1U < clear->extra_colors.size()
-                                     ? clear->extra_colors[index - 1U]
-                                     : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
-            color_clears[index].color = { { extra.r, extra.g, extra.b, extra.a } };
+    const std::size_t filled = std::min(color_count, color_storage.size());
+    for (std::size_t index = 0; index < filled; ++index) {
+        const vn::graphics::AttachmentLoadStore* stated = clear != nullptr && index < clear->color_ops.size() ? &clear->color_ops[index] : nullptr;
+        PassAttachment&                          slot   = color_storage[index];
+        slot.load  = stated != nullptr ? stated->load : (preserve_previous && !clear_color ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear);
+        slot.store = stated != nullptr ? stated->store : vn::graphics::StoreOp::Store;
+        // NOTHING TO KEEP IS NOT A LOAD: the group rule already answers Clear on a fresh set, and a stated `Load` gets
+        // the same answer instead of reading contents the image never had.
+        if (slot.load == vn::graphics::LoadOp::Load && !preserve_previous) {
+            slot.load = vn::graphics::LoadOp::Clear;
         }
+        // THE CLEAR VALUE, in output-location order: attachment 0 takes the policy's colour and 1..N-1 its extra
+        // colours, an absent entry being transparent black; a value beside a Load or a DontCare is never read.
+        const Colorf colour =
+            index == 0 ? (clear != nullptr ? clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F))
+                       : (clear != nullptr && index - 1U < clear->extra_colors.size() ? clear->extra_colors[index - 1U] : Colorf(0.0F, 0.0F, 0.0F, 0.0F));
+        slot.clear.color = {
+            { colour.r, colour.g, colour.b, colour.a }
+        };
     }
-    load.color_clears = color_clears.first(filled);
+    load.color = color_storage.first(filled);
+
+    load.depth              = PassAttachment{};
+    const bool depth_stated = clear != nullptr && clear->depth_op.has_value();
+    load.depth.load  = depth_stated ? clear->depth_op->load : (preserve_previous && !clear_depth ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear);
+    load.depth.store = depth_stated ? clear->depth_op->store : vn::graphics::StoreOp::Store;
+    if (load.depth.load == vn::graphics::LoadOp::Load && !preserve_previous) {
+        load.depth.load = vn::graphics::LoadOp::Clear;
+    }
     // Reverse-Z: this camera convention's far plane is 0, and the policy states WHETHER, never to what.
-    load.depth.depthStencil = { 0.0F, 0U };
+    load.depth.clear.depthStencil = { 0.0F, 0U };
     return load;
 }
 
@@ -127,16 +137,20 @@ void beginRendering(const VolkDeviceTable& table,
     // afterwards (a resolver is the only way out of a sample buffer), so keeping it is bandwidth that buys nothing -
     // `DontCare` is the honest store and the one a tiled renderer can use to skip the flush. The caller states what its
     // images are worth; this call knows whether a resolve consumes them, which is why the downgrade lives here.
-    const bool                       colour_resolved = !attachments.picture.empty();
-    const bool                       depth_resolved  = attachments.depth_picture.present();
-    const VkAttachmentLoadOp         colour_load     = loadOpOf(load.load_color);
-    const VkAttachmentLoadOp         depth_load      = loadOpOf(load.load_depth);
-    const VkAttachmentStoreOp        colour_store    = storeOpOf(colour_resolved ? vn::graphics::StoreOp::DontCare : load.store_color);
-    const VkAttachmentStoreOp        depth_store     = storeOpOf(depth_resolved ? vn::graphics::StoreOp::DontCare : load.store_depth);
+    const bool                                                  colour_resolved = !attachments.picture.empty();
+    const bool                                                  depth_resolved  = attachments.depth_picture.present();
+    const PassAttachment                                        fallback{};
     std::array<VkRenderingAttachmentInfo, kMaxColorAttachments> colors{};
     for (std::size_t index = 0; index < attachments.color.size(); ++index) {
-        const VkClearValue clear = index < load.color_clears.size() ? load.color_clears[index] : VkClearValue{};
-        colors[index] = colorAttachmentInfo(attachments.color.views[index], attachments.picture.viewAt(index), colour_load, colour_store, clear);
+        // ONE ENTRY PER ATTACHMENT (see PassLoad): the index names the image, its view and its own op. A caller that
+        // states fewer entries than the set has attachments falls back to the defaults rather than reading past the
+        // span - the recorder never trusts a count it did not take from the same owner.
+        const PassAttachment& op = index < load.color.size() ? load.color[index] : fallback;
+        colors[index]            = colorAttachmentInfo(attachments.color.views[index],
+                                                       attachments.picture.viewAt(index),
+                                                       loadOpOf(op.load),
+                                                       storeOpOf(colour_resolved ? vn::graphics::StoreOp::DontCare : op.store),
+                                                       op.clear);
     }
 
     VkRenderingAttachmentInfo depth{};
@@ -151,9 +165,9 @@ void beginRendering(const VolkDeviceTable& table,
         depth.resolveImageView   = attachments.depth_picture.view;
         depth.resolveImageLayout = attachments.depth_picture.view != VK_NULL_HANDLE ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
                                                                                      : VK_IMAGE_LAYOUT_UNDEFINED;
-        depth.loadOp     = depth_load;
-        depth.storeOp    = depth_store;
-        depth.clearValue = load.depth;
+        depth.loadOp             = loadOpOf(load.depth.load);
+        depth.storeOp            = storeOpOf(depth_resolved ? vn::graphics::StoreOp::DontCare : load.depth.store);
+        depth.clearValue         = load.depth.clear;
     }
 
     VkRenderingInfo rendering{};

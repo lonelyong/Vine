@@ -2244,3 +2244,22 @@
 - **Trap**: `endFrame`'s batch id must be the DRIVER's (`uploadBatch()`), not a hard-coded 0. The warm-up and the frame
   record the same batch, and a mismatched id means `hasPendingUploads(0)` answers false, so the batch is never submitted
   (measured: a prepared texture samples black).
+
+## 2026-11-24 — per-attachment load/store
+
+- **The seam states one pair per attachment** (`AttachmentLoadStore` in `DrawState.hpp`): `ClearPolicy::color_ops` (one
+  per colour attachment) + `depth_op`, authored through `PassDesc`'s same two fields. Empty/unset keeps the group
+  spelling (`clear_color` / `clear_depth`), so every existing pass is unchanged; a stated entry overrides its own
+  attachment.
+- **A pass that states only ops announces a policy**: `RenderPass::clearPolicy()` returns a `ClearPolicy` when either
+  group flag clears OR an op is stated - "load both, discard one" must reach the backend.
+- **vk's `PassLoad` is now per attachment**: `span<const PassAttachment> color` + one `PassAttachment depth`;
+  `decidePassLoad` applies the group default, the per-attachment override, and `Load` on a set with no picture ->
+  `Clear` (the old safety net). The resolve downgrade stays in `beginRendering`. A BORROWED depth forces BOTH halves
+  (`Load` + `Store`) - a borrower may neither clear nor discard the lender's image; the borrow test states
+  `DontCare`/`DontCare` so a missing override turns it red (the load half deterministically).
+- **Witnesses**: `PassLoadTest` (5 device-free cases), `VkContentTargetTest.EachColourAttachmentLoadsOrClearsOnItsOwn`
+  (one pass, three answers: clear / load / DontCare, read back at a corner), and
+  `RenderEngineTest.APassAnnouncesPerAttachmentOpsToTheBackend`.
+- **Rejected**: backend-only arrays (no author, `G8`); renaming `ClearPolicy` in the same batch (a word sweep with no
+  witness). ADR-2026-11-24.

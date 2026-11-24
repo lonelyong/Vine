@@ -143,68 +143,77 @@ struct PassAttachments {
 };
 
 /**
- * @brief What one pass states about its attachments' LOAD and STORE, one value per ROLE.
+ * @brief What ONE attachment does in this pass: its load op, its store op and the value a Clear writes.
  *
  * @details
- * - THE SEAM'S OWN VOCABULARY. A load is "keep what is there" or "make a value"; a store is "keep the result" or
- *   "nothing will read it" - `vn::graphics::LoadOp` / `StoreOp`, the neutral pair each family binds to its API.
- *   Stating them here rather than as two booleans is what makes `BarrierPlan::loadOpOf` / `storeOpOf` the ONE place
+ * - THE SEAM'S OWN VOCABULARY. A load is "keep what is there", "make a value" or "nothing to keep"; a store is
+ *   "keep the result" or "nothing will read it" - `vn::graphics::LoadOp` / `StoreOp`, the neutral pair each family
+ *   binds to its API. Stating them per attachment is what makes `BarrierPlan::loadOpOf` / `storeOpOf` the ONE place
  *   those facts become Vulkan enums, instead of a second conditional inside the recorder (`G1` / `G6`).
  * - WHY THE STORE IS STATED AND NOT ASSUMED. This backend keeps every attachment's contents by default, but a
  *   MULTISAMPLED pass resolves into a separate picture: the SAMPLE BUFFERS are then content nothing can read, so
  *   keeping them is pure bandwidth and, on a tiled renderer, a tile flush nobody consumes (`G10`). `beginRendering`
  *   therefore DOWNGRADES a resolved role to `DontCare` - the rule lives where the resolve is known, so a caller
  *   states what IT wants and cannot get the resolve case wrong.
- * - COLOUR AND DEPTH ARE DECIDED SEPARATELY (see `ClearPolicy`): a HUD pass keeps the picture and owns the depth
- *   inside its rectangle without a second attachment set.
- * - A CLEAR VALUE IS ONLY READ WHEN THE MATCHING LOAD OP IS `Clear`; a loading attachment keeps what an earlier pass
- *   wrote and its value is ignored. `color_clears` is parallel to the colour attachments - one entry per output
- *   location, in the order a fragment's outputs are written - and an absent entry is transparent black, which is
- *   `ClearPolicy`'s rule for an attachment a pass does not state.
+ * - THE CLEAR VALUE IS PART OF THE ENTRY, but it is read only when `load` is `Clear`: a `Load`/`DontCare` attachment
+ *   ignores the field beside it, and `ClearPolicy` is where the author states what a Clear writes.
  */
-struct PassLoad {
-    /// The colour attachments' load operation (`Load` keeps the picture, `Clear` resets it to `color_clears[0]`).
-    vn::graphics::LoadOp load_color{ vn::graphics::LoadOp::Clear };
-    /// The depth attachment's load operation (`Load` keeps the depth, `Clear` resets it to the reverse-Z far plane).
-    vn::graphics::LoadOp load_depth{ vn::graphics::LoadOp::Clear };
-    /// What a colour attachment's contents are worth AFTER the pass (downgraded to `DontCare` when it is resolved).
-    vn::graphics::StoreOp store_color{ vn::graphics::StoreOp::Store };
-    /// What the depth attachment's contents are worth after the pass (downgraded the same way when resolved).
-    vn::graphics::StoreOp store_depth{ vn::graphics::StoreOp::Store };
-    /// One clear value per colour attachment, in output-location order (parallel to the `color` role).
-    std::span<const VkClearValue> color_clears{};
-    /// The clear value of the depth attachment.
-    VkClearValue depth{};
+struct PassAttachment {
+    /// What this attachment loads before the first draw.
+    vn::graphics::LoadOp load{ vn::graphics::LoadOp::Clear };
+    /// What this attachment's contents are worth after the pass.
+    vn::graphics::StoreOp store{ vn::graphics::StoreOp::Store };
+    /// The value a `LoadOp::Clear` writes (ignored for `Load` and `DontCare`).
+    VkClearValue clear{};
 };
 
 /**
- * @brief DECIDES a pass' load and clear values from ONE question: does the attachment already hold a picture to keep?
+ * @brief What one pass states about its attachments' LOAD and STORE: ONE VALUE PER ATTACHMENT.
  *
  * @details
- * - THE RULE HAS ONE HOME (`G1`). A pass loads when the set already holds a picture worth keeping AND the pass does not
- *   ask to reset that attachment; `ClearPolicy`'s two dimensions are independent (a HUD keeps the colour and owns the
- *   depth). Both halves of the backend - the off-screen set and the window - used to spell the same expression, with
- *   only the INPUT differing; that input is now the only thing a caller states.
- * - WHAT THE INPUT IS NOT. It is not "is this target fresh": it is "may a later pass load what is there" - a window's
- *   acquired image answers false however many frames have presented through it (see `PassTarget::holdsPicture`).
+ * - ONE ENTRY PER COLOUR ATTACHMENT, in output-location order (the order `PassAttachments::color` names them), plus
+ *   one for the depth attachment. A pass can therefore keep one image, reset another and discard a third in ONE
+ *   rendering instance - the case a per-role pair could not express (`G4`).
+ * - THE COLOUR AND DEPTH HALVES ARE INDEPENDENT (see `ClearPolicy`): a HUD pass keeps the picture and owns the depth
+ *   inside its rectangle without a second attachment set.
+ */
+struct PassLoad {
+    /// One entry per colour attachment, in output-location order (parallel to the `color` role).
+    std::span<const PassAttachment> color{};
+    /// The depth attachment's entry (its clear value is the reverse-Z far plane).
+    PassAttachment depth{};
+};
+
+/**
+ * @brief DECIDES each attachment's load and store from the pass' policy and ONE question: does the set hold a picture?
+ *
+ * @details
+ * - THE RULE HAS ONE HOME (`G1`). The group spelling is the default: a pass loads when the set already holds a
+ *   picture worth keeping AND the pass does not ask to reset that attachment. A stated per-attachment op overrides
+ *   the group for ITS attachment, so "keep one, reset another, discard a third" needs no second mechanism (`G4`).
+ * - WHAT THE INPUT IS NOT. It is not "is this target fresh": it is "may a later pass load what is there" - a
+ *   window's acquired image answers false however many frames have presented through it (see
+ *   `PassTarget::holdsPicture`).
+ * - `Load` ON A SET WITH NO PICTURE IS NOT HONOURED: there is nothing to keep, so it becomes `Clear` with the value
+ *   that attachment states. The group spelling already had that safety net; a stated op gets the same answer instead
+ *   of reading undefined contents.
  * - THE CLEAR VALUES ARE FILLED IN OUTPUT-LOCATION ORDER: attachment 0 takes the policy's colour, 1..N-1 its extra
- *   colours, an absent entry is transparent black (an auxiliary attachment's "nothing here"), and a load op of `Load`
- *   ignores the value it sits beside. A DEPTH-ONLY pass has no colour slot, which is why the depth value is a field.
+ *   colours, an absent entry is transparent black (an auxiliary attachment's "nothing here"), and a `Load` or
+ *   `DontCare` op ignores the value beside it. A DEPTH-ONLY pass has no colour slot, which is why depth is its own
+ *   entry.
  * - REVERSE-Z: depth is cleared to this camera convention's far plane, 0 - the policy states WHETHER, never to what.
- * - STORE IS `Store`: this backend keeps what a pass wrote; `beginRendering` alone may DOWNGRADE a resolved role to
+ * - STORE IS `Store` unless the policy states otherwise; `beginRendering` alone may DOWNGRADE a resolved role to
  *   `DontCare`, because only it knows whether a resolve consumes the images.
  *
  * @param preserve_previous Whether an earlier pass (or frame) put a picture in these attachments that may be kept.
- * @param clear             The pass' clear policy, or null when the pass announced none (both attachments clear).
- * @param color_clears      Storage for one value per colour attachment (the caller's array; left alone past
+ * @param clear             The pass' policy, or null when the pass announced none (both attachments clear).
+ * @param color_storage     Storage for one entry per colour attachment (the caller's array; untouched past
  *                          @p color_count).
  * @param color_count       How many colour attachments the set has (see `PassTarget::colorCount`).
- * @return The pass' load policy, with `color_clears` filled.
+ * @return The pass' per-attachment policy, with @p color_storage filled and `color` naming its prefix.
  */
-[[nodiscard]] PassLoad decidePassLoad(bool                            preserve_previous,
-                                     const vn::graphics::ClearPolicy* clear,
-                                     std::span<VkClearValue>         color_clears,
-                                     std::size_t                     color_count) noexcept;
+[[nodiscard]] PassLoad
+decidePassLoad(bool preserve_previous, const vn::graphics::ClearPolicy* clear, std::span<PassAttachment> color_storage, std::size_t color_count) noexcept;
 
 /**
  * @brief Records the attachment transitions a pass needs, then `vkCmdBeginRendering`.

@@ -91,12 +91,20 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (87)
+## decisions/ — decision records (ADRs) (88)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
+
+- `ADR-2026-11-24-per-attachment-load-store.md` — **a pass states load/store per attachment, and the backend resolves
+  the one fact the engine cannot know**: `AttachmentLoadStore` (`LoadOp` + `StoreOp`) is the seam's per-attachment
+  pair; `ClearPolicy` / `PassDesc` gain `color_ops` / `depth_op` (empty or unset keeps the group spelling, so every
+  existing pass is unchanged), `RenderPass::clearPolicy()` announces a policy when ops are stated without a group
+  clear, and vk's `PassLoad` is one entry per attachment with `decidePassLoad` falling a stated `Load` back to
+  `Clear` on a set that holds no picture. Backend-only arrays (no author) and renaming `ClearPolicy` in the same
+  batch are rejected.
 
 - `ADR-2026-11-23-retiring-the-reference-backend.md` — **the seam keeps promises, not a second reader**: the eight
   shared mechanisms stay in the SDK because each implements a sentence a host can observe (one line per mechanism

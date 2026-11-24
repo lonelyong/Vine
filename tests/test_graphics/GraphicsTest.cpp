@@ -4464,6 +4464,36 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     EXPECT_FALSE(backend->last_clear_policy.clear_depth);
 }
 
+TEST(RenderEngineTest, APassAnnouncesPerAttachmentOpsToTheBackend)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    engine->initialize();
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    // A pass that states ops but no group clear still ANNOUNCES a policy: "keep one, discard another" is a statement
+    // the backend must receive, and it is the whole point of per-attachment ops (see ClearPolicy::color_ops).
+    PassDesc desc;
+    desc.camera        = cam;
+    desc.content       = content;
+    desc.clear_enabled = false;
+    desc.clear_depth   = false;
+    desc.color_ops     = {
+        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Load, vn::graphics::StoreOp::DontCare }
+    };
+    (void)vn::test::applyPassForTest(*engine, std::move(desc), 0);
+
+    engine->frame();
+
+    ASSERT_EQ(backend->clear_calls, 1) << "per-attachment ops are an announcement even without a group clear";
+    ASSERT_EQ(backend->last_clear_policy.color_ops.size(), 1u);
+    EXPECT_EQ(backend->last_clear_policy.color_ops[0].load, vn::graphics::LoadOp::Load);
+    EXPECT_EQ(backend->last_clear_policy.color_ops[0].store, vn::graphics::StoreOp::DontCare);
+}
+
 TEST(RenderEngineTest, APassMayClearDepthAndKeepTheColourItIsDrawnOver)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());

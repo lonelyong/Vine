@@ -369,13 +369,15 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
         attachments.depth_picture = PassImage{ depth_resolve, depth_resolve_view, depthPictureLayout() };
     }
 
-    // A BORROWED DEPTH IS ALWAYS LOADED: the image is the LENDER's, and the depth it holds is the whole reason this
-    // target borrows it - clearing it would erase another pass' depth. The pass' own policy describes THIS set's
-    // attachments, so this is the one place that overrides it (the shape rules already make a borrowing target
-    // single-sampled, so its own depth never exists to be cleared).
+    // A BORROWED DEPTH IS ALWAYS LOADED AND STORED: the image is the LENDER's, and the depth it holds is the whole
+    // reason this target borrows it - clearing it would erase another pass' depth, and discarding it would erase the
+    // result the lender still needs. The pass' own policy describes THIS set's attachments, so this is the one place
+    // that overrides it (the shape rules already make a borrowing target single-sampled, so its own depth never exists
+    // to be cleared).
     PassLoad effective = load;
     if (depth_borrowed) {
-        effective.load_depth = vn::graphics::LoadOp::Load;
+        effective.depth.load  = vn::graphics::LoadOp::Load;
+        effective.depth.store = vn::graphics::StoreOp::Store;
     }
 
     beginRendering(table, commands, attachments, effective, tally);

@@ -1892,10 +1892,10 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // differs between the two kinds of target is "does this set already hold a picture to keep": an off-screen set
         // answers from its own record, and a window from what THIS frame has already written into the acquired image (its
         // content before that belongs to the presentation engine, not to the host).
-        std::array<VkClearValue, kMaxColorAttachments> color_clears{};
+        std::array<PassAttachment, kMaxColorAttachments> color_ops{};
         const PassTarget& target   = pass_run.target;
         const bool        preserve = target.isWindow() ? recording.window_written : target.holdsPicture();
-        const PassLoad    load     = decidePassLoad(preserve, draw.clear.has_value() ? &*draw.clear : nullptr, color_clears, target.colorCount());
+        const PassLoad load = decidePassLoad(preserve, draw.clear.has_value() ? &*draw.clear : nullptr, color_ops, target.colorCount());
 
         // THE SET OWNS THE TRANSITIONS AND THE INSTANCE (see PassTarget::begin): the layouts each attachment is in are the
         // owner's bookkeeping, so the recorder cannot disagree with them.

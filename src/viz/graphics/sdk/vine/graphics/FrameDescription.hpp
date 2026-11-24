@@ -14,12 +14,13 @@
 
 #include "CameraSnapshot.hpp"
 #include "DepthRange.hpp"
+#include "DrawItem.hpp"
 #include "DrawKind.hpp"
+#include "DrawState.hpp"
 #include "ImageSource.hpp"
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"
-#include "DrawItem.hpp"
 #include "StateResolution.hpp"
 #include "View.hpp"
 #include "Viewport.hpp"
@@ -53,6 +54,9 @@ class ShaderProgram;
  *   position of ~0 as background). A pass that wants a G-buffer's normal image cleared to (0,0,1,0) states it
  *   there instead of painting every attachment one colour. One that cannot honour these must report it rather
  *   than clearing differently.
+ * - PER ATTACHMENT, LOAD AND STORE: @ref color_ops / @ref depth_op state the pair ONE attachment uses, so a pass may
+ *   keep one attachment while clearing another and store a third as `DontCare` - a G-buffer or a HUD does exactly
+ *   that. Left empty, the two group flags above decide every attachment, which is the ordinary spelling.
  * - DEPTH IS A FLAG, NOT A VALUE: every backend clears depth to its own far plane (reverse-Z here, far = 0 -
  *   see Camera), so a value here would be a second place to get the clip convention wrong.
  * - WHAT A TARGET CAN EXPRESS IS THE TARGET'S FACT, and a backend that cannot honour a request reports it rather
@@ -114,6 +118,16 @@ struct ClearPolicy {
     /// An absent entry is transparent black, which is what an auxiliary attachment (normals, ids) means by
     /// "nothing here". A target with more attachments than entries clears the rest to that same value.
     std::vector<Colorf> extra_colors;
+    /// Per-attachment load/store ops for the colour attachments, in attachment order.
+    ///
+    /// EMPTY means the group spelling decides every attachment: @ref clear_color chooses Clear-or-Load and every
+    /// attachment stores its result. An entry overrides the group for THAT attachment; an entry past the set's colour
+    /// count is ignored. The clear VALUE stays in @ref color / @ref extra_colors - this vector says only what happens,
+    /// never what a Clear writes.
+    std::vector<AttachmentLoadStore> color_ops;
+    /// The depth attachment's load/store ops, or nullopt for the group spelling: @ref clear_depth chooses
+    /// Clear-or-Load and the depth stores its result.
+    std::optional<AttachmentLoadStore> depth_op;
 };
 
 /**

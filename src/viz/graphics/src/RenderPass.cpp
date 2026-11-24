@@ -105,16 +105,20 @@ std::optional<ClearPolicy> RenderPass::clearPolicy() const
     // colour it is drawn over.
     const bool colour = isClearEnabled();
     const bool depth  = shouldClearDepth();
-    if (!colour && !depth) {
+    // A pass that states per-attachment ops ANNOUNCES a policy even when neither group flag clears: "load both, store
+    // one, discard a third" is a statement a backend must receive (see ClearPolicy).
+    if (!colour && !depth && desc_.color_ops.empty() && !desc_.depth_op.has_value()) {
         return std::nullopt;
     }
-    // One value, one authority: the per-attachment colours travel WITH the single-colour spelling, so a backend reads
-    // one policy rather than a list plus a fallback.
+    // One value, one authority: the per-attachment colours and ops travel WITH the single-colour spelling, so a backend
+    // reads one policy rather than a list plus a fallback.
     ClearPolicy policy;
     policy.clear_color  = colour;
     policy.clear_depth  = depth;
     policy.color        = clearColor(0);
     policy.extra_colors = desc_.clear_extra_colors;
+    policy.color_ops    = desc_.color_ops;
+    policy.depth_op     = desc_.depth_op;
     return policy;
 }
 

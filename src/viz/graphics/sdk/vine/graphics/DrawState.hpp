@@ -59,6 +59,25 @@ enum class StoreOp : std::uint8_t
     DontCare, // Nothing will read it back.
 };
 
+/**
+ * @brief What ONE attachment does across a pass: what it loads before the first draw, what it stores afterwards.
+ *
+ * @details
+ * - THE PAIR EVERY API FAMILY STATES PER ATTACHMENT: Vulkan's `VkRenderingAttachmentInfo`, D3D12's render-pass
+ *   render-target description and Metal's attachment descriptor each carry a load and a store for ONE attachment -
+ *   so the seam states the pair per attachment instead of a group boolean plus an exception list.
+ * - A CLEAR VALUE IS NOT PART OF IT: what a `LoadOp::Clear` writes is stated beside the op (`ClearPolicy::color` /
+ *   `extra_colors`), so this value stays small, copyable and comparable.
+ * - `Load` on an attachment that holds nothing is not honoured as a load: the backend substitutes `Clear`, because
+ *   there is no picture to keep (the rule the group spelling of `ClearPolicy` already follows).
+ */
+struct AttachmentLoadStore {
+    /// What the attachment loads before the first draw.
+    LoadOp load{ LoadOp::Clear };
+    /// What the attachment's contents are worth after the pass.
+    StoreOp store{ StoreOp::Store };
+};
+
 /** @brief Identity of a vertex layout: the attributes a pipeline DECLARES, in binding order, each with its width. */
 struct VN_GRAPHICS_API VertexLayoutSlot {
     std::uint32_t location{ 0 };   // Shader location the pipeline declares this attribute at.

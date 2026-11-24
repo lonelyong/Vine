@@ -439,9 +439,14 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     friend struct detail::PassNode;
 
     /**
-     * @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule).
+     * @brief The attachment policy this pass announces, or nothing when it states neither a clear nor an op.
      *
-     * @return The policy, or nullopt when this pass does not clear.
+     * @details
+     * - THE ONE RULE for both spellings: the group flags answer every attachment, and a stated per-attachment op
+     *   overrides its own attachment. A pass that only states ops ("load both, discard one") still announces a policy,
+     *   because that statement is what a backend must receive.
+     *
+     * @return The policy, or nullopt when this pass clears nothing and states no per-attachment op.
      */
     [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const;
 
