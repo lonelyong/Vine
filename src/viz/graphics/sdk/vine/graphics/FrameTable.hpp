@@ -50,7 +50,7 @@ struct VN_GRAPHICS_API PassRow {
     raw_ptr<const RenderTarget> target = nullptr;
     /// Whether it runs this frame. A disabled pass is LISTED (its row is part of the picture) and skipped.
     bool enabled                       = true;
-    /// Whether it clears its target's COLOUR attachments before it draws (see ClearPolicy: the pass' own clear, not
+    /// Whether it clears its target's COLOUR attachments before it draws (see AttachmentPolicy: the pass' own clear, not
     /// "a clear happened"). One of the two dimensions - @ref clears_depth is the other, and a pass may state either.
     bool clears_color                 = false;
     /// The colour attachment 0 is cleared to when @ref clears_color is true (linear, like every authored colour).

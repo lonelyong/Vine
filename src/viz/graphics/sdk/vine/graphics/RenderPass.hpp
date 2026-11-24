@@ -144,7 +144,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *   in the space it is DISPLAYED in and decoded once (see kDefaultClearColor); nothing in the engine names a
      *   colour for the off-screen targets its builders create, so an off-full-screen pass that wants one states it.
      * - Attachments 1 and beyond are not that value: an unstated attachment is transparent black, so a consumer can
-     *   tell "nothing drawn here" from data (see ClearPolicy).
+     *   tell "nothing drawn here" from data (see AttachmentPolicy).
      *
      * @param attachment Colour attachment index (0 = the first, the default).
      * @return The LINEAR colour stated for that attachment, or transparent black for an unstated one past the first.
@@ -171,7 +171,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * @brief Returns whether this pass asks for CLEARED COLOUR attachments.
      *
      * @details
-     * - The COLOUR half of the pass' clear; the depth half is shouldClearDepth, `clearPolicy()` states both, and a
+     * - The COLOUR half of the pass' clear; the depth half is shouldClearDepth, `attachmentPolicy()` states both, and a
      *   pass that asks for neither announces no clear at all.
      *
      * @return True when the pass clears its colour attachments (the default for a Scene pass, never for a Fullscreen
@@ -448,7 +448,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *
      * @return The policy, or nullopt when this pass clears nothing and states no per-attachment op.
      */
-    [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const;
+    [[nodiscard]] std::optional<AttachmentPolicy> attachmentPolicy() const;
 
     /**
      * @brief Adopts @p desc as this pass' whole declaration (see detail::PassNode).

@@ -43,16 +43,16 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
 using vn::graphics::FrameDescription;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -78,8 +78,8 @@ constexpr int kTargetSize = 64;
 
     vn::graphics::PassDraw pass;
     pass.target       = target;
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     entry.draw        = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;
@@ -94,8 +94,8 @@ constexpr int kTargetSize = 64;
 
     vn::graphics::PassDraw pass;
     pass.target       = target;
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
 
     vn::graphics::DrawPacket draw;
     draw.kind     = vn::graphics::DrawKind::Scene;

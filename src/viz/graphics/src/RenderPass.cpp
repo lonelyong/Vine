@@ -95,30 +95,30 @@ PassRenderState RenderPass::stateOverrides() const noexcept
     return state;
 }
 
-std::optional<ClearPolicy> RenderPass::clearPolicy() const
+std::optional<AttachmentPolicy> RenderPass::attachmentPolicy() const
 {
     // The ONE place "does this pass clear, and how" is answered: a pass that clears NOTHING says nothing, so a backend
     // can tell "clears these attachments" from "draws over what is already there".
     //
-    // THE TWO DIMENSIONS ARE INDEPENDENT (see ClearPolicy): the colour clear is what `clear_enabled` states and the
+    // THE TWO DIMENSIONS ARE INDEPENDENT (see AttachmentPolicy): the colour clear is what `clear_enabled` states and the
     // depth one what `clear_depth` states, so a pass may ask for either alone - a HUD owns its depth and keeps the
     // colour it is drawn over.
     const bool colour = isClearEnabled();
     const bool depth  = shouldClearDepth();
     // A pass that states per-attachment ops ANNOUNCES a policy even when neither group flag clears: "load both, store
-    // one, discard a third" is a statement a backend must receive (see ClearPolicy).
+    // one, discard a third" is a statement a backend must receive (see AttachmentPolicy).
     if (!colour && !depth && desc_.color_ops.empty() && !desc_.depth_op.has_value()) {
         return std::nullopt;
     }
     // One value, one authority: the per-attachment colours and ops travel WITH the single-colour spelling, so a backend
     // reads one policy rather than a list plus a fallback.
-    ClearPolicy policy;
+    AttachmentPolicy policy;
     policy.clear_color  = colour;
     policy.clear_depth  = depth;
     policy.color        = clearColor(0);
     policy.extra_colors = desc_.clear_extra_colors;
-    policy.color_ops    = desc_.color_ops;
-    policy.depth_op     = desc_.depth_op;
+    policy.color_ops = desc_.color_ops;
+    policy.depth_op  = desc_.depth_op;
     return policy;
 }
 
@@ -127,7 +127,7 @@ void RenderPass::fillPassFacts(PassDraw& out)
     out.target           = renderTarget();
     out.viewport         = desc_.viewport;
     out.depth_range      = desc_.depth_range;
-    out.clear            = clearPolicy();
+    out.attachment_policy = attachmentPolicy();
     out.program_override = desc_.program_override;
     // Its text as a value, taken with the pointer: the recorder applies THIS, so an override edited while a frame is in
     // flight keeps the text the frame described itself with (see PassDraw::program_override_description).

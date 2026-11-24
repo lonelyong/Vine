@@ -806,7 +806,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | `Color(51, 51, 51)`（sRGB 字节，#333333） | 线性光 | `Color(51, 51, 51).toLinear()` ≈ (0.0331, …) |
 | `Colorf(0.5F, …)`（线性光） | 8 位 sRGB | `Colorf(...).toColor()` = **188**，不是 128 |
 
-* **清屏色也是线性值**：`PassDesc::clear_color` / `PassDesc::clear_extra_colors` / `ClearPolicy::color` 都取
+* **清屏色也是线性值**：`PassDesc::clear_color` / `PassDesc::clear_extra_colors` / `AttachmentPolicy::color` 都取
   `Colorf`，后端不再 `/255`。默认清屏色是"#333333 在屏幕上看起来的样子"解一次（`kDefaultClearColor`），
   所以窗口背景就是设计师写下的那个灰。
 * **alpha 不参与编码**：它是覆盖率，两个方向都只是 `/255` 与 `×255`。编码 alpha 会让每一次混合与透明读回全错。
@@ -845,7 +845,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | --- | --- |
 | 浮点颜色是线性值；8 位颜色是 sRGB 编码，两者只由 `toLinear()` / `toColor()` 往来 | `vn::core::Colorf` / `vn::core::Color` 的类注释 |
 | 颜色文本是 CSS hex（`#rgb[a]` / `#rrggbb[aa]`）；打包整数的顺序写在入口名字里 | `vn::core::Color::toString` / `parse` / `fromArgb` / `fromBgr` 的注释 |
-| 清屏色是线性值（默认色写成它显示时的样子，解一次） | `vn::graphics::ClearPolicy` / `PassDesc::clear_color` 的注释 |
+| 清屏色是线性值（默认色写成它显示时的样子，解一次） | `vn::graphics::AttachmentPolicy` / `PassDesc::clear_color` 的注释 |
 | 颜色图 `*Srgb`、数据图 `*Unorm` | `vn::imaging::PixelFormat` 的文件注释 |
 | target 格式是"投影"，离屏取线性拼写 | `vn::graphics::RenderTarget::ColorFormat` 的枚举注释 |
 | 内建 program 不自己套 gamma | `vn::graphics::forwardProgram` 等工厂所在的 `sdk/vine/graphics/BuiltinShaders.hpp` 文件注释 |
@@ -1065,7 +1065,7 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
 - **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序）。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
   法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
 - **每个附件可以各自 load / store**：`clear_enabled` / `clear_depth` 只回答“洗不洗”；要“这个附件保留、那个附件丢弃”就在
-  `PassDesc::color_ops` 里按附件顺序写 `AttachmentLoadStore{ load, store }`（深度用 `depth_op`）。没写到的附件仍按
+  `PassDesc::color_ops` 里按附件顺序写 `AttachmentOps{ load, store }`（深度用 `depth_op`）。没写到的附件仍按
   `clear_enabled` / `clear_depth` 走；target 上没有旧内容时，写 `Load` 会被后端退化成 `Clear`（没有东西可留）。
 - **返回的是结点**：`applyPlan` 是唯一的注册入口；要拿已注册的执行结点按名字回读（`engine->pass(desc.name)`），
   于是"我声明了什么"与"我接下来要调什么"是同一个对象。builder 内部正是这样写的 ——

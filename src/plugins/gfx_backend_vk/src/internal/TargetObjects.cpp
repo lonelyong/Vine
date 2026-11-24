@@ -344,11 +344,11 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 
 } // namespace
 
-void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassLoad& load, RecordingTally* const tally)
+void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassAttachmentOps& load, RecordingTally* const tally)
 {
     // TRANSCRIPTION, NOT DERIVATION: every layout below is the record of the image it names. The only decisions taken
     // here are which image plays which role, and those are shape facts (`isMultisampled`, `hasDepth`, `hasDepthResolve`).
-    PassAttachments attachments{};
+    PassAttachmentSet attachments{};
     attachments.extent = VkExtent2D{ static_cast<std::uint32_t>(width()), static_cast<std::uint32_t>(height()) };
     // RENDERING WRITES THE SAMPLE BUFFERS when the shape resolves; the pictures are the resolve targets then.
     if (isMultisampled()) {
@@ -374,7 +374,7 @@ void TargetObjects::beginPass(const VolkDeviceTable& table, const VkCommandBuffe
     // result the lender still needs. The pass' own policy describes THIS set's attachments, so this is the one place
     // that overrides it (the shape rules already make a borrowing target single-sampled, so its own depth never exists
     // to be cleared).
-    PassLoad effective = load;
+    PassAttachmentOps effective = load;
     if (depth_borrowed) {
         effective.depth.load  = vn::graphics::LoadOp::Load;
         effective.depth.store = vn::graphics::StoreOp::Store;

@@ -32,7 +32,7 @@ class WindowTarget;
  * - THE FACTS ARE A SNAPSHOT (`G4`). Extent and compatibility are read when the frame CLAIMS its passes, which is the
  *   same moment `FrameHead` records what the pass will draw into - so a resize that lands later belongs to the next
  *   frame, exactly as a pipeline resolved into the head does.
- * - `holdsPicture()` IS THE ONE QUESTION THE LOAD RULE ASKS (see `decidePassLoad`): whether an earlier pass has put a
+ * - `holdsPicture()` IS THE ONE QUESTION THE LOAD RULE ASKS (see `resolveAttachmentOps`): whether an earlier pass has put a
  *   picture in these attachments that a later one may keep. A freshly acquired swapchain image answers false - its
  *   content belongs to the presentation engine, not to the host - and the frame records that it has written the image
  *   itself once a window pass has run (see `FrameRecording::window_written`).
@@ -118,7 +118,7 @@ class VN_BACKEND_VK_API PassTarget final {
      * @param load     The pass' load policy and clear values.
      * @param tally    Receives what the entry dependency cost (see `RecordingTally`), or null.
      */
-    void begin(const VolkDeviceTable& table, VkCommandBuffer commands, const PassLoad& load, RecordingTally* tally = nullptr) const;
+    void begin(const VolkDeviceTable& table, VkCommandBuffer commands, const PassAttachmentOps& load, RecordingTally* tally = nullptr) const;
 
     /** @brief Closes the rendering instance @ref begin opened (a no-op when it opened none). */
     void end(const VolkDeviceTable& table, VkCommandBuffer commands) const noexcept;

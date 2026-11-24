@@ -545,7 +545,7 @@ bool WindowTarget::acquire(vn::String* why)
     return false;
 }
 
-void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& load, RecordingTally* const tally)
+void WindowTarget::beginPass(const VkCommandBuffer commands, const PassAttachmentOps& load, RecordingTally* const tally)
 {
     if (impl == nullptr || !impl->image_acquired || impl->image_index >= impl->images.size()) {
         return; // nothing acquired: the caller never reaches here (see acquire), and a pass with no image is nothing
@@ -554,12 +554,12 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
 
     // THE IMAGE RENDERING WRITES is the acquired one; its colour FROM is what this image's own record says (Undefined on
     // first use, Present after it was presented, the colour layout between two passes of one frame). ONE IMAGE, ONE
-    // RECORD, which is why the attachment's colour starting layouts are a one-entry span (see `PassAttachments`).
+    // RECORD, which is why the attachment's colour starting layouts are a one-entry span (see `PassAttachmentSet`).
     const VkImage     colour_image = impl->images[index];
     const VkImageView colour_view  = impl->views[index];
     const ImageLayout colour_from  = impl->image_layouts[index];
 
-    PassAttachments attachments{};
+    PassAttachmentSet attachments{};
     attachments.extent   = VkExtent2D{ impl->extent.width, impl->extent.height };
     attachments.color    = PassRole{ std::span<const VkImage>(&colour_image, 1U),
                                      std::span<const VkImageView>(&colour_view, 1U),
@@ -571,11 +571,11 @@ void WindowTarget::beginPass(const VkCommandBuffer commands, const PassLoad& loa
     // is about to hand to the compositor, so the window's one colour attachment takes `Store` whatever the pass
     // stated. The DEPTH is not forced: it is not presented, and a pass may discard it (a later pass that loads it is
     // the author's to order - the same rule every off-screen attachment follows).
-    PassAttachment window_colour = load.color.empty() ? PassAttachment{} : load.color.front();
-    window_colour.store          = vn::graphics::StoreOp::Store;
-    const std::array<PassAttachment, 1U> window_colour_ops{ window_colour };
-    PassLoad effective = load;
-    effective.color    = std::span<const PassAttachment>(window_colour_ops);
+    ResolvedAttachment window_colour = load.color.empty() ? ResolvedAttachment{} : load.color.front();
+    window_colour.store              = vn::graphics::StoreOp::Store;
+    const std::array<ResolvedAttachment, 1U> window_colour_ops{ window_colour };
+    PassAttachmentOps                    effective = load;
+    effective.color                                    = std::span<const ResolvedAttachment>(window_colour_ops);
 
     // `beginRendering` records the barriers before the instance: every window pass announces its own, because the
     // instance may start in a layout the presentation engine left (Present) or one an earlier pass left (colour).

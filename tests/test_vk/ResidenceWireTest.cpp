@@ -51,22 +51,22 @@ namespace
 using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderFrameExecutor;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Topology;
-using vn::graphics::DrawKind;
 
 using vn::backend_vk::MemoryStats;
 using vn::backend_vk::ResidencyClaims;
@@ -179,8 +179,8 @@ void main()
 
     PassDraw pass;
     pass.target       = target;
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     if (draw.has_value()) {
         pass.packets.push_back(std::move(*draw));
     }

@@ -31,7 +31,7 @@ class RenderPass;
  *   one collection is usually drawn by several passes, and ownership of it is already shared.
  *
  * @note
- * - Like ClearPolicy, this is a header-only value: every member is defined here, so there is no symbol to export and
+ * - Like AttachmentPolicy, this is a header-only value: every member is defined here, so there is no symbol to export and
  *   the type deliberately carries no VN_GRAPHICS_API (the DLL never instantiates it).
  */
 struct OwnedDrawPacket {
@@ -55,15 +55,15 @@ struct OwnedDrawPacket {
  *
  * @details
  * - Same shape, different ownership: `target` is held rather than borrowed, and the packets are @ref OwnedDrawPacket. The
- *   fields that are plain values (viewport, clear, state) are copied verbatim, because a value cannot dangle.
+ *   fields that are plain values (viewport, attachment policy, state) are copied verbatim, because a value cannot dangle.
  */
 struct OwnedPassDraw {
     /// The off-screen target this pass draws into (held; null = the presenting surface).
     intrusive_ptr<RenderTarget> target;
     /// The sub-rectangle it draws into, or nullopt for the whole of it.
     std::optional<Viewport> viewport;
-    /// The clear it announces, or nullopt for none (see ClearPolicy).
-    std::optional<ClearPolicy> clear;
+    /// The attachment policy it announces, or nullopt for none (see AttachmentPolicy).
+    std::optional<AttachmentPolicy> attachment_policy;
     /// This pass' state for the content it draws.
     PassRenderState state{};
     /// The program the pass draws all of its content with (held; null = per-geometry programs).
@@ -176,7 +176,7 @@ class OwnedFrame {
         PassDraw out;
         out.target           = owned.target.get();
         out.viewport         = owned.viewport;
-        out.clear            = owned.clear;
+        out.attachment_policy = owned.attachment_policy;
         out.state            = owned.state;
         out.program_override = owned.program_override;
         out.packets.reserve(owned.packets.size());

@@ -3,7 +3,7 @@
  *        decides which fragment survives.
  *
  * What each case pins:
- *   - MRT: every colour attachment is its own image, cleared to its OWN colour (`ClearPolicy::extra_colors`) and
+ *   - MRT: every colour attachment is its own image, cleared to its OWN colour (`AttachmentPolicy::extra_colors`) and
  *     written by its own fragment output location - two facts a single-attachment target cannot tell apart;
  *   - RESIZE: an extent change replaces the images but not the SHAPE (formats, depth, samples), so the pipeline is
  *     REUSED (`Device::contentPipelines()` does not move); a SHAPE change does rebuild it. That is `planTarget`'s
@@ -44,12 +44,15 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -58,14 +61,11 @@ using vn::graphics::PassRenderState;
 using vn::graphics::Primitive;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Topology;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -280,7 +280,7 @@ void main()
 }
 
 /// @brief A frame with ONE pass that clears @p target (with @p clear) and issues @p commands.
-[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, const ClearPolicy& clear, PassRenderState state, std::vector<DrawItem> commands)
+[[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, const AttachmentPolicy& clear, PassRenderState state, std::vector<DrawItem> commands)
 {
     auto list = std::make_shared<std::vector<DrawItem>>(std::move(commands));
 
@@ -294,7 +294,7 @@ void main()
     entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target = target;
-    pass.clear  = clear;
+    pass.attachment_policy = clear;
     pass.state  = state;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
@@ -339,7 +339,7 @@ TEST(VkContentTargetTest, EveryColourAttachmentIsClearedAndWrittenOnItsOwn)
     const intrusive_ptr<ShaderProgram> program  = makeProgram(kMrFragment);
     const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color        = Colorf(0.25F, 0.5F, 0.75F, 1.0F);
     clear.extra_colors = { Colorf(0.1F, 0.2F, 0.3F, 1.0F), Colorf(0.4F, 0.5F, 0.6F, 1.0F) };
 
@@ -385,20 +385,20 @@ TEST(VkContentTargetTest, EachColourAttachmentLoadsOrClearsOnItsOwn)
     const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
 
     // FIRST FRAME: every attachment holds a distinct colour, so a later LOAD has something visible to keep.
-    ClearPolicy first;
+    AttachmentPolicy first;
     first.color        = Colorf(0.25F, 0.5F, 0.75F, 1.0F);
     first.extra_colors = { Colorf(0.1F, 0.2F, 0.3F, 1.0F), Colorf(0.4F, 0.5F, 0.6F, 1.0F) };
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), first, PassRenderState{}, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
 
     // SECOND FRAME: ONE pass, THREE answers - attachment 0 clears, attachment 1 keeps frame one's picture, attachment 2
-    // is discarded (see ClearPolicy::color_ops). A per-role pair could not express this.
-    ClearPolicy second;
+    // is discarded (see AttachmentPolicy::color_ops). A per-role pair could not express this.
+    AttachmentPolicy second;
     second.color     = Colorf(1.0F, 0.0F, 1.0F, 1.0F);
     second.color_ops = {
-        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Clear,    vn::graphics::StoreOp::Store    },
-        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Load,     vn::graphics::StoreOp::Store    },
-        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::DontCare, vn::graphics::StoreOp::DontCare }
+        vn::graphics::AttachmentOps{ vn::graphics::LoadOp::Clear,    vn::graphics::StoreOp::Store    },
+        vn::graphics::AttachmentOps{ vn::graphics::LoadOp::Load,     vn::graphics::StoreOp::Store    },
+        vn::graphics::AttachmentOps{ vn::graphics::LoadOp::DontCare, vn::graphics::StoreOp::DontCare }
     };
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), second, PassRenderState{}, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
@@ -432,7 +432,7 @@ TEST(VkContentTargetTest, AResizeKeepsThePipelinesAndAShapeChangeRebuildsThem)
     const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
     const std::vector<DrawItem>   commands{ commandOf(geometry, program) };
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
 
     const auto drawAndProbeCentre = [&](int width, int height) {
@@ -488,7 +488,7 @@ TEST(VkContentTargetTest, ThePassDepthPolicyDecidesWhichFragmentSurvives)
     // NEAR first, FAR second: the default policy tests and writes depth, so the far fragment is rejected.
     const std::vector<DrawItem> ordered{ commandOf(near_geometry, green_program), commandOf(far_geometry, red_program) };
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
 
     {
@@ -537,7 +537,7 @@ TEST(VkContentTargetTest, TheDepthAttachmentReadsBackAsNormalisedRowMajorValues)
     const intrusive_ptr<ShaderProgram> program  = makeProgram(kGreenFragment);
     const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.5F);
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     clear.clear_depth = true;
 
@@ -590,7 +590,7 @@ TEST(VkContentTargetTest, AMultisampledTargetsDepthReadsItsResolvePicture)
     const intrusive_ptr<ShaderProgram> program  = makeProgram(kGreenFragment);
     const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.5F);
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     clear.clear_depth = true;
 
@@ -631,7 +631,7 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
         GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
     }
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     clear.clear_depth = true;
 
@@ -735,38 +735,36 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
     const intrusive_ptr<Geometry>      left_half   = makeRectQuad(-1.0F, -1.0F, 0.0F, 1.0F, 0.0F);
     const intrusive_ptr<Geometry>      everywhere  = makeRectQuad(-1.0F, -1.0F, 1.0F, 1.0F, 0.25F);
 
-    ClearPolicy lender_clear;
+    AttachmentPolicy lender_clear;
     lender_clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     lender_clear.clear_depth = true;
-    ClearPolicy borrower_clear;
+    AttachmentPolicy borrower_clear;
     borrower_clear.color = Colorf(0.0F, 0.0F, 1.0F, 1.0F); // BLUE: what a REJECTED fragment leaves behind
     // A BORROWER MAY NEITHER CLEAR NOR DISCARD THE LENDER'S IMAGE. The worst pair an author can state is the one that
     // proves both overrides: if the load were honoured, the lender's depth would be gone and the fragment would win;
     // if the store were honoured, the depth the lender still needs would be discarded.
-    borrower_clear.depth_op = vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::DontCare, vn::graphics::StoreOp::DontCare };
+    borrower_clear.depth_op = vn::graphics::AttachmentOps{ vn::graphics::LoadOp::DontCare, vn::graphics::StoreOp::DontCare };
 
-    const auto passOf = [](RenderTarget* target,
-                           const ClearPolicy& clear,
-                           const intrusive_ptr<Geometry>& geometry,
-                           const intrusive_ptr<ShaderProgram>& program) {
-        auto list = std::make_shared<std::vector<DrawItem>>();
-        list->push_back(commandOf(geometry, program));
+    const auto passOf =
+        [](RenderTarget* target, const AttachmentPolicy& clear, const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program) {
+            auto list = std::make_shared<std::vector<DrawItem>>();
+            list->push_back(commandOf(geometry, program));
 
-        DrawPacket draw;
-        draw.kind     = DrawKind::Scene;
-        draw.view.camera   = identityCamera();
-        draw.commands = list;
+            DrawPacket draw;
+            draw.kind        = DrawKind::Scene;
+            draw.view.camera = identityCamera();
+            draw.commands    = list;
 
-        PassDraw pass;
-        pass.target = target;
-        pass.clear  = clear;
-        pass.packets.push_back(std::move(draw));
+            PassDraw pass;
+            pass.target            = target;
+            pass.attachment_policy = clear;
+            pass.packets.push_back(std::move(draw));
 
-        FrameDescription::Pass entry;
-        entry.pass = vn::test::framePassForTest();
-        entry.draw = std::move(pass);
-        return entry;
-    };
+            FrameDescription::Pass entry;
+            entry.pass = vn::test::framePassForTest();
+            entry.draw = std::move(pass);
+            return entry;
+        };
 
     // ONE FRAME, LENDER FIRST: the SDK's shareDepth rule is that the source renders earlier in the same frame.
     FrameDescription frame;
@@ -833,7 +831,7 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     auto* device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    ClearPolicy clear;
+    AttachmentPolicy clear;
     clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     clear.clear_depth = true;
 

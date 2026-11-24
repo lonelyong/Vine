@@ -74,3 +74,24 @@ reachable only through the backend's resolve downgrade.
   `VkContentTargetTest.EachColourAttachmentLoadsOrClearsOnItsOwn` (one pass, three answers, pixels read back);
   `test_graphics`' `RenderEngineTest.APassAnnouncesPerAttachmentOpsToTheBackend` (the policy reaches the backend
   without a group clear).
+
+## Amendment 2026-11-24 — the vocabulary follows the engine families (and keeps `Op`)
+
+The decision above is unchanged. `LoadOp` / `StoreOp` are **not** renamed: `Op` is the term Vulkan
+(`VkAttachmentLoadOp` / `VkAttachmentStoreOp`) and WebGPU (`GPULoadOp` / `GPUStoreOp`, `loadOp` / `storeOp`) use;
+`Action` is UE5 (`ERenderTargetLoadAction` / `ERenderTargetStoreAction`), Unity
+(`RenderBufferLoadAction` / `RenderBufferStoreAction`) and Metal (`MTLLoadAction` / `MTLStoreAction`) spelling.
+The first attempt renamed the enum too and was withdrawn on 2026-11-24 - both spellings are industry terms, and the
+seam already used the one the shipped API uses.
+
+The names that DID change are the ones that no longer said what they hold:
+
+| Before | After | Evidence |
+|---|---|---|
+| `AttachmentLoadStore` | `AttachmentOps` | One value per attachment: its load op and store op (the pair Vulkan and WebGPU state on the attachment). |
+| `ClearPolicy` | `AttachmentPolicy` | The type states the per-attachment ops, not only a clear. `color_ops` / `depth_op` keep their names. |
+| `RenderPass::clearPolicy()` / `PassDraw::clear` | `attachmentPolicy()` / `attachment_policy` | Same reason. |
+| `PassLoad` / `PassAttachment` / `PassAttachments` | `PassAttachmentOps` / `ResolvedAttachment` / `PassAttachmentSet` | Three different things: the resolved ops, one resolved entry, and the image set. |
+| `decidePassLoad` | `resolveAttachmentOps` | It resolves the pass' intent against target history; `decide` hid the resolution. |
+
+The design pages and the user guide use the new names; `.ai/memory` keeps the old spellings where it records history.

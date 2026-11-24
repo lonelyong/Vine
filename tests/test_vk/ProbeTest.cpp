@@ -46,12 +46,15 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -60,15 +63,12 @@ using vn::graphics::PrepareReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::SurfaceTargetResult;
 using vn::graphics::Topology;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -156,8 +156,8 @@ void main()
     entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target       = nullptr; // the window the frame is presented through
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(1.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(1.0F, 0.0F, 0.0F, 1.0F);
     pass.state.depth  = DepthPolicy::TestAndWrite;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);

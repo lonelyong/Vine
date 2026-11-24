@@ -17,7 +17,7 @@ add_executable(${TEST_NAME}
         MsaaTest.cpp
         MultiSessionTest.cpp
         OffscreenClearTest.cpp
-        PassLoadTest.cpp
+        AttachmentOpsTest.cpp
         PassTimingTest.cpp
         PipelineCacheTest.cpp
         PrepareUploadTest.cpp

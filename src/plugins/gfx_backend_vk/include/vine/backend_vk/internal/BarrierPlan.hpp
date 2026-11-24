@@ -247,7 +247,7 @@ void recordBarrier(const VolkDeviceTable& table,
 /**
  * @brief Gets the attachment load operation for @p op.
  *
- * @param op The pass' neutral load operation (see `PassLoad`).
+ * @param op The pass' neutral load operation (see `PassAttachmentOps`).
  * @return The Vulkan attachment load operation.
  */
 [[nodiscard]] VkAttachmentLoadOp loadOpOf(vn::graphics::LoadOp op) noexcept;
@@ -255,7 +255,7 @@ void recordBarrier(const VolkDeviceTable& table,
 /**
  * @brief Gets the attachment store operation for @p op.
  *
- * @param op The pass' neutral store operation (see `PassLoad`).
+ * @param op The pass' neutral store operation (see `PassAttachmentOps`).
  * @return The Vulkan attachment store operation.
  */
 [[nodiscard]] VkAttachmentStoreOp storeOpOf(vn::graphics::StoreOp op) noexcept;

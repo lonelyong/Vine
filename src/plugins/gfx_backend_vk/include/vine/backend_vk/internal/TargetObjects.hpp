@@ -401,10 +401,10 @@ struct TargetObjects {
      *
      * @param table    The device's entry points (volk table).
      * @param commands The command buffer being recorded (outside any rendering instance).
-     * @param load     The pass' load policy - one answer per attachment (see ClearPolicy).
+     * @param load     The pass' load policy - one answer per attachment (see AttachmentPolicy).
      * @param tally    Receives what the pass' entry dependency cost (see `RecordingTally`), or null.
      */
-    void beginPass(const VolkDeviceTable& table, VkCommandBuffer commands, const PassLoad& load, RecordingTally* tally = nullptr);
+    void beginPass(const VolkDeviceTable& table, VkCommandBuffer commands, const PassAttachmentOps& load, RecordingTally* tally = nullptr);
 
     /**
      * @brief Closes the rendering instance @ref beginPass opened (see `DynamicRendering::endRendering`).

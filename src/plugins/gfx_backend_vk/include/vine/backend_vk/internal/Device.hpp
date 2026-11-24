@@ -312,7 +312,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @details
      * - WHICH PASSES RUN. One that names an off-screen target is recorded as ONE DYNAMIC-RENDERING INSTANCE (colour
-     *   attachments CLEAR or LOAD, depth CLEAR or LOAD, as `ClearPolicy` says); one that names no target draws into the
+     *   attachments CLEAR or LOAD, depth CLEAR or LOAD, as `AttachmentPolicy` says); one that names no target draws into the
      *   acquired image of `present_to` when that is a window this device handed out, and the frame's tail presents it
      *   (M5). A frame that names no presenter, or a pass that names a target this device cannot build, is reported once
      *   and left out.

@@ -28,15 +28,15 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
-using vn::graphics::ClearPolicy;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
 using vn::graphics::PresentOutcome;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -62,8 +62,8 @@ constexpr int kFrames     = 8;
 
     vn::graphics::PassDraw pass;
     pass.target       = target;
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = colour;
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = colour;
     entry.draw        = std::move(pass);
     frame.passes.push_back(std::move(entry));
     return frame;

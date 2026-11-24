@@ -210,8 +210,8 @@ void main()
 
     vn::graphics::PassDraw pass;
     pass.target       = target;
-    pass.clear        = vn::graphics::ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = vn::graphics::AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     vn::graphics::DrawPacket draw;
     draw.kind     = vn::graphics::DrawKind::Scene;
     draw.view.camera   = vn::graphics::CameraSnapshot{};

@@ -54,9 +54,10 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -68,8 +69,8 @@ using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
-using vn::graphics::PresentOutcome;
 using vn::graphics::PrepareReport;
+using vn::graphics::PresentOutcome;
 using vn::graphics::RenderBackend;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderPass;
@@ -78,7 +79,6 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Topology;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -270,7 +270,7 @@ void expectRecord(const Ran& ran, std::uint64_t passes, std::uint64_t packets, c
 
 TEST(VkFrameRecordTest, ADepthOnlyClearKeepsTheDrawnPicture)
 {
-    // THE HUD LAYER'S CLEAR (see ClearPolicy's two dimensions): a later pass into the SAME target loads the colour and
+    // THE HUD LAYER'S CLEAR (see AttachmentPolicy's two dimensions): a later pass into the SAME target loads the colour and
     // resets only the depth - "the marker owns the depth inside its box, the scene underneath stays". What this pins:
     // the picture the first pass drew is still there (the colour was LOADed, not cleared), the depth really was reset
     // (the second pass is recorded with no draws and a clear of its own), and the record counts two scopes and one
@@ -298,7 +298,7 @@ TEST(VkFrameRecordTest, ADepthOnlyClearKeepsTheDrawnPicture)
     painting.order = 0;
     PassDraw paint;
     paint.target      = shared.get();
-    paint.clear       = ClearPolicy{ Colorf(0.0F, 0.0F, 0.0F, 1.0F), true };
+    paint.attachment_policy = AttachmentPolicy{ Colorf(0.0F, 0.0F, 0.0F, 1.0F), true };
     paint.state.depth = DepthPolicy::TestAndWrite;
     paint.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
     painting.draw = std::move(paint);
@@ -309,7 +309,7 @@ TEST(VkFrameRecordTest, ADepthOnlyClearKeepsTheDrawnPicture)
     overlay.order = 1;
     PassDraw cleaned;
     cleaned.target      = shared.get();
-    cleaned.clear       = ClearPolicy::depthOnly(); // the colour is LOADed and the depth is CLEARed
+    cleaned.attachment_policy = AttachmentPolicy::depthOnly(); // the colour is LOADed and the depth is CLEARed
     cleaned.state.depth = DepthPolicy::TestAndWrite;
     overlay.draw = std::move(cleaned);
     frame.passes.push_back(std::move(overlay));
@@ -344,7 +344,7 @@ TEST(VkFrameRecordTest, APrepareReportsTheShapeTheFrameRecords)
     const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
     const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    std::optional<ClearPolicy> clear = ClearPolicy{};
+    std::optional<AttachmentPolicy> clear = AttachmentPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.25F, 1.0F);
 
     DrawPacket idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
@@ -366,14 +366,14 @@ TEST(VkFrameRecordTest, APrepareReportsTheShapeTheFrameRecords)
 
     std::vector<FrameDescription::Pass> pass_entries;
     std::vector<intrusive_ptr<RenderPass>> pass_objects;
-    auto add = [&](std::optional<ClearPolicy> announced, std::vector<DrawPacket> draws) {
+    auto                                   add = [&](std::optional<AttachmentPolicy> announced, std::vector<DrawPacket> draws) {
         pass_objects.push_back(intrusive_ptr<RenderPass>(new RenderPass()));
         FrameDescription::Pass entry;
         entry.pass  = pass_objects.back().get();
         entry.order = static_cast<int>(pass_objects.size()) - 1;
         PassDraw pass;
         pass.target      = shared.get();
-        pass.clear       = std::move(announced);
+        pass.attachment_policy = std::move(announced);
         pass.state.depth = DepthPolicy::TestAndWrite;
         pass.packets     = std::move(draws);
         entry.draw       = std::move(pass);
@@ -420,7 +420,7 @@ TEST(VkFrameRecordTest, ADrawPacketCountsPacketsAndDrawsSeparately)
     const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
     const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
 
-    std::optional<ClearPolicy> clear = ClearPolicy{};
+    std::optional<AttachmentPolicy> clear = AttachmentPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
 
     FrameDescription frame;
@@ -429,7 +429,7 @@ TEST(VkFrameRecordTest, ADrawPacketCountsPacketsAndDrawsSeparately)
     entry.order = 0;
     PassDraw pass;
     pass.target      = shared.get();
-    pass.clear       = clear;
+    pass.attachment_policy = clear;
     pass.state.depth = DepthPolicy::TestAndWrite;
     pass.packets.push_back(
         sceneDraw(commandsOf({ commandOf(geometry, program, red), commandOf(geometry, program, red) })));
@@ -497,9 +497,9 @@ TEST(VkFrameRecordTest, AnEntryThatNamesNoPassIsNothingToRun)
     entry.order = 0;
     PassDraw pass;
     pass.target      = shared.get();
-    std::optional<ClearPolicy> clear = ClearPolicy{};
+    std::optional<AttachmentPolicy> clear = AttachmentPolicy{};
     clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-    pass.clear       = clear;
+    pass.attachment_policy                = clear;
     pass.state.depth = DepthPolicy::TestAndWrite;
     pass.packets.push_back(sceneDraw(commandsOf({ commandOf(geometry, program, red) })));
     entry.draw = std::move(pass);

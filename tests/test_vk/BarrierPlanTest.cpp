@@ -15,12 +15,12 @@
 #include <vine/graphics/DrawState.hpp>
 
 using vn::backend_vk::barrierFor;
+using vn::backend_vk::ImageLayout;
 using vn::backend_vk::ImageState;
 using vn::backend_vk::loadOpOf;
 using vn::backend_vk::requiresTransition;
 using vn::backend_vk::stateOf;
 using vn::backend_vk::storeOpOf;
-using vn::backend_vk::ImageLayout;
 using vn::graphics::LoadOp;
 using vn::graphics::StoreOp;
 

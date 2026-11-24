@@ -123,7 +123,7 @@ struct PassRole {
     }
 };
 
-struct PassAttachments {
+struct PassAttachmentSet {
     /// The extent the rendering instance covers (the attachment set's own; there is no framebuffer to disagree with).
     VkExtent2D extent{};
 
@@ -156,9 +156,9 @@ struct PassAttachments {
  *   therefore DOWNGRADES a resolved role to `DontCare` - the rule lives where the resolve is known, so a caller
  *   states what IT wants and cannot get the resolve case wrong.
  * - THE CLEAR VALUE IS PART OF THE ENTRY, but it is read only when `load` is `Clear`: a `Load`/`DontCare` attachment
- *   ignores the field beside it, and `ClearPolicy` is where the author states what a Clear writes.
+ *   ignores the field beside it, and `AttachmentPolicy` is where the author states what a Clear writes.
  */
-struct PassAttachment {
+struct ResolvedAttachment {
     /// What this attachment loads before the first draw.
     vn::graphics::LoadOp load{ vn::graphics::LoadOp::Clear };
     /// What this attachment's contents are worth after the pass.
@@ -171,17 +171,17 @@ struct PassAttachment {
  * @brief What one pass states about its attachments' LOAD and STORE: ONE VALUE PER ATTACHMENT.
  *
  * @details
- * - ONE ENTRY PER COLOUR ATTACHMENT, in output-location order (the order `PassAttachments::color` names them), plus
+ * - ONE ENTRY PER COLOUR ATTACHMENT, in output-location order (the order `PassAttachmentSet::color` names them), plus
  *   one for the depth attachment. A pass can therefore keep one image, reset another and discard a third in ONE
  *   rendering instance - the case a per-role pair could not express (`G4`).
- * - THE COLOUR AND DEPTH HALVES ARE INDEPENDENT (see `ClearPolicy`): a HUD pass keeps the picture and owns the depth
+ * - THE COLOUR AND DEPTH HALVES ARE INDEPENDENT (see `AttachmentPolicy`): a HUD pass keeps the picture and owns the depth
  *   inside its rectangle without a second attachment set.
  */
-struct PassLoad {
+struct PassAttachmentOps {
     /// One entry per colour attachment, in output-location order (parallel to the `color` role).
-    std::span<const PassAttachment> color{};
+    std::span<const ResolvedAttachment> color{};
     /// The depth attachment's entry (its clear value is the reverse-Z far plane).
-    PassAttachment depth{};
+    ResolvedAttachment depth{};
 };
 
 /**
@@ -191,7 +191,7 @@ struct PassLoad {
  * - THE RULE HAS ONE HOME (`G1`). The group spelling is the default: a pass loads when the set already holds a
  *   picture worth keeping AND the pass does not ask to reset that attachment. A stated per-attachment op overrides
  *   the group for ITS attachment, so "keep one, reset another, discard a third" needs no second mechanism (`G4`).
- * - NO POLICY MEANS NO CLEAR. `RenderPass::clearPolicy()` answers nullopt for a pass that clears NOTHING, so a
+ * - NO POLICY MEANS NO CLEAR. `RenderPass::attachmentPolicy()` answers nullopt for a pass that clears NOTHING, so a
  *   later pass into a set that already holds a picture LOADs it; only a FRESH set (nothing to keep) falls back to
  *   `Clear`, which is the one safety net the input cannot express.
  * - WHAT THE INPUT IS NOT. It is not "is this target fresh": it is "may a later pass load what is there" - a
@@ -216,8 +216,10 @@ struct PassLoad {
  * @param color_count       How many colour attachments the set has (see `PassTarget::colorCount`).
  * @return The pass' per-attachment policy, with @p color_storage filled and `color` naming its prefix.
  */
-[[nodiscard]] PassLoad
-decidePassLoad(bool preserve_previous, const vn::graphics::ClearPolicy* clear, std::span<PassAttachment> color_storage, std::size_t color_count) noexcept;
+[[nodiscard]] PassAttachmentOps resolveAttachmentOps(bool                                  preserve_previous,
+                                                             const vn::graphics::AttachmentPolicy* clear,
+                                                             std::span<ResolvedAttachment>         color_storage,
+                                                             std::size_t                           color_count) noexcept;
 
 /**
  * @brief Records the attachment transitions a pass needs, then `vkCmdBeginRendering`.
@@ -249,11 +251,11 @@ decidePassLoad(bool preserve_previous, const vn::graphics::ClearPolicy* clear, s
  * @param load        The pass' load policy and clear values.
  * @param tally       Receives what the entry's dependency cost (see `RecordingTally`), or null.
  */
-void beginRendering(const VolkDeviceTable& table,
-                    VkCommandBuffer        commands,
-                    const PassAttachments& attachments,
-                    const PassLoad&        load,
-                    RecordingTally*        tally = nullptr);
+void beginRendering(const VolkDeviceTable&       table,
+                    VkCommandBuffer              commands,
+                    const PassAttachmentSet&     attachments,
+                    const PassAttachmentOps& load,
+                    RecordingTally*              tally = nullptr);
 
 /**
  * @brief Records `vkCmdEndRendering`, closing the instance @ref beginRendering opened.

@@ -15,7 +15,7 @@ class Color;
  *   is @ref Color::toLinear and @ref toColor, both of which apply the sRGB curve - dividing by 255 is not decoding.
  * - WHICH SPACE a value is in belongs to whoever consumes it, not to the type: this is a value type, and the modules
  *   that give a colour a meaning declare it. The graphics module declares that every colour it is handed is LINEAR
- *   light (see its ClearPolicy), so a palette / PNG / `QColor` value is decoded once on the way in.
+ *   light (see its AttachmentPolicy), so a palette / PNG / `QColor` value is decoded once on the way in.
  *
  * @note
  * - Alpha is a coverage fraction in both halves of the pair and is never encoded.

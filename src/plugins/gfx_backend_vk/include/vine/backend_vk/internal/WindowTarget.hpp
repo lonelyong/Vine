@@ -128,7 +128,7 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      *   the shared DEPTH image is `UNDEFINED` on its first use and a depth attachment afterwards. A per-image record is
      *   what makes "the first use" exact - a swapchain image the presentation engine has never handed out is not the
      *   one that was presented last frame.
-     * - THE LOAD POLICY IS THE PASS' OWN (see `ClearPolicy`'s two independent dimensions): the first pass into an image
+     * - THE LOAD POLICY IS THE PASS' OWN (see `AttachmentPolicy`'s two independent dimensions): the first pass into an image
      *   that has no earlier pass this frame CLEARs, and a later pass keeps what the earlier one wrote unless it asks to
      *   reset an attachment.
      *
@@ -138,7 +138,7 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      *
      * @warning The caller acquired an image first (@ref acquire) and ends the pass with @ref endPass.
      */
-    void beginPass(VkCommandBuffer commands, const PassLoad& load, RecordingTally* tally = nullptr);
+    void beginPass(VkCommandBuffer commands, const PassAttachmentOps& load, RecordingTally* tally = nullptr);
 
     /**
      * @brief Closes the rendering instance @ref beginPass opened.

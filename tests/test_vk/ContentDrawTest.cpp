@@ -54,12 +54,17 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
+using vn::graphics::BlendFactor;
+using vn::graphics::BlendState;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -72,7 +77,6 @@ using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderState;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -81,10 +85,6 @@ using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
 using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
-using vn::graphics::BlendFactor;
-using vn::graphics::BlendState;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -272,8 +272,8 @@ void main()
 
     PassDraw pass;
     pass.target        = target;
-    pass.clear         = ClearPolicy{};
-    pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
 
@@ -810,8 +810,8 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     state.depth = DepthPolicy::Disabled;
     PassDraw pass;
     pass.target = target.get();
-    pass.clear  = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.state  = state;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
@@ -887,8 +887,8 @@ TEST(VkContentDrawTest, AStateChangeIsACommandNotAPipeline)
         state.depth = DepthPolicy::Disabled;
         PassDraw pass;
         pass.target       = target.get();
-        pass.clear        = ClearPolicy{};
-        pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.attachment_policy        = AttachmentPolicy{};
+        pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         pass.state        = state;
         pass.packets.push_back(std::move(draw));
         entry.draw = std::move(pass);
@@ -1155,8 +1155,8 @@ TEST(VkContentDrawTest, APassEntryIsOneDependencyWhateverItWrites)
     entry.pass        = vn::test::framePassForTest();
     PassDraw pass;
     pass.target       = target.get();
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     entry.draw        = std::move(pass);
     frame.passes.push_back(std::move(entry));
 
@@ -1258,8 +1258,8 @@ TEST(VkContentDrawTest, AFrameAndItsPassesAreNamedToACaptureTool)
         entry.pass = vn::test::framePassForTest();
         PassDraw pass;
         pass.target       = target;
-        pass.clear        = ClearPolicy{};
-        pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.attachment_policy        = AttachmentPolicy{};
+        pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         entry.draw        = std::move(pass);
         frame.passes.push_back(std::move(entry));
     }

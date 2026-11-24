@@ -36,10 +36,10 @@ class RenderTarget;
 class ShaderProgram;
 
 /**
- * @brief How a pass has its target cleared before it draws.
+ * @brief What a pass does to its target's attachments: what each loads, what a Clear writes, what each stores.
  *
  * @details
- * - A PASS' OWN FACT, a field of its description (PassDraw::clear): the pass describes the clear its
+ * - A PASS' OWN FACT, a field of its description (PassDraw::attachment_policy): the pass describes the clear its
  *   content expects and every draw of that pass gets it. Nothing is cleared at call time - a backend that
  *   clears through its render pass' load-op applies it when the pass records.
  * - TWO INDEPENDENT DIMENSIONS: @ref clear_color and @ref clear_depth say WHICH attachments this pass resets, and
@@ -71,13 +71,13 @@ class ShaderProgram;
  *
  * @note
  * - A DEFAULT-CONSTRUCTED policy is not "the default clear": this value is only ever built by the pass that states
- *   one (RenderPass::clearPolicy), and that pass' own default colour is the #333333 grey, not the white a
+ *   one (RenderPass::attachmentPolicy), and that pass' own default colour is the #333333 grey, not the white a
  *   zero-initialised @ref value would be. The initialiser exists so the type can be stored and assigned, not to
  *   describe a clearing frame.
  */
-struct ClearPolicy {
+struct AttachmentPolicy {
     /** @brief A policy that clears both dimensions: what an ordinary frame start and an off-full-screen pass state. */
-    ClearPolicy() = default;
+    AttachmentPolicy() = default;
 
     /** @brief A policy that clears the colour attachments to @p in_color and the depth when @p with_depth.
      *
@@ -87,7 +87,7 @@ struct ClearPolicy {
      * @param in_color    What attachment 0 is cleared to (linear).
      * @param with_depth  Whether the depth attachment is cleared as well.
      */
-    ClearPolicy(const Colorf& in_color, bool with_depth)
+    AttachmentPolicy(const Colorf& in_color, bool with_depth)
       : clear_depth(with_depth)
       , color(in_color)
     {}
@@ -96,9 +96,9 @@ struct ClearPolicy {
     ///
     /// The spelling of the second dimension alone (see the class note): the colour the pass is drawn over is KEPT, so
     /// the pass occludes itself against its own depth without ever washing out the picture underneath.
-    [[nodiscard]] static ClearPolicy depthOnly() noexcept
+    [[nodiscard]] static AttachmentPolicy depthOnly() noexcept
     {
-        ClearPolicy policy;
+        AttachmentPolicy policy;
         policy.clear_color = false;
         return policy;
     }
@@ -125,10 +125,10 @@ struct ClearPolicy {
     /// count is ignored. The clear VALUE stays in @ref color / @ref extra_colors - this vector says only what happens,
     /// never what a Clear writes. A `DontCare` load leaves the previous contents undefined, so a pass that BLENDS
     /// against the attachment (or reads it in a shader) must state `Load`.
-    std::vector<AttachmentLoadStore> color_ops;
+    std::vector<AttachmentOps> color_ops;
     /// The depth attachment's load/store ops, or nullopt for the group spelling: @ref clear_depth chooses
     /// Clear-or-Load and the depth stores its result.
-    std::optional<AttachmentLoadStore> depth_op;
+    std::optional<AttachmentOps> depth_op;
 };
 
 /**
@@ -224,8 +224,8 @@ struct VN_GRAPHICS_API PassDraw {
     /// The depth band this pass' draws are mapped into, or nullopt for the whole buffer (see DepthRange).
     std::optional<DepthRange> depth_range;
     /// The clear it announces before it draws, or nullopt to announce NONE (a pass that clears nothing must not
-    /// claim to: see ClearPolicy).
-    std::optional<ClearPolicy> clear;
+    /// claim to: see AttachmentPolicy).
+    std::optional<AttachmentPolicy> attachment_policy;
     /// This pass' state for the content it draws (see RenderPass::stateOverrides).
     PassRenderState state{};
     /// The program this pass draws ALL of its content with, or null for per-geometry programs (see
@@ -360,7 +360,7 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
  */
 [[nodiscard]] inline bool passHasEffect(const PassDraw& draw) noexcept
 {
-    if (draw.clear.has_value()) {
+    if (draw.attachment_policy.has_value()) {
         return true;
     }
     for (const DrawPacket& description : draw.packets) {
@@ -435,7 +435,7 @@ struct VN_GRAPHICS_API FrameCounts {
             ++packets;
             draws += drawItemsOf(description);
         }
-        if (packets == 0U && !entry.draw->clear.has_value()) {
+        if (packets == 0U && !entry.draw->attachment_policy.has_value()) {
             continue; // no effect: nothing drawn, nothing cleared
         }
         ++counts.passes;

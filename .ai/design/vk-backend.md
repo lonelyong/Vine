@@ -135,7 +135,7 @@ and every cache has a witness a test can read.**
   execution dependency), then the instance. `TargetObjects::beginPass` / `WindowTarget::beginPass` are the two call sites; the
   layout bookkeeping is theirs (see `F4` and `P15`).
 - **Two depth images, two layouts; a borrowed depth is a dependency, not an exception**: the depth ATTACHMENT and the picture
-  it resolves into are two ROLES (`PassAttachments::depth` / `depth_picture`), because a reader sampling the picture moves only
+  it resolves into are two ROLES (`PassAttachmentSet::depth` / `depth_picture`), because a reader sampling the picture moves only
   the picture - a multisampled image may not be sampled at all, so stating the picture's layout for the sample buffer is an illegal
   barrier (`VUID-VkImageMemoryBarrier2-oldLayout-01211`, measured). On a SINGLE-SAMPLED set the two names resolve to ONE
   image, which therefore has ONE record (`TargetObjects::depthPictureLayout`) and the `depth_picture` role is simply
@@ -158,16 +158,16 @@ and every cache has a witness a test can read.**
   then `record = to`), which is the shape that shipped VUID 09588 and 09592: the barrier and the record drifted and the
   next pass stated a layout the image had never been in. A new mover calls one of those two verbs; a caller that needs a
   same-layout dependency (two passes into one attachment) is `beginRendering`'s job, not theirs.
-- **LOAD AND STORE ARE PER ATTACHMENT, AND THE STORE IS DERIVED WHERE THE RESOLVE IS KNOWN**: `PassLoad` carries one
-  `PassAttachment` (the seam's `LoadOp` / `StoreOp` plus the clear value) for EACH colour attachment and one for depth,
+- **LOAD AND STORE ARE PER ATTACHMENT, AND THE STORE IS DERIVED WHERE THE RESOLVE IS KNOWN**: `PassAttachmentOps` carries one
+  `ResolvedAttachment` (the seam's `LoadOp` / `StoreOp` plus the clear value) for EACH colour attachment and one for depth,
   and `beginRendering` DOWNGRADES a resolved role to `DontCare` - a multisampled pass' sample buffers, and a depth that
-  resolves, are content nobody can read afterwards, so keeping them is bandwidth nobody buys. `decidePassLoad` is the
-  one rule that turns `ClearPolicy` (the group flags, plus the per-attachment `color_ops` / `depth_op` an author states)
+  resolves, are content nobody can read afterwards, so keeping them is bandwidth nobody buys. `resolveAttachmentOps` is the
+  one rule that turns `AttachmentPolicy` (the group flags, plus the per-attachment `color_ops` / `depth_op` an author states)
   into those entries; the neutral ops are mapped by the table's `loadOpOf` / `storeOpOf`, which is what makes those two
   rows live instead of a second conditional inside the recorder. **A pass that announces NO policy clears NOTHING**: a
   later pass into a set that already holds a picture LOADs it, and only a fresh set falls back to `Clear` (there is
   nothing to keep). Reading nullopt as "clear both" wiped the demo's deferred result and every later window pass.
-- **A pass states four ROLES, not thirteen fields**: `PassAttachments` is `color` (the images rendering writes), `picture`
+- **A pass states four ROLES, not thirteen fields**: `PassAttachmentSet` is `color` (the images rendering writes), `picture`
   (their resolve targets), `depth` and `depth_picture` (`DynamicRendering.hpp`). A role with one image is a `PassImage`
   value (image + view + its record), a role with one image per colour attachment is a `PassRole` of three parallel spans -
   three and not one array of structs because a full-screen draw binds the views as ONE contiguous `VkImageView` span, and
@@ -421,7 +421,7 @@ and every cache has a witness a test can read.**
 ### 2.20 One pass is one value; one frame is one command buffer (`G1` / `G5` / `G6`)
 
 - **What it is**: the frame body used to keep four descriptions of "the pass about to run" - a local `Runnable` list,
-  `FrameHead::Pass`, `PassAttachments` and `PassLoad` - plus the `pass_position` / `pass_index` arithmetic that kept the
+  `FrameHead::Pass`, `PassAttachmentSet` and `PassAttachmentOps` - plus the `pass_position` / `pass_index` arithmetic that kept the
   indexings in step. `FrameHead::Pass` now carries the frame facts (`entry`, `draw`, `target`): the walk claims them, the
   head resolves the plans into the same slots while it holds the cache lock, and the recorder walks that one array. **A
   pass' attachment set is itself a value** (`PassTarget`): the off-screen set and the window's acquired image answer the
@@ -523,7 +523,7 @@ and every cache has a witness a test can read.**
 
 - **Behaviour**: `TargetObjects` holds the colour / sample buffer / depth / depth-resolve images and views, and the layout each
   one is in; a pass opens a **dynamic-rendering instance** over them (`beginPass` / `endPass`, and `DynamicRendering`), stating
-  ONE load/store answer PER ATTACHMENT (`ClearPolicy::color_ops` / `depth_op`; a stated op overrides the group spelling) - so the HUD case (keep the picture, own the depth inside its rectangle) is two fields of one
+  ONE load/store answer PER ATTACHMENT (`AttachmentPolicy::color_ops` / `depth_op`; a stated op overrides the group spelling) - so the HUD case (keep the picture, own the depth inside its rectangle) is two fields of one
   `VkRenderingAttachmentInfo` instead of a fourth render pass. The WINDOW owns the same pair (`WindowTarget::beginPass`), with
   a PER-IMAGE layout record: a swapchain image is `UNDEFINED` on its first use, `PRESENT_SRC_KHR` after it was presented, and
   the colour layout between two passes of one frame. A PRESENTED COLOUR ATTACHMENT IS ALWAYS `Store`d: `beginPass` overrides a
@@ -727,7 +727,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `PassTarget` | WHERE one pass draws: an off-screen set or the window's acquired image, as one value with the facts and the verbs a pass needs | §2.20 |
 | `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) | F4 / §2.18 |
 | `TargetObjects` | an offscreen target's attachment set: images, views and the layout each one is in (`beginPass` / `endPass`) | F4 |
-| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `decidePassLoad` (the per-attachment load/store rule, one place) | F4 / §2.7 |
+| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `resolveAttachmentOps` (the per-attachment load/store rule, one place) | F4 / §2.7 |
 | `WindowTarget` / `WindowSystem` | the swap chain and the surface (per-image layout record, `beginPass` / `endPass`) | F3 |
 | `MemoryAllocator` | the device memory pool (blocks / slices / mapping) | F10 |
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |

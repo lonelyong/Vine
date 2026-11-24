@@ -45,11 +45,14 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -57,11 +60,8 @@ using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -169,8 +169,8 @@ void main()
     entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target       = target;
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));

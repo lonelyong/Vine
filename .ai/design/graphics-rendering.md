@@ -161,7 +161,7 @@ family answers.
 | `vn::graphics::LoadOpVariantKey` | the backend that builds pass objects keys its own (vk builds variants by hand) | the key of a render-pass OBJECT; a D3D12 backend keys PSOs, Metal has no pass object at all |
 
 - What a host must change: nothing - neither type was ever a parameter of a host call (the load/store DECISION reaches a
-  backend through `PassDesc`'s `ClearPolicy`).
+  backend through `PassDesc`'s `AttachmentPolicy`).
 - What a backend must do: include its own header; `keyAuditTable()` now has six rows, because the variant key cannot
   enter `PipelineKey` when it is not an SDK type (the seam test states that as the stronger fact).
 - The rule that decided it is in `graphics-architecture.md` 2.15: a fact only one API family can answer stays off the
@@ -205,9 +205,9 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
   provide. The trap, its VUID and the mutation that proves the transitions load-bearing are `vk-backend.md` `P15`.
 - What it bought: one load/store pair per attachment instead of a render-pass variant, so the HUD case (keep the
   picture, clear only the depth inside its rectangle), the "clear one attachment, load another, discard a third" case
-  (2026-11-24: `ClearPolicy::color_ops` / `depth_op`, authored through `PassDesc`) and the MSAA resolve pair are values
+  (2026-11-24: `AttachmentPolicy::color_ops` / `depth_op`, authored through `PassDesc`) and the MSAA resolve pair are values
   rather than structures - and the last legacy creation call in the backend is gone. The backend resolves the one fact
-  the engine cannot know: a stated `Load` on a set with no picture becomes `Clear` (`decidePassLoad`).
+  the engine cannot know: a stated `Load` on a set with no picture becomes `Clear` (`resolveAttachmentOps`).
 
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):

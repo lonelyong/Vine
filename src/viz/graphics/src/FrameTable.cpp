@@ -29,7 +29,7 @@ std::string clearText(const PassRow& pass)
         return pass.clears_depth ? std::string("depth") : std::string("-");
     }
     // The SPACE is part of the text: "rgba(51,51,51,255)" reads the same whether it means encoded samples or linear
-    // light, and telling which one this is was the whole point (see ClearPolicy). Three decimals is finer than an
+    // light, and telling which one this is was the whole point (see AttachmentPolicy). Three decimals is finer than an
     // 8-bit sRGB step at the values a pass usually clears to.
     char color[256]{};
     std::snprintf(color,

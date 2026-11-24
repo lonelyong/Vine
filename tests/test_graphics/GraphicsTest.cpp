@@ -3541,7 +3541,7 @@ class MockBackend : public RenderBackend {
     int render_calls = 0;
     int clear_calls  = 0;
     /// Policy of the last clear the frame stated, so a test can assert WHAT the pass asked for.
-    ClearPolicy   last_clear_policy{};
+    AttachmentPolicy last_clear_policy{};
     int           viewport_sets = 0;
     /// The view the last content draw was projected with (the frame's VALUE: a frame no longer names a Camera).
     CameraSnapshot last_camera{};
@@ -3701,9 +3701,9 @@ class MockBackend : public RenderBackend {
             last_viewport[2] = description.viewport->width;
             last_viewport[3] = description.viewport->height;
         }
-        if (description.clear.has_value()) {
+        if (description.attachment_policy.has_value()) {
             ++clear_calls;
-            last_clear_policy = *description.clear;
+            last_clear_policy = *description.attachment_policy;
         }
         pass_state = description.state;
         for (const DrawPacket& draw : description.packets) {
@@ -4475,14 +4475,14 @@ TEST(RenderEngineTest, APassAnnouncesPerAttachmentOpsToTheBackend)
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     // A pass that states ops but no group clear still ANNOUNCES a policy: "keep one, discard another" is a statement
-    // the backend must receive, and it is the whole point of per-attachment ops (see ClearPolicy::color_ops).
+    // the backend must receive, and it is the whole point of per-attachment ops (see AttachmentPolicy::color_ops).
     PassDesc desc;
     desc.camera        = cam;
     desc.content       = content;
     desc.clear_enabled = false;
     desc.clear_depth   = false;
-    desc.color_ops     = {
-        vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Load, vn::graphics::StoreOp::DontCare }
+    desc.color_ops = {
+        vn::graphics::AttachmentOps{ vn::graphics::LoadOp::Load, vn::graphics::StoreOp::DontCare }
     };
     (void)vn::test::applyPassForTest(*engine, std::move(desc), 0);
 
@@ -4505,7 +4505,7 @@ TEST(RenderEngineTest, APassMayClearDepthAndKeepTheColourItIsDrawnOver)
     auto cam     = intrusive_ptr<Camera>(new Camera());
 
     // A HUD pass: it KEEPS the colour it is drawn over and owns the depth inside its box. The two halves of a clear are
-    // independent dimensions (see ClearPolicy), so that declaration reaches the backend as exactly that pair - which is
+    // independent dimensions (see AttachmentPolicy), so that declaration reaches the backend as exactly that pair - which is
     // what lets a marker's own arrows occlude each other without ever occluding the scene underneath.
     PassDesc hud_desc;
     hud_desc.camera        = cam;
@@ -6258,10 +6258,10 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     EXPECT_EQ(described.viewport->y, backend->last_viewport[1]);
     EXPECT_EQ(described.viewport->width, backend->last_viewport[2]);
     EXPECT_EQ(described.viewport->height, backend->last_viewport[3]);
-    ASSERT_TRUE(described.clear.has_value());
+    ASSERT_TRUE(described.attachment_policy.has_value());
     EXPECT_EQ(backend->clear_calls, 1);
-    EXPECT_EQ(described.clear->color, backend->last_clear_policy.color);
-    EXPECT_EQ(described.clear->clear_depth, backend->last_clear_policy.clear_depth);
+    EXPECT_EQ(described.attachment_policy->color, backend->last_clear_policy.color);
+    EXPECT_EQ(described.attachment_policy->clear_depth, backend->last_clear_policy.clear_depth);
     EXPECT_EQ(described.state.depth, backend->pass_state.depth);
     EXPECT_EQ(described.state.polygonMode, backend->pass_state.polygonMode);
     EXPECT_DOUBLE_EQ(cam->aspect(), 32.0 / 18.0) << "形状是 CAMERA 的状态（描述里没有这个字段），投影与剔除读的是同一个数";
@@ -6333,7 +6333,7 @@ TEST(PassDrawTest, WhatAFullscreenPassDescribesIsWhatItAnnounces)
     EXPECT_TRUE(backend->last_program_camera.view.isEqual(draw.view.camera.view, 1e-12)) << "the same view the description stated";
     EXPECT_EQ(backend->render_calls, 0) << "全屏档走 drawFullscreenProgram()，不走 render()";
     // 清屏在构造里就关了：描述里没有 clear，线上也没收到 setClearPolicy（0 值不是"清了黑色"）
-    EXPECT_FALSE(described.clear.has_value());
+    EXPECT_FALSE(described.attachment_policy.has_value());
     EXPECT_EQ(backend->clear_calls, 0);
 }
 
@@ -7803,7 +7803,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
 
         OwnedPassDraw description;
         description.target = target;
-        description.clear  = ClearPolicy{ Color(0, 0, 0, 255).toLinear(), true };
+        description.attachment_policy = AttachmentPolicy{ Color(0, 0, 0, 255).toLinear(), true };
         OwnedDrawPacket draw;
         draw.view.camera = CameraSnapshot::of(*camera);
         draw.commands = commands;
@@ -7825,7 +7825,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
     ASSERT_TRUE(frame.passes[0].draw.has_value()) << "a pass that issues something keeps its description";
     const PassDraw& description = *frame.passes[0].draw;
     EXPECT_EQ(description.target, target_raw);
-    ASSERT_TRUE(description.clear.has_value());
+    ASSERT_TRUE(description.attachment_policy.has_value());
     ASSERT_EQ(description.packets.size(), 1U);
     EXPECT_TRUE(description.packets[0].view.camera.view.isEqual(camera_view, 1e-12)) << "the camera the pass held, as a value";
     ASSERT_NE(description.packets[0].commands, nullptr) << "the command collection is held, not borrowed";

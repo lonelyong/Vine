@@ -55,12 +55,15 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -72,11 +75,8 @@ using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -195,9 +195,9 @@ struct Scene {
 
     PassDraw pass;
     pass.target        = scene.gbuffer.get();
-    pass.clear         = ClearPolicy{};
-    pass.clear->color  = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
-    pass.clear->clear_depth  = true;
+    pass.attachment_policy              = AttachmentPolicy{};
+    pass.attachment_policy->color       = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+    pass.attachment_policy->clear_depth = true;
     pass.state.depth   = DepthPolicy::TestAndWrite;
     pass.packets.push_back(gbufferDraw(scene));
 
@@ -232,8 +232,8 @@ struct Scene {
 
     PassDraw pass;
     pass.target       = scene.result.get();
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     // The destination carries depth, and a full-screen triangle sits at the far plane: the pass states that it draws
     // OVER what the target holds, which is the same policy the SDK's own lighting pass states by having no depth.
     pass.state.depth = DepthPolicy::Disabled;
@@ -264,8 +264,8 @@ struct Scene {
 
     PassDraw pass;
     pass.target       = destination;
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     pass.state.depth  = DepthPolicy::Disabled;
 
     DrawPacket draw;

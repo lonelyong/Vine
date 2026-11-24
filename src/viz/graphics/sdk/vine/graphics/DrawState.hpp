@@ -66,15 +66,15 @@ enum class StoreOp : std::uint8_t
  * - THE PAIR EVERY API FAMILY STATES PER ATTACHMENT: Vulkan's `VkRenderingAttachmentInfo`, D3D12's render-pass
  *   render-target description and Metal's attachment descriptor each carry a load and a store for ONE attachment -
  *   so the seam states the pair per attachment instead of a group boolean plus an exception list.
- * - A CLEAR VALUE IS NOT PART OF IT: what a `LoadOp::Clear` writes is stated beside the op (`ClearPolicy::color` /
+ * - A CLEAR VALUE IS NOT PART OF IT: what a `LoadOp::Clear` writes is stated beside the op (`AttachmentPolicy::color` /
  *   `extra_colors`), so this value stays small, copyable and comparable.
  * - `Load` on an attachment that holds nothing is not honoured as a load: the backend substitutes `Clear`, because
- *   there is no picture to keep (the rule the group spelling of `ClearPolicy` already follows).
+ *   there is no picture to keep (the rule the group spelling of `AttachmentPolicy` already follows).
  * - DEPTH AND STENCIL ARE ONE PAIR: Vulkan's dynamic rendering states one load/store for both aspects, and that is the
  *   floor this seam rests on. A family that separates them (D3D12's depth/stencil beginning access) applies this pair
  *   to both until a stencil user exists - separate stencil ops would be an extension point with no consumer (`G8`).
  */
-struct AttachmentLoadStore {
+struct AttachmentOps {
     /// What the attachment loads before the first draw.
     LoadOp load{ LoadOp::Clear };
     /// What the attachment's contents are worth after the pass.

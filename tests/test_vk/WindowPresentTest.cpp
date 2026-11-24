@@ -54,11 +54,14 @@
 #endif
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -67,15 +70,12 @@ using vn::graphics::PrepareReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::SurfaceTargetResult;
 using vn::graphics::Topology;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -223,8 +223,8 @@ void main()
     entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target       = nullptr; // the window
-    pass.clear        = ClearPolicy{};
-    pass.clear->color = clear;
+    pass.attachment_policy        = AttachmentPolicy{};
+    pass.attachment_policy->color = clear;
     pass.packets.push_back(std::move(draw));
     entry.draw = std::move(pass);
     frame.passes.push_back(std::move(entry));
@@ -328,12 +328,12 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 
         // A STORE OF `DontCare` ON THE PRESENTED IMAGE IS NOT HONOURED: `WindowTarget::beginPass` forces `Store` for
         // the window's one colour attachment, because `DontCare` would discard the picture the compositor is about to
-        // read. The pass states the worst pair (see `ClearPolicy::color_ops`) and the corner is still the clear.
+        // read. The pass states the worst pair (see `AttachmentPolicy::color_ops`) and the corner is still the clear.
         FrameDescription discarded = windowFrame();
         ASSERT_TRUE(discarded.passes.front().draw.has_value());
-        ASSERT_TRUE(discarded.passes.front().draw->clear.has_value());
-        discarded.passes.front().draw->clear->color_ops = {
-            vn::graphics::AttachmentLoadStore{ vn::graphics::LoadOp::Clear, vn::graphics::StoreOp::DontCare }
+        ASSERT_TRUE(discarded.passes.front().draw->attachment_policy.has_value());
+        discarded.passes.front().draw->attachment_policy->color_ops = {
+            vn::graphics::AttachmentOps{ vn::graphics::LoadOp::Clear, vn::graphics::StoreOp::DontCare }
         };
         EXPECT_EQ(backend->executeFrame(discarded, target), PresentOutcome::Presented);
         const std::array<std::uint8_t, 3> kept = window.waitForPixel(2, 2, magenta, std::chrono::milliseconds{ 1000 });

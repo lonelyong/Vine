@@ -2,9 +2,9 @@
  * @brief M1's acceptance: a pass that clears its off-screen target leaves exactly that colour, and the readback says so.
  *
  * What this pins, and why each half matters:
- *   - the frame value is enough to run a pass: `PassDraw::target` + `PassDraw::clear` are the whole input, so a backend
+ *   - the frame value is enough to run a pass: `PassDraw::target` + `PassDraw::attachment_policy` are the whole input, so a backend
  *     needs nothing from a live `RenderPass` to clear a target (see FrameDescription's note);
- *   - the clear colour travels as LINEAR values (`ClearPolicy::color`) and comes back as packed RGBA8, which is the
+ *   - the clear colour travels as LINEAR values (`AttachmentPolicy::color`) and comes back as packed RGBA8, which is the
  *     readback contract - a colour that drifted through a wrong conversion would show here;
  *   - a target the device never built answers `NotReady`, NOT a picture: "no pixels yet" and "black pixels" are
  *     different answers, and only one of them is evidence.
@@ -26,7 +26,8 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
-using vn::graphics::ClearPolicy;
+using vn::intrusive_ptr;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
@@ -35,7 +36,6 @@ using vn::graphics::PresentOutcome;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -62,8 +62,8 @@ namespace
 
     PassDraw draw;
     draw.target = target;
-    draw.clear  = ClearPolicy{};
-    draw.clear->color = colour;
+    draw.attachment_policy        = AttachmentPolicy{};
+    draw.attachment_policy->color = colour;
     entry.draw = draw;
 
     frame.passes.push_back(std::move(entry));

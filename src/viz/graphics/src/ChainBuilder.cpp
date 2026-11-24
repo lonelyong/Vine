@@ -102,7 +102,7 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         // A HUD OWNS THE DEPTH INSIDE ITS BOX: the pass keeps the colour it is drawn over and resets only the depth in
         // its rectangle, then tests and writes - so the marker's arrows occlude each other like the solids they are,
         // while the scene underneath is never occluded by them. The two halves are independent on purpose (see
-        // ClearPolicy); stating only `depth_policy` would test the arrows against the SCENE's depth, which has nothing to
+        // AttachmentPolicy); stating only `depth_policy` would test the arrows against the SCENE's depth, which has nothing to
         // do with their own.
         desc.clear_enabled = false;
         desc.clear_depth   = true;

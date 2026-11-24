@@ -54,12 +54,15 @@
 
 using vn::BufferSlice;
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::ClearPolicy;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
@@ -69,13 +72,10 @@ using vn::graphics::LightValue;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 
 namespace
 {
@@ -241,7 +241,7 @@ struct Scene {
     shadow_entry.order = 0;
     PassDraw shadow_pass;
     shadow_pass.target = scene.map.get();
-    shadow_pass.clear  = ClearPolicy{}; // clears the depth (the only attachment)
+    shadow_pass.attachment_policy = AttachmentPolicy{}; // clears the depth (the only attachment)
     shadow_pass.state.depth = DepthPolicy::TestAndWrite;
     shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
@@ -255,8 +255,8 @@ struct Scene {
     }
     PassDraw main_pass;
     main_pass.target       = scene.target.get();
-    main_pass.clear        = ClearPolicy{};
-    main_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    main_pass.attachment_policy        = AttachmentPolicy{};
+    main_pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     main_pass.state.depth  = DepthPolicy::TestAndWrite;
     main_pass.packets.push_back(sceneDraw(receiver_list, vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
@@ -458,7 +458,7 @@ void main()
     shadow_entry.order = 0;
     PassDraw shadow_pass;
     shadow_pass.target      = scene.map.get();
-    shadow_pass.clear       = ClearPolicy{};
+    shadow_pass.attachment_policy = AttachmentPolicy{};
     shadow_pass.state.depth = DepthPolicy::TestAndWrite;
     shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
@@ -473,7 +473,7 @@ void main()
     source_entry.order = 1;
     PassDraw source_pass;
     source_pass.target      = source.get();
-    source_pass.clear       = ClearPolicy{};
+    source_pass.attachment_policy = AttachmentPolicy{};
     source_pass.state.depth = DepthPolicy::Disabled;
     source_entry.draw       = std::move(source_pass);
     frame.passes.push_back(std::move(source_entry));

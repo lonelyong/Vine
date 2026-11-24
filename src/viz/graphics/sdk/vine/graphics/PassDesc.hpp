@@ -97,27 +97,27 @@ struct VN_GRAPHICS_API PassDesc {
     /// The colour its target is cleared to, or unset for the kind's own default (the #333333 grey a hand-built
     /// pass clears to — a surface that has its own colour states it here).
     ///
-    /// LINEAR, like every other authored colour in this module (see ClearPolicy): a host holding an encoded colour
+    /// LINEAR, like every other authored colour in this module (see AttachmentPolicy): a host holding an encoded colour
     /// - a palette, a PNG, a `QColor` - states it with `Color(...).toLinear()`.
     /// Channels may exceed 1 for a floating-point target: an HDR clear is a value, not a clamped sample.
     std::optional<Colorf> clear_color;
-    /// Colours for attachments 1..N-1, in attachment order (see ClearPolicy): an absent entry is transparent
+    /// Colours for attachments 1..N-1, in attachment order (see AttachmentPolicy): an absent entry is transparent
     /// black. This is what a G-buffer needs (a normal image cleared to (0,0,1,0) rather than the pass' colour).
     std::vector<Colorf> clear_extra_colors;
     /// Whether the depth attachment is cleared, or unset for the kind's own policy: it follows `clear_enabled` for a
     /// pass that clears (a Scene pass clears both, a full-screen pass neither), and a pass that clears NO colour clears no
     /// depth either unless it says so here. `clear_enabled = false` + `clear_depth = true` is therefore a DEPTH-ONLY
-    /// clear, applied inside the pass' viewport (see ClearPolicy for what each target can express).
+    /// clear, applied inside the pass' viewport (see AttachmentPolicy for what each target can express).
     std::optional<bool> clear_depth;
-    /// Per-attachment load/store for the colour attachments, in attachment order (see ClearPolicy::color_ops).
+    /// Per-attachment load/store for the colour attachments, in attachment order (see AttachmentPolicy::color_ops).
     ///
     /// EMPTY keeps the group spelling: @ref clear_enabled chooses Clear-or-Load and every attachment stores its
     /// result. A pass that states one entry for attachment 1 overrides the group for that attachment only. A
     /// `DontCare` load leaves the previous contents undefined, so a pass that BLENDS against the attachment (or reads
     /// it in a shader) must state `Load`; `DontCare` is for an attachment the pass fully overwrites.
-    std::vector<AttachmentLoadStore> color_ops;
-    /// Per-attachment load/store for the depth attachment (see ClearPolicy::depth_op). Unset keeps @ref clear_depth.
-    std::optional<AttachmentLoadStore> depth_op;
+    std::vector<AttachmentOps> color_ops;
+    /// Per-attachment load/store for the depth attachment (see AttachmentPolicy::depth_op). Unset keeps @ref clear_depth.
+    std::optional<AttachmentOps> depth_op;
 
     /// A sub-rectangle of the target to draw into (unset = the whole of it).
     std::optional<Viewport> viewport;

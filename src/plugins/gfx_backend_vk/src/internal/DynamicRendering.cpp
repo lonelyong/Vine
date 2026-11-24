@@ -17,7 +17,7 @@ namespace
  * @param view    The image rendering writes.
  * @param resolve The picture it resolves into, or null.
  * @param load    The pass' colour load op (one value for every colour attachment).
- * @param store   What the written image's contents are worth (see `PassLoad`: `DontCare` on a resolved role).
+ * @param store   What the written image's contents are worth (see `PassAttachmentOps`: `DontCare` on a resolved role).
  * @param clear   This attachment's clear value (read only when loading is off).
  * @return The attachment info.
  */
@@ -44,24 +44,24 @@ namespace
 
 } // namespace
 
-PassLoad decidePassLoad(const bool                             preserve_previous,
-                        const vn::graphics::ClearPolicy* const clear,
-                        const std::span<PassAttachment>        color_storage,
-                        const std::size_t                      color_count) noexcept
+PassAttachmentOps resolveAttachmentOps(const bool                                  preserve_previous,
+                                               const vn::graphics::AttachmentPolicy* const clear,
+                                               const std::span<ResolvedAttachment>         color_storage,
+                                               const std::size_t                           color_count) noexcept
 {
     // THE GROUP SPELLING IS THE DEFAULT, and a stated per-attachment op overrides it for its own attachment.
-    // `ClearPolicy`'s two group dimensions stay independent (a HUD keeps the colour and owns the depth).
-    // NO POLICY AT ALL MEANS NO CLEAR: `RenderPass::clearPolicy()` answers nullopt for a pass that clears nothing,
+    // `AttachmentPolicy`'s two group dimensions stay independent (a HUD keeps the colour and owns the depth).
+    // NO POLICY AT ALL MEANS NO CLEAR: `RenderPass::attachmentPolicy()` answers nullopt for a pass that clears nothing,
     // so a later pass into a set that already holds a picture must LOAD it - treating nullopt as "clear both" wiped
     // the deferred-lighting result in the demo and left only the last overlay on a black window.
     const bool clear_color = clear != nullptr && clear->clear_color;
     const bool clear_depth = clear != nullptr && clear->clear_depth;
 
-    PassLoad load{};
+    PassAttachmentOps load{};
     const std::size_t filled = std::min(color_count, color_storage.size());
     for (std::size_t index = 0; index < filled; ++index) {
-        const vn::graphics::AttachmentLoadStore* stated = clear != nullptr && index < clear->color_ops.size() ? &clear->color_ops[index] : nullptr;
-        PassAttachment&                          slot   = color_storage[index];
+        const vn::graphics::AttachmentOps* stated = clear != nullptr && index < clear->color_ops.size() ? &clear->color_ops[index] : nullptr;
+        ResolvedAttachment&                    slot   = color_storage[index];
         slot.load  = stated != nullptr ? stated->load : (preserve_previous && !clear_color ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear);
         slot.store = stated != nullptr ? stated->store : vn::graphics::StoreOp::Store;
         // NOTHING TO KEEP IS NOT A LOAD: the group rule already answers Clear on a fresh set, and a stated `Load` gets
@@ -80,9 +80,10 @@ PassLoad decidePassLoad(const bool                             preserve_previous
     }
     load.color = color_storage.first(filled);
 
-    load.depth              = PassAttachment{};
+    load.depth              = ResolvedAttachment{};
     const bool depth_stated = clear != nullptr && clear->depth_op.has_value();
-    load.depth.load  = depth_stated ? clear->depth_op->load : (preserve_previous && !clear_depth ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear);
+    load.depth.load =
+        depth_stated ? clear->depth_op->load : (preserve_previous && !clear_depth ? vn::graphics::LoadOp::Load : vn::graphics::LoadOp::Clear);
     load.depth.store = depth_stated ? clear->depth_op->store : vn::graphics::StoreOp::Store;
     if (load.depth.load == vn::graphics::LoadOp::Load && !preserve_previous) {
         load.depth.load = vn::graphics::LoadOp::Clear;
@@ -92,11 +93,11 @@ PassLoad decidePassLoad(const bool                             preserve_previous
     return load;
 }
 
-void beginRendering(const VolkDeviceTable& table,
-                    const VkCommandBuffer  commands,
-                    const PassAttachments& attachments,
-                    const PassLoad&        load,
-                    RecordingTally* const  tally)
+void beginRendering(const VolkDeviceTable&       table,
+                    const VkCommandBuffer        commands,
+                    const PassAttachmentSet&     attachments,
+                    const PassAttachmentOps& load,
+                    RecordingTally* const        tally)
 {
     // THE TRANSITIONS FIRST, ONE DEPENDENCY FOR THE WHOLE PASS (see the header). The destination is always the rendering
     // layout; the source is the record the owner keeps for THAT image, which may be the same value - see the header's
@@ -142,18 +143,18 @@ void beginRendering(const VolkDeviceTable& table,
     // images are worth; this call knows whether a resolve consumes them, which is why the downgrade lives here.
     const bool                                                  colour_resolved = !attachments.picture.empty();
     const bool                                                  depth_resolved  = attachments.depth_picture.present();
-    const PassAttachment                                        fallback{};
+    const ResolvedAttachment                                    fallback{};
     std::array<VkRenderingAttachmentInfo, kMaxColorAttachments> colors{};
     for (std::size_t index = 0; index < attachments.color.size(); ++index) {
-        // ONE ENTRY PER ATTACHMENT (see PassLoad): the index names the image, its view and its own op. A caller that
+        // ONE ENTRY PER ATTACHMENT (see PassAttachmentOps): the index names the image, its view and its own op. A caller that
         // states fewer entries than the set has attachments falls back to the defaults rather than reading past the
         // span - the recorder never trusts a count it did not take from the same owner.
-        const PassAttachment& op = index < load.color.size() ? load.color[index] : fallback;
-        colors[index]            = colorAttachmentInfo(attachments.color.views[index],
-                                                       attachments.picture.viewAt(index),
-                                                       loadOpOf(op.load),
-                                                       storeOpOf(colour_resolved ? vn::graphics::StoreOp::DontCare : op.store),
-                                                       op.clear);
+        const ResolvedAttachment& op = index < load.color.size() ? load.color[index] : fallback;
+        colors[index]                = colorAttachmentInfo(attachments.color.views[index],
+                                                           attachments.picture.viewAt(index),
+                                                           loadOpOf(op.load),
+                                                           storeOpOf(colour_resolved ? vn::graphics::StoreOp::DontCare : op.store),
+                                                           op.clear);
     }
 
     VkRenderingAttachmentInfo depth{};

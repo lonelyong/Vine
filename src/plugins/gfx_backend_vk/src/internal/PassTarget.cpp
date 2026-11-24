@@ -33,7 +33,7 @@ bool PassTarget::holdsPicture() const noexcept
     return !images_->fresh.load(std::memory_order_relaxed);
 }
 
-void PassTarget::begin(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassLoad& load, RecordingTally* const tally) const
+void PassTarget::begin(const VolkDeviceTable& table, const VkCommandBuffer commands, const PassAttachmentOps& load, RecordingTally* const tally) const
 {
     if (images_ != nullptr) {
         images_->beginPass(table, commands, load, tally);

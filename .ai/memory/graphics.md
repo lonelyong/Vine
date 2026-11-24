@@ -2272,3 +2272,14 @@
   attachment (a stated `DontCare` is ignored there); the depth is not forced, because it is not presented. Witness:
   `VkWindowPresentTest.AWindowFrameIsDrawnAndPresented` draws a second frame stating `{Clear, DontCare}` and still
   reads the clear.
+
+## 2026-11-24 — attachment vocabulary follows the engine families (`Op` stays)
+
+- `LoadOp`/`StoreOp` **stay**: `Op` is Vulkan (`VkAttachmentLoadOp`) and WebGPU (`GPULoadOp`/`loadOp`);
+  `Action` is UE5/Unity/Metal's. The enum rename was withdrawn after review.
+- `AttachmentLoadStore` → `AttachmentOps`; `ClearPolicy` → `AttachmentPolicy` (fields keep `color_ops`/`depth_op`);
+  `RenderPass::clearPolicy()`/`PassDraw::clear` → `attachmentPolicy()`/`attachment_policy`.
+- Backend: `PassLoad` → `PassAttachmentOps`, `PassAttachment` → `ResolvedAttachment`, `PassAttachments` →
+  `PassAttachmentSet`, `decidePassLoad` → `resolveAttachmentOps`; test `PassLoadTest` → `AttachmentOpsTest`.
+- Why: `ClearPolicy`/`PassLoad` no longer said what they hold; `Op` is the neutral term the seam already used.
+- Verified: build 0; test_vk/test_graphics green; gates.
