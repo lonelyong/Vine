@@ -22,14 +22,14 @@
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
-#include <vine/backend_vk/internal/ProgramVariant.hpp>
 #include <vine/backend_vk/internal/ResidencyClaims.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/MaterialValues.hpp>
+#include <vine/graphics/ProgramVariant.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
-#include <vine/graphics/DrawState.hpp>
-#include <vine/graphics/RetirementQueue.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 

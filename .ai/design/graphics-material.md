@@ -304,7 +304,7 @@ forward and deferred reconstruct the same set of surfaces from their own inputs 
 - `src/viz/graphics/sdk/vine/graphics/MaterialValues.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
 - `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
 - `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
-- `MaterialAbi.hpp` (`blockOfMaterial` and the block's offsets) · `ContentImages.hpp` (F11's slot decision) · `ProgramVariant.hpp` · `SceneBuild.cpp` (`materialFrom`)
+- `MaterialAbi.hpp` (`blockOfMaterial` and the block's offsets) · `ContentImages.hpp` (F11's slot decision) · `ProgramVariant.hpp` (the SDK's variant rule) · `SceneBuild.cpp` (`materialFrom`)
 
 ### 10.2 Documents, ADRs and external sources
 

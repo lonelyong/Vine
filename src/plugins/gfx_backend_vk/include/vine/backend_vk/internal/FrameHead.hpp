@@ -11,14 +11,14 @@
 
 #include <volk.h>
 
-#include <vine/graphics/MaterialValues.hpp>
-#include <vine/graphics/StateResolution.hpp>
-#include <vine/graphics/DrawState.hpp>
-#include <vine/graphics/FrameDescription.hpp>
 #include <vine/backend_vk/internal/ContentAbi.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/PassTarget.hpp>
-#include <vine/backend_vk/internal/ProgramVariant.hpp>
+#include <vine/graphics/DrawState.hpp>
+#include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/MaterialValues.hpp>
+#include <vine/graphics/ProgramVariant.hpp>
+#include <vine/graphics/StateResolution.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -102,7 +102,7 @@ class FrameHead final {
 
         /// The content call's payload (empty for a full-screen packet).
         vn::graphics::MaterialDescriptionPtr material{}; ///< The material it is shaded with, or null (defaults).
-        ProgramVariant                       variant{};  ///< What the program was compiled under.
+        vn::graphics::ProgramVariant         variant{};  ///< What the program was compiled under.
         std::vector<VkBuffer>                vertex_streams{}; ///< The geometry's non-empty channels, in binding order.
         std::uint32_t                        vertex_count{ 0 };
         VkBuffer                             instance_buffer{ VK_NULL_HANDLE }; ///< The LAST binding, or null.

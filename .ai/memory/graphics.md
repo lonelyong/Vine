@@ -2403,3 +2403,18 @@
 - **Evidence**: ctest `test_gui` (offscreen, what the suite runs under) passes, 13.9 s; on this session's real display
   `TitleBarStaysReachable` skips in 63 ms (the WM refuses the off-screen placement) while the drag case passes in
   189 ms - both outcomes the backlog asked for, and each failure now names the window manager instead of the code.
+
+## 2026-11-25 - the variant rule moves to the SDK (`ProgramVariant`, backlog T68)
+
+- **Why**: the backend derived four bits (textured / vertex colour / cube texcoord / instanced) and fixed their
+  numbers, while the INPUTS are SDK values (a material's slots, a geometry's channel widths, the draw's instance
+  stream) and the OUTPUT names are the SDK's own stage text (`#pragma import_defines`). A second backend would have had
+  to restate "three scalars is a cube" - the divergence `ADR-2026-11-23` D1 exists to prevent.
+- **What**: `sdk/vine/graphics/ProgramVariant.hpp` + `src/ProgramVariant.cpp` now state the four switches, the bit
+  constants (`kTexturedBit` 1 / `kVertexColorBit` 2 / `kCubeTexcoordBit` 4 / `kInstancedBit` 8, so `bits()` IS the
+  number `PipelineKey::variant` carries), `defines()` (the names the shipped stages gate on, one texcoord kind always
+  named), `describe()`, and `variantOf(geometry, material, instanced)` - the one place the bits are derived.
+- **Boundary**: a backend that compiles the text takes `defines()`; one that ships precompiled stages maps `bits()`.
+  Neither derives the bits again. The vk plugin deletes its own `ProgramVariant.{hpp,cpp}` and imports the SDK names,
+  so its `internal/` no longer owns a rule - only the use.
+- **Evidence**: `VkVariantTest` 7/7 device-free, ctest `test_vk` and `test_graphics` green, gates green.

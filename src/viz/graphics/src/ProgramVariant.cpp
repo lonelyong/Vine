@@ -1,15 +1,13 @@
-#include <vine/backend_vk/internal/ProgramVariant.hpp>
+#include <vine/graphics/ProgramVariant.hpp>
 
+#include <string>
+#include <vector>
+
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 
-VN_BACKEND_VK_NS_BEGIN
-
-std::uint32_t ProgramVariant::bits() const noexcept
-{
-    // One bit per switch, and the bits ARE the number the program cache and the pipeline key carry: a reader that
-    // compared two variants by anything else would have to know this mapping, which is what the type exists to avoid.
-    return (textured ? 1U : 0U) | (vertex_color ? 2U : 0U) | (cube_texcoord ? 4U : 0U) | (instanced ? 8U : 0U);
-}
+VN_GRAPHICS_NS_BEGIN
 
 std::vector<std::string> ProgramVariant::defines() const
 {
@@ -47,8 +45,8 @@ std::string ProgramVariant::describe() const
 
 bool operator==(const ProgramVariant& left, const ProgramVariant& right) noexcept
 {
-    return left.textured == right.textured && left.vertex_color == right.vertex_color && left.cube_texcoord == right.cube_texcoord &&
-           left.instanced == right.instanced;
+    return left.textured == right.textured && left.vertex_color == right.vertex_color &&
+           left.cube_texcoord == right.cube_texcoord && left.instanced == right.instanced;
 }
 
 bool operator!=(const ProgramVariant& left, const ProgramVariant& right) noexcept
@@ -56,9 +54,7 @@ bool operator!=(const ProgramVariant& left, const ProgramVariant& right) noexcep
     return !(left == right);
 }
 
-ProgramVariant variantOf(const vn::graphics::GeometryDescription& geometry,
-                         const vn::graphics::MaterialDescription*  material,
-                         const bool                                instanced) noexcept
+ProgramVariant variantOf(const GeometryDescription& geometry, const MaterialDescription* material, const bool instanced) noexcept
 {
     using vn::graphics::attributeLocation;
     using vn::graphics::VertexAttribute;
@@ -66,14 +62,14 @@ ProgramVariant variantOf(const vn::graphics::GeometryDescription& geometry,
     ProgramVariant variant;
 
     // ANY present slot asks for the textured variant: the switch is "has a texture set", not "which slots" (see the
-    // struct note on why five per-slot bits would multiply the cache).
+    // struct note on why per-slot bits would multiply the cache).
     if (material != nullptr) {
-        for (const vn::graphics::TextureSlotBinding& slot : material->values().textures) {
+        for (const TextureSlotBinding& slot : material->values().textures) {
             variant.textured = variant.textured || slot.texture != nullptr;
         }
     }
 
-    for (const vn::graphics::GeometryChannel& channel : geometry.channels()) {
+    for (const GeometryChannel& channel : geometry.channels()) {
         if (channel.channel.empty()) {
             continue;
         }
@@ -82,7 +78,7 @@ ProgramVariant variantOf(const vn::graphics::GeometryDescription& geometry,
             variant.cube_texcoord = channel.channel.components == 3U;
         }
         else if (channel.location == attributeLocation(VertexAttribute::Color)) {
-            variant.vertex_color = true; // this backend derives no channel, so a fed colour is an authored one
+            variant.vertex_color = true; // no backend derives a channel of its own, so a fed colour is an authored one
         }
     }
 
@@ -90,4 +86,4 @@ ProgramVariant variantOf(const vn::graphics::GeometryDescription& geometry,
     return variant;
 }
 
-VN_BACKEND_VK_NS_END
+VN_GRAPHICS_NS_END

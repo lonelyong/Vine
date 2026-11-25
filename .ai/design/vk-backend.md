@@ -793,7 +793,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |
 | `ReadbackStaging` | one readback's staging sequence | F11 |
 | `BarrierPlan.hpp` / `StateMapping` | `stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf` / the clock's boundary stages; `recordBarriers` and `BarrierBatch` state a pass' moves as ONE dependency | §2.7 / §2.19 |
-| `ShaderCompiler.hpp` / `ProgramVariant` | `compileStage` + `SpirvModule` (glslang); the variant bits | F5 |
+| `ShaderCompiler.hpp` | `compileStage` + `SpirvModule` (glslang); the variant's define names (the variant VALUE itself is the SDK's `ProgramVariant`) | F5 |
 | `Handles` (`internal/` + `support/`) | the escape hatch | F15 |
 | `ContentAbi.hpp` | the content block layout this backend packs (offsets are the SDK's ABI) | F5, `graphics-material.md` |
 | `SampleCounts.hpp` | which sample counts this device builds, and the refusal when one is asked for | F4, `ADR-2026-11-14` |

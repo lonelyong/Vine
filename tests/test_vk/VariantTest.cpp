@@ -3,10 +3,11 @@
  *
  * WHAT THIS PINS, and why it is device-free. The engine's own stages branch on names they declare in a
  * `#pragma import_defines` line (`VN_TEXTURED`, `VN_VERTEX_COLOR`, `VN_TEXCOORD_UV`, `VN_TEXCOORD_CUBE`,
- * `VN_INSTANCED`). The RULES that pick those names from a drawable are the engine's (a material with any texture
- * slot is textured; the texcoord WIDTH is the kind; a fed colour is an authored one; an instance stream is the
- * command's), so they are asserted here as a table - before any device exists, exactly like the barrier and state
- * tables. `compileStage` is glslang alone, so "the names reach the text" is also device-free.
+ * `VN_INSTANCED`). The RULES that pick those names from a drawable are the SDK's now (`variantOf` in
+ * `vine/graphics/ProgramVariant.hpp`: a material with any texture slot is textured; the texcoord WIDTH is the kind;
+ * a fed colour is an authored one; an instance stream is the command's), and this table pins them through that API -
+ * before any device exists, exactly like the barrier and state tables. `compileStage` is glslang alone, so "the
+ * names reach the text" is also device-free.
  */
 
 #include <gtest/gtest.h>
@@ -20,25 +21,25 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
+#include <vine/graphics/ProgramVariant.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
-#include <vine/backend_vk/internal/ProgramVariant.hpp>
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 
+using vn::intrusive_ptr;
 using vn::backend_vk::compileStage;
-using vn::backend_vk::ProgramVariant;
 using vn::backend_vk::SpirvModule;
-using vn::backend_vk::variantOf;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
+using vn::graphics::ProgramVariant;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
 using vn::graphics::TextureSlot;
-using vn::intrusive_ptr;
+using vn::graphics::variantOf;
 
 namespace
 {

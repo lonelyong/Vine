@@ -35,6 +35,8 @@ using detail::kShadowBlockBinding;
 using detail::kShadowMapBinding;
 using detail::kTextureSlots;
 using detail::vertexFormatOf;
+using vn::graphics::ProgramVariant;
+using vn::graphics::variantOf;
 
 } // namespace
 
@@ -1104,7 +1106,7 @@ struct ContentCaches::Impl {
         }
 
         // THE MATERIAL AND THE VARIANT, before anything is compiled: the texture slots select `VN_TEXTURED` and the
-        // geometry's channels select the colour and texcoord names (see ProgramVariant::variantOf). Resolved HERE so
+        // geometry's channels select the colour and texcoord names (see variantOf). Resolved HERE so
         // a warm-up and the frame that follows it cannot compile different programs for one drawable (G1).
         vn::graphics::MaterialDescriptionPtr material = command.material_description;
         if (material == nullptr && command.material != nullptr) {

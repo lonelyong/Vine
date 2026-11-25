@@ -227,6 +227,7 @@ SEAM_SHARED_HEADERS = frozenset((
     "PrepareReport.hpp",
     "PresentTarget.hpp",
     "Primitive.hpp",
+    "ProgramVariant.hpp",
     "RenderDiagnostic.hpp",
 ))
 SDK_GRAPHICS_ROOT = "src/viz/graphics/sdk/vine/graphics"

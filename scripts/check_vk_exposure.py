@@ -178,9 +178,9 @@ def main() -> int:
     root = resolve_root(args.root)
 
     # V6's pattern is built from the tree: a plugin unit's stem, unless the SDK owns the same stem or the stem is one
-    # ordinary word. Sorted and joined once, so the scan stays one regex per file rather than one per unit. The SDK's
-    # stems include its subdirectories: `api/ProgramVariant` is the SDK's own spelling even though the plugin keeps a
-    # `ProgramVariant` of its own.
+    # ordinary word. Sorted and joined once, so the scan stays one regex per file rather than one per unit. A stem the
+    # SDK exports is not a leak even when a plugin names it (the SDK's `ProgramVariant` is the variant rule itself, and
+    # a backend compiling a program for one names it), because the rule is the SDK's and only the USE is the backend's.
     sdk_stems = {path.stem for path in (root / SDK_FACE).rglob("*.hpp")}
     unit_stems = {
         path.stem
