@@ -1,7 +1,7 @@
 # graphics architecture: device, engine, chain, one frame
 
 > **Status**: current
-> **Last verified**: 2026-11-23
+> **Last verified**: 2026-11-25
 > **Scope**: the layering of device/window/area/view/engine, and one frame's compilation and scheduling.
 > **Sources**: `RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsHandle.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`.
@@ -104,23 +104,35 @@ removing an unregistered pass and removing an already removed pass are the same 
     backend reaches it", recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, and the two pages that state it (this point and
     `docs/guides/graphics-backends.md` 5) are checked against that list, so a mechanism cannot join or leave it without them
     changing too. An alias group (`vn::graphics::backend`) was rejected: it gives one class two names, and the shared surface
-    is 35 headers, not the 8 mechanisms - a name covering 8 of 35 claims a boundary that is not there (`G1`, `G4`).
+    is the headers `SEAM_SHARED_HEADERS` lists (not the 8 mechanisms) - a name covering 8 of that list claims a boundary that is not there (`G1`, `G4`).
 2.10 **The migration APIs are closed**: the `addPass` family is gone, `Plan` is the only shape of a pass declaration;
     `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
     plan), `frame()` answers only Ran / Submitted, `applyPlan` is three-state, `SessionBusy` is no longer a plan problem code.
     Reason: changing during migration in two passes would leave three shapes alive; now there is one shape and the public signatures match the documentation (`G1` / `G6`).
-2.11 **An extension point's cost is a table, not an adjective** (audit `A12`): saying "easy to extend" without saying "which places a new one touches" cannot be falsified.
-    So every extension point has a row here, listing **today's actual files** — read this table before adding something, update it afterwards.
-    Criterion: if an extension point starts needing changes to the **core model** (`FrameDescription`'s shape, the engine's compilation, scheduling), it is not an extension
-    but a refactor, and that step needs an ADR (the reverse of `G9` is exactly "every addition touches the core").
+2.11 **An extension point's cost is a row: one DECISION SITE and a grep, never a file list** (audit `A12`): saying
+    "easy to extend" without saying "which places a new one touches" cannot be falsified, and a list of propagation
+    files cannot stay true - the pass-kind row named `RenderPass.cpp`'s kind → node mapping for the weeks after that
+    mapping moved to `SessionShape.cpp`. So a row names the ONE place the decision is written (a closed enum, a
+    struct, or "none - the host subclasses") and the rule that finds the rest; read it before adding something.
+    Criterion: a row whose decision site is a closed SDK enum is an **ordinary batch** - the compiler usually finds
+    no other site, which is exactly why the propagation rule is a grep - and the batch bumps
+    `VN_RENDER_BACKEND_ABI_VERSION` when a value crossing the seam changes layout. Touching the **core model**
+    itself (`FrameDescription`'s shape, the engine's compilation, the scheduling) is not an extension but a
+    refactor, and that step needs an ADR (`G9`'s reverse is exactly "every addition touches the core"). Which sets
+    are closed on purpose, and which are the host's to extend, is 2.17.
 
-| Extension point | Where it touches today (actual files) | Places |
+| Extension point | Decision site (the one place the new value is written) | Propagation rule |
 |---|---|---|
-| A **pass kind** (e.g. compute) | `DrawKind.hpp`'s `DrawKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `FullscreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend's frame compiler and recorder (switches over `DrawKind`) | 6–8 |
-| A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.hpp`'s `kColorFormats` (drives `colorFormatOf` / `colorFormatName` and the device-support mask); `Readback.cpp`'s `colorBytesPerTexel` / `depthBytesPerTexel`; vk `ContentImages.cpp`'s `formatOf` | 5 |
-| A **pass declaration field** | `PassDesc.hpp`; `Plan.cpp` (diff and validation); `FrameDescription.hpp`'s `PassDraw`; each backend's recorder | 4+ |
-| A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; a new backend's own binding | 4 |
-| A **backend** (and, for a second API FAMILY such as D3D12 or Metal, also its `check_<family>_exposure` gate over the SDK's family spelling and its own shader translation - the SDK keeps ONE shader source language, review 8 `P4`) | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`), the two halves of `RenderBackend`, its own `test_*`, a `check_*_exposure` gate, `RenderBackendRegistry` self-registration | about 6 kinds of file, +2 for a new family |
+| A **pass kind** | `DrawKind.hpp`'s `DrawKind` | `grep -rn 'DrawKind::' src` - the plan's validation and describe, the kind → node mapping (`SessionShape.cpp`), the frame value's expansion, each pass class, and each backend's frame compiler and recorder; a new node class follows `FullscreenPass.cpp` |
+| A **pass stage** | `PassStage.hpp` (and `passStageOrder`'s switch) | the preset recipes that place passes (`ChainBuilder.cpp`), and the pass whose stage it is |
+| A **topology** | `Topology.hpp` (and `isTriangleTopology`) | `TriangleStream.hpp`'s `triangleCountOf` / `triangleCorners`, each backend's mapping (vk `StateMapping.hpp`), and "one pipeline per enum value" |
+| A **built-in view mode** | `ShadingMode.hpp` | the switch in `PassChain::setShadingMode`, and the program it selects in `BuiltinShaders.cpp` (a new GLSL text is registered there) |
+| A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat` | `grep -rn 'ColorFormat::\|DepthFormat::' src` - each backend's format table (vk `TargetObjects.cpp` and its support mask), `Readback.cpp`'s two width tables, vk `ContentImages.cpp`'s `formatOf` |
+| A **pass declaration field** | `PassDesc.hpp` | `Plan.cpp` (diff, validation, `describe`), `FrameDescription.hpp`'s `PassDraw`, `OwnedFrame`'s borrow rule, each backend's recorder |
+| A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table | `ShaderAbi.hpp`'s block layout, vk `ContentDraw.cpp`'s channel → location and vertex format, a new backend's own binding |
+| A **content node type** | **none - the host subclasses** `Node` / `Group` / `StateNode` / `MaterialValues` | nothing in the engine: the `obj_cast` dispatch and the fold recognise a subclass; the host's own tests carry it (2.17's open axis) |
+| A **diagnostic code** | the report site (a `u8"module.name"` literal) | `scripts/diagnostic_codes.txt` (the registry, checked in both directions), and - in a backend - the refusal switch that names its codes (vk `ContentRefusalCause`) |
+| A **backend** (and, for a second API FAMILY such as D3D12 or Metal, also its `check_<family>_exposure` gate over the SDK's family spelling and its own shader translation - the SDK keeps ONE shader source language, review 8 `P4`) | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`) | implement `RenderBackend`'s two halves, state the ABI handshake, add its own `test_*`, a `check_*_exposure` gate, and its registration |
 
 2.12 **`Content*` names only the content model and identity** (naming, `G12`): the `Content*` prefix belongs to **content objects themselves** — `ContentId` /
     `ContentRef` / `ContentRegistry` / `ContentDeclarations` / `ContentStore` (the device's "identity + row" table). GPU objects compiled or cached from content are named by **what they are**, without the `Content` prefix: `CompiledPrograms` (the compiled half of each
@@ -232,6 +244,34 @@ removing an unregistered pass and removing an already removed pass are the same 
       loads backends itself asks `isRenderBackendAbiCompatible`, the same function the registry uses, instead of inventing a
       second rule. The one-argument `registerFactory` overload is the compatibility shim for a module compiled before the
       rule: it must stay resolvable, because on Linux a missing symbol aborts the process where a refusal leaves a sentence.
+
+2.17 **Two kinds of set, and which is which is stated** (`G9` / `G8` / `G12`): "can I add one?" is the first question an
+    integrator asks, and the answer is a split, not a policy of "no".
+    * **CLOSED** - edited by the framework, at the decision site 2.11 names: `DrawKind` (two values), `PassStage`,
+      `Topology`, `ShadingMode`, the pixel-format table, `DiagnosticCategory`. A closed set is *why the model is small*
+      and why a backend can map it exhaustively; adding a member is an ordinary batch (2.11's propagation rule, plus an
+      ABI bump when a value crossing the seam changes), not a refactor.
+    * **OPEN** - what a host extends without the framework changing: a pass is a declaration (`PassDesc`, whose target,
+      inputs, program, viewport, state and hook are all data), a program is supplied (`PassDesc::program` /
+      `program_override`), a material implements `MaterialValues::resolved()`, a node type subclasses `Node` / `Group` /
+      `StateNode`, a backend implements `RenderBackend`.
+    * **NOT EXTENSIBLE, only configurable** - what the DEVICE answers and a host reads: `Capabilities`, `Limits`, the two
+      report values. A host branches on these; it does not add to them.
+    Why: every peer states this split and makes it part of its answer (WebGPU's closed `GPUPrimitiveTopology` beside an
+    open pipeline descriptor; Filament's five shading models beside material data compiled offline). Here it was only
+    inferable from four enum @notes, and 2.11's criterion read as a ban on ever adding a member. Boundary: closed is a
+    decision about the MODEL, not about a backend - each backend maps the closed set in its own switch, and a closed
+    member's propagation is 2.11's grep. An extension point that would need a new member of a closed set *and* a change
+    to `FrameDescription`'s shape is a refactor and goes through an ADR (2.11's criterion).
+2.18 **A public header is named after what a host writes** (`G12` / `G4`): the file takes the name of the value a host
+    constructs or subclasses, not of the value the engine derives from it, and it holds one concept - unless its parts
+    are only meaningful together, in which case its name says the cluster (`DrawState` is the pipeline-key vocabulary,
+    `FrameReport` is the frame's numbers, `FrameDescription` is the frame's value).
+    Why: the 101 headers ARE the SDK's map, and the map is read by a host looking for a type (`G4`). A header named after
+    the engine's half of a concept (`ImageSource.hpp` declaring the host-written `ImageInput` beside the resolved
+    `ImageSource`) makes the reader learn which half the file is about, and makes the design page spend a sentence on it.
+    Boundary: no umbrella header and no reorganisation of existing headers - moving 101 files is churn (`G8`), and the
+    reader-facing index is `docs/guides/graphics.md` §5.1's translation table.
 
 ## 3. Features
 

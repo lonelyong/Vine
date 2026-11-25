@@ -159,6 +159,13 @@ Rules:
 - Group public interfaces by class; the full signature is in the header.
 - Every caveat says how it fails / how to detect it / how to prevent it — no generalities.
 - A rejected option is one line; the full argument is the ADR.
+- A **count** of something that grows (test cases, suites, headers, files, lines) is not written in prose: write the
+  producer instead (`the headers \`SEAM_SHARED_HEADERS\` lists`, `the counts \`measure_graphics_claims.py\` prints`,
+  `\`test_vk\` green`). A number that answers a decision (a measured cost, a threshold, a size a gate pins) may be
+  written, and then it names the command, file or list that produces it. A count in prose is the one fact no gate can
+  check, and every count that stayed drifted: `graphics-architecture.md` 2.9 said 35 seam headers where the gate held
+  37, and two pages said `test_vk` had 186 cases where the binary listed 220. (A blanket regex was rejected: about 40
+  legitimate sites read `SomeTest.cpp (N cases)`, and a check that must be switched off is worse than none.)
 - A small document may merge 1.1–1.3 into one paragraph, but the §1/§2/§3/§5/§7/§8/§9/§10 headings
   stay.
 - A diagram must match the current code; update "Last verified" when the code changes.

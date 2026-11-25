@@ -233,7 +233,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
   becomes "forward to the target session".
 - **Constraints** (C2): the frame machinery exists **only** in a session; the device has no second `command_pool`.
 - **Requirements** (R2): `executor()` stays, with its meaning narrowed to "the device's own session" (`G6`, the same shape as `setDiagnosticsRoute`).
-- **Acceptance** (T2): `test_vk` (186 cases / 45 suites) is green; the device's own driver answers the same frames it did before the session split.
+- **Acceptance** (T2): `test_vk` is green (its counts come from `python3 scripts/measure_graphics_claims.py`); the device's own driver answers the same frames it did before the session split.
 - **Caveat** (N2): `PrepareReport` / `FrameReport` are a session's answers; the device-level one answers for its own session.
 
 ### 3.1.3 F3 Device caches + frame-head snapshot
@@ -519,7 +519,7 @@ while the frame records is parked to the device watermark (§2.6), so another dr
 | # | Criterion | Case / command |
 |---|---|---|
 | T1 | a single-session backend changes no behaviour | `build/bin/test_graphics` (the default `createFrameDriver`) |
-| T2 | the shipped backend's own driver answers every frame the device runs | `build/bin/test_vk` (186 cases / 45 suites) |
+| T2 | the shipped backend's own driver answers every frame the device runs | `build/bin/test_vk` (its counts come from `python3 scripts/measure_graphics_claims.py`) |
 | T3 | the recording path's cache locks are 0; the whole frame's count **does not grow with the draw count** (measured 4: 1 at the frame head + 2 for the books + 1 at the frame tail) | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls` (1 vs 6 commands; the mutation 6 → 10 goes red) |
 | T4 | two sessions first-drawing the same geometry at once: no crash, both pictures right, uploads ≤ 2 | `test_vk` `VkResidenceWireTest.TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMostOneCopy` (really two sessions on two threads: claims 1 / published 1 / copies ≤ 1 / both pictures red / the next frame uploads nothing), `AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDiscarded` (a fake lease: a copy, exactly two streams, `used_bytes` back in place), `ARefusedBuildIsWithdrawnInsteadOfPublished`, `AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`; mutations 3/3 red (not asking the table / publishing a failed fill / not forgetting on release) |
 | T5 | two sessions drawing one target: one pass skipped + one report | `test_vk` `TargetClaimFrameTest.AFrameThatLostItsTargetSkipsThatPassAndSaysSoOncePerEpisode`, `TargetTableTest.ASecondDriverIsRefusedAndSkipsOnlyItsOwnPass` |
