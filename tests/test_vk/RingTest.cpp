@@ -218,7 +218,7 @@ TEST(VkUniformRingTest, ASteadyFrameCreatesNoRingAndBuildsNoSet)
     EXPECT_GE(first.set_builds, 2U) << "a content draw binds a content set and the per-draw set";
     EXPECT_GE(first.sets_live, 2U);
 
-    const ColorReadback before = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback before = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(before.ok());
     EXPECT_EQ(pixelAt(before.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
@@ -234,7 +234,7 @@ TEST(VkUniformRingTest, ASteadyFrameCreatesNoRingAndBuildsNoSet)
 
     // AND THE PICTURE IS STILL THE ONE THE FIRST FRAME DREW: the slices are rewritten every frame, so "no churn" must
     // not have been bought by drawing something else.
-    const ColorReadback after = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback after = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(after.ok());
     EXPECT_EQ(after.values, before.values) << "the steady frame drew a different picture";
 
@@ -399,7 +399,7 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
     EXPECT_LE(six_delta, 8U) << "the per-frame cache work is the head plus the two book reads and the frame end";
 
     // AND THE SIX-COMMAND FRAME REALLY DREW: a cheaper head must not have been bought by skipping the picture.
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 

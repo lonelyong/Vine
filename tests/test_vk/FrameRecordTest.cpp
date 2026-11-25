@@ -238,7 +238,7 @@ struct Ran {
     Ran ran;
     ran.present = backend.executeFrame(frame, nullptr);
     ran.report  = backend.frameReport();
-    const ColorReadback read = backend.readColorBuffer(target, 0);
+    const ColorReadback read = backend.readColorImage(target, 0);
     ran.pixels               = read.values;
     ran.read                 = read.ok();
     return ran;

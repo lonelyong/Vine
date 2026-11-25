@@ -314,7 +314,7 @@ TEST(VkDeferredTest, TheDeferredFrameLightsTheGbuffer)
     const PresentOutcome outcome = backend->executeFrame(deferredFrame(scene), nullptr);
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "a device with no window presents nothing; a target is not a surface";
 
-    const ColorReadback read = backend->readColorBuffer(scene.result.get(), 0);
+    const ColorReadback read = backend->readColorImage(scene.result.get(), 0);
     ASSERT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
     const std::vector<std::uint8_t>& pixels = read.values;
     ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
@@ -389,12 +389,12 @@ TEST(VkDeferredTest, TheDeferredFrameIsDrawnAgainAfterItsGbufferWasSampled)
 
         const PresentOutcome first_outcome = backend->executeFrame(deferredFrame(scene), nullptr);
         EXPECT_EQ(first_outcome, PresentOutcome::Skipped) << "a target is not a surface";
-        const ColorReadback first = backend->readColorBuffer(scene.result.get(), 0);
+        const ColorReadback first = backend->readColorImage(scene.result.get(), 0);
         ASSERT_TRUE(first.ok()) << samples << " samples: the first frame's readback was refused: " << static_cast<int>(first.status);
 
         // THE SECOND FRAME IS THE ONE THAT HAS TO STATE WHERE THE SAMPLED PICTURES ARE.
         (void)backend->executeFrame(deferredFrame(scene), nullptr);
-        const ColorReadback second = backend->readColorBuffer(scene.result.get(), 0);
+        const ColorReadback second = backend->readColorImage(scene.result.get(), 0);
         ASSERT_TRUE(second.ok()) << samples << " samples: the second frame's readback was refused: " << static_cast<int>(second.status);
 
         ASSERT_EQ(second.values.size(), first.values.size());
@@ -447,7 +447,7 @@ TEST(VkDeferredTest, EveryGbufferAttachmentWasWritten)
 
         (void)backend->executeFrame(copyFrame(scene.gbuffer.get(), destination.get(), copy), nullptr);
 
-        const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+        const ColorReadback read = backend->readColorImage(destination.get(), 0);
         ASSERT_TRUE(read.ok()) << "the copy of attachment " << attachment << " must read back";
         ASSERT_EQ(read.values.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
 

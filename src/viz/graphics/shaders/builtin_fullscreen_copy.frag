@@ -15,6 +15,6 @@ void main()
 {
     // The projection maps world-up to the top image row (reverse-Y perspective), and the fullscreen
     // triangle's vn_uv.y == 0 sits at the top of the screen, so sampling vn_uv directly keeps the
-    // source upright (no Y flip) — the same orientation readColorBuffer() hands back.
+    // source upright (no Y flip) — the same orientation readColorImage() hands back.
     vn_out_color = texture(vn_copy_tex, vn_uv);
 }

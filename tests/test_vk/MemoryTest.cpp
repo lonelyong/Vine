@@ -323,7 +323,7 @@ TEST(VkMemoryPoolTest, ASteadyFrameAllocatesNothing)
 TEST(VkMemoryPoolTest, AReadbackGivesItsStagingBytesBack)
 {
     // A READBACK IS A SLICE THAT LIVES FOR ONE COPY: the staging buffer is created, mapped, read and released by the
-    // time `readColorBuffer` answers. Five reads must therefore leave the pool exactly where the first one found it -
+    // time `readColorImage` answers. Five reads must therefore leave the pool exactly where the first one found it -
     // the bytes and the block count say so.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
@@ -336,13 +336,13 @@ TEST(VkMemoryPoolTest, AReadbackGivesItsStagingBytesBack)
     const intrusive_ptr<RenderTarget> target = makeTarget(u8"vk_memory_readback");
     (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
 
-    const ColorReadback first_read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback first_read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(first_read.ok());
     const vn::backend_vk::MemoryStats first = device->memoryStats();
     EXPECT_GT(first.releases, 0U) << "a readback's staging slice was never released";
 
     for (int read = 0; read < 4; ++read) {
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0).ok());
+        ASSERT_TRUE(backend->readColorImage(target.get(), 0).ok());
         const vn::backend_vk::MemoryStats stats = device->memoryStats();
         EXPECT_EQ(stats.used_bytes, first.used_bytes) << "a readback left bytes in the pool";
         EXPECT_EQ(stats.blocks_live, first.blocks_live) << "a readback grew the pool";

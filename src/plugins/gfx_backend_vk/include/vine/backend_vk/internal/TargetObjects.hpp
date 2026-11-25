@@ -50,7 +50,7 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  * - MULTISAMPLING IS A SHAPE FACT, AND IT ADDS A SECOND IMAGE PER ATTACHMENT. A target whose shape says `samples > 1`
  *   is drawn into MULTISAMPLED colour images and RESOLVES them into single-sample ones when the rendering instance
  *   ends. `colors` / `color_views` are then the RESOLVE images - the picture this device hands out, which is what a
- *   full-screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
+ *   full-screen draw samples and what `readColorImage` copies - while `multisample_colors` /
  *   `multisample_color_views` are the sample buffers, which nothing samples and nothing reads back. The DEPTH is
  *   resolved the same way into `depth_resolve` / `depth_resolve_view` (`sample0`, so multisampling cannot change the
  *   depth a later pass tests against): `depthPicture()` / `depthPictureView()` name whichever depth image is the
@@ -328,7 +328,7 @@ struct TargetObjects {
      *
      * @note
      * - A BORROWING TARGET OWNS NO PICTURE and answers `VK_NULL_HANDLE`: the image belongs to the lender, which is
-     *   also the target a readback reads (see RenderBackend::readDepthBuffer) and the one a shader samples.
+     *   also the target a readback reads (see RenderBackend::readDepthImage) and the one a shader samples.
      */
     [[nodiscard]] VkImage depthPicture() const noexcept
     {

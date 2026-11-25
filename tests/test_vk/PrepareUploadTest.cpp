@@ -285,7 +285,7 @@ TEST(VkPrepareUploadTest, APreparedTexturedFrameUploadsNothingWhenItRuns)
 
     // THE PROOF THAT THE UPLOAD LANDED DURING PREPARE: the sampled pixel is the texture's colour. A copy that never ran
     // would leave an image nothing wrote, not this colour.
-    const ColorReadback read = backend->readColorBuffer(scene.target.get(), 0);
+    const ColorReadback read = backend->readColorImage(scene.target.get(), 0);
     ASSERT_TRUE(read.ok());
     ASSERT_EQ(read.values.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), kTextureColour) << "the base-colour texture was not resident when the frame sampled it";
@@ -365,7 +365,7 @@ TEST(VkPrepareUploadTest, APrepareWhoseSubmitFailsPublishesNothingAndTheNextFram
     EXPECT_EQ(ran.uploads->texture_uploads, 1U) << "a texture the failed batch never filled was published as resident";
 
     // AND THE PICTURE IS THE TEXTURE'S: the upload the frame recorded itself ran.
-    const ColorReadback read = backend->readColorBuffer(scene.target.get(), 0);
+    const ColorReadback read = backend->readColorImage(scene.target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), kTextureColour)
         << "the frame sampled a texture the failed preparation believed it had filled";
@@ -374,13 +374,13 @@ TEST(VkPrepareUploadTest, APrepareWhoseSubmitFailsPublishesNothingAndTheNextFram
     // `Undefined` - which the readback's NotReady hint is the one observable form of.
     device->refuseNextSubmit();
     ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
-    const ColorReadback after_refusal = backend->readColorBuffer(scene.target.get(), 0);
+    const ColorReadback after_refusal = backend->readColorImage(scene.target.get(), 0);
     EXPECT_FALSE(after_refusal.ok()) << "a frame that never ran left a picture a reader can vouch for";
     EXPECT_EQ(after_refusal.status, ReadbackStatus::NotReady);
 
     // AND THE SAME FRAME RUNS AGAIN, CLEARING WHAT THE REWOUND RECORD SAYS IS UNDEFINED.
     ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
-    const ColorReadback reread = backend->readColorBuffer(scene.target.get(), 0);
+    const ColorReadback reread = backend->readColorImage(scene.target.get(), 0);
     ASSERT_TRUE(reread.ok());
     EXPECT_EQ(pixelAt(reread.values, kTargetSize / 2, kTargetSize / 2), kTextureColour) << "the frame after the rewound one did not draw again";
 

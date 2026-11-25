@@ -50,8 +50,6 @@ using vn::graphics::FrameGate;
 using vn::graphics::FrameTimeline;
 using vn::graphics::FrameToken;
 using vn::graphics::PipelineKey;
-using vn::graphics::ReadbackRequest;
-using vn::graphics::ReadbackState;
 using vn::graphics::RenderTarget;
 using vn::graphics::RepairReason;
 using vn::graphics::RetirementQueue;
@@ -355,98 +353,20 @@ TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
     }
 }
 
-TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
+TEST(CoreReadbackTest, TheTablesAnswerATexelWidthOrNothingAndCoverBothSides)
 {
-    using vn::graphics::ReadbackKind;
-    using vn::graphics::readbackOf;
-    using vn::graphics::ReadbackRefusal;
-
-    ReadbackState state;
-    state.color_attachments = 2U;
-    state.color_format      = RenderTarget::ColorFormat::RGBA8;
-    state.depth_format      = RenderTarget::DepthFormat::D32;
-
-    // Nothing has recorded a copy yet: the answer is "not yet" - a frame can fix it, and a caller that gets
-    // this one may retry instead of hunting for a format bug.
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::NotCaptured);
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::NotCaptured);
-
-    state.color_captured = true;
-    state.depth_captured = true;
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), std::nullopt) << "a captured RGBA8 attachment";
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 1U }), std::nullopt) << "and the second one too";
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), std::nullopt)
-        << "servable is ONE spelling (nullopt), not an ok flag beside a None category";
-
-    // The request's own existence comes first: index 2 does not exist, and a target without a depth cannot
-    // answer a depth readback - whatever has been captured.
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }), ReadbackRefusal::UnknownAttachment);
-    ReadbackState colorless = state;
-    colorless.depth_format.reset();
-    EXPECT_EQ(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::UnknownAttachment);
-}
-
-TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
-{
-    using vn::graphics::ReadbackKind;
-    using vn::graphics::readbackOf;
-    using vn::graphics::ReadbackRefusal;
-
-    ReadbackState state;
-    state.color_attachments = 1U;
-    state.color_format      = RenderTarget::ColorFormat::RGBA16F;
-    state.depth_format      = RenderTarget::DepthFormat::D24;
-
-    // NOTHING captured: the format is still the answer, because a frame cannot fix it. Reporting "not captured"
-    // here would send a caller off to run another frame that cannot change anything.
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::UnreadableFormat);
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::UnreadableFormat);
-
-    state.color_captured = true;
-    state.depth_captured = true;
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::UnreadableFormat)
-        << "capturing more changes nothing: the format table is what says so";
-    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::UnreadableFormat);
-
-    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
-    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
-    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-}
-
-TEST(CoreReadbackTest, ANarrowColourFormatIsServableLikeAColour)
-{
-    using vn::graphics::ReadbackKind;
-    using vn::graphics::readbackOf;
-    using vn::graphics::ReadbackRefusal;
-
-    // A post-process product is not always four channels wide. A mask (R8) or a packed pair (RG8) is servable once a
-    // copy is captured, and the only refusal left for a colour value this SDK defines is "not captured yet" - the
-    // format table never refuses the 8-bit family (see colorReadbackOf's note on the two families).
-    for (const RenderTarget::ColorFormat narrow : { RenderTarget::ColorFormat::R8, RenderTarget::ColorFormat::RG8 }) {
-        ReadbackState state;
-        state.color_attachments = 1U;
-        state.color_format      = narrow;
-        EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::NotCaptured)
-            << "a narrow attachment is a product, not an unreadable format";
-        state.color_captured = true;
-        EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), std::nullopt);
-    }
-}
-
-TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
-{
-    using vn::graphics::colorReadbackOf;
-    using vn::graphics::depthReadbackOf;
-    using vn::graphics::ReadbackFormat;
+    using vn::graphics::colorBytesPerTexel;
+    using vn::graphics::depthBytesPerTexel;
 
     // The colour half serves the 8-bit family, and a texel's width IS its channel count: one byte per channel, so a
     // coverage mask (R8) reads exactly like a colour (RGBA8) does, one or two bytes per texel.
-    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA8), (ReadbackFormat{ 4U, true }));
-    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RG8), (ReadbackFormat{ 2U, true }));
-    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::R8), (ReadbackFormat{ 1U, true }));
+    EXPECT_EQ(colorBytesPerTexel(RenderTarget::ColorFormat::RGBA8), std::optional<std::uint32_t>{ 4U });
+    EXPECT_EQ(colorBytesPerTexel(RenderTarget::ColorFormat::RG8), std::optional<std::uint32_t>{ 2U });
+    EXPECT_EQ(colorBytesPerTexel(RenderTarget::ColorFormat::R8), std::optional<std::uint32_t>{ 1U });
 
-    // The float family is refused: this table promises "copy the texels, no conversion", and a byte count alone does
-    // not describe a half or a full float to a caller decoding bytes.
+    // The float family has no packing: this table promises "copy the texels, no conversion", and a byte count alone
+    // does not describe a half or a full float to a caller decoding bytes. One spelling for one fact - there is no
+    // second `readable` flag that could disagree with the width.
     for (const RenderTarget::ColorFormat floated : { RenderTarget::ColorFormat::RGBA16F,
                                                      RenderTarget::ColorFormat::RGBA32F,
                                                      RenderTarget::ColorFormat::R16F,
@@ -454,16 +374,15 @@ TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexe
                                                      RenderTarget::ColorFormat::R32F,
                                                      RenderTarget::ColorFormat::RG32F })
     {
-        EXPECT_FALSE(colorReadbackOf(floated).readable) << "a float colour attachment has no byte-per-channel packing";
-        EXPECT_EQ(colorReadbackOf(floated).bytes_per_texel, 0U);
+        EXPECT_EQ(colorBytesPerTexel(floated), std::nullopt) << "a float colour attachment has no byte-per-channel packing";
     }
 
-    // The depth half: D16 is two bytes (and gets scaled on decode), D32 / D32F four (raw float), and the
-    // combined format is refused rather than read as if its first bytes were depth.
-    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D16), (ReadbackFormat{ 2U, true }));
-    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D32), (ReadbackFormat{ 4U, true }));
-    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D32F), (ReadbackFormat{ 4U, true }));
-    EXPECT_FALSE(depthReadbackOf(RenderTarget::DepthFormat::D24).readable);
+    // The depth half: D16 is two bytes (and gets scaled on decode), D32 / D32F four (raw float), and the combined
+    // format answers nothing rather than letting its first bytes be read as a depth.
+    EXPECT_EQ(depthBytesPerTexel(RenderTarget::DepthFormat::D16), std::optional<std::uint32_t>{ 2U });
+    EXPECT_EQ(depthBytesPerTexel(RenderTarget::DepthFormat::D32), std::optional<std::uint32_t>{ 4U });
+    EXPECT_EQ(depthBytesPerTexel(RenderTarget::DepthFormat::D32F), std::optional<std::uint32_t>{ 4U });
+    EXPECT_EQ(depthBytesPerTexel(RenderTarget::DepthFormat::D24), std::nullopt);
 }
 
 TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)

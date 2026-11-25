@@ -227,7 +227,7 @@ class VN_BACKEND_VK_API TargetTable final {
      *   for exactly the release a host may announce mid-frame (R6: a release does not wait for the frames in flight).
      * - A request this device cannot serve (a sample count it does not offer, a multisampled depth, a borrow from a
      *   target it has not built) is REFUSED with one warning naming the request and the limit, and nothing is
-     *   created - the pass naming it is skipped, and `readColorBuffer` answers NotReady.
+     *   created - the pass naming it is skipped, and `readColorImage` answers NotReady.
      *
      * @param target The host's target (borrowed; its address is the identity).
      * @return The record holding @p target's objects (shared, so a release announced right after this call parks it

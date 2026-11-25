@@ -6,13 +6,13 @@
  *     above 1 on a device that can multisample at all - the number a host reads before it chooses `setSamples`.
  *   - THE PICTURE SURVIVES THE RESOLVE: a 64x64 RGBA8 + D24 target drawn with `samples = 4` (or the largest count
  *     the device offers) hands back the fragment stage's colour at the centre AND at a corner through
- *     `readColorBuffer`, which reads the RESOLVE image - so a target whose resolve never ran, or whose pass attached
+ *     `readColorImage`, which reads the RESOLVE image - so a target whose resolve never ran, or whose pass attached
  *     the sample buffers to the wrong location, answers the clear instead.
  *   - THE SAME FRAME, SINGLE-SAMPLED, IS THE SAME PICTURE: the two targets are drawn with one program and one
  *     camera, and the centre pixels must be equal - multisampling changes edges, never the colour of a covered pixel.
  *   - A COUNT THE DEVICE CANNOT BUILD IS REFUSED, NEVER LOWERED (ADR-2026-11-14): asking above the device's limit,
  *     or for a number that is not one of the counts (three), builds nothing, reports it ONCE (`UnsupportedRequest`),
- *     answers `NotReady` from `readColorBuffer` and records no draw packet - running the same frame again must not
+ *     answers `NotReady` from `readColorImage` and records no draw packet - running the same frame again must not
  *     report it a second time.
  *   - A DEPTH A SHADER SAMPLES RESOLVES WITH THE COLOUR (backlog T40): a multisampled target whose depth may be sampled
  *     builds, draws and reads back; the DEPTH side of that promise is pinned where a shader can actually read it - see
@@ -290,13 +290,13 @@ TEST(VkMsaaTest, AMultisampledTargetResolvesTheSamePicture)
     const PresentOutcome single_outcome = backend->executeFrame(drawingFrame(single.get(), constantDraw(program, geometry)), nullptr);
     EXPECT_EQ(single_outcome, PresentOutcome::Skipped);
 
-    const ColorReadback multisampled_read = backend->readColorBuffer(multisampled.get(), 0);
+    const ColorReadback multisampled_read = backend->readColorImage(multisampled.get(), 0);
     ASSERT_TRUE(multisampled_read.ok()) << "the multisampled target's readback was refused: " << static_cast<int>(multisampled_read.status)
-                                        << " (readColorBuffer reads the RESOLVE image)";
+                                        << " (readColorImage reads the RESOLVE image)";
     const std::vector<std::uint8_t>& multisampled_pixels = multisampled_read.values;
     ASSERT_EQ(multisampled_pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
 
-    const ColorReadback single_read = backend->readColorBuffer(single.get(), 0);
+    const ColorReadback single_read = backend->readColorImage(single.get(), 0);
     ASSERT_TRUE(single_read.ok()) << "the single-sampled target's readback was refused: " << static_cast<int>(single_read.status);
     const std::vector<std::uint8_t>& single_pixels = single_read.values;
     ASSERT_EQ(single_pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
@@ -364,7 +364,7 @@ TEST(VkMsaaTest, AnOverLimitRequestIsRefusedNotLowered)
     const FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
     EXPECT_EQ(report.counters->draw_packets, 0U) << "a pass whose target was not built recorded a draw packet";
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     EXPECT_FALSE(read.ok()) << "a target that was not built answered pixels";
     EXPECT_EQ(read.status, ReadbackStatus::NotReady);
 
@@ -415,7 +415,7 @@ TEST(VkMsaaTest, ACountTheDeviceDoesNotOfferIsRefusedToo)
     ASSERT_TRUE(report.counters.has_value());
     EXPECT_EQ(report.counters->draw_packets, 0U) << "the pass recorded a draw packet into a target that was not built";
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     EXPECT_FALSE(read.ok());
     EXPECT_EQ(read.status, ReadbackStatus::NotReady);
 
@@ -465,7 +465,7 @@ TEST(VkMsaaTest, ASampleableDepthResolvesWithTheColour)
     ASSERT_TRUE(report.counters.has_value());
     EXPECT_EQ(report.counters->draw_packets, 1U) << "the pass into the multisampled depth-attached target was skipped";
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok()) << "the resolved colour readback was refused: " << static_cast<int>(read.status);
     ASSERT_EQ(read.values.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
     expectFragmentColor(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), "the multisampled centre");

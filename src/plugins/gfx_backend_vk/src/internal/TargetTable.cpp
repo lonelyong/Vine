@@ -206,7 +206,7 @@ std::shared_ptr<TargetObjects> TargetTable::ensure(const vn::graphics::RenderTar
     // A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the target states the number of
     // samples it is drawn with, and `wanted.shape.samples` is that number - never another one. A count this device
     // cannot build (above its limit, or not a power of two) REFUSES the target: one warning naming the request and
-    // the limit, nothing created, nothing drawn into it, and `readColorBuffer` answering NotReady. Lowering it would
+    // the limit, nothing created, nothing drawn into it, and `readColorImage` answering NotReady. Lowering it would
     // leave `RenderTarget::samples()` saying a number the images are not drawn with, which no value in this shape can
     // express.
     const std::uint32_t requested_samples = target.samples() == 0U ? 1U : target.samples();
@@ -242,7 +242,7 @@ std::shared_ptr<TargetObjects> TargetTable::ensure(const vn::graphics::RenderTar
     // into and every reader uses (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so
     // multisampling cannot change the depth a later pass tests against. `Limits::depth_resolve_supported` is the
     // device's own answer (`supportedDepthResolveModes`), and a device without that mode genuinely cannot serve this
-    // shape: nothing is created, nothing is drawn, and `readColorBuffer` answers NotReady.
+    // shape: nothing is created, nothing is drawn, and `readColorImage` answers NotReady.
     if (requested_samples > 1U && target.hasDepth() && !limits_.depth_resolve_supported) {
         if (samples_depth_report_.shouldReport()) {
             if (report_) {

@@ -261,6 +261,20 @@ class VN_BACKEND_VK_API MemoryAllocator final
     [[nodiscard]] bool opened() const noexcept;
 
     /**
+     * @brief Answers whether any memory type serves a host-visible, coherent allocation (no allocation, no device call).
+     *
+     * @details
+     * - THE CHEAP FORM OF "CAN THIS DEVICE COPY TO THE HOST": it reads the memory properties the allocator already
+     *   holds, so a caller that must know BEFORE it does other device work - a readback that would otherwise stop the
+     *   device first - can ask here instead. `allocate` remains the authority, because it also honours the resource's
+     *   own type bits: a `true` here means the device HAS such a type, not that every request will be served.
+     * - False while the allocator is closed: there is no device to ask.
+     *
+     * @return true when a memory type carries `HOST_VISIBLE | HOST_COHERENT`.
+     */
+    [[nodiscard]] bool supportsHostVisible() const noexcept;
+
+    /**
      * @brief Carves a range that satisfies @p requirements out of a block, creating a block when none fits.
      *
      * @details

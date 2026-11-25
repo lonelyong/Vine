@@ -52,12 +52,17 @@ The witness that the rule has teeth is `../bugs/vsg-depth-bias-not-declared-dyna
 
 2.9 **Capabilities are two questions, readback has one "which image" and one answer**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
 the limit fields are `Capabilities::limits.*` (source-level, BC-11), and the feature questions are `Features::supports` / `Features::bit` with `Features::Feature` as the enum.
-The transitive bit-set spelling on `Capabilities` was deleted once its migration was done (BC-32): one question has one spelling. Both readback verbs `readColorBuffer` / `readDepthBuffer` take one `ImageRef` - the same vocabulary as a pass input's "which image" (BC-16); `readColorBuffer(target, attachment = 0)` and `readDepthBuffer(target)` are short spellings of the same verbs, not a second readback path.
+The transitive bit-set spelling on `Capabilities` was deleted once its migration was done (BC-32): one question has one spelling. Both readback verbs `readColorImage` / `readDepthImage` take one `ImageRef` - the same vocabulary as a pass input's "which image" (BC-16); `readColorImage(target, attachment = 0)` and `readDepthImage(target)` are short spellings of the same verbs, not a second readback path.
 
 **The answer is one value** (`BC-41`, 2026-11-25): a verb returns `ColorReadback` / `DepthReadback` - `ReadbackResult<T>`, the classification (`ReadbackStatus`: `Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`) together with the picture it classifies, `values` empty on every refusal. Nothing is an out-parameter any more: the `bool` + `std::vector&` + `ReadbackStatus*` shapes and the payload-less `ReadbackOutcome` wrapper are deleted, not deprecated (the batch above had kept them "for one release"; nothing shipped with them, and a second spelling would have survived in every caller and every guide table - `G1`).
 Why: `G3` (ask, configure, answer readable in one pass), `G4` (a refused read cannot leave a vector a caller reads as this frame's picture), `G6` (`PlanResult` and `FrameCallOutcome` are the same shape: an answer carries its status and its product).
 The naming rule it completes: a verb with NO product returns a `*Result` code (`SurfaceTargetResult`, `BackendRegistrationResult`); a verb that HAS a product returns a `*Result` carrying its `Status` (`PlanResult`, `FrameResult`, `ReadbackResult<T>`) - which is why the code itself is `ReadbackStatus`.
-The seam keeps its finer vocabulary and loses its sentinel: `readbackOf()` answers `std::optional<ReadbackRefusal>` (`nullopt` = servable, one spelling for one fact) and `readbackStatusOf()` is the only projection onto the host's status.
+
+**The names state the image, and the classification has one home** (`BC-42`, 2026-11-25): the verbs are `readColorImage` / `readDepthImage`, because a target holds IMAGES (attachments) and a buffer is a different GPU resource - a verb named `readColorBuffer` names the wrong object (`G12`; the helper that builds the image for the short spelling is `makeReadbackImage`).
+The classification is `ReadbackStatus` and nothing else. The seam's second vocabulary (`readbackOf` / `ReadbackState` / `ReadbackRequest` / `ReadbackRefusal` / `readbackStatusOf` / `detail::refusalName` / `ReadbackKind`) is DELETED, not deprecated: it described a copy-back-node model neither backend has, its only consumer was `BackendSeamTest`, and the repo already demotes test-only exports (audit-4 `B5`) - keeping it would be two answers to one question (`T70`, `G1`, `G8`). Which answer wins is stated ONCE, on `ReadbackStatus`: a request that can never be served answers permanently first (`Invalid` - it names nothing; then `Unsupported` - this device has no packing for it), and a target this device has not built yet answers `NotReady` before the request is judged, because until a frame announces it there is no shape to judge against.
+The two tables answer one fact each: `colorBytesPerTexel` / `depthBytesPerTexel` return `std::optional<std::uint32_t>`, and `std::nullopt` IS "no packing here". The deleted `ReadbackFormat{bytes, readable}` pair could state a width and a refusal that disagreed, and one field was a copy of the other.
+A depth readback describes the image the device BUILT (the record's `TargetShape::depth_format`), never `RenderTarget::depthFormat()`: that is the host's current declaration, and a host that changes it before the next frame announces would otherwise size the copy from a format the image does not have (`VkContentTargetTest.ADepthReadbackAnswersAboutTheImageThatExistsNotALaterDeclaration`).
+The device also answers its capabilities before it waits: a device with no host-visible coherent memory type refuses `Unsupported` without stopping the device (`MemoryAllocator::supportsHostVisible`), which is the rule a refusal owes a caller.
 
 2.10 **A public name states the thing, not the artifact that produced it** (naming, `G1` / `G4` / `G12`; audit-4 `T-12`, 2026-11-18):
 five spellings changed, one migration note each, and **no `[[deprecated]]` alias was kept** - the module promises no source or ABI
@@ -242,14 +247,14 @@ normal is two channels.
   deliberately absent says as much as what is present: no three-channel value (`D7`), no integer family (`D8`), no
   packed 10/11-bit (`D9`), no sRGB spelling (`D4`).
 - The families are two CONTRACTS, not two precisions:
-  - **8-bit** is one byte per channel, so a texel is 1, 2 or 4 bytes and `colorReadbackOf` states exactly that width
+  - **8-bit** is one byte per channel, so a texel is 1, 2 or 4 bytes and `colorBytesPerTexel` states exactly that width
     (`C5`). A mask reads back like a colour does, because it is the same rule - which is what lets a host verify a
     post-process product rather than only draw it.
-  - **float** renders and samples (an HDR product, a depth-like slice) but is `UnreadableFormat` for a readback: the
-    verb copies texels and converts nothing, and a byte count alone does not describe a half or a full float to a
-    caller decoding bytes (`D10`).
+  - **float** renders and samples (an HDR product, a depth-like slice) but has no readback packing: `colorBytesPerTexel`
+    answers `std::nullopt` and a read answers `Unsupported`, because the verb copies texels and converts nothing, and a
+    byte count alone does not describe a half or a full float to a caller decoding bytes (`D10`).
 - **The mapping is the rule**: `R8` is `R8_UNORM`, `RG16F` is `R16G16_SFLOAT`. A value added to the enum is added to
-  the backend's "every value" list (`kColorFormats`) and to `colorReadbackOf`; the two switches report an omission.
+  the backend's "every value" list (`kColorFormats`) and to `colorBytesPerTexel`; the two switches report an omission.
 - **A format is a target only when the device backs every use a target has** (`C6`): drawn into, sampled by a later
   pass and copied by a readback. That is the DEVICE's answer (`vkGetPhysicalDeviceFormatProperties`, asked once at
   session open), and a target asking for a format the device does not back is refused BY NAME
@@ -297,7 +302,7 @@ that same order, so a wire is resolved once and reported once.
 | F2 | Depth attachment | `attachDepth(D16/D24/D32/D32F)`. |
 | F3 | Shared depth | `setDepthPromotion(false)` + `shareDepth(DepthView)`; the lender draws first, the borrower LOADs. |
 | F4 | Validity | At least one own attachment + a positive size; borrowed depth does not count as its own. |
-| F5 | Readback | `readColorBuffer` / `readDepthBuffer`, both take one `ImageRef` (it names "which image") and return `ColorReadback` / `DepthReadback` = `ReadbackResult<T>`: `status` (`Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`) together with `values`, populated exactly on `Ok` (BC-41). `readColorBuffer(target, attachment = 0)` / `readDepthBuffer(target)` are short spellings of the same verbs (BC-16). |
+| F5 | Readback | `readColorImage` / `readDepthImage`, both take one `ImageRef` (it names "which image") and return `ColorReadback` / `DepthReadback` = `ReadbackResult<T>`: `status` (`Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`) together with `values`, populated exactly on `Ok` (BC-41). `readColorImage(target, attachment = 0)` / `readDepthImage(target)` are short spellings of the same verbs (BC-16), and the byte-width tables answer a texel width or nothing (`colorBytesPerTexel` / `depthBytesPerTexel`; BC-42). |
 
 ### 3.2 MSAA
 
@@ -385,7 +390,7 @@ that same order, so a wire is resolved once and reported once.
 | C2 | produced and imported image sources are not merged; their lifetimes differ. |
 | C3 | Colour splits into linear-light `Colorf` and sRGB-encoded `Color`. |
 | C4 | The engine core's pass description has no shadow field; "this image is a shadow" is declared by the target itself, consumers do not guess from "the first input with depth". |
-| C5 | A colour texel's readback width is its channel count: the 8-bit family is one byte per channel (1 / 2 / 4 bytes), the float family has no byte packing and is `UnreadableFormat`. |
+| C5 | A colour texel's readback width is its channel count: the 8-bit family is one byte per channel (1 / 2 / 4 bytes); the float family answers `std::nullopt` from `colorBytesPerTexel` and `Unsupported` from a read. |
 | C6 | A format is a target only when the device backs colour attachment, sampling AND transfer-source for it; a target asking for anything less is refused by name, never attempted. |
 | C7 | A pass' inputs are ONE ordered list of `ImageInput`; each entry names one identity, and every reader (resolution, edges, wiring checks, frame table, plan description) reads that list in declaration order. |
 
@@ -439,13 +444,14 @@ that same order, so a wire is resolved once and reported once.
 
 ### 6.4 A narrow attachment read as if it were a picture
 
-- How it fails: `readColorBuffer` on an `R8` target answers one byte per texel, and a caller indexing it as RGBA8
+- How it fails: `readColorImage` on an `R8` target answers one byte per texel, and a caller indexing it as RGBA8
   (`(y * width + x) * 4`) reads a quarter of the picture at the wrong stride; a fragment writing `vec4` into `R8` keeps
   only `.r`, so a reader of `.g` sees zero and calls the product empty.
 - How to detect it: `pixels.size()` is not `width * height * 4`; a mask reads back all-zero except its first channel; the
   target's `colorFormat()` differs from the format the probe assumed.
-- How to prevent it: size the read from `colorReadbackOf(format).bytes_per_texel` (never a literal 4), and name the
-  channel the product lives in - `R8` is a mask, not a grey picture with three empty channels (`N12`).
+- How to prevent it: size the read from `colorBytesPerTexel(format)` (never a literal 4; `std::nullopt` means this
+  format cannot be read back at all), and name the channel the product lives in - `R8` is a mask, not a grey picture
+  with three empty channels (`N12`).
 
 ### 6.5 An empty input, or a name that lost
 
@@ -489,7 +495,7 @@ that same order, so a wire is resolved once and reported once.
 | T4 | `VkContentDrawTest.AFullscreenCopySamplesTheSourceTarget` / `AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays` / `ABaseColorTextureIsUploadedAndSampled` / `ACubeMapIsUploadedWithEveryFaceAndSampled` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
 | T5 | Shadows: the ground darkens with a casting light; without one the evidence is byte-identical. |
 | T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (witness: `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
-| T7 | Every colour format: `VkContentTargetTest.AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack` (agreement between the device mask and the build path, plus the 8-bit readback values), `VkBackendTest.AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse` (mapping, names, all-or-nothing feature rule), `CoreReadbackTest.ANarrowColourFormatIsServableLikeAColour`, `CoreReadbackTest.TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel`, `RenderTargetTest.MultipleColorAttachments`. |
+| T7 | Every colour format: `VkContentTargetTest.AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack` (agreement between the device mask and the build path, plus the 8-bit readback values), `VkBackendTest.AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse` (mapping, names, all-or-nothing feature rule), `CoreReadbackTest.TheTablesAnswerATexelWidthOrNothingAndCoverBothSides`, `RenderTargetTest.MultipleColorAttachments`. |
 | T8 | One input list: `PlanTest.TheDescriptionSpellsEveryDeclaredInput` (every identity spelled in one order), `RenderTest.NamedOutputAndInputSlots` (an empty name declares nothing), `RenderPassTest.ObjectTypedOutputAndInputImages` (kinds and declaration order), `OwnedFrameTest.TheOwnedFrameKeepsWhatItsProducersReleased` (a whole target resolves like an imported texture does), `PassChainTest.AShadowThisChainCannotShadeIsReported` (the shadow map appears in the frame table), `FrameScheduleTest.AProducerRunsBeforeAConsumerAnnouncedEarlier` (the edge comes from a target identity). |
 
 ## 9. Status and Evolution
@@ -506,10 +512,20 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
 
+2026-11-25 - the readback vocabulary has one classifier and names the image (`BC-42`): `readColorBuffer` / `readDepthBuffer`
+become `readColorImage` / `readDepthImage` (a target holds images, not buffers), `colorReadbackOf` / `depthReadbackOf`
+become `colorBytesPerTexel` / `depthBytesPerTexel` returning `std::optional<std::uint32_t>` (`std::nullopt` = no packing),
+`ReadbackFormat` is gone, and the seam's second classification (`readbackOf` / `ReadbackState` / `ReadbackRequest` /
+`ReadbackRefusal` / `readbackStatusOf` / `detail::refusalName` / `ReadbackKind`) is deleted. What a host must change: the two
+verb names, the two table names (`.readable` -> `.has_value()`), and the answer for a borrowed depth, which is now `Invalid`
+(the request names an image that target does not have) instead of `Unsupported`. `ReadbackResult` gained a constructor, so
+there is no default answer: every construction states the classification it measured.
+
 2026-11-25 - the readback answer is one value (`BC-41`): `readColorBuffer` / `readDepthBuffer` return
 `ColorReadback` / `DepthReadback` (`ReadbackResult<T>` - the status together with the picture it classifies). What a host must
 change: drop the out-vector and the `why` pointer - `const ColorReadback read = device->readColorBuffer(target, 0);` then
-`read.ok()`, `read.status`, `read.values`. `ReadbackOutcome`, `ReadbackResult` (the code, now `ReadbackStatus`) and every
+`read.ok()`, `read.status`, `read.values` (the two verbs were renamed `readColorImage` / `readDepthImage` the same day, see
+the `BC-42` note above). `ReadbackOutcome`, `ReadbackResult` (the code, now `ReadbackStatus`) and every
 `bool` + out-parameter overload are deleted, not deprecated: every in-tree consumer moved in the same commit and the module
 promises no source stability.
 

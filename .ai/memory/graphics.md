@@ -2468,3 +2468,22 @@
   `colorFormatName` + `colorReadbackOf` + the extension-point table in `graphics-architecture.md` 2.11 (now 5 places).
 - **Evidence**: ctest `test_graphics` (649 cases) and `test_vk` (222 cases) green; the device case asserts that a value builds exactly when the
   device mask has its bit and reads the 8-bit family's centre/corner texels; gates green.
+
+## 2026-11-25 - a readback has one vocabulary and one classifier (`BC-42`)
+
+- **What changed**: `readColorBuffer` / `readDepthBuffer` -> `readColorImage` / `readDepthImage`; `colorReadbackOf` /
+  `depthReadbackOf` -> `colorBytesPerTexel` / `depthBytesPerTexel` returning `std::optional<std::uint32_t>` (`nullopt` =
+  no packing); `ReadbackFormat` deleted; the seam's second classification (`readbackOf` / `ReadbackState` /
+  `ReadbackRequest` / `ReadbackRefusal` / `readbackStatusOf` / `detail::refusalName` / `ReadbackKind`) DELETED and `T70`
+  closed by deletion; `ReadbackResult` gained a constructor, so no default answer exists.
+- **Why**: the seam table's `*_captured` facts described a copy-back-node model neither backend has (the reference backend
+  is retired) and only `BackendSeamTest` consumed it; the precedence it carried now lives on `ReadbackStatus` - a request
+  that can never be served answers permanently first, a not-yet-built target answers `NotReady` before it is judged.
+- **The defect it fixed**: the vk depth verb sized its copy from `RenderTarget::depthFormat()` (the host's CURRENT
+  declaration) while the image had been built with the record's format - an `attachDepth` before the next frame produced a
+  half-true picture (buffer over-sized, half the staging decoded as floats). Both verbs now take the format from the record
+  and share one copy sequence (`Device::copyImageToHost`).
+- **Rule kept**: `Unsupported` means "this device never will" and gates a feature off; a borrowed depth is `Invalid` (the
+  request names an image the target does not have), and "no host-visible memory" is answered before the wait
+  (`MemoryAllocator::supportsHostVisible`), so a refusal costs no device stop.
+- **Witness**: `VkContentTargetTest.ADepthReadbackAnswersAboutTheImageThatExistsNotALaterDeclaration`.

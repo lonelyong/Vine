@@ -327,7 +327,7 @@ TEST(VkResidencyTest, TheSecondFrameOfTheSameContentBuildsNothing)
     EXPECT_EQ(second.progress->presented, 0U) << "an off-screen device presents nothing";
 
     // THE PICTURE IS STILL THE TRIANGLE: "nothing happened" must not mean "nothing was drawn".
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
@@ -383,7 +383,7 @@ TEST(VkResidencyTest, PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing)
     EXPECT_EQ(ran.progress->submitted, 1U);
 
     // THE PICTURE FOLLOWS THE WARM-UP: preparation must not be a different frame.
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
@@ -427,7 +427,7 @@ TEST(VkResidencyTest, ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItA
     ASSERT_TRUE(rerun.uploads.has_value());
     EXPECT_EQ(rerun.uploads->stream_uploads, 2U);
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "releasing and re-uploading must draw the same picture";
@@ -580,7 +580,7 @@ TEST(VkResidencyTest, ReleasingATextureLowersTheImageResidency)
     const FrameReport rerun = backend->frameReport();
     EXPECT_EQ(rerun.uploads->texture_uploads, 1U);
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }));
 
@@ -603,21 +603,21 @@ TEST(VkResidencyTest, ReleasingATargetFreesItsAttachmentsAndTheNextFrameBuildsTh
     const intrusive_ptr<RenderTarget>   target   = makeTarget();
 
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
     // THE RELEASE IS THE HOST'S STATEMENT, and the answer is that this device holds no attachments for the target:
     // a readback has nothing to read rather than stale pixels (the SDK's ReadbackResult states the difference).
     device->releaseRenderTarget(target.get());
-    const ColorReadback after_release = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback after_release = backend->readColorImage(target.get(), 0);
     EXPECT_EQ(after_release.status, ReadbackStatus::NotReady);
     EXPECT_TRUE(after_release.values.empty()) << "a refused read must not hand out the previous pixels";
 
     // THE OBJECT STAYS A DESCRIPTION: the next frame that names it builds the attachments again, and the picture is
     // the one the content draws - a release changes what is resident, never what the target means.
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
-    const ColorReadback rebuilt = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback rebuilt = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(rebuilt.ok());
     EXPECT_EQ(pixelAt(rebuilt.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
@@ -661,7 +661,7 @@ TEST(VkResidencyTest, ReleasingOneBufferLowersOnlyTheStreamsThatReadIt)
     ASSERT_TRUE(rerun.uploads.has_value());
     EXPECT_EQ(rerun.uploads->stream_uploads, 1U);
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 

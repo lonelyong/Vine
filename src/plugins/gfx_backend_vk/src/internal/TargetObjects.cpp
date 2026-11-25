@@ -361,7 +361,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
         image_create.format  = images.depthFormat();
         // A MULTISAMPLED depth is a DRAW target only (the API forbids sampling or copying it); the single-sample one
         // IS the picture, and it carries the same pair the colour pictures carry: SAMPLED (the shadow path reads it -
-        // see Device::resolveShadow) and TRANSFER_SRC (a readDepthBuffer copy reads it).
+        // see Device::resolveShadow) and TRANSFER_SRC (a readDepthImage copy reads it).
         image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                              (resolved ? 0U : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
         image_create.samples = sample_count;

@@ -364,7 +364,7 @@ TEST(VkContentDrawTest, ATriangleIsDrawnIntoTheTargetAndProbed)
     const PresentOutcome outcome = backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the device presents nothing yet; drawing into a target is not presenting";
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
     const std::vector<std::uint8_t>& pixels = read.values;
     ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
@@ -411,7 +411,7 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
 
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     const std::vector<std::uint8_t>& pixels = read.values;
     // The DEFAULT material: its values are the block's defaults (0.8 grey), so a command with no material shades
@@ -579,7 +579,7 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
     draw.commands = commands;
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
         << "the base-colour texture was not sampled at set 0 binding 1";
@@ -624,7 +624,7 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     draw.light_values = vn::graphics::LightSet::create({ ambient });
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
         << "the ambient light did not reach the light block";
@@ -678,7 +678,7 @@ TEST(VkContentDrawTest, AFullscreenCopySamplesTheSourceTarget)
     const PresentOutcome outcome              = backend->executeFrame(fullscreenFrame(destination.get(), std::move(fullscreen_draw)));
     EXPECT_EQ(outcome, PresentOutcome::Skipped);
 
-    const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+    const ColorReadback read = backend->readColorImage(destination.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the full-screen copy did not sample the source's drawn pixel";
@@ -748,7 +748,7 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
     frame.passes.push_back(std::move(entry));
     EXPECT_EQ(backend->executeFrame(frame), PresentOutcome::Skipped);
 
-    const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+    const ColorReadback read = backend->readColorImage(destination.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the full-screen packet was discarded by a depth test it does not have";
@@ -817,7 +817,7 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     frame.passes.push_back(std::move(entry));
     backend->executeFrame(frame);
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     const std::array<int, 4> centre = pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
     EXPECT_LE(std::abs(centre[0] - 127), 2) << "the destination's red did not survive the half-opacity draw";
@@ -894,7 +894,7 @@ TEST(VkContentDrawTest, AStateChangeIsACommandNotAPipeline)
         frame.passes.push_back(std::move(entry));
         backend->executeFrame(frame);
 
-        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        const ColorReadback read = backend->readColorImage(target.get(), 0);
         EXPECT_TRUE(read.ok());
         return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
     };
@@ -986,7 +986,7 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
         draw.commands = commands;
         backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        const ColorReadback read = backend->readColorImage(target.get(), 0);
         EXPECT_TRUE(read.ok());
         return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
     };

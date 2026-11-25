@@ -24,7 +24,7 @@ using vn::math::Mat4d;
  * @details
  * - An off-screen frame buffer as a VALUE: colour and depth formats, size and sample count. It owns no GPU image and
  *   no device handle (the same split Texture states for itself); a backend builds the images from this description.
- * - Readback belongs to the DEVICE (RenderDevice::readColorBuffer / readDepthBuffer), not to the target: a target
+ * - Readback belongs to the DEVICE (RenderDevice::readColorImage / readDepthImage), not to the target: a target
  *   says what the picture IS, it does not hold a copy of the pixels.
  */
 class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarget> {
@@ -39,11 +39,11 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      *   family offers), and the families are 8-bit UNORM, 16-bit float and 32-bit float.
      * - WHAT EACH FAMILY IS FOR - the width is the product's own precision, not a preference:
      *   - 8-bit: a colour, a coverage mask, a weight in [0, 1]. One channel is one byte, so a texel is 1, 2 or 4
-     *     bytes and the colour readback copies those bytes as they are stored (`colorReadbackOf`).
+     *     bytes and the colour readback copies those bytes as they are stored (`colorBytesPerTexel`).
      *   - 16-bit float: an HDR quantity, a luminance, a depth-like slice - a value that needs RANGE. 32-bit float is
      *     the same with the precision a downsample or an accumulation needs. Both float families render and sample;
-     *     reading one back answers `UnreadableFormat`, because the byte-per-channel packing a colour readback
-     *     promises does not describe a float texel (see Readback.hpp).
+     *     reading one back answers `Unsupported`, because the byte-per-channel packing a colour readback promises does
+     *     not describe a float texel (see Readback.hpp).
      * - A SHADER WRITES `vec4` WHATEVER THE CHANNEL COUNT IS: the attachment keeps the channels it declares and drops
      *   the rest, so an effect pass writing an SSAO mask into `R8` needs no second fragment-output contract.
      * - NOT A PIXEL-FORMAT MIRROR AND NOT AN UPLOAD FORMAT: no sRGB spelling (colour space is a projection, see
@@ -220,7 +220,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     /** @brief Returns whether a depth attachment is configured.
      *
      * @note True for an own depth attachment or one borrowed via shareDepth(); readback of a borrowed depth goes
-     *       through the source target (see RenderDevice::readDepthBuffer).
+     *       through the source target (see RenderDevice::readDepthImage).
      */
     bool hasDepth() const;
 

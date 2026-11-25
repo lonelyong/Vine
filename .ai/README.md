@@ -98,12 +98,12 @@ One ADR records one decision: background, options, decision, consequences, evide
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
-- `ADR-2026-11-25-readback-answer-is-one-value.md` — **a readback answers with one value**: `readColorBuffer` /
-  `readDepthBuffer` return `ColorReadback` / `DepthReadback` (`ReadbackResult<T>`) - the `ReadbackStatus` together with
-  the pixels it classifies, empty on every refusal - so a refused read cannot leave a caller's buffer readable as this
-  frame's picture. `ReadbackOutcome` and every `bool` + out-parameter overload are deleted rather than deprecated; the
-  seam answers `std::optional<ReadbackRefusal>`; the short `(target, attachment)` spellings stay as derivations of the
-  same verbs.
+- `ADR-2026-11-25-readback-answer-is-one-value.md` — **a readback answers with one value, and has one classifier**:
+  `readColorImage` / `readDepthImage` return `ColorReadback` / `DepthReadback` (`ReadbackResult<T>`) - the `ReadbackStatus`
+  together with the pixels it classifies, empty on every refusal - so a refused read cannot leave a caller's buffer
+  readable as this frame's picture. `ReadbackOutcome` and every `bool` + out-parameter overload are deleted rather than
+  deprecated, and so is the seam's second classification (`readbackOf` / `ReadbackState` / `ReadbackRefusal` / ...;
+  amendment of 2026-11-25, `BC-42`); the short `(target, attachment)` spellings stay as derivations of the same verbs.
 
 - `ADR-2026-11-25-one-input-list-per-pass.md` — **a pass declares its reads once**: `PassDesc::inputs` is one ordered
   `ImageInput` list and each entry names one identity (`byImage` / `byTarget` / `byName` / `byTexture`), so resolution,

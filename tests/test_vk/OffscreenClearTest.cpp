@@ -90,19 +90,19 @@ TEST(VkOffscreenTest, ADeclaredTargetIsBuiltWithoutAFrame)
     const intrusive_ptr<RenderTarget> target = makeTarget(); // RGBA8 + D24, one colour attachment
 
     backend->setRenderTarget(target.get());
-    const ColorReadback out_of_range = backend->readColorBuffer(target.get(), 1);
+    const ColorReadback out_of_range = backend->readColorImage(target.get(), 1);
     EXPECT_EQ(out_of_range.status, ReadbackStatus::Invalid) << "the announcement built the one colour attachment the target states";
     EXPECT_TRUE(out_of_range.values.empty());
     // BUILT IS NOT DRAWN: the image exists, but no pass has written it, so the picture is still NotReady.
-    EXPECT_EQ(backend->readColorBuffer(target.get(), 0).status, ReadbackStatus::NotReady) << "nothing has drawn into the announced target yet";
+    EXPECT_EQ(backend->readColorImage(target.get(), 0).status, ReadbackStatus::NotReady) << "nothing has drawn into the announced target yet";
 
     // A FRAME THAT NAMES IT finds it built: the same question still answers Invalid, and the clear it recorded is
     // readable - the frame built no attachment of its own.
     backend->executeFrame(clearingFrame(target.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)));
-    const ColorReadback still_out_of_range = backend->readColorBuffer(target.get(), 1);
+    const ColorReadback still_out_of_range = backend->readColorImage(target.get(), 1);
     EXPECT_EQ(still_out_of_range.status, ReadbackStatus::Invalid) << "the frame did not have to build what the announcement built";
     EXPECT_TRUE(still_out_of_range.values.empty());
-    EXPECT_TRUE(backend->readColorBuffer(target.get(), 0).ok()) << "the frame's clear is readable";
+    EXPECT_TRUE(backend->readColorImage(target.get(), 0).ok()) << "the frame's clear is readable";
 
     backend->releaseRenderTarget(target.get());
     backend->shutdown();
@@ -126,7 +126,7 @@ TEST(VkOffscreenTest, AClearedTargetReadsBackAsThatColour)
     const PresentOutcome outcome = backend->executeFrame(clearingFrame(target.get(), colour));
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the device presents nothing yet; drawing into a target is not presenting";
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
     const std::vector<std::uint8_t>& pixels = read.values;
     ASSERT_EQ(pixels.size(), static_cast<std::size_t>(target->width() * target->height()) * 4U);
@@ -177,13 +177,13 @@ TEST(VkOffscreenTest, ATargetThatWasNeverDrawnHasNoPixelsRatherThanBlackOnes)
     }
 
     const intrusive_ptr<RenderTarget> target = makeTarget();
-    const ColorReadback               unknown_read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback               unknown_read = backend->readColorImage(target.get(), 0);
     EXPECT_EQ(unknown_read.status, ReadbackStatus::NotReady) << "an unknown target is 'nothing to read', not an invalid request";
     EXPECT_TRUE(unknown_read.values.empty());
 
     // An attachment index this device does not have IS an invalid request - the two refusals stay distinguishable.
     backend->executeFrame(clearingFrame(target.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)));
-    EXPECT_EQ(backend->readColorBuffer(target.get(), 3).status, ReadbackStatus::Invalid);
+    EXPECT_EQ(backend->readColorImage(target.get(), 3).status, ReadbackStatus::Invalid);
 
     backend->shutdown();
 }

@@ -213,7 +213,7 @@ are migrated; `ImageIO` decoding is implemented (public surface in `imageio-desi
 ### 9.2 Known Gaps and Backlog
 
 - **no mip generation**: decoding produces one mip; the upload side already works per level, what is missing is the step that expands level 0 into a chain.
-- **no `imaging::Image`-level read-back wrapper**: the backends already have `readColorBuffer()/readDepthBuffer()`, and window read-back goes through an X11 script.
+- **no `imaging::Image`-level read-back wrapper**: the backends already have `readColorImage()/readDepthImage()`, and window read-back goes through an X11 script.
 - `RenderTarget`'s `ColorFormat`/`DepthFormat` duplicate `PixelFormat` and should be folded into the latter eventually (a public API change, its own batch).
 - `Texture3D`/`2DArray` cannot be expressed (`Image` is strictly two-dimensional).
 

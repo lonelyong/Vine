@@ -689,14 +689,16 @@ and every cache has a witness a test can read.**
 ### 3.1.11 F11 Readback
 
 - **Behaviour**: `ReadbackStaging` is one per call and **carries its own command pool and fence** (`C7`: readback borrows no session's frame machinery); a colour
-  readback requires the target attachment to be `R8G8B8A8_UNORM`, and a depth readback turns D32 into a float array; the answer is ONE VALUE -
+  readback serves the attachment's own 8-bit format (one byte per channel), and a depth readback turns D16 / D32 / D32F into normalised floats; the answer is ONE VALUE -
   `ColorReadback` / `DepthReadback` (`ReadbackResult<T>`): the `ReadbackStatus` (`Ok` / `NotReady` / `Unsupported` / `Invalid` / `Failed`) together with
   the picture it classifies, `values` empty on every refusal (`BC-41`). Readback takes the body gate EXCLUSIVE (the device's "between frames")
-  and **counts one** `deviceWaits()`; a refusal answerable before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format, borrowed depth) does
-  not stop the device; a read called back from inside a frame body answers `Failed` (`FrameBodyDepth`, never waiting for itself).
+  and **counts one** `deviceWaits()`; a refusal answerable before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format,
+  borrowed depth, no host-visible coherent memory type) does not stop the device; a read called back from inside a frame body answers `Failed` (`FrameBodyDepth`, never waiting for itself).
+  Both verbs share ONE copy sequence (`Device::copyImageToHost`), so the barriers, the copy and the layout restore cannot drift between colour and depth (`BC-42`).
 - **Which formats can be read is a classification, not a surprise**: pure depth formats (D16 / D32 / D32F, MSAA resolving its
-  resolve image) are read, and D24 or a borrowed depth answers `Unsupported` through the SDK's `depthReadbackOf` (`Readback.hpp`) -
-  "this device never will", the answer a host gates its feature on (review 8 `K6`).
+  resolve image) are read, and D24 answers `Unsupported` through the SDK's `depthBytesPerTexel` (`Readback.hpp`) - "this device never will", the answer a
+  host gates its feature on (review 8 `K6`). A BORROWED depth answers `Invalid`, because the request names an image this target does not have - the caller reads
+  the SOURCE target. The depth format always comes from the record (`TargetShape::depth_format`), never the host's current `RenderTarget::depthFormat()`.
 - **Constraints**: `C1`, `R3`, `R28`.
 - **Phase one reads values, not records** (A3-01): a refusal answerable before waiting takes a snapshot through `TargetTable::peek` under the map lock (`built` / `fresh` /
   the engine shape); the record itself is rebuilt in place by `ensure` and handed to the park by `release` to be destroyed outside the table, so reading its fields again
@@ -759,7 +761,7 @@ and every cache has a witness a test can read.**
 | `initialize()` / `shutdown()` / `initialized()` | idempotent; `initialized()` is false after a loss | §2.2 |
 | `executeFrame(frame, present_to)` | one submission + one wait; `Presented` / `Skipped` / `Lost` | §2.3 |
 | `prepareFrame(frame, present_to)` | records content and transfers only, draws nothing and presents nothing; may submit one transfer-only batch | ADR-2026-11-14-prepare-may-submit-transfers |
-| `readColorBuffer` / `readDepthBuffer` | readable as soon as it is drawn (guaranteed by `C1`) | F11 |
+| `readColorImage` / `readDepthImage` | readable as soon as it is drawn (guaranteed by `C1`) | F11 |
 | `setRenderTarget` / `releaseRenderTarget` | targets are held by the device; a release gives the slices back | F4 / F10 |
 | `releaseContent(...)` | leaves a hole by identity and fills it next frame | §2.5 |
 | `createSurfaceTarget(handle, why)` | one live target per window | F3 |
@@ -870,7 +872,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 ### 6.1 P1 A fullscreen call must have depth Disabled
 
 - How it fails: the fullscreen triangle sits at z = 0 (the Reverse-Z far plane); inheriting the pass' `TestAndWrite` discards the whole block with **zero VUIDs**.
-- How to detect it: the recorder says `recorded=1` per call but the picture is the clear colour; `readColorBuffer` equals the background everywhere.
+- How to detect it: the recorder says `recorded=1` per call but the picture is the clear colour; `readColorImage` equals the background everywhere.
 - How to prevent it: `planFullscreen()` forces `DepthPolicy::Disabled`; the case `AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays` pins it with a fixture of "default pass
   state + a target with depth" (the old fixture set Disabled explicitly, which is exactly why it did not catch this).
 
@@ -1110,7 +1112,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   spellings now - no `VkRenderPass`, no `VkFramebuffer`, no 1.0 `vkCmdPipelineBarrier` or `vkCmdBeginRenderPass` in the
   backend. The 1.3 floor with the `synchronization2` and `dynamicRendering` features is the device requirement.
 - **Backlog `T35` (becoming the default backend)**'s gate (`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`): `releaseRenderTarget` really frees the
-  attachments, `readDepthBuffer` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
+  attachments, `readDepthImage` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
   `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
   174/174, no skips, the window cases reading the compositor); **still missing** are a measured Wayland fallback and a performance reading the gate accepts.
 - **Backlog `T12` / `T13`**: reading pixels from a Windows window, and the Wayland fallback.

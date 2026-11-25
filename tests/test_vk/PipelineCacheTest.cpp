@@ -238,7 +238,7 @@ struct Session {
         target = makeTarget();
         const FrameDescription frame = pipelineFrame(target.get());
         (void)backend->executeFrame(frame, nullptr);
-        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        const ColorReadback read = backend->readColorImage(target.get(), 0);
         pixels                   = read.values;
         backend->shutdown();
         return true;

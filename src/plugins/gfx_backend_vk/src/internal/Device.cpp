@@ -58,8 +58,9 @@ VN_BACKEND_VK_NS_BEGIN
 
 using vn::backend_vk::ImageLayout;
 using vn::graphics::Capabilities;
+using vn::graphics::colorBytesPerTexel;
 using vn::graphics::decodeDepth;
-using vn::graphics::depthReadbackOf;
+using vn::graphics::depthBytesPerTexel;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DiagnosticCategory;
@@ -3954,7 +3955,29 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
     return impl->session->frameReport();
 }
 
-vn::graphics::ColorReadback Device::readColorBuffer(const vn::graphics::ImageRef& image)
+std::optional<std::span<const std::byte>>
+Device::copyImageToHost(ReadbackStaging& staging, VkImage image, VkImageAspectFlags aspect, const ImageLayout current, const VkExtent3D extent)
+{
+    // RECORD: the image's OWN layout -> transfer source -> copy -> THE SAME LAYOUT AGAIN. A readback is a device verb,
+    // not a pass: it reads ONE image and leaves it exactly where it found it, so no record changes and no other
+    // attachment of the set moves. The starting layout is never `Undefined` - the caller refused a target no pass has
+    // drawn into before it got here.
+    recordBarrier(impl->device_table, staging.commands(), barrierBetween(image, stateOf(current), transferReadState(), aspect));
+    staging.recordCopy(image, aspect, extent);
+    recordBarrier(impl->device_table, staging.commands(), barrierBetween(image, transferReadState(), stateOf(current), aspect));
+
+    const StagingRun run = staging.run(impl->queue, impl->queue_submit);
+    if (!run.ran()) {
+        // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
+        // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
+        (void)noteDeviceLost(run.submit, "vkQueueSubmit");
+        (void)noteDeviceLost(run.wait, "vkWaitForFences");
+        return std::nullopt;
+    }
+    return staging.bytes();
+}
+
+vn::graphics::ColorReadback Device::readColorImage(const vn::graphics::ImageRef& image)
 {
     // ONE ANSWER: a refusal is a status with NO picture, so a refused read cannot hand out bytes it never wrote.
     const auto fail = [](const ReadbackStatus reason) { return vn::graphics::ColorReadback{ reason, {} }; };
@@ -3978,10 +4001,11 @@ vn::graphics::ColorReadback Device::readColorBuffer(const vn::graphics::ImageRef
         return fail(ReadbackStatus::Invalid);
     }
 
-    // THE REFUSALS THAT NEED NO WAIT COME FIRST (the reference backend's rule, and the same answers): a target this
-    // device never built, an attachment that does not exist, a format the readback contract does not serve. A frame may
-    // rebuild the target while this verb waits below, so every answer is checked AGAIN under the gate - this pass only
-    // spares the device the stop.
+    // THE ANSWERS A SNAPSHOT CAN GIVE COME BEFORE THE WAIT: a target this device never built, an attachment that does
+    // not exist, a picture no pass has drawn, a format the readback contract does not serve - and the device's own
+    // ability to copy to the host at all, which is a property of its memory types rather than of this target. A frame
+    // may rebuild the target while this verb waits below, so every answer is checked AGAIN under the gate; this pass
+    // only spares the device the stop, which is the rule a refusal owes a caller.
     {
         // A VALUE, NOT THE RECORD (see TargetTable::peek): the record is rebuilt in place and destroyed outside the
         // table, so a field read through a borrowed pointer has no synchronisation to point at (audit A3-01). One
@@ -4000,8 +4024,11 @@ vn::graphics::ColorReadback Device::readColorBuffer(const vn::graphics::ImageRef
             // range check, so an index the target does not have is Invalid whether or not anything drew.
             return fail(ReadbackStatus::NotReady);
         }
-        if (!vn::graphics::colorReadbackOf(peek.shape.color_formats[static_cast<std::size_t>(attachment)]).readable) {
+        if (!colorBytesPerTexel(peek.shape.color_formats[static_cast<std::size_t>(attachment)]).has_value()) {
             return fail(ReadbackStatus::Unsupported);
+        }
+        if (!impl->allocator.supportsHostVisible()) {
+            return fail(ReadbackStatus::Unsupported); // no host-visible coherent type: this device cannot copy to the host
         }
     }
 
@@ -4015,7 +4042,7 @@ vn::graphics::ColorReadback Device::readColorBuffer(const vn::graphics::ImageRef
     }
     {
         // ONE COUNTED DEVICE STOP per readback (F7): this is the counter the host reads, and the same counter the
-        // reference backend raises with its readback idle (G6). A refusal answered above never reaches this line.
+        // retired backend raised with its readback idle (G6). A refusal answered above never reaches this line.
         const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
         impl->retirement.noteDeviceWait();
     }
@@ -4035,23 +4062,23 @@ vn::graphics::ColorReadback Device::readColorBuffer(const vn::graphics::ImageRef
     if (images.fresh.load(std::memory_order_relaxed)) {
         return fail(ReadbackStatus::NotReady); // built but never drawn (see the pre-gate check's note)
     }
-    const std::size_t   attachment_index = static_cast<std::size_t>(attachment);
-    const VkImage       color_image      = images.colors[attachment_index];
-    // ONE TABLE SAYS WHAT A COLOUR READBACK IS - the SDK's `colorReadbackOf`, the one `decodeDepth`'s sibling table
-    // uses for the depth half - and its texel width sizes the copy below. An 8-bit attachment is one byte per channel
-    // (1, 2 or 4), so a mask reads back like a picture does; a float format is unreadable there and is refused before
-    // the device stops.
-    const vn::graphics::ReadbackFormat packed = vn::graphics::colorReadbackOf(images.desc.shape.color_formats[attachment_index]);
-    if (!packed.readable || packed.bytes_per_texel == 0U) {
+
+    // ONE TABLE SAYS WHAT A COLOUR READBACK IS, and it is the SDK's - the same one a host indexes the answer with, so
+    // the copy and the reader cannot disagree about a texel's width. An 8-bit attachment is one byte per channel (1, 2
+    // or 4), so a mask reads back like a picture does; a float format has no packing there and is refused before the
+    // device stops.
+    const std::size_t                  attachment_index = static_cast<std::size_t>(attachment);
+    const std::optional<std::uint32_t> texel_width      = colorBytesPerTexel(images.desc.shape.color_formats[attachment_index]);
+    if (!texel_width.has_value()) {
         return fail(ReadbackStatus::Unsupported);
     }
 
+    const VkExtent3D   extent{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U };
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * static_cast<VkDeviceSize>(extent.height) * static_cast<VkDeviceSize>(*texel_width);
+
     // THE COPY MECHANISM IS ReadbackStaging's (its own command pool and fence, the staging buffer, submit, wait,
     // mapping); this function says WHAT to copy and what the bytes mean. Where each picture is stays this backend's
-    // knowledge (the per-image `color_layouts` records), recorded below through the staging command buffer.
-    const VkDeviceSize bytes =
-        static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * static_cast<VkDeviceSize>(packed.bytes_per_texel);
-
+    // knowledge (the per-image `color_layouts` records), which `copyImageToHost` reads.
     ReadbackStaging staging;
     const StagingRefusal opened =
         staging.open(impl->device_table, impl->device, impl->allocator, impl->queue_family, bytes);
@@ -4062,47 +4089,22 @@ vn::graphics::ColorReadback Device::readColorBuffer(const vn::graphics::ImageRef
         return fail(ReadbackStatus::Failed);
     }
 
-    // RECORD: the image's OWN layout -> transfer source -> copy -> THE SAME LAYOUT AGAIN. A readback is a device verb,
-    // not a pass: it reads ONE image and leaves it exactly where it found it, so no record changes and no other
-    // attachment of the set moves. The `fresh` check above is what rules out `Undefined` here - a set no pass has drawn
-    // into has nothing to read - so the starting layout is the colour attachment layout or the sampled one.
-    const ImageLayout colour_now = images.color_layouts[attachment_index];
-
-    const VkImageMemoryBarrier2 to_transfer =
-        barrierBetween(color_image, stateOf(colour_now), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
-    recordBarrier(impl->device_table, staging.commands(), to_transfer);
-
-    staging.recordCopy(color_image,
-                       VK_IMAGE_ASPECT_COLOR_BIT,
-                       VkExtent3D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U });
-
-    const VkImageMemoryBarrier2 restored =
-        barrierBetween(color_image, transferReadState(), stateOf(colour_now), VK_IMAGE_ASPECT_COLOR_BIT);
-    recordBarrier(impl->device_table, staging.commands(), restored);
-
-    const StagingRun run = staging.run(impl->queue, impl->queue_submit);
-    if (!run.ran()) {
-        // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
-        // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
-        (void)noteDeviceLost(run.submit, "vkQueueSubmit");
-        (void)noteDeviceLost(run.wait, "vkWaitForFences");
-        return fail(ReadbackStatus::Failed);
-    }
-    const std::span<const std::byte> copied = staging.bytes();
-    if (copied.size() != static_cast<std::size_t>(bytes)) {
+    const std::optional<std::span<const std::byte>> copied =
+        copyImageToHost(staging, images.colors[attachment_index], VK_IMAGE_ASPECT_COLOR_BIT, images.color_layouts[attachment_index], extent);
+    if (!copied.has_value() || copied->size() != static_cast<std::size_t>(bytes)) {
         return fail(ReadbackStatus::Failed); // a copy that is not a whole picture is not a picture of anything
     }
 
     // THE ANSWER OWNS THE PICTURE, and it is built only once there IS one: a refusal hands back an empty vector, so a
     // caller cannot read bytes this call never wrote (the SDK's rule, see ReadbackResult).
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(bytes));
-    std::memcpy(pixels.data(), copied.data(), static_cast<std::size_t>(bytes));
+    std::memcpy(pixels.data(), copied->data(), static_cast<std::size_t>(bytes));
     return vn::graphics::ColorReadback{ ReadbackStatus::Ok, std::move(pixels) };
 }
 
-vn::graphics::DepthReadback Device::readDepthBuffer(const vn::graphics::ImageRef& image)
+vn::graphics::DepthReadback Device::readDepthImage(const vn::graphics::ImageRef& image)
 {
-    // ONE ANSWER, like the colour readback: a refusal carries no picture at all (see RenderDevice::readDepthBuffer).
+    // ONE ANSWER, like the colour readback: a refusal carries no picture at all (see RenderDevice::readDepthImage).
     const auto fail = [](const ReadbackStatus reason) { return vn::graphics::DepthReadback{ reason, {} }; };
 
     if (image.kind() != vn::graphics::ImageRef::Kind::Depth) {
@@ -4122,22 +4124,21 @@ vn::graphics::DepthReadback Device::readDepthBuffer(const vn::graphics::ImageRef
         return fail(ReadbackStatus::Invalid);
     }
 
-    // THE REFUSALS THAT NEED NO WAIT COME FIRST, and every one of them is checked again under the gate below (a frame
-    // may rebuild the target while this verb waits). A BORROWED DEPTH IS READ THROUGH THE SOURCE (the SDK's rule, see
-    // RenderBackend::readDepthBuffer): the image belongs to the lender, and this target never promised it - so that
-    // refusal comes before any format question. D24 is Vulkan's COMBINED depth/stencil format with no plain depth
-    // copy, so it is refused rather than decoded into numbers that look like depths and are not (the same table the
-    // copy and the decoder use is the SDK's `depthReadbackOf`).
+    // THE ANSWERS A SNAPSHOT CAN GIVE COME BEFORE THE WAIT, and every one of them is checked again under the gate below
+    // (a frame may rebuild the target while this verb waits). A BORROWED DEPTH NAMES NOTHING ON THIS TARGET - the image
+    // belongs to the lender (RenderTarget::shareDepth) - so the caller's fix is to read the SOURCE target, and the
+    // answer is `Invalid` rather than "this device cannot read depth". D24 is Vulkan's COMBINED depth/stencil format
+    // with no plain depth copy, so it is refused rather than decoded into numbers that look like depths and are not.
     {
-        // THE SAME VALUE-OF-RECORD RULE as readColorBuffer's phase one (see TargetTable::peek), and the depth format
-        // is the one the ATTACHMENTS were built with rather than whatever the host object declares now: the hint has
-        // to describe the image a copy would read.
+        // THE SAME VALUE-OF-RECORD RULE as readColorImage's phase one (see TargetTable::peek), and the depth format is
+        // the one the ATTACHMENTS were built with rather than whatever the host object declares now: the hint has to
+        // describe the image a copy would read.
         const TargetTable::Peek peek = impl->target_table.peek(target);
         if (!peek.built) {
             return fail(ReadbackStatus::NotReady);
         }
         if (target->depthSource() != nullptr) {
-            return fail(ReadbackStatus::Unsupported);
+            return fail(ReadbackStatus::Invalid);
         }
         if (!peek.shape.depth_format.has_value()) {
             return fail(ReadbackStatus::Invalid);
@@ -4145,13 +4146,16 @@ vn::graphics::DepthReadback Device::readDepthBuffer(const vn::graphics::ImageRef
         if (peek.fresh) {
             return fail(ReadbackStatus::NotReady); // built but never drawn: the depth is UNDEFINED
         }
-        if (!depthReadbackOf(*peek.shape.depth_format).readable) {
+        if (!depthBytesPerTexel(*peek.shape.depth_format).has_value()) {
             return fail(ReadbackStatus::Unsupported);
+        }
+        if (!impl->allocator.supportsHostVisible()) {
+            return fail(ReadbackStatus::Unsupported); // no host-visible coherent type: this device cannot copy to the host
         }
     }
 
-    // THE WAIT THE DEVICE NAMES FOR THE HOST, AND IT IS COUNTED, exactly as in readColorBuffer: the frames in flight
-    // are what the gate waits for, and the command machinery below is the readback's own (see ReadbackStaging).
+    // THE WAIT THE DEVICE NAMES FOR THE HOST, AND IT IS COUNTED, exactly as in readColorImage: the frames in flight are
+    // what the gate waits for, and the command machinery below is the readback's own (see ReadbackStaging).
     const vn::graphics::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
     if (!device_lock) {
         return fail(ReadbackStatus::Failed); // the guard above covers this thread; a refused gate is still a refusal
@@ -4170,27 +4174,27 @@ vn::graphics::DepthReadback Device::readDepthBuffer(const vn::graphics::ImageRef
         return fail(ReadbackStatus::NotReady);
     }
     if (target->depthSource() != nullptr) {
-        return fail(ReadbackStatus::Unsupported);
+        return fail(ReadbackStatus::Invalid); // a borrowed depth is the lender's image (see the pre-gate note)
     }
     TargetObjects& images = *entry;
-    if (!images.hasDepth()) {
+
+    // ONE SOURCE FOR THE DEPTH FORMAT: the shape the ATTACHMENTS were built with, never `RenderTarget::depthFormat()`
+    // (that is the host's current declaration, which may have changed since the build while the image did not). The
+    // same value decides the texel width, the aspect mask and the decode, so the three cannot disagree.
+    const std::optional<vn::graphics::RenderTarget::DepthFormat> format = images.desc.shape.depth_format;
+    if (!format.has_value()) {
         return fail(ReadbackStatus::Invalid); // no depth attachment at all: the request names nothing
     }
     if (images.fresh.load(std::memory_order_relaxed)) {
         return fail(ReadbackStatus::NotReady); // built but never drawn (see the pre-gate check's note)
     }
-
-    // ONE TABLE SAYS WHAT A DEPTH READBACK IS - the SDK's, the same one `decodeDepth` reads. The per-texel size below
-    // is the table's too, so the copy and the decoder cannot disagree.
-    const vn::graphics::ReadbackFormat packed = depthReadbackOf(target->depthFormat());
-    if (!packed.readable) {
+    const std::optional<std::uint32_t> texel_width = depthBytesPerTexel(*format);
+    if (!texel_width.has_value()) {
         return fail(ReadbackStatus::Unsupported);
     }
 
-    const VkImage    depth_image = images.depthPicture();
     const VkExtent3D extent{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U };
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * static_cast<VkDeviceSize>(extent.height) *
-                               static_cast<VkDeviceSize>(packed.bytes_per_texel);
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * static_cast<VkDeviceSize>(extent.height) * static_cast<VkDeviceSize>(*texel_width);
 
     ReadbackStaging staging;
     const StagingRefusal opened =
@@ -4202,32 +4206,13 @@ vn::graphics::DepthReadback Device::readDepthBuffer(const vn::graphics::ImageRef
         return fail(ReadbackStatus::Failed);
     }
 
-    // RECORD: the PICTURE's own layout -> transfer source -> copy -> THE SAME LAYOUT AGAIN. Like the colour readback this
-    // is not a pass: it reads one image and leaves it where it found it, so the record does not change and the sample
-    // buffer of a multisampled target is never named. `fresh` rules out `Undefined`, so the starting layout is the depth
-    // attachment layout or the sampled one a shadow pass left behind.
-    const ImageLayout picture_now = images.depthPictureLayout();
-
-    // A BARRIER NAMES BOTH HALVES of a combined depth/stencil image (see depthAspectMask); the COPY names only the
-    // aspect it reads, because a depth readback is the depth half - the stencil half is not a depth and nothing here
-    // decodes it (which is also why a combined format is refused above: this backend serves the formats the SDK's
-    // table can decode, and that table has no combined entry).
-    const VkImageMemoryBarrier2 to_transfer =
-        barrierBetween(depth_image, stateOf(picture_now), transferReadState(), depthAspectMask(images.depthFormat()));
-    recordBarrier(impl->device_table, staging.commands(), to_transfer);
-
-    staging.recordCopy(depth_image, VK_IMAGE_ASPECT_DEPTH_BIT, extent);
-
-    const VkImageMemoryBarrier2 restored =
-        barrierBetween(depth_image, transferReadState(), stateOf(picture_now), depthAspectMask(images.depthFormat()));
-    recordBarrier(impl->device_table, staging.commands(), restored);
-
-    const StagingRun run = staging.run(impl->queue, impl->queue_submit);
-    if (!run.ran()) {
-        // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
-        // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
-        (void)noteDeviceLost(run.submit, "vkQueueSubmit");
-        (void)noteDeviceLost(run.wait, "vkWaitForFences");
+    // THE PICTURE IS THE RESOLVED SINGLE-SAMPLE IMAGE (see TargetObjects::depthPicture), never the sample buffer of a
+    // multisampled target - multisampling cannot change the depths a reader sees. A BARRIER NAMES BOTH HALVES of a
+    // combined image (see depthAspectMask) while the COPY names only the depth half; a combined format has no plain
+    // depth copy and was refused above, so the mask is the depth bit in practice.
+    const std::optional<std::span<const std::byte>> copied =
+        copyImageToHost(staging, images.depthPicture(), depthAspectMask(images.depthFormat()), images.depthPictureLayout(), extent);
+    if (!copied.has_value()) {
         return fail(ReadbackStatus::Failed);
     }
 
@@ -4235,7 +4220,7 @@ vn::graphics::DepthReadback Device::readDepthBuffer(const vn::graphics::ImageRef
     // normalised values a probe answers with (D32/D32F arrive as their float, D16 divided by its full scale). A copy
     // that is not a whole image is not a picture of anything, so a short decode is a failure - and the answer carries
     // the values only once there IS a picture.
-    std::vector<float> values = decodeDepth(target->depthFormat(), staging.bytes());
+    std::vector<float> values = decodeDepth(*format, *copied);
     if (values.size() != static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height)) {
         return fail(ReadbackStatus::Failed);
     }

@@ -1,6 +1,6 @@
 # ADR-2026-11-25: a readback answers with one value — the pixels and the classification together
 
-- Status: **accepted** (2026-11-25).
+- Status: **accepted** (2026-11-25; amended the same day - see the amendment at the end).
 - Date: 2026-11-25
 - Scope: the SDK's readback vocabulary (`Readback.hpp`), the device verbs (`RenderDevice::readColorBuffer` /
   `readDepthBuffer` and the two short spellings), the vk device's implementation, and every in-tree reader (17 test
@@ -114,3 +114,42 @@ result is only valid after a frame. None of them asks the caller to keep a buffe
 - `BC-41` in `graphics-rendering.md` §2.9; the closed `BC-16` answer-shape half.
 - Evidence for the premise: `Device.cpp` wrote the caller's vector only after a whole picture existed, and both verbs
   already built the picture as a value; 76 of 99 call sites read the answer in a boolean context.
+
+## Amendment (2026-11-25, same day): one classifier, and the verbs name the image
+
+`BC-42` finished what this ADR started, on the same explicit go. Decision `C` and points 1-4 are unchanged; points 5 and 6
+and the "Open, recorded as backlog `T70`" consequence are replaced by the following:
+
+1. **The seam table is DELETED, not wired in.** `readbackOf` / `ReadbackState` / `ReadbackRequest` / `ReadbackRefusal` /
+   `readbackStatusOf` / `detail::refusalName` / `ReadbackKind` are gone, and `T70` is closed by deletion. The reasons:
+   the `*_captured` facts described a copy-back-node model neither backend has (the reference backend that had one is
+   retired), its only consumer was `BackendSeamTest`, and the repo already demotes test-only exports (audit-4 `B5`). To
+   become the one classifier it would have had to grow the device's own facts (`built` / `drawn` / `borrowed` / device
+   format) - backend knowledge moved INTO the SDK (`G2`, `G7` backwards). The precedence the table carried - a request
+   that can never be served answers permanently first, a not-yet-built target answers `NotReady` before the request is
+   judged - now lives on `ReadbackStatus`, where the host reads it.
+2. **The verbs name the object.** `readColorBuffer` / `readDepthBuffer` become `readColorImage` / `readDepthImage`: a
+   target holds images, a buffer is a different GPU resource, and `ImageRef` already says "one image, two roles". The
+   helper is `makeReadbackImage`, because it builds an image rather than reading one, and its comment no longer calls
+   itself a one-release bridge - the short spellings are a permanent derivation.
+3. **One fact, one spelling in the tables.** `ReadbackFormat{bytes_per_texel, readable}` and its `operator==` are replaced
+   by `colorBytesPerTexel` / `depthBytesPerTexel` returning `std::optional<std::uint32_t>` - `std::nullopt` IS "no packing
+   here", and there is no second flag that can disagree with the width.
+4. **An answer always states its classification.** `ReadbackResult` gained a constructor, so a default-constructed answer
+   cannot claim a copy it never attempted.
+5. **A borrowed depth is `Invalid`.** `Unsupported` means "this device never will" and is what a host gates a feature on; a
+   borrowed depth is a request naming an image that target does not have (the caller reads the SOURCE target), which is
+   exactly what `Invalid` states - a host probing a borrower once must not switch depth readback off for the session.
+6. **The device's own limits are answered before the wait.** A device with no host-visible coherent memory type answers
+   `Unsupported` through `MemoryAllocator::supportsHostVisible` without stopping the device, which is the rule a refusal
+   owes a caller. Both verbs share one copy sequence (`Device::copyImageToHost`), so the barriers, the copy and the layout
+   restore cannot drift between colour and depth.
+7. **A defect found in review is fixed and pinned.** The depth path sized its copy from `RenderTarget::depthFormat()` - the
+   host's current declaration - while the image had been built with the record's format, so a declaration changed before
+   the next frame produced a half-true picture (the copy wrote half the buffer and the decode read the rest as floats).
+   The answer now describes the built image; the witness is
+   `VkContentTargetTest.ADepthReadbackAnswersAboutTheImageThatExistsNotALaterDeclaration`.
+
+Consequences: one public vocabulary for one question (`G1`), the surface a host switches on is exactly the answer it
+receives, and the device owns the classification it is the only one able to make. `BC-42` in `graphics-rendering.md` §2.9
+states the current fact; §9.3 carries the migration note.

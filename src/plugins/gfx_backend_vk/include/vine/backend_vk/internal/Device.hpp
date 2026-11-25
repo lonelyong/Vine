@@ -1,12 +1,17 @@
 #pragma once
 
-#include <vine/graphics/RenderBackend.hpp>
-#include <vine/graphics/FrameGate.hpp>
+#include <optional>
+#include <span>
+
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
+#include <vine/backend_vk/internal/ImageLayout.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
+#include <vine/backend_vk/internal/ReadbackStaging.hpp>
 #include <vine/backend_vk/internal/ResidencyClaims.hpp>
 #include <vine/backend_vk/internal/TargetTable.hpp>
+#include <vine/graphics/FrameGate.hpp>
+#include <vine/graphics/RenderBackend.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -60,7 +65,7 @@ VN_BACKEND_VK_NS_BEGIN
  *          takes the gate EXCLUSIVELY. THE RELEASE VERBS DO NOT TAKE IT (R6): `releaseContent` (all three) and
  *          `releaseRenderTarget` remove what the host named and PARK it against the completion watermark, so they may
  *          run while another driver's frame records or submits - they wait at most for one cache operation, never for
- *          a frame. The verbs that cannot overlap a frame - `readColorBuffer`, `readDepthBuffer`,
+ *          a frame. The verbs that cannot overlap a frame - `readColorImage`, `readDepthImage`,
  *          `setDefaultContentProgram`, `createSurfaceTarget`, the diagnostic readers, `shutdown` - take the gate
  *          EXCLUSIVELY and may WAIT for the frames in flight; they do not race them. `initialize()` is the creator's
  *          call, made with no frame in flight.
@@ -270,40 +275,44 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - REFUSED FROM INSIDE A FRAME: a diagnostic sink or hook that calls this while this device drives a frame
      *   answers `Failed` instead of waiting for the frame it is itself inside; read from the host's own thread, after
      *   the frame.
+     * - IT ANSWERS FROM WHAT IT BUILT: the format, the extent and the layout are the RECORD's, never the host object's
+     *   current declaration - a host that changed a format after the last frame is answered about the image that exists
+     *   (`G4`: the answer describes what was read). The copy sequence itself is `copyImageToHost`, one implementation
+     *   for both readbacks.
      *
      * @param image Image to read: a bound `Kind::Color` image (borrowed, may not be null); a depth image is refused
      *              as Invalid.
-     * @return The answer: `Ok` and `width * height * bytes_per_texel` packed bytes, or the classification that says
-     *         why there are none (the picture is empty on every refusal).
+     * @return The answer: `Ok` and `width * height * bytesPerTexel` packed bytes, or the classification that says why
+     *         there are none (the picture is empty on every refusal).
      */
-    [[nodiscard]] vn::graphics::ColorReadback readColorBuffer(const vn::graphics::ImageRef& image) override;
+    [[nodiscard]] vn::graphics::ColorReadback readColorImage(const vn::graphics::ImageRef& image) override;
 
-    using vn::graphics::RenderDevice::readColorBuffer;
+    using vn::graphics::RenderDevice::readColorImage;
 
     /**
      * @brief Reads back the depth attachment of an off-screen target this device drew into.
      *
      * @details
-     * - The copy is synchronous, like readColorBuffer: one command buffer, one fence, the depths the last frame left,
+     * - The copy is synchronous, like readColorImage: one command buffer, one fence, the depths the last frame left,
      *   as `width * height` floats in [0, 1], row-major. It owns the command pool and fence it runs on, waits for the
      *   frames in flight (one counted stop in `RetirementNumbers::device_waits`, like the colour readback) and is
      *   refused with `Failed` when asked from inside a frame body.
      * - IT READS THE DEPTH PICTURE: a multisampled target's resolved single-sample image (see
      *   `TargetObjects::depthPicture`), never the sample buffer - multisampling cannot change the depths a reader sees.
-     * - WHICH FORMATS, from the SDK's own table (`core::depthReadbackOf`, the table `decodeDepth` reads): D16, D32 and
+     * - WHICH FORMATS, from the SDK's own table (`depthBytesPerTexel`, the table `decodeDepth` reads): D16, D32 and
      *   D32F have a plain depth copy; D24 is Vulkan's COMBINED depth/stencil format with no plain depth copy, so it
-     *   answers Unsupported instead of decoding bytes that are not depths - the reference backend answers the same way.
-     * - A BORROWED depth (`RenderTarget::shareDepth`) answers Unsupported: the image belongs to the lender, and the
-     *   SDK's rule is that it is read through the SOURCE target.
+     *   answers Unsupported instead of decoding bytes that are not depths.
+     * - A BORROWED depth (`RenderTarget::shareDepth`) answers `Invalid`: the image belongs to the lender, so the request
+     *   names an image this target does not have - read it through the SOURCE target.
      * - Only a successful read answers with values; every refusal (Invalid / NotReady / Unsupported / Failed) answers
      *   an empty picture and costs no submission.
      *
      * @param image Image to read: a bound `Kind::Depth` image (borrowed; null or a colour image is refused as Invalid).
      * @return The answer: `Ok` and `width * height` depths, or the classification that says why there are none.
      */
-    [[nodiscard]] vn::graphics::DepthReadback readDepthBuffer(const vn::graphics::ImageRef& image) override;
+    [[nodiscard]] vn::graphics::DepthReadback readDepthImage(const vn::graphics::ImageRef& image) override;
 
-    using vn::graphics::RenderDevice::readDepthBuffer;
+    using vn::graphics::RenderDevice::readDepthImage;
 
     /**
      * @brief Runs the frame's passes and presents the window's picture when a window is named: each pass clears or
@@ -688,6 +697,30 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @param report The pool's account of one allocation (see MemoryRefusalReport).
      */
     void noteMemoryRefusal(const MemoryRefusalReport& report);
+
+    /**
+     * @brief Copies one image of a built target into @p staging, leaving the image in the layout it was found in.
+     *
+     * @details
+     * - ONE COPY SEQUENCE, TWO VERBS (`G5`). The colour and the depth readback differ in WHICH image they copy and in
+     *   what the bytes MEAN, not in how an image reaches host memory: own layout -> transfer source -> copy -> own
+     *   layout, one submit, one fence. Spelling that twice is how the two paths drift - the depth path once sized its
+     *   copy from a format the image was not built with - so "what" stays with the caller and "how" lives here.
+     * - IT ASSUMES THE CALLER HOLDS THE DEVICE GATE: the layout @p current comes from the target record, which a frame
+     *   body may rewrite.
+     * - THE BARRIERS NAME @p aspect, and the copy then names it too: for a combined depth/stencil image the caller
+     *   passes the mask `depthAspectMask` computes, while `ReadbackStaging::recordCopy` copies only the depth half.
+     *
+     * @param staging The open copy this call records into and runs (borrowed; it owns its pool, fence and mapping).
+     * @param image   The image to copy (it must be in @p current, and the layout is where it is put back).
+     * @param aspect  The aspect(s) the transitions name.
+     * @param current The image's layout before and after the copy.
+     * @param extent  The whole extent copied (mip 0, layer 0, depth 1).
+     * @return The staged bytes, or nothing when the copy did not run (a submission or fence failure, already classified
+     *         through `noteDeviceLost`); the caller answers that as `ReadbackStatus::Failed`.
+     */
+    [[nodiscard]] std::optional<std::span<const std::byte>>
+    copyImageToHost(ReadbackStaging& staging, VkImage image, VkImageAspectFlags aspect, ImageLayout current, VkExtent3D extent);
 
     /// The frame driver this device owns (see the class note): it holds the command machinery and the gate.
     class FrameDriver;

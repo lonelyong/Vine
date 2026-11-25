@@ -862,15 +862,15 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 整数片段输出，是另一套 shader 契约）。产品直接对着它选：**灰度 / 覆盖率掩码用 `R8`**，**亮度、SSAO、深度切片用
 `R16F` / `R32F`**，**速度缓冲、八面体法线用 `RG16F`**。着色器照旧写 `vec4`，附件只保留自己声明的通道，多出的分量被丢掉。
 
-读回的两半规则不同（`colorReadbackOf` 就是那张表），而**答案是一个值**：`readColorBuffer` / `readDepthBuffer` 返回
+读回的两半规则不同（`colorBytesPerTexel` 就是那张表），而**答案是一个值**：`readColorImage` / `readDepthImage` 返回
 `ColorReadback` / `DepthReadback`（`ReadbackResult<T>`）——`status`（`Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`）
 和它分类的那张图一起回来，`values` 只在 `Ok` 时有内容，所以被拒绝的读回不可能让调用者的旧缓冲区被当成这一帧的画面
 （`.ai/design/graphics-rendering.md` 2.9、`ADR-2026-11-25-readback-answer-is-one-value`）：
 
 * **8 位族一个通道一个字节**，所以一个 texel 是 1 / 2 / 4 字节——`R8` 的掩码和 `RGBA8` 的颜色一样能读回，`read.values.size()`
   等于 `width * height * 通道数`。按 `* 4` 去索引一个 `R8` 目标会读错步长（见 `.ai/design/graphics-rendering.md` `P4`）。
-* **浮点族能画能采、暂时不能读回**：读回是「原样拷贝 texel、不做转换」，而一个字节数说不清半浮点/全浮点，所以答案是
-  `UnreadableFormat`；浮点读回要等自己的解码器（不是把字节硬塞进 8 位契约）。
+* **浮点族能画能采、暂时不能读回**：读回是「原样拷贝 texel、不做转换」，而一个字节数说不清半浮点/全浮点，所以
+  `colorBytesPerTexel` 对这个族返回 `std::nullopt`，动词的答案是 `Unsupported`；浮点读回要等自己的解码器（不是把字节硬塞进 8 位契约）。
 * **设备说不能建就是不能建**：后端在会话打开时问一次设备（彩色附件 + 可采样 + 可拷出三项都要），缺哪项就按名字拒绝那个
   target（`vk.target.color_format_unsupported`），不会先建再在 pipeline 里莫名其妙地失败。
 
@@ -1298,7 +1298,7 @@ scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零
 
 // 画法一个字都不用改：场景 pass 画进 scene_rt，屏幕 pass 把它的彩色图拷到窗口。
 // 后端替你做的是：scene_rt 自建多重采样图，并把**颜色**解析（resolve）成一张单采样图；
-// 那张解析图就是 target 的彩色内容 —— 后面的 pass 采它、readColorBuffer() 读它，拿到的都是它。
+// 那张解析图就是 target 的彩色内容 —— 后面的 pass 采它、readColorImage() 读它，拿到的都是它。
 ```
 
 - **先问设备**：`capabilities().limits.max_samples` 是上限（彩色与深度两个上限的**较小值**：一张 target 只有一个样本
@@ -1306,7 +1306,7 @@ scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零
   `capabilities()` 再选值。
 - **窗口仍是单采样**：交换链的样本数归平台。要让窗口抗锯齿，就把场景画进多重采样离屏目标，再用 `FullscreenPass`
   把解析后的图呈现到窗口 —— 也就是 §3.3 的 2 pass 形状，一行不改。
-- **深度也解析**（规则与颜色一致）：被 shader 采样的、被别的 pass 借走的、被 `readDepthBuffer()` 读的，
+- **深度也解析**（规则与颜色一致）：被 shader 采样的、被别的 pass 借走的、被 `readDepthImage()` 读的，
   都是那张**单采样解析图**，多重采样那张只当绘制目标。解析方式是 `sample0`（取第一个样本的值）——所以
   打开多重采样**不会改变**深度值：深度要么是某个样本的值，要么是清除值，永远不会"平均"出中间值。
 - **借深度的一侧仍是单采样**：`shareDepth()` 借到的就是出借方的解析图（单采样），而一个帧缓冲里的附件
@@ -1593,7 +1593,7 @@ ctest --test-dir build                # CTest 视角（见下面那段的口径�
 `check_ai_docs.py --strict`、`check_export_annotations.py`、`check_vk_exposure.py`。
 
 **设备证据在 `test_vk` 里**：离屏像素判据（`VkContentTargetTest` 的线框用例、`VkDeferredTest`、`VkContentDrawTest`
-的混合/全屏用例、`VkShadowTest` 与 `VkMsaaTest`）都在真设备上画一帧、`readColorBuffer` 读回、逐像素判；宿主窗口的
+的混合/全屏用例、`VkShadowTest` 与 `VkMsaaTest`）都在真设备上画一帧、`readColorImage` 读回、逐像素判；宿主窗口的
 读像素在 `VkWindowPresentTest` / `VkHostWindowReadTest`，夹具是 `tests/test_vk/TestHostWindow.hpp`（X11 走
 `XGetImage`、Win32 走 `PrintWindow` 合成器读回），平台不提供窗口时据此 `SKIP` 并说出原因。
 

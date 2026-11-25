@@ -49,7 +49,7 @@ struct WindowDevice {
  *   A window the platform destroyed under the target leaves it DETACHED: every later call answers the truth instead
  *   of touching a dead surface.
  * - THE WINDOW PIXELS ARE THE SWAPCHAIN'S. A presented image cannot be read back (that is the platform's picture),
- *   which is why `readColorBuffer` stays for off-screen targets only; a test that wants the pixels captures the
+ *   which is why `readColorImage` stays for off-screen targets only; a test that wants the pixels captures the
  *   window, not the target.
  *
  * @warning Not thread-safe: the device drives one frame at a time (the SDK's contract).

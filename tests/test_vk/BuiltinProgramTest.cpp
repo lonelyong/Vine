@@ -234,7 +234,7 @@ TEST(VkBuiltinProgramTest, TheEngineUnlitProgramDrawsItsMaterialColour)
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, red) })));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the engine's unlit program did not shade the centre with the material's base colour";
@@ -260,7 +260,7 @@ TEST(VkBuiltinProgramTest, ABaseColorMapCompilesAndSamplesTheTexturedVariant)
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
         << "the engine's `VN_TEXTURED` variant did not sample the base-colour map";
@@ -284,7 +284,7 @@ TEST(VkBuiltinProgramTest, AVertexColourChannelModulatesTheAlbedoOnItsOwnVariant
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the engine's `VN_VERTEX_COLOR` variant did not modulate the white material with the authored colour";
@@ -328,7 +328,7 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command })));
 
-    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(read.ok());
     EXPECT_EQ(pixelAt(read.values, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the first instance is not where its matrix places it";
     EXPECT_EQ(pixelAt(read.values, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the second instance is not where its matrix places it";
@@ -345,7 +345,7 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
     EXPECT_EQ(streamsLive(backend->frameReport()), before - 1U) << "the released instance stream stayed resident";
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command })));
-    const ColorReadback reread = backend->readColorBuffer(target.get(), 0);
+    const ColorReadback reread = backend->readColorImage(target.get(), 0);
     ASSERT_TRUE(reread.ok());
     EXPECT_EQ(pixelAt(reread.values, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the re-uploaded instance stream drew nothing";
     EXPECT_EQ(pixelAt(reread.values, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 }));

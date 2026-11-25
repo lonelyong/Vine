@@ -384,6 +384,15 @@ bool MemoryAllocator::opened() const noexcept
     return impl->openedLocked();
 }
 
+bool MemoryAllocator::supportsHostVisible() const noexcept
+{
+    // The properties are the device's own and immutable once open, but `close()` resets them, so the read is taken
+    // under the same lock every other accessor uses. No allocation, no device call: this is the answer a readback needs
+    // BEFORE it stops the device.
+    const std::lock_guard<std::mutex> held(impl->lock);
+    return impl->openedLocked() && findMemoryType(impl->memory, ~0U, MemoryUsage::HostVisible).has_value();
+}
+
 void MemoryAllocator::setFailureSink(MemoryFailureSink sink)
 {
     const std::lock_guard<std::mutex> held(impl->lock);

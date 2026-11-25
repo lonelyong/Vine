@@ -125,7 +125,7 @@ struct VN_GRAPHICS_API DeviceDesc {
  *     capability decides how it is driven;
  *   - createSurfaceTarget(): the window half, one target per window (WindowPresentTarget), or the machine-readable
  *     reason it handed none out (see SurfaceTargetResult);
- *   - readColorBuffer / readDepthBuffer: a target's pixels (or depths), or the machine-readable reason there are none
+ *   - readColorImage / readDepthImage: a target's pixels (or depths), or the machine-readable reason there are none
  *     (see ReadbackResult - `Unsupported` is the expected answer for "this device cannot", which is what a host gates
  *     the feature on);
  *   - diagnosticCount() / diagnosticsClean(): what it had to say, counted on the ONE route the engine handed over
@@ -149,7 +149,7 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   back into the device (a re-entrant frame is refused, not queued, and a readback asked from inside a frame answers
  *   `ReadbackStatus::Failed` instead of waiting for the frame it is itself inside).
  * - FAILURE. A device reports what it could not do instead of degrading silently (see setDiagnosticSink) and never
- *   throws across this interface: initialize() returns false, the readback methods return false,
+ *   throws across this interface: initialize() returns false, the readback verbs answer a `ReadbackStatus`,
  *   createSurfaceTarget() answers nullptr with a reason, and a request that cannot be served leaves the previous
  *   state intact. A false return never means "partially applied". A false initialize() must not leave a half-built
  *   session behind: the creator calls shutdown() only after a successful initialize(), so the device owns the
@@ -411,33 +411,34 @@ class VN_GRAPHICS_API RenderDevice {
         return false;
     }
 
-    /** @brief Reads back ONE image of an off-screen target (the one vocabulary a pass input uses).
+    /** @brief Reads back one colour image of an off-screen target, blocking until the copy has completed.
      *
      * @details
      * - @p image names the target AND which image of it, exactly as a declared pass input does (see ImageRef):
-     *   `Kind::Color` with an attachment index, or `Kind::Depth`. Reading pixels changes nothing about the target, and
-     *   the image may be borrowed/const - a host reading a target it did not create can still ask for its pixels.
+     *   `Kind::Color` with an attachment index (the depth counterpart is readDepthImage). Reading pixels changes
+     *   nothing about the target, and the image may be borrowed/const - a host reading a target it did not create can
+     *   still ask for its pixels.
+     * - BLOCKING, AND COUNTED: the verb waits for the frames in flight, submits one copy on the device's own staging
+     *   machinery and waits for it, so the answer is this call's picture rather than a later frame's. Every completed
+     *   read is one device stop in the device's record (`FrameReport`'s retention numbers); a refusal decided from the
+     *   target's record stops nothing.
      * - ONE QUESTION, ONE ANSWER: the packed texels and the classification travel together in the returned
      *   `ColorReadback`, so a refusal returns an EMPTY picture instead of leaving an out-parameter a caller might read
      *   as this frame's pixels (see ReadbackResult; the out-parameter shapes are deleted, `G4`).
-     * - Synchronously reads the colour attachment as tightly packed texels of the attachment's own format - width *
-     *   height * `colorReadbackOf(format).bytes_per_texel` bytes, row-major. A logical RenderTarget holds no GPU
-     *   pixels, so the transfer belongs to the device that owns the attachments.
-     * - THE BYTES ARE THE STORED TEXELS, NO CONVERSION: the channels are R, G, B, A in that order (the first one or
-     *   two of them for `R8` / `RG8`) and hold the numbers the colour attachment already contains - no channel swap,
-     *   no linear/sRGB conversion, no tone mapping. A `ColorFormat::R8` target is a `*_UNORM` image in both
-     *   backends, so the values are what the shading stage wrote, one byte per channel.
-     * - ROW 0 IS THE TOP ROW of the attachment: the copy preserves the image's own row order, so a caller indexing
-     *   `y * width + x` reads the picture the right way up.
+     * - THE BYTES ARE THE STORED TEXELS, NO CONVERSION: tightly packed, width * height *
+     *   `colorBytesPerTexel(format)` bytes, row-major, row 0 at the top. The channels are R, G, B, A in that order (the
+     *   first one or two of them for `R8` / `RG8`) and hold the numbers the colour attachment already contains - no
+     *   channel swap, no linear/sRGB conversion, no tone mapping. A `ColorFormat::R8` target is a `*_UNORM` image, so
+     *   the values are what the shading stage wrote, one byte per channel.
      * - A FLOAT COLOUR FORMAT IS `Unsupported`, permanently: which formats a device can pack is a fact about the
-     *   format, not about this frame (see `colorReadbackOf` / `ReadbackRefusal::UnreadableFormat`), and the readable
-     *   family is the 8-bit one - a float attachment is refused rather than handed back as bytes that would misread
-     *   every texel.
-     * - The default implementation reports the operation as unsupported; a device that implements readback overrides
-     *   it (staging buffer, image-to-buffer copy, queue/fence synchronisation and format conversion).
-     * - The classification is `ReadbackStatus`: `Unsupported` (this device never can), `NotReady` (retry after a
-     *   frame), `Invalid` (the request is wrong), `Failed` (the copy was attempted and failed). The device also
-     *   reports the reason on its diagnostics channel (see the class contract).
+     *   format, not about this frame (see `colorBytesPerTexel`), and the readable family is the 8-bit one - a float
+     *   attachment is refused rather than handed back as bytes that would misread every texel.
+     * - The default implementation reports the operation as unsupported; a device that implements readback overrides it
+     *   (staging buffer, image-to-buffer copy, queue/fence synchronisation).
+     * - The classification is `ReadbackStatus`, and WHICH ANSWER WINS is the precedence its own note states - a
+     *   request that can never be served answers permanently first, a not-yet-built target answers `NotReady` before the
+     *   request is judged. The device also reports its own failures on its diagnostics channel (see the class
+     *   contract).
      * - THE ANSWER OWNS ITS BUFFER: a verb that filled a caller's vector would have to decide whether a refusal
      *   leaves it alone, and a caller cannot tell a stale picture from this frame's. A caller that wants to keep the
      *   allocation keeps `values` and moves it back in; no `readInto(span)` door is opened while nothing demands one
@@ -448,26 +449,26 @@ class VN_GRAPHICS_API RenderDevice {
      * @return The answer: `Ok` and the packed texels (see the width rule above), or the classification that says why
      *         there are none.
      */
-    [[nodiscard]] virtual ColorReadback readColorBuffer(const ImageRef& image)
+    [[nodiscard]] virtual ColorReadback readColorImage(const ImageRef& image)
     {
         (void)image;
         return ColorReadback{ ReadbackStatus::Unsupported, {} };
     }
 
-    /** @brief Reads back the depth image of an off-screen target (the one vocabulary a pass input uses).
+    /** @brief Reads back the depth image of an off-screen target, blocking until the copy has completed.
      *
      * @details
      * - Synchronously reads the target's depth buffer as width * height floats in [0, 1], row-major, answering with
      *   them in `DepthReadback::values`. @p image must be a bound `Kind::Depth` image; anything else is `Invalid`.
-     * - Ownership, support and answer model match readColorBuffer(): one value carrying picture and classification,
-     *   and the default implementation reports the operation as unsupported.
-     * - A target whose depth is borrowed (RenderTarget::shareDepth) is read through the SOURCE target, not the
-     *   borrower, which reports the request as unsupported.
+     * - Ownership, blocking, support and answer model match readColorImage(): one value carrying picture and
+     *   classification, and the default implementation reports the operation as unsupported.
+     * - A target whose depth is BORROWED (`RenderTarget::shareDepth`) answers `Invalid`: the image belongs to the lender,
+     *   so the request names an image this target does not have - read it through the source target instead.
      *
-     * @param image Image to read: a bound `Kind::Depth` image (borrowed, and const like readColorBuffer's).
+     * @param image Image to read: a bound `Kind::Depth` image (borrowed, and const like readColorImage's).
      * @return The answer: `Ok` and one normalised depth per texel, or the classification that says why there are none.
      */
-    [[nodiscard]] virtual DepthReadback readDepthBuffer(const ImageRef& image)
+    [[nodiscard]] virtual DepthReadback readDepthImage(const ImageRef& image)
     {
         (void)image;
         return DepthReadback{ ReadbackStatus::Unsupported, {} };
@@ -485,21 +486,21 @@ class VN_GRAPHICS_API RenderDevice {
      * @param target     Off-screen target whose colour attachment to read (borrowed; null answers Invalid).
      * @param attachment Colour attachment index in [0, target->colorCount()); 0 is the attachment a pass with one
      *                   colour output writes.
-     * @return The answer (see readColorBuffer(const ImageRef&)).
+     * @return The answer (see readColorImage(const ImageRef&)).
      */
-    [[nodiscard]] ColorReadback readColorBuffer(const RenderTarget* target, int attachment = 0)
+    [[nodiscard]] ColorReadback readColorImage(const RenderTarget* target, int attachment = 0)
     {
-        return readColorBuffer(*readbackImage(target, attachment, ImageRef::Kind::Color));
+        return readColorImage(*makeReadbackImage(target, attachment, ImageRef::Kind::Color));
     }
 
     /** @brief Reads the depth attachment of @p target: the short spelling of the image verb above.
      *
      * @param target Off-screen target whose depth buffer to read (borrowed; null answers Invalid).
-     * @return The answer (see readDepthBuffer(const ImageRef&)).
+     * @return The answer (see readDepthImage(const ImageRef&)).
      */
-    [[nodiscard]] DepthReadback readDepthBuffer(const RenderTarget* target)
+    [[nodiscard]] DepthReadback readDepthImage(const RenderTarget* target)
     {
-        return readDepthBuffer(*readbackImage(target, 0, ImageRef::Kind::Depth));
+        return readDepthImage(*makeReadbackImage(target, 0, ImageRef::Kind::Depth));
     }
 
     /** @brief Gets what this device can do (see Capabilities).
@@ -642,16 +643,18 @@ class VN_GRAPHICS_API RenderDevice {
      * @brief Builds the image the short readback spelling names (target + attachment + kind).
      *
      * @details
-     * - The short overloads (see readColorBuffer / readDepthBuffer) name an image for the length of the call, so the
-     *   object exists only inside it. A null target stays UNBOUND, which the backend answers as Invalid - the same
-     *   answer the spelling with an explicit ImageRef gives for an image nothing bound.
+     * - A DERIVATION, NOT A MIGRATION SHIM: the short overloads (see readColorImage / readDepthImage) name an image for
+     *   the length of the call, so the object exists only inside it and the two spellings cannot diverge - "attachment
+     *   N of that target" is a convenience over "this declared image", and the one implementation is the virtual verb.
+     * - A null target stays UNBOUND, which the backend answers as Invalid - the same answer the spelling with an
+     *   explicit ImageRef gives for an image nothing bound.
      *
      * @param target     Target to name (borrowed; null builds an unbound image).
      * @param attachment Attachment index inside @p target.
      * @param kind       Which image of the target this is.
      * @return The image, bound when @p target is not null.
      */
-    [[nodiscard]] static intrusive_ptr<ImageRef> readbackImage(const RenderTarget* target, int attachment, ImageRef::Kind kind);
+    [[nodiscard]] static intrusive_ptr<ImageRef> makeReadbackImage(const RenderTarget* target, int attachment, ImageRef::Kind kind);
 
     RenderDevice() = default;
 
