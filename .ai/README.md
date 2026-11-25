@@ -255,7 +255,7 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (7)
+## research/ — research and proposals (8)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
@@ -301,7 +301,8 @@ reviews compare against the peer engines at a level a design page cannot carry.
   contradicting sentences, the read set resolved at the claim and held by the pass slot, the per-command
   bind lists and the state shadow across a bind, and filter-then-rank device choice - and the rest are
   backlog `T17` (amended: the cross-driver cache-lock stall and the build-admission vocabulary), `T67`
-  (device-local streams), `T68` (the SDK-owned variant rule) and `T69` (the descriptor ceiling).- `graphics-2026-11-25-review-10.md` — the tenth pass, on the three artefacts the module's discipline rests
+  (device-local streams), `T68` (the SDK-owned variant rule) and `T69` (the descriptor ceiling).
+- `graphics-2026-11-25-review-10.md` — the tenth pass, on the three artefacts the module's discipline rests
   on rather than on its code: the design corpus, the concept inventory (101 headers, 139 exported types) and
   the extension surface. Seven findings - the extension table (2.11) names propagation sites, so it has
   already drifted and is still the table `DrawKind.hpp` sends a developer to; numbers in normative prose have
@@ -312,6 +313,16 @@ reviews compare against the peer engines at a level a design page cannot carry.
   concept a host writes as `ImageInput`; and the surface's three header granularities have no stated rule.
   Also the measured layering (`G2`: 0 leaks in five directions, 0 API-family dependencies) and the seven
   things the design does that the peer set does not.
+- `graphics-2026-11-25-review-11.md` — the eleventh pass, the first one on three-dimensional SEMANTICS
+  rather than engine mechanisms: no single owner for handedness / up axis / world units; normals transformed
+  by `mat3(modelView)` instead of the inverse transpose under the documented non-uniform scale; negative
+  scale mirrors winding while `frontFace` is fixed; missing normal channels read an undefined attribute under
+  the default lit program although the header promises a derivation; degenerate `lookAt` yields a zero view
+  and frustum parameters are unvalidated while the stored up can disagree with the resolved basis; two
+  clip-space conventions whose prose says the near/far direction backwards; light units that are not glTF's
+  cd/lux and a diffuse lobe without `1/π`; Mask opacity feeding the cutout threshold while sorting opaque;
+  a sort-key comment with the depth direction inverted. Includes the peer comparison (three.js, OSG, glTF,
+  Vulkan/D3D12, Unity/Unreal/Filament), what does NOT transfer, and a proposed order; adds no backlog entry.
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
