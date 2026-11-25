@@ -22,8 +22,9 @@
   `vk`），`VN_RENDER_BACKEND=<name> ./Vine --open demo` 覆盖。应用没点名时只接受**唯一注册**的那一个；
   多个已注册又没点名，attach 直接失败并在理由里列出全部注册名——**绝不按名字序取第一个**（那是名字的偶然，不是决定）。
   这是宿主加载了别的后端插件时的回退行为，不是选择逻辑。
-* 注册表**后注册者胜且不报告**：加载一个同名插件会把内建条目换成插件自己的工厂（`T64` 决定改为“先注册者胜 + 报告”，
-  尚未落地）。契约写在 `RenderBackendRegistry::registerFactory` 的头注释里。
+* 注册表**后注册者胜且不报告**：加载一个同名插件会把内建条目换成插件自己的工厂。这条规则最终要变成宿主声明的**配置项**，
+  但策略本身还没定、也没实现（`T64` 目前只钉住不变量：给定配置下“谁占这个名字”由模块身份决定，**不由加载顺序决定**）。
+  现状契约写在 `RenderBackendRegistry::registerFactory` 的头注释里。
 * **模块要报出自己编译时的 SDK ABI**：每个后端模块用 `VN_DECLARE_RENDER_BACKEND_ABI()` 定义一次
   `vineRenderBackendAbi()`，注册时把 `{abi_version, sdk_version}` 一起交给 `registerFactory`。注册表在**调用工厂的任何
   虚函数之前**比对 `VN_RENDER_BACKEND_ABI_VERSION`，不一致就不收这个模块，并在注册表自己的 `diagnostics()` 上报

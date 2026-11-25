@@ -2437,3 +2437,13 @@
   Letting `Registrar` pass the header constant instead was rejected: that value can be interposed by another DSO's copy, and
   it would be a second answer to "what revision is this module?".
 - **Evidence**: ctest `test_graphics` (648 cases, 4 of them new registry cases) and `test_vk` (219 cases) green; gates green.
+
+## 2026-11-25 - T64 deferred; registry identity becomes a configuration option
+
+- **The owner's decision**: do NOT build `ADR-2026-11-23` D5.3's "keep-first + report" now; registry identity becomes a
+  configuration option the host states, and it is scheduled only when a host needs that choice.
+- **Trap for a future session**: the ADR's D5 text still says "keep-first", because a record is not rewritten - the
+  amendment appended under it supersedes the shape. Read the amendment before implementing anything from D5.3.
+- **What still holds**: for a given configuration, "which registration owns a name" must follow the module identity
+  (name + `VN_RENDER_BACKEND_ABI_VERSION`), never the load order; a policy value that means "last one loaded wins" is
+  excluded. The route the policy will report on already exists: `RenderBackendRegistry::diagnostics()`.

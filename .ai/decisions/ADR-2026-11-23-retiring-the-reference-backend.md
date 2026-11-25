@@ -374,3 +374,23 @@ and the four decisions that were open under it are now made:
 What it costs, honestly: a program that compiles a backend's sources into itself is a module and must define the handshake
 (`tests/test_vk` gained one line); and the refusal cannot name the backend, because naming it is the call the refusal exists
 to avoid - the report names the two revisions instead.
+
+## Amendment 2026-11-25 - T64 deferred: registry identity becomes a configuration option
+
+D5 obligation 3 decided "keep-first and report the attempt". That shape is replaced on the owner's decision of 2026-11-25,
+and the item is deferred instead of implemented:
+
+- **What changes**: which registration owns a name becomes a **configuration option the host states**, not a fixed
+  keep-first rule. The original argument against "replace and report" was `G8` - a plugin shadowing the binary's own backend
+  is a capability nobody asked for - and an option is exactly the condition `G8` asks for: the behaviour exists because a
+  host requested it.
+- **What does not change**: the invariant that made this an item. For a given configuration, "which registration owns a
+  name" must be a function of the module identity (name + `VN_RENDER_BACKEND_ABI_VERSION`), never of load order; two hosts
+  with the same configuration and the same modules must see the same registry. The option chooses a POLICY, so it must not
+  reintroduce "last one loaded wins" as one of its values.
+- **What is already in place**: the route the option will report on - `RenderBackendRegistry::diagnostics()`, landed with
+  `T65` - and `BackendRegistrationResult`, whose shape a "this name is taken" answer extends by one value rather than by a
+  new enum.
+
+`T64` stays open in `../backlog/graphics.md` with the destination and the trigger recorded there; nothing is built for it in
+this batch.

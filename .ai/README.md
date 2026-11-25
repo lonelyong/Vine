@@ -127,7 +127,7 @@ keeps the old argument.
   codes leave with no aliases (a stated compatibility event), the comparison documents collapse into vk facts and
   three vk facts move into `vk-backend.md` now, the batch order is `T54` → `T11` → `T58` → delete (the floor raise is
   what the retirement buys), and if the reference stays under another owner the placements are identical with four
-  obligations added (a conformance entry condition, an ABI/build-identity rule and a registry keep-first rule as
+  obligations added (a conformance entry condition, an ABI/build-identity rule and a registry-identity rule as
   backlog `T64` / `T65`, and the user page's difference table stated as what the contract allows). The shader source
   language is explicitly not decided here.
 

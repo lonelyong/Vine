@@ -168,8 +168,10 @@ class VN_GRAPHICS_API RenderBackendRegistry {
      *   The registry compares @p abi, and only a compatible module is ever asked anything.
      * - The registry does not own the factory; it must outlive the registry.
      * - STILL LAST-ONE-WINS BETWEEN VALID MODULES: two modules that both speak this revision replace each other in
-     *   registration order, and the replacement is not reported (backlog `T64` holds the decided shape - keep-first
-     *   plus a report - not yet landed).
+     *   registration order, and the replacement is not reported.
+     *   WHICH POLICY SHOULD REPLACE THAT IS NOT DECIDED HERE: backlog `T64` records the invariant any policy must keep
+     *   (for a given configuration the winner follows the module identity, never the load order) and leaves the policy
+     *   itself to the host as a configuration option, deferred until a host needs the choice.
      * - A REFUSAL IS COUNTED AND REPORTED on diagnostics(), with one of two stable codes
      *   (`engine.backend.abi_missing`, `engine.backend.abi_mismatch`) and a sentence naming both revisions.
      *   The report carries no subject on purpose: naming the backend means calling the module, which is exactly what
