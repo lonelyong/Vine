@@ -51,7 +51,9 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DepthPolicy;
+using vn::graphics::DepthReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawItem;
@@ -62,7 +64,7 @@ using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
 using vn::graphics::PassRenderState;
 using vn::graphics::Primitive;
-using vn::graphics::ReadbackResult;
+using vn::graphics::ReadbackStatus;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -354,10 +356,9 @@ TEST(VkContentTargetTest, EveryColourAttachmentIsClearedAndWrittenOnItsOwn)
     const std::array<std::array<int, 4>, 3> written{ { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }, { 0, 0, 255, 255 } } };
     const std::array<Colorf, 3>             cleared{ clear.color, clear.extra_colors[0], clear.extra_colors[1] };
     for (int attachment = 0; attachment < 3; ++attachment) {
-        std::vector<std::uint8_t> pixels;
-        ReadbackResult            why = ReadbackResult::Failed;
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), attachment, pixels, &why))
-            << "attachment " << attachment << " refused: " << static_cast<int>(why);
+        const ColorReadback read = backend->readColorBuffer(target.get(), attachment);
+        ASSERT_TRUE(read.ok()) << "attachment " << attachment << " refused: " << static_cast<int>(read.status);
+        const std::vector<std::uint8_t>& pixels = read.values;
         ASSERT_EQ(pixels.size(), std::size_t{ 64U * 64U } * 4U);
 
         expectPixel(pixels, 64, 32, 32, written[attachment], "the attachment's fragment output");
@@ -408,12 +409,12 @@ TEST(VkContentTargetTest, EachColourAttachmentLoadsOrClearsOnItsOwn)
 
     // THE CORNER: the triangle never reaches it, so it shows only what the load/clear did. Attachment 0 is magenta;
     // attachment 1 still holds frame one's own clear; attachment 2's contents are undefined and are not asserted.
-    std::vector<std::uint8_t> pixels;
-    ReadbackResult            why = ReadbackResult::Failed;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "attachment 0 refused: " << static_cast<int>(why);
-    expectPixel(pixels, 64, 2, 2, { 255, 0, 255, 255 }, "attachment 0's own Clear");
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 1, pixels, &why)) << "attachment 1 refused: " << static_cast<int>(why);
-    expectPixel(pixels, 64, 2, 2, { byteOf(0.1F), byteOf(0.2F), byteOf(0.3F), 255 }, "attachment 1's Load of frame one");
+    const ColorReadback attachment0 = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(attachment0.ok()) << "attachment 0 refused: " << static_cast<int>(attachment0.status);
+    expectPixel(attachment0.values, 64, 2, 2, { 255, 0, 255, 255 }, "attachment 0's own Clear");
+    const ColorReadback attachment1 = backend->readColorBuffer(target.get(), 1);
+    ASSERT_TRUE(attachment1.ok()) << "attachment 1 refused: " << static_cast<int>(attachment1.status);
+    expectPixel(attachment1.values, 64, 2, 2, { byteOf(0.1F), byteOf(0.2F), byteOf(0.3F), 255 }, "attachment 1's Load of frame one");
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -441,9 +442,9 @@ TEST(VkContentTargetTest, AResizeKeepsThePipelinesAndAShapeChangeRebuildsThem)
     const auto drawAndProbeCentre = [&](int width, int height) {
         const vn::graphics::PresentOutcome outcome = backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, commands));
         EXPECT_EQ(outcome, vn::graphics::PresentOutcome::Skipped);
-        std::vector<std::uint8_t> pixels;
-        ReadbackResult            why = ReadbackResult::Failed;
-        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "readback refused: " << static_cast<int>(why);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        EXPECT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
+        const std::vector<std::uint8_t>& pixels = read.values;
         if (pixels.size() == static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U) {
             expectPixel(pixels, width, width / 2, height / 2, { 255, 0, 0, 255 }, "the triangle after the frame");
         }
@@ -498,9 +499,9 @@ TEST(VkContentTargetTest, ThePassDepthPolicyDecidesWhichFragmentSurvives)
         const intrusive_ptr<RenderTarget> target = makeTarget(1);
         backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, ordered));
 
-        std::vector<std::uint8_t> pixels;
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-        expectPixel(pixels, 64, 32, 32, { 0, 255, 0, 255 }, "the nearer fragment drawn first must keep the pixel");
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        ASSERT_TRUE(read.ok());
+        expectPixel(read.values, 64, 32, 32, { 0, 255, 0, 255 }, "the nearer fragment drawn first must keep the pixel");
     }
 
     // THE SAME ORDER with depth disabled: nothing is tested, so the later fragment wins.
@@ -511,9 +512,9 @@ TEST(VkContentTargetTest, ThePassDepthPolicyDecidesWhichFragmentSurvives)
         const intrusive_ptr<RenderTarget> target = makeTarget(1);
         backend->executeFrame(drawingFrame(target.get(), clear, no_depth, ordered));
 
-        std::vector<std::uint8_t> pixels;
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-        expectPixel(pixels, 64, 32, 32, { 255, 0, 0, 255 }, "a pass with depth disabled must let the later draw win");
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        ASSERT_TRUE(read.ok());
+        expectPixel(read.values, 64, 32, 32, { 255, 0, 0, 255 }, "a pass with depth disabled must let the later draw win");
     }
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
@@ -547,10 +548,9 @@ TEST(VkContentTargetTest, TheDepthAttachmentReadsBackAsNormalisedRowMajorValues)
     EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
 
-    std::vector<float> depths;
-    ReadbackResult     why = ReadbackResult::Failed;
-    ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why)) << "the depth readback was refused: " << static_cast<int>(why);
-    EXPECT_EQ(why, ReadbackResult::Ok);
+    const DepthReadback read = backend->readDepthBuffer(target.get());
+    ASSERT_TRUE(read.ok()) << "the depth readback was refused: " << static_cast<int>(read.status);
+    const std::vector<float>& depths = read.values;
     ASSERT_EQ(depths.size(), std::size_t{ 64U * 64U }) << "one value per texel";
 
     const auto depthAt = [&depths](int x, int y) { return depths[static_cast<std::size_t>(y) * 64U + static_cast<std::size_t>(x)]; };
@@ -600,11 +600,10 @@ TEST(VkContentTargetTest, AMultisampledTargetsDepthReadsItsResolvePicture)
     EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
               vn::graphics::PresentOutcome::Skipped);
 
-    std::vector<float> depths;
-    ReadbackResult     why = ReadbackResult::Failed;
-    ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why))
-        << "a multisampled target's resolved depth is served now (see TargetObjects::depthPicture), refused: " << static_cast<int>(why);
-    EXPECT_EQ(why, ReadbackResult::Ok);
+    const DepthReadback read = backend->readDepthBuffer(target.get());
+    ASSERT_TRUE(read.ok()) << "a multisampled target's resolved depth is served now (see TargetObjects::depthPicture), refused: "
+                           << static_cast<int>(read.status);
+    const std::vector<float>& depths = read.values;
     ASSERT_EQ(depths.size(), std::size_t{ 64U * 64U }) << "one value per PIXEL, not per sample";
 
     const auto depthAt = [&depths](int x, int y) { return depths[static_cast<std::size_t>(y) * 64U + static_cast<std::size_t>(x)]; };
@@ -643,13 +642,10 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
     const intrusive_ptr<RenderTarget> combined = makeDepthTarget(32, 32, RenderTarget::DepthFormat::D24);
     EXPECT_EQ(backend->executeFrame(drawingFrame(combined.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
 
-    const std::vector<float> seeded{ 0.5F };
-    std::vector<float>       depths = seeded;
-    ReadbackResult           why    = ReadbackResult::Ok;
-    const std::size_t        waits  = 0U;
-    EXPECT_FALSE(backend->readDepthBuffer(combined.get(), depths, &why));
-    EXPECT_EQ(why, ReadbackResult::Unsupported) << "D24 is combined depth/stencil: no plain depth copy exists";
-    EXPECT_EQ(depths, seeded) << "a refused read leaves the destination untouched";
+    const std::size_t   waits         = 0U;
+    const DepthReadback combined_read = backend->readDepthBuffer(combined.get());
+    EXPECT_EQ(combined_read.status, ReadbackStatus::Unsupported) << "D24 is combined depth/stencil: no plain depth copy exists";
+    EXPECT_TRUE(combined_read.values.empty()) << "a refused read hands back no picture";
 
     // A BUILT target WITHOUT a depth attachment: the request names nothing (Invalid, not Unsupported - no format could
     // ever make it servable). Built by hand: `makeTarget` always attaches a depth.
@@ -657,18 +653,14 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
     colour_only->attachColor(RenderTarget::ColorFormat::RGBA8);
     colour_only->setSize(32, 32);
     EXPECT_EQ(backend->executeFrame(drawingFrame(colour_only.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
-    EXPECT_FALSE(backend->readDepthBuffer(colour_only.get(), depths, &why));
-    EXPECT_EQ(why, ReadbackResult::Invalid);
-    EXPECT_EQ(depths, seeded);
+    EXPECT_EQ(backend->readDepthBuffer(colour_only.get()).status, ReadbackStatus::Invalid);
 
     // A target this device never built: nothing to read YET.
     const intrusive_ptr<RenderTarget> unknown = makeDepthTarget(8, 8, RenderTarget::DepthFormat::D32F);
-    EXPECT_FALSE(backend->readDepthBuffer(unknown.get(), depths, &why));
-    EXPECT_EQ(why, ReadbackResult::NotReady);
+    EXPECT_EQ(backend->readDepthBuffer(unknown.get()).status, ReadbackStatus::NotReady);
 
     // No target at all: the request itself is wrong.
-    EXPECT_FALSE(backend->readDepthBuffer(nullptr, depths, &why));
-    EXPECT_EQ(why, ReadbackResult::Invalid);
+    EXPECT_EQ(backend->readDepthBuffer(nullptr).status, ReadbackStatus::Invalid);
 
     // A BORROWED depth is the lender's to read (the SDK's rule): the borrower says Unsupported, and the LENDER answers
     // its own depths. The borrower is drawn into first so it is BUILT - the refusal is then the borrow itself, not a
@@ -680,22 +672,18 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
     const intrusive_ptr<RenderTarget> borrower = makeTarget(1, 16, 16);
     borrower->shareDepth(depthViewOf(lender));
     EXPECT_EQ(backend->executeFrame(drawingFrame(borrower.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
-    EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), depths, &why));
-    EXPECT_EQ(why, ReadbackResult::Unsupported) << "read it through the source target";
-    EXPECT_EQ(depths, seeded);
-    std::vector<float> lender_depths;
-    ASSERT_TRUE(backend->readDepthBuffer(lender.get(), lender_depths, &why)) << "the lender's own depth is served, refused: " << static_cast<int>(why);
-    ASSERT_EQ(lender_depths.size(), std::size_t{ 16U * 16U });
-    for (const float value : lender_depths) {
+    EXPECT_EQ(backend->readDepthBuffer(borrower.get()).status, ReadbackStatus::Unsupported) << "read it through the source target";
+    const DepthReadback lender_read = backend->readDepthBuffer(lender.get());
+    ASSERT_TRUE(lender_read.ok()) << "the lender's own depth is served, refused: " << static_cast<int>(lender_read.status);
+    ASSERT_EQ(lender_read.values.size(), std::size_t{ 16U * 16U });
+    for (const float value : lender_read.values) {
         EXPECT_FLOAT_EQ(value, 0.0F) << "the lender's pass cleared its depth and drew nothing";
     }
 
     // A RELEASED target is NotReady again (a later frame announcing it can make it readable - this is residency, not
     // a capability).
     backend->releaseRenderTarget(combined.get());
-    EXPECT_FALSE(backend->readDepthBuffer(combined.get(), depths, &why));
-    EXPECT_EQ(why, ReadbackResult::NotReady);
-    EXPECT_EQ(depths, seeded);
+    EXPECT_EQ(backend->readDepthBuffer(combined.get()).status, ReadbackStatus::NotReady);
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(waits, 0U);
@@ -775,35 +763,32 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
     frame.passes.push_back(passOf(borrower.get(), borrower_clear, everywhere, green));
     ASSERT_EQ(backend->executeFrame(frame, nullptr), vn::graphics::PresentOutcome::Skipped);
 
-    ReadbackResult            why = ReadbackResult::Ok;
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(borrower.get(), 0, pixels, &why)) << "borrower readback refused: " << static_cast<int>(why);
-    ASSERT_EQ(pixels.size(), std::size_t{ 32U * 32U } * 4U);
+    const ColorReadback borrower_read = backend->readColorBuffer(borrower.get(), 0);
+    ASSERT_TRUE(borrower_read.ok()) << "borrower readback refused: " << static_cast<int>(borrower_read.status);
+    ASSERT_EQ(borrower_read.values.size(), std::size_t{ 32U * 32U } * 4U);
     // (8, 16) is inside the lender's half and (24, 16) is not; both are well away from every edge.
-    EXPECT_EQ(pixelAt(pixels, 32, 8, 16), (std::array<int, 4>{ 0, 0, 255, 255 }))
+    EXPECT_EQ(pixelAt(borrower_read.values, 32, 8, 16), (std::array<int, 4>{ 0, 0, 255, 255 }))
         << "the lender's depth rejected the borrower's farther fragment - a borrower with its OWN cleared depth would paint here";
-    EXPECT_EQ(pixelAt(pixels, 32, 24, 16), (std::array<int, 4>{ 0, 255, 0, 255 }))
+    EXPECT_EQ(pixelAt(borrower_read.values, 32, 24, 16), (std::array<int, 4>{ 0, 255, 0, 255 }))
         << "nothing covered the right half, so the borrower's fragment reached its colour attachment";
 
     // THE LENDER'S OWN COLOUR: the half it drew is red, the other half keeps its clear colour - a borrower writes its
     // own attachments, never the lender's colour.
-    std::vector<std::uint8_t> lender_pixels;
-    ASSERT_TRUE(backend->readColorBuffer(lender.get(), 0, lender_pixels, &why)) << "lender readback refused: " << static_cast<int>(why);
-    EXPECT_EQ(pixelAt(lender_pixels, 32, 8, 16), (std::array<int, 4>{ 255, 0, 0, 255 }));
-    EXPECT_EQ(pixelAt(lender_pixels, 32, 24, 16), (std::array<int, 4>{ 0, 0, 0, 255 }));
+    const ColorReadback lender_colour = backend->readColorBuffer(lender.get(), 0);
+    ASSERT_TRUE(lender_colour.ok()) << "lender readback refused: " << static_cast<int>(lender_colour.status);
+    EXPECT_EQ(pixelAt(lender_colour.values, 32, 8, 16), (std::array<int, 4>{ 255, 0, 0, 255 }));
+    EXPECT_EQ(pixelAt(lender_colour.values, 32, 24, 16), (std::array<int, 4>{ 0, 0, 0, 255 }));
 
     // THE SAME IMAGE, SEEN AS DEPTH: 0.5 where the lender drew, 0.375 where the borrower's fragment won.
-    std::vector<float> depths;
-    ASSERT_TRUE(backend->readDepthBuffer(lender.get(), depths, &why)) << "lender depth readback refused: " << static_cast<int>(why);
-    ASSERT_EQ(depths.size(), std::size_t{ 32U * 32U });
-    const auto depthAt = [&depths](int x, int y) { return depths[static_cast<std::size_t>(y) * 32U + static_cast<std::size_t>(x)]; };
+    const DepthReadback lender_depths = backend->readDepthBuffer(lender.get());
+    ASSERT_TRUE(lender_depths.ok()) << "lender depth readback refused: " << static_cast<int>(lender_depths.status);
+    ASSERT_EQ(lender_depths.values.size(), std::size_t{ 32U * 32U });
+    const auto depthAt = [&lender_depths](int x, int y) { return lender_depths.values[static_cast<std::size_t>(y) * 32U + static_cast<std::size_t>(x)]; };
     EXPECT_NEAR(depthAt(8, 16), 0.5F, 0.002F) << "the lender's own depth, written by its own pass";
     EXPECT_NEAR(depthAt(24, 16), 0.375F, 0.002F) << "the borrower wrote its depth INTO the lender's image";
 
     // The borrow's own refusal, unchanged: a borrowed depth is read through the lender (see RenderBackend).
-    std::vector<float> borrowed_depths;
-    EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), borrowed_depths, &why));
-    EXPECT_EQ(why, ReadbackResult::Unsupported);
+    EXPECT_EQ(backend->readDepthBuffer(borrower.get()).status, ReadbackStatus::Unsupported);
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     backend->shutdown();
@@ -839,12 +824,11 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     clear.clear_depth = true;
 
     const auto paintedPixels = [&backend, &target]() {
-        std::vector<std::uint8_t> pixels;
-        ReadbackResult            why = ReadbackResult::Ok;
-        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "readback refused: " << static_cast<int>(why);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        EXPECT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
         std::size_t painted = 0U;
-        for (std::size_t index = 0; index + 3U < pixels.size(); index += 4U) {
-            painted += pixels[index] != 0U ? 1U : 0U;
+        for (std::size_t index = 0; index + 3U < read.values.size(); index += 4U) {
+            painted += read.values[index] != 0U ? 1U : 0U;
         }
         return painted;
     };
@@ -946,14 +930,13 @@ void main() { out_color = vec4(0.5, 0.25, 0.75, 1.0); }
             backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) }));
         ASSERT_EQ(outcome, vn::graphics::PresentOutcome::Skipped) << "a pass that cannot build is skipped, not failed: " << name;
 
-        const vn::graphics::ReadbackFormat  packed = vn::graphics::colorReadbackOf(format);
-        std::vector<std::uint8_t>           texels;
-        const vn::graphics::ReadbackOutcome read = backend->readColorBuffer(target.get(), 0, texels);
+        const vn::graphics::ReadbackFormat packed = vn::graphics::colorReadbackOf(format);
+        const ColorReadback                read   = backend->readColorBuffer(target.get(), 0);
         if ((buildable & (1U << static_cast<std::uint32_t>(format))) == 0U) {
             // REFUSED BY NAME, NOT ATTEMPTED: the target was never built, so nothing can be read and the report says
             // which format this device does not back.
             ++refused;
-            EXPECT_EQ(read.result, ReadbackResult::NotReady) << "a refused format never built: " << name;
+            EXPECT_EQ(read.status, ReadbackStatus::NotReady) << "a refused format never built: " << name;
             continue;
         }
 
@@ -961,24 +944,24 @@ void main() { out_color = vec4(0.5, 0.25, 0.75, 1.0); }
         // float family renders and samples but has no byte packing (`colorReadbackOf`), and that refusal is the SDK's
         // rule rather than this pass failing.
         if (!packed.readable) {
-            EXPECT_EQ(read.result, ReadbackResult::Unsupported) << "a float product has no byte-per-channel packing: " << name;
+            EXPECT_EQ(read.status, ReadbackStatus::Unsupported) << "a float product has no byte-per-channel packing: " << name;
             continue;
         }
-        ASSERT_TRUE(read.ok()) << "format " << name << " refused: " << static_cast<int>(read.result);
-        ASSERT_EQ(texels.size(), std::size_t{ 16U * 16U } * packed.bytes_per_texel) << name;
+        ASSERT_TRUE(read.ok()) << "format " << name << " refused: " << static_cast<int>(read.status);
+        ASSERT_EQ(read.values.size(), std::size_t{ 16U * 16U } * packed.bytes_per_texel) << name;
         EXPECT_TRUE(packed.bytes_per_texel == 1U || packed.bytes_per_texel == 2U || packed.bytes_per_texel == 4U)
             << "one byte per channel: 1, 2 or 4 (" << name << ")";
 
         // THE CENTRE IS THE TRIANGLE: its value survives in the channels the attachment keeps.
         for (std::uint32_t channel = 0; channel < packed.bytes_per_texel; ++channel) {
             const std::size_t texel = (std::size_t{ 8U } * 16U + 8U) * packed.bytes_per_texel + channel;
-            EXPECT_LE(std::abs(static_cast<int>(texels[texel]) - written[channel]), 1) << name << " channel " << channel;
+            EXPECT_LE(std::abs(static_cast<int>(read.values[texel]) - written[channel]), 1) << name << " channel " << channel;
         }
         // A CORNER SEES ONLY THE CLEAR: zero everywhere, and the clear's opaque alpha where the attachment has one.
         for (std::uint32_t channel = 0; channel < packed.bytes_per_texel; ++channel) {
             const std::size_t texel  = (std::size_t{ 1U } * 16U + 1U) * packed.bytes_per_texel + channel;
             const int         expect = (packed.bytes_per_texel == 4U && channel == 3U) ? 255 : 0;
-            EXPECT_LE(std::abs(static_cast<int>(texels[texel]) - expect), 1) << name << " channel " << channel << " (clear)";
+            EXPECT_LE(std::abs(static_cast<int>(read.values[texel]) - expect), 1) << name << " channel " << channel << " (clear)";
         }
     }
 

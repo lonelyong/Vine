@@ -49,6 +49,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawItem;
@@ -61,6 +62,7 @@ using vn::graphics::PassDraw;
 using vn::graphics::PrepareReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
+using vn::graphics::ReadbackStatus;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -283,11 +285,10 @@ TEST(VkPrepareUploadTest, APreparedTexturedFrameUploadsNothingWhenItRuns)
 
     // THE PROOF THAT THE UPLOAD LANDED DURING PREPARE: the sampled pixel is the texture's colour. A copy that never ran
     // would leave an image nothing wrote, not this colour.
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(scene.target.get(), 0, pixels));
-    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), kTextureColour)
-        << "the base-colour texture was not resident when the frame sampled it";
+    const ColorReadback read = backend->readColorBuffer(scene.target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    ASSERT_EQ(read.values.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), kTextureColour) << "the base-colour texture was not resident when the frame sampled it";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -364,25 +365,24 @@ TEST(VkPrepareUploadTest, APrepareWhoseSubmitFailsPublishesNothingAndTheNextFram
     EXPECT_EQ(ran.uploads->texture_uploads, 1U) << "a texture the failed batch never filled was published as resident";
 
     // AND THE PICTURE IS THE TEXTURE'S: the upload the frame recorded itself ran.
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(scene.target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), kTextureColour)
+    const ColorReadback read = backend->readColorBuffer(scene.target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), kTextureColour)
         << "the frame sampled a texture the failed preparation believed it had filled";
 
     // NOW A FRAME THAT NEVER REACHES THE QUEUE (P17): its commands are dropped, and the records it advanced go back to
     // `Undefined` - which the readback's NotReady hint is the one observable form of.
     device->refuseNextSubmit();
     ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
-    std::vector<std::uint8_t> refused_pixels;
-    const vn::graphics::ReadbackOutcome after_refusal = backend->readColorBuffer(scene.target.get(), 0, refused_pixels);
+    const ColorReadback after_refusal = backend->readColorBuffer(scene.target.get(), 0);
     EXPECT_FALSE(after_refusal.ok()) << "a frame that never ran left a picture a reader can vouch for";
-    EXPECT_EQ(after_refusal.result, vn::graphics::ReadbackResult::NotReady);
+    EXPECT_EQ(after_refusal.status, ReadbackStatus::NotReady);
 
     // AND THE SAME FRAME RUNS AGAIN, CLEARING WHAT THE REWOUND RECORD SAYS IS UNDEFINED.
     ASSERT_EQ(backend->executeFrame(scene.frame, nullptr), PresentOutcome::Skipped);
-    ASSERT_TRUE(backend->readColorBuffer(scene.target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), kTextureColour)
-        << "the frame after the rewound one did not draw again";
+    const ColorReadback reread = backend->readColorBuffer(scene.target.get(), 0);
+    ASSERT_TRUE(reread.ok());
+    EXPECT_EQ(pixelAt(reread.values, kTargetSize / 2, kTargetSize / 2), kTextureColour) << "the frame after the rewound one did not draw again";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     backend->shutdown();

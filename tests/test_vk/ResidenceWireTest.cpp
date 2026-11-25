@@ -53,6 +53,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawItem;
@@ -250,9 +251,9 @@ TEST(VkResidenceWireTest, AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDisca
     // FRAME ONE: the picture must be right although the cache holds no entry for the key - the frame was given a
     // temporary copy, not the other driver's half fill and not a wait for its frame.
     (void)backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr);
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    expectRed(pixels, "the frame that met an Uploading key");
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    expectRed(read.values, "the frame that met an Uploading key");
 
     ResidencyClaims::Numbers numbers = device->residence().numbers();
     EXPECT_EQ(numbers.copies, 1U) << "the frame did not take the Copy answer";
@@ -283,8 +284,9 @@ TEST(VkResidenceWireTest, AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDisca
     EXPECT_EQ(numbers.uploading, 0U) << "a published key was left Uploading";
     EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Resident);
     EXPECT_GT(device->memoryStats().used_bytes, before.used_bytes) << "a published entry's streams must be resident";
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    expectRed(pixels, "the frame that built the shared entry");
+    const ColorReadback published_read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(published_read.ok());
+    expectRed(published_read.values, "the frame that built the shared entry");
 
     // FRAME FOUR, STEADY: a resident key is USED - nothing is claimed, nothing is copied, nothing is uploaded.
     const MemoryStats steady = device->memoryStats();
@@ -349,11 +351,12 @@ TEST(VkResidenceWireTest, TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMos
 
     // BOTH PICTURES ARE RIGHT: a copy and a shared entry are equally valid sources, and neither ever reads the other
     // driver's half fill (that would be a picture that is not red, or a validation fault).
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target_a.get(), 0, pixels));
-    expectRed(pixels, "the first driver");
-    ASSERT_TRUE(backend->readColorBuffer(target_b.get(), 0, pixels));
-    expectRed(pixels, "the second driver");
+    const ColorReadback first_read = backend->readColorBuffer(target_a.get(), 0);
+    ASSERT_TRUE(first_read.ok());
+    expectRed(first_read.values, "the first driver");
+    const ColorReadback second_read = backend->readColorBuffer(target_b.get(), 0);
+    ASSERT_TRUE(second_read.ok());
+    expectRed(second_read.values, "the second driver");
 
     // THE BOUND, WHATEVER THE INTERLEAVING: one claim won, one fill published, at most one copy built - so the same
     // geometry was uploaded at most twice, which is T4's acceptance criterion at the device level.
@@ -466,9 +469,9 @@ TEST(VkResidenceWireTest, AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAg
     EXPECT_EQ(numbers.published, 2U) << "the rebuilt key was not published";
     EXPECT_EQ(numbers.resident, 1U);
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    expectRed(pixels, "the frame after the release");
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    expectRed(read.values, "the frame after the release");
 
     backend->shutdown();
 }

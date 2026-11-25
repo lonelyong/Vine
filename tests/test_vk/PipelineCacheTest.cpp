@@ -46,17 +46,18 @@
 #include "PlanTestSupport.hpp"
 
 using vn::Colorf;
+using vn::intrusive_ptr;
 using vn::String;
-using vn::graphics::DeviceDesc;
-using vn::graphics::DevicePresentation;
-using vn::graphics::FrameDescription;
-using vn::graphics::RenderBackendRegistry;
-using vn::graphics::DrawItem;
-using vn::graphics::RenderTarget;
 using vn::backend_vk::PipelineCacheFile;
 using vn::backend_vk::PipelineCacheKey;
 using vn::backend_vk::PipelineCacheRefusal;
-using vn::intrusive_ptr;
+using vn::graphics::ColorReadback;
+using vn::graphics::DeviceDesc;
+using vn::graphics::DevicePresentation;
+using vn::graphics::DrawItem;
+using vn::graphics::FrameDescription;
+using vn::graphics::RenderBackendRegistry;
+using vn::graphics::RenderTarget;
 
 namespace
 {
@@ -237,7 +238,8 @@ struct Session {
         target = makeTarget();
         const FrameDescription frame = pipelineFrame(target.get());
         (void)backend->executeFrame(frame, nullptr);
-        (void)backend->readColorBuffer(target.get(), 0, pixels);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        pixels                   = read.values;
         backend->shutdown();
         return true;
     }

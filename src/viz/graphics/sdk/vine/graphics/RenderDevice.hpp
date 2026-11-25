@@ -34,8 +34,8 @@ class RenderTarget;
  *   this device but not to this surface: a cross-GPU drag, a kind it does not decode - the host either keeps drawing
  *   off-screen or brings up a device that can), and a window already occupied (the host asked for a second target on
  *   a window that has one - one live swapchain per window is a platform constraint, see WindowPresentTarget).
- * - Like ReadbackResult, the machine answer travels in an out-parameter and the sentence travels on the diagnostics
- *   channel; "this device presents nothing" is answered SILENTLY, because a display-less device is a first-class
+ * - The machine answer is a code the host switches on, and the sentence travels on the diagnostics channel; "this
+ *   device presents nothing" is answered SILENTLY, because a display-less device is a first-class
  *   state rather than a failure (see Capabilities::presentation).
  */
 enum class SurfaceTargetResult
@@ -147,7 +147,7 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   state stays on the same thread across an initialize()/shutdown() pair. The
  *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
  *   back into the device (a re-entrant frame is refused, not queued, and a readback asked from inside a frame answers
- *   `ReadbackResult::Failed` instead of waiting for the frame it is itself inside).
+ *   `ReadbackStatus::Failed` instead of waiting for the frame it is itself inside).
  * - FAILURE. A device reports what it could not do instead of degrading silently (see setDiagnosticSink) and never
  *   throws across this interface: initialize() returns false, the readback methods return false,
  *   createSurfaceTarget() answers nullptr with a reason, and a request that cannot be served leaves the previous
@@ -417,9 +417,12 @@ class VN_GRAPHICS_API RenderDevice {
      * - @p image names the target AND which image of it, exactly as a declared pass input does (see ImageRef):
      *   `Kind::Color` with an attachment index, or `Kind::Depth`. Reading pixels changes nothing about the target, and
      *   the image may be borrowed/const - a host reading a target it did not create can still ask for its pixels.
-     * - Synchronously copies the colour attachment into @p outPixels as tightly packed texels of the attachment's own
-     *   format - width * height * `colorReadbackOf(format).bytes_per_texel` bytes, row-major. A logical RenderTarget
-     *   holds no GPU pixels, so the transfer belongs to the device that owns the attachments.
+     * - ONE QUESTION, ONE ANSWER: the packed texels and the classification travel together in the returned
+     *   `ColorReadback`, so a refusal returns an EMPTY picture instead of leaving an out-parameter a caller might read
+     *   as this frame's pixels (see ReadbackResult; the out-parameter shapes are deleted, `G4`).
+     * - Synchronously reads the colour attachment as tightly packed texels of the attachment's own format - width *
+     *   height * `colorReadbackOf(format).bytes_per_texel` bytes, row-major. A logical RenderTarget holds no GPU
+     *   pixels, so the transfer belongs to the device that owns the attachments.
      * - THE BYTES ARE THE STORED TEXELS, NO CONVERSION: the channels are R, G, B, A in that order (the first one or
      *   two of them for `R8` / `RG8`) and hold the numbers the colour attachment already contains - no channel swap,
      *   no linear/sRGB conversion, no tone mapping. A `ColorFormat::R8` target is a `*_UNORM` image in both
@@ -432,153 +435,71 @@ class VN_GRAPHICS_API RenderDevice {
      *   every texel.
      * - The default implementation reports the operation as unsupported; a device that implements readback overrides
      *   it (staging buffer, image-to-buffer copy, queue/fence synchronisation and format conversion).
-     * - The answer IS the return value (`ReadbackOutcome`): `Unsupported` (this device never can), `NotReady` (retry
-     *   after a frame), `Invalid` (the request is wrong), `Failed` (the copy was attempted and failed). The device
-     *   also reports the reason on its diagnostics channel (see the class contract), and @p outPixels is left
-     *   untouched on every answer but `Ok`.
+     * - The classification is `ReadbackStatus`: `Unsupported` (this device never can), `NotReady` (retry after a
+     *   frame), `Invalid` (the request is wrong), `Failed` (the copy was attempted and failed). The device also
+     *   reports the reason on its diagnostics channel (see the class contract).
+     * - THE ANSWER OWNS ITS BUFFER: a verb that filled a caller's vector would have to decide whether a refusal
+     *   leaves it alone, and a caller cannot tell a stale picture from this frame's. A caller that wants to keep the
+     *   allocation keeps `values` and moves it back in; no `readInto(span)` door is opened while nothing demands one
+     *   (`G8`).
      *
-     * @param image     Image to read: a bound `Kind::Color` image whose attachment is in [0, target->colorCount())
-     *                  (borrowed, and const - reading changes nothing about it).
-     * @param outPixels Receives the packed texels on success (see the width rule above).
-     * @return The answer; `Ok` when the pixels were read (see ReadbackOutcome::result for the classification).
+     * @param image Image to read: a bound `Kind::Color` image whose attachment is in [0, target->colorCount())
+     *              (borrowed, and const - reading changes nothing about it).
+     * @return The answer: `Ok` and the packed texels (see the width rule above), or the classification that says why
+     *         there are none.
      */
-    virtual ReadbackOutcome readColorBuffer(const ImageRef& image, std::vector<std::uint8_t>& outPixels)
+    [[nodiscard]] virtual ColorReadback readColorBuffer(const ImageRef& image)
     {
         (void)image;
-        (void)outPixels;
-        return ReadbackOutcome{ ReadbackResult::Unsupported };
+        return ColorReadback{ ReadbackStatus::Unsupported, {} };
     }
 
     /** @brief Reads back the depth image of an off-screen target (the one vocabulary a pass input uses).
      *
      * @details
-     * - Synchronously copies the target's depth buffer into @p outDepths as width * height floats in [0, 1],
-     *   row-major. @p image must be a bound `Kind::Depth` image; anything else is `Invalid`.
-     * - Ownership and support model match readColorBuffer(): the default implementation reports the operation as
-     *   unsupported.
+     * - Synchronously reads the target's depth buffer as width * height floats in [0, 1], row-major, answering with
+     *   them in `DepthReadback::values`. @p image must be a bound `Kind::Depth` image; anything else is `Invalid`.
+     * - Ownership, support and answer model match readColorBuffer(): one value carrying picture and classification,
+     *   and the default implementation reports the operation as unsupported.
      * - A target whose depth is borrowed (RenderTarget::shareDepth) is read through the SOURCE target, not the
      *   borrower, which reports the request as unsupported.
      *
-     * @param image     Image to read: a bound `Kind::Depth` image (borrowed, and const like readColorBuffer's).
-     * @param outDepths Receives the depth values on success.
-     * @return The answer; `Ok` when the values were read (see ReadbackOutcome::result for the classification).
+     * @param image Image to read: a bound `Kind::Depth` image (borrowed, and const like readColorBuffer's).
+     * @return The answer: `Ok` and one normalised depth per texel, or the classification that says why there are none.
      */
-    virtual ReadbackOutcome readDepthBuffer(const ImageRef& image, std::vector<float>& outDepths)
+    [[nodiscard]] virtual DepthReadback readDepthBuffer(const ImageRef& image)
     {
         (void)image;
-        (void)outDepths;
-        return ReadbackOutcome{ ReadbackResult::Unsupported };
+        return DepthReadback{ ReadbackStatus::Unsupported, {} };
     }
 
-    /** @brief Reads one colour attachment by (target, index): the OLD spelling, forwarded through the image vocabulary.
+    /** @brief Reads attachment @p attachment of @p target: the short spelling of the image verb above.
      *
      * @details
-     * - Kept for one version so existing callers compile (BC-16): it builds a `Kind::Color` image for
-     *   (@p target, @p attachment) and calls the virtual above. New code should name the image directly.
+     * - It builds the `Kind::Color` image for (@p target, @p attachment) and calls the virtual above, so the two
+     *   spellings cannot diverge: "attachment N of that target" is a convenience over "this declared image", not a
+     *   second readback path (`G1`, `G4`).
+     * - A null @p target builds an unbound image, which the backend answers as `Invalid` - the answer the previous
+     *   `(target, index)` spelling gave, because a caller with no target has nothing to read either way.
      *
      * @param target     Off-screen target whose colour attachment to read (borrowed; null answers Invalid).
-     * @param attachment Colour attachment index in [0, target->colorCount()).
-     * @param outPixels  Receives the packed texels on success.
-     * @return The answer (see readColorBuffer(const ImageRef&, ...)).
+     * @param attachment Colour attachment index in [0, target->colorCount()); 0 is the attachment a pass with one
+     *                   colour output writes.
+     * @return The answer (see readColorBuffer(const ImageRef&)).
      */
-    ReadbackOutcome readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels)
+    [[nodiscard]] ColorReadback readColorBuffer(const RenderTarget* target, int attachment = 0)
     {
-        const intrusive_ptr<ImageRef> image = readbackImage(target, attachment, ImageRef::Kind::Color);
-        return readColorBuffer(*image, outPixels);
+        return readColorBuffer(*readbackImage(target, attachment, ImageRef::Kind::Color));
     }
 
-    /** @brief The OLD two-answer shape (bool + out-parameter): kept for one release, then deleted (BC-16).
+    /** @brief Reads the depth attachment of @p target: the short spelling of the image verb above.
      *
-     * @details
-     * - A shim, not an extension point: it forwards to the virtual above and writes the classification into @p why.
-     *   It exists so an out-of-tree caller survives one release; new code reads `ReadbackOutcome::result` instead.
-     *
-     * @param image     Image to read.
-     * @param outPixels Receives the packed texels on success.
-     * @param why       Receives the classification (Ok when the read happened), or null to ignore.
-     * @return true when the pixels were read.
+     * @param target Off-screen target whose depth buffer to read (borrowed; null answers Invalid).
+     * @return The answer (see readDepthBuffer(const ImageRef&)).
      */
-    [[deprecated("readColorBuffer now returns ReadbackOutcome; read outcome.result instead")]]
-    bool readColorBuffer(const ImageRef& image, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
+    [[nodiscard]] DepthReadback readDepthBuffer(const RenderTarget* target)
     {
-        const ReadbackOutcome outcome = readColorBuffer(image, outPixels);
-        if (why != nullptr) {
-            *why = outcome.result;
-        }
-        return outcome.ok();
-    }
-
-    /** @brief Reads the depth buffer by target: the OLD spelling, forwarded through the image vocabulary (see above).
-     *
-     * @param target    Off-screen target whose depth buffer to read (borrowed; null answers Invalid).
-     * @param outDepths Receives the depth values on success.
-     * @return The answer (see readDepthBuffer(const ImageRef&, ...)).
-     */
-    ReadbackOutcome readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths)
-    {
-        const intrusive_ptr<ImageRef> image = readbackImage(target, 0, ImageRef::Kind::Depth);
-        return readDepthBuffer(*image, outDepths);
-    }
-
-    /** @brief The OLD two-answer shape for depth: kept for one release, then deleted (see the colour overload).
-     *
-     * @details
-     * - A shim, not an extension point: it forwards to the virtual above and writes the classification into @p why.
-     *
-     * @param image     Image to read: a bound `Kind::Depth` image.
-     * @param outDepths Receives the depth values on success.
-     * @param why       Receives the classification (Ok when the read happened), or null to ignore.
-     * @return true when the depths were read.
-     */
-    [[deprecated("readDepthBuffer now returns ReadbackOutcome; read outcome.result instead")]]
-    bool readDepthBuffer(const ImageRef& image, std::vector<float>& outDepths, ReadbackResult* why)
-    {
-        const ReadbackOutcome outcome = readDepthBuffer(image, outDepths);
-        if (why != nullptr) {
-            *why = outcome.result;
-        }
-        return outcome.ok();
-    }
-
-    /** @brief The OLD (target, index) spelling with the two-answer result: kept for one release (see above).
-     *
-     * @details
-     * - A shim, not an extension point: it forwards to the 3-argument overload and writes the classification.
-     *
-     * @param target     Off-screen target whose colour attachment to read (borrowed; null answers Invalid).
-     * @param attachment Colour attachment index in [0, target->colorCount()).
-     * @param outPixels  Receives the packed RGBA8 pixels on success.
-     * @param why        Receives the classification (Ok when the read happened), or null to ignore.
-     * @return true when the pixels were read.
-     */
-    [[deprecated("readColorBuffer now returns ReadbackOutcome; read outcome.result instead")]]
-    bool readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
-    {
-        const ReadbackOutcome outcome = readColorBuffer(target, attachment, outPixels);
-        if (why != nullptr) {
-            *why = outcome.result;
-        }
-        return outcome.ok();
-    }
-
-    /** @brief The OLD (target) spelling with the two-answer result: kept for one release (see above).
-     *
-     * @details
-     * - A shim, not an extension point: it forwards to the 3-argument overload and writes the classification.
-     *
-     * @param target    Off-screen target whose depth buffer to read (borrowed; null answers Invalid).
-     * @param outDepths Receives the depth values on success.
-     * @param why       Receives the classification (Ok when the read happened), or null to ignore.
-     * @return true when the depths were read.
-     */
-    [[deprecated("readDepthBuffer now returns ReadbackOutcome; read outcome.result instead")]]
-    bool readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why)
-    {
-        const ReadbackOutcome outcome = readDepthBuffer(target, outDepths);
-        if (why != nullptr) {
-            *why = outcome.result;
-        }
-        return outcome.ok();
+        return readDepthBuffer(*readbackImage(target, 0, ImageRef::Kind::Depth));
     }
 
     /** @brief Gets what this device can do (see Capabilities).
@@ -718,12 +639,12 @@ class VN_GRAPHICS_API RenderDevice {
     void reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category, const String& message);
 
     /**
-     * @brief Builds the image a legacy readback spelling names (target + attachment + kind).
+     * @brief Builds the image the short readback spelling names (target + attachment + kind).
      *
      * @details
-     * - The old overloads (see readColorBuffer / readDepthBuffer) are one-version forwarders, so the image they
-     *   describe exists only for the length of the call. A null target stays UNBOUND, which the backend answers as
-     *   Invalid - the same answer the old spelling gave.
+     * - The short overloads (see readColorBuffer / readDepthBuffer) name an image for the length of the call, so the
+     *   object exists only inside it. A null target stays UNBOUND, which the backend answers as Invalid - the same
+     *   answer the spelling with an explicit ImageRef gives for an image nothing bound.
      *
      * @param target     Target to name (borrowed; null builds an unbound image).
      * @param attachment Attachment index inside @p target.

@@ -49,6 +49,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawItem;
@@ -217,9 +218,9 @@ TEST(VkUniformRingTest, ASteadyFrameCreatesNoRingAndBuildsNoSet)
     EXPECT_GE(first.set_builds, 2U) << "a content draw binds a content set and the per-draw set";
     EXPECT_GE(first.sets_live, 2U);
 
-    std::vector<std::uint8_t> before;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, before));
-    EXPECT_EQ(pixelAt(before, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
+    const ColorReadback before = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(before.ok());
+    EXPECT_EQ(pixelAt(before.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
     // FRAMES TWO AND THREE: the same resources - so the ring is not rebuilt and no set is built again. THIS is the
     // regression: "one buffer per draw" and "one set per draw, per frame" both fail these two assertions.
@@ -233,9 +234,9 @@ TEST(VkUniformRingTest, ASteadyFrameCreatesNoRingAndBuildsNoSet)
 
     // AND THE PICTURE IS STILL THE ONE THE FIRST FRAME DREW: the slices are rewritten every frame, so "no churn" must
     // not have been bought by drawing something else.
-    std::vector<std::uint8_t> after;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, after));
-    EXPECT_EQ(after, before) << "the steady frame drew a different picture";
+    const ColorReadback after = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(after.ok());
+    EXPECT_EQ(after.values, before.values) << "the steady frame drew a different picture";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     backend->shutdown();
@@ -398,9 +399,9 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
     EXPECT_LE(six_delta, 8U) << "the per-frame cache work is the head plus the two book reads and the frame end";
 
     // AND THE SIX-COMMAND FRAME REALLY DREW: a cheaper head must not have been bought by skipping the picture.
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     backend->shutdown();

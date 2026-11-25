@@ -58,6 +58,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -282,9 +283,9 @@ struct Scene {
 [[nodiscard]] std::vector<std::uint8_t> runAndRead(vn::graphics::RenderBackend& backend, const FrameDescription& frame, RenderTarget* target)
 {
     (void)backend.executeFrame(frame, nullptr);
-    std::vector<std::uint8_t> pixels;
-    EXPECT_TRUE(backend.readColorBuffer(target, 0, pixels)) << "the scene's picture must read back";
-    return pixels;
+    const ColorReadback read = backend.readColorBuffer(target, 0);
+    EXPECT_TRUE(read.ok()) << "the scene's picture must read back";
+    return read.values;
 }
 
 } // namespace

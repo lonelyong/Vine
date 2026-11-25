@@ -47,6 +47,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawItem;
@@ -335,14 +336,13 @@ TEST(VkMemoryPoolTest, AReadbackGivesItsStagingBytesBack)
     const intrusive_ptr<RenderTarget> target = makeTarget(u8"vk_memory_readback");
     (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+    const ColorReadback first_read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(first_read.ok());
     const vn::backend_vk::MemoryStats first = device->memoryStats();
     EXPECT_GT(first.releases, 0U) << "a readback's staging slice was never released";
 
     for (int read = 0; read < 4; ++read) {
-        pixels.clear();
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0).ok());
         const vn::backend_vk::MemoryStats stats = device->memoryStats();
         EXPECT_EQ(stats.used_bytes, first.used_bytes) << "a readback left bytes in the pool";
         EXPECT_EQ(stats.blocks_live, first.blocks_live) << "a readback grew the pool";

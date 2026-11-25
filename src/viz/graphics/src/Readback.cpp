@@ -4,26 +4,26 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-ReadbackAnswer readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept
+std::optional<ReadbackRefusal> readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept
 {
     // 1. Does the request name something the target has? (A request that can never be served answers the
     //    same way whatever the target currently holds.)
     if (request.kind == ReadbackKind::Color) {
         if (request.attachment >= state.color_attachments) {
-            return ReadbackAnswer{ false, ReadbackRefusal::UnknownAttachment };
+            return ReadbackRefusal::UnknownAttachment;
         }
         // 2. Can this backend read that format at all? (A permanent property of the target, not of this
         //    frame.)
         if (!colorReadbackOf(state.color_format).readable) {
-            return ReadbackAnswer{ false, ReadbackRefusal::UnreadableFormat };
+            return ReadbackRefusal::UnreadableFormat;
         }
     }
     else {
         if (!state.depth_format.has_value()) {
-            return ReadbackAnswer{ false, ReadbackRefusal::UnknownAttachment };
+            return ReadbackRefusal::UnknownAttachment;
         }
         if (!depthReadbackOf(state.depth_format.value()).readable) {
-            return ReadbackAnswer{ false, ReadbackRefusal::UnreadableFormat };
+            return ReadbackRefusal::UnreadableFormat;
         }
     }
 
@@ -31,10 +31,10 @@ ReadbackAnswer readbackOf(const ReadbackState& state, const ReadbackRequest& req
     //    whatever the allocation held.
     const bool captured = request.kind == ReadbackKind::Color ? state.color_captured : state.depth_captured;
     if (!captured) {
-        return ReadbackAnswer{ false, ReadbackRefusal::NotCaptured };
+        return ReadbackRefusal::NotCaptured;
     }
 
-    return ReadbackAnswer{ true, ReadbackRefusal::None };
+    return std::nullopt; // servable: one spelling for "nothing stops this", not a None enumerator
 }
 
 namespace detail
@@ -43,25 +43,23 @@ namespace detail
 std::string_view refusalName(ReadbackRefusal refusal) noexcept
 {
     switch (refusal) {
-    case ReadbackRefusal::None: return "none";
     case ReadbackRefusal::UnknownAttachment: return "unknown-attachment";
     case ReadbackRefusal::UnreadableFormat: return "unreadable-format";
     case ReadbackRefusal::NotCaptured: return "not-captured";
     }
-    return "none";
+    return "unknown";
 }
 
 } // namespace detail
 
-ReadbackResult readbackResultOf(ReadbackRefusal refusal) noexcept
+ReadbackStatus readbackStatusOf(ReadbackRefusal refusal) noexcept
 {
     switch (refusal) {
-    case ReadbackRefusal::None: return ReadbackResult::Ok;
-    case ReadbackRefusal::UnknownAttachment: return ReadbackResult::Invalid;
-    case ReadbackRefusal::UnreadableFormat: return ReadbackResult::Unsupported;
-    case ReadbackRefusal::NotCaptured: return ReadbackResult::NotReady;
+    case ReadbackRefusal::UnknownAttachment: return ReadbackStatus::Invalid;
+    case ReadbackRefusal::UnreadableFormat: return ReadbackStatus::Unsupported;
+    case ReadbackRefusal::NotCaptured: return ReadbackStatus::NotReady;
     }
-    return ReadbackResult::Failed; // an unmapped case is a failure to look at, never "Ok"
+    return ReadbackStatus::Failed; // an unmapped case is a failure to look at, never "Ok"
 }
 
 bool ReadbackFormat::operator==(const ReadbackFormat& other) const noexcept

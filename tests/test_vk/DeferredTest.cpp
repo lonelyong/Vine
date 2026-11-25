@@ -59,6 +59,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -73,7 +74,7 @@ using vn::graphics::LightValue;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
-using vn::graphics::ReadbackResult;
+using vn::graphics::ReadbackStatus;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
@@ -313,9 +314,9 @@ TEST(VkDeferredTest, TheDeferredFrameLightsTheGbuffer)
     const PresentOutcome outcome = backend->executeFrame(deferredFrame(scene), nullptr);
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "a device with no window presents nothing; a target is not a surface";
 
-    std::vector<std::uint8_t> pixels;
-    ReadbackResult            why = ReadbackResult::Failed;
-    ASSERT_TRUE(backend->readColorBuffer(scene.result.get(), 0, pixels, &why)) << "readback refused: " << static_cast<int>(why);
+    const ColorReadback read = backend->readColorBuffer(scene.result.get(), 0);
+    ASSERT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
+    const std::vector<std::uint8_t>& pixels = read.values;
     ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
 
     const std::array<int, 4> centre = pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
@@ -388,24 +389,20 @@ TEST(VkDeferredTest, TheDeferredFrameIsDrawnAgainAfterItsGbufferWasSampled)
 
         const PresentOutcome first_outcome = backend->executeFrame(deferredFrame(scene), nullptr);
         EXPECT_EQ(first_outcome, PresentOutcome::Skipped) << "a target is not a surface";
-        std::vector<std::uint8_t> first;
-        ReadbackResult            why = ReadbackResult::Failed;
-        ASSERT_TRUE(backend->readColorBuffer(scene.result.get(), 0, first, &why))
-            << samples << " samples: the first frame's readback was refused: " << static_cast<int>(why);
+        const ColorReadback first = backend->readColorBuffer(scene.result.get(), 0);
+        ASSERT_TRUE(first.ok()) << samples << " samples: the first frame's readback was refused: " << static_cast<int>(first.status);
 
         // THE SECOND FRAME IS THE ONE THAT HAS TO STATE WHERE THE SAMPLED PICTURES ARE.
         (void)backend->executeFrame(deferredFrame(scene), nullptr);
-        std::vector<std::uint8_t> second;
-        why = ReadbackResult::Failed;
-        ASSERT_TRUE(backend->readColorBuffer(scene.result.get(), 0, second, &why))
-            << samples << " samples: the second frame's readback was refused: " << static_cast<int>(why);
+        const ColorReadback second = backend->readColorBuffer(scene.result.get(), 0);
+        ASSERT_TRUE(second.ok()) << samples << " samples: the second frame's readback was refused: " << static_cast<int>(second.status);
 
-        ASSERT_EQ(second.size(), first.size());
-        EXPECT_EQ(second, first) << samples
-                                 << " samples: the second frame shaded a different composite than the first - the "
-                                    "G-buffer's pictures were not transitioned back to the attachment layout";
+        ASSERT_EQ(second.values.size(), first.values.size());
+        EXPECT_EQ(second.values, first.values) << samples
+                                               << " samples: the second frame shaded a different composite than the first - the "
+                                                  "G-buffer's pictures were not transitioned back to the attachment layout";
         // THE PIXEL IS STILL LIT, so the equality above cannot pass by both frames being empty.
-        const std::array<int, 4> centre = pixelAt(second, kTargetSize / 2, kTargetSize / 2);
+        const std::array<int, 4> centre = pixelAt(second.values, kTargetSize / 2, kTargetSize / 2);
         EXPECT_GT(centre[0] + centre[1] + centre[2], 0)
             << samples << " samples: the second frame's centre is black - the geometry pass did not write the G-buffer";
         EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
@@ -450,12 +447,11 @@ TEST(VkDeferredTest, EveryGbufferAttachmentWasWritten)
 
         (void)backend->executeFrame(copyFrame(scene.gbuffer.get(), destination.get(), copy), nullptr);
 
-        std::vector<std::uint8_t> pixels;
-        ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels))
-            << "the copy of attachment " << attachment << " must read back";
-        ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
+        const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+        ASSERT_TRUE(read.ok()) << "the copy of attachment " << attachment << " must read back";
+        ASSERT_EQ(read.values.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
 
-        copies[static_cast<std::size_t>(attachment)] = pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
+        copies[static_cast<std::size_t>(attachment)] = pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
         std::printf("[vk-deferred] gbuffer attachment %d copy: r=%d g=%d b=%d a=%d\n",
                     attachment,
                     copies[static_cast<std::size_t>(attachment)][0],

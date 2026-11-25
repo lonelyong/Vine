@@ -28,12 +28,13 @@
 using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::graphics::AttachmentPolicy;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
 using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
-using vn::graphics::ReadbackResult;
+using vn::graphics::ReadbackStatus;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
 
@@ -87,24 +88,21 @@ TEST(VkOffscreenTest, ADeclaredTargetIsBuiltWithoutAFrame)
     }
 
     const intrusive_ptr<RenderTarget> target = makeTarget(); // RGBA8 + D24, one colour attachment
-    std::vector<std::uint8_t>         pixels;
 
     backend->setRenderTarget(target.get());
-    ReadbackResult why = ReadbackResult::Ok;
-    EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
-    EXPECT_EQ(why, ReadbackResult::Invalid) << "the announcement built the one colour attachment the target states";
-    EXPECT_TRUE(pixels.empty());
+    const ColorReadback out_of_range = backend->readColorBuffer(target.get(), 1);
+    EXPECT_EQ(out_of_range.status, ReadbackStatus::Invalid) << "the announcement built the one colour attachment the target states";
+    EXPECT_TRUE(out_of_range.values.empty());
     // BUILT IS NOT DRAWN: the image exists, but no pass has written it, so the picture is still NotReady.
-    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
-    EXPECT_EQ(why, ReadbackResult::NotReady) << "nothing has drawn into the announced target yet";
+    EXPECT_EQ(backend->readColorBuffer(target.get(), 0).status, ReadbackStatus::NotReady) << "nothing has drawn into the announced target yet";
 
     // A FRAME THAT NAMES IT finds it built: the same question still answers Invalid, and the clear it recorded is
     // readable - the frame built no attachment of its own.
     backend->executeFrame(clearingFrame(target.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)));
-    EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
-    EXPECT_EQ(why, ReadbackResult::Invalid) << "the frame did not have to build what the announcement built";
-    EXPECT_TRUE(pixels.empty());
-    EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the frame's clear is readable";
+    const ColorReadback still_out_of_range = backend->readColorBuffer(target.get(), 1);
+    EXPECT_EQ(still_out_of_range.status, ReadbackStatus::Invalid) << "the frame did not have to build what the announcement built";
+    EXPECT_TRUE(still_out_of_range.values.empty());
+    EXPECT_TRUE(backend->readColorBuffer(target.get(), 0).ok()) << "the frame's clear is readable";
 
     backend->releaseRenderTarget(target.get());
     backend->shutdown();
@@ -128,9 +126,9 @@ TEST(VkOffscreenTest, AClearedTargetReadsBackAsThatColour)
     const PresentOutcome outcome = backend->executeFrame(clearingFrame(target.get(), colour));
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the device presents nothing yet; drawing into a target is not presenting";
 
-    std::vector<std::uint8_t> pixels;
-    ReadbackResult            why = ReadbackResult::Failed;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "readback refused: " << static_cast<int>(why);
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
+    const std::vector<std::uint8_t>& pixels = read.values;
     ASSERT_EQ(pixels.size(), static_cast<std::size_t>(target->width() * target->height()) * 4U);
 
     // One UNORM conversion is allowed to round: compare every pixel against the clear colour within one step.
@@ -179,17 +177,13 @@ TEST(VkOffscreenTest, ATargetThatWasNeverDrawnHasNoPixelsRatherThanBlackOnes)
     }
 
     const intrusive_ptr<RenderTarget> target = makeTarget();
-    std::vector<std::uint8_t>         pixels;
-    ReadbackResult                    why = ReadbackResult::Ok;
-    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
-    EXPECT_EQ(why, ReadbackResult::NotReady) << "an unknown target is 'nothing to read', not an invalid request";
-    EXPECT_TRUE(pixels.empty());
+    const ColorReadback               unknown_read = backend->readColorBuffer(target.get(), 0);
+    EXPECT_EQ(unknown_read.status, ReadbackStatus::NotReady) << "an unknown target is 'nothing to read', not an invalid request";
+    EXPECT_TRUE(unknown_read.values.empty());
 
     // An attachment index this device does not have IS an invalid request - the two refusals stay distinguishable.
     backend->executeFrame(clearingFrame(target.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)));
-    ReadbackResult wrong = ReadbackResult::Ok;
-    EXPECT_FALSE(backend->readColorBuffer(target.get(), 3, pixels, &wrong));
-    EXPECT_EQ(wrong, ReadbackResult::Invalid);
+    EXPECT_EQ(backend->readColorBuffer(target.get(), 3).status, ReadbackStatus::Invalid);
 
     backend->shutdown();
 }

@@ -368,25 +368,22 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 
     // Nothing has recorded a copy yet: the answer is "not yet" - a frame can fix it, and a caller that gets
     // this one may retry instead of hunting for a format bug.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured));
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured));
-    EXPECT_FALSE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::NotCaptured);
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::NotCaptured);
 
     state.color_captured = true;
     state.depth_captured = true;
-    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok) << "a captured RGBA8 attachment";
-    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 1U }).ok) << "and the second one too";
-    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).ok);
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::None))
-        << "ok and a category are two views of one answer, never contradictory";
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), std::nullopt) << "a captured RGBA8 attachment";
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 1U }), std::nullopt) << "and the second one too";
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), std::nullopt)
+        << "servable is ONE spelling (nullopt), not an ok flag beside a None category";
 
     // The request's own existence comes first: index 2 does not exist, and a target without a depth cannot
     // answer a depth readback - whatever has been captured.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }).refusal), static_cast<int>(ReadbackRefusal::UnknownAttachment));
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }), ReadbackRefusal::UnknownAttachment);
     ReadbackState colorless = state;
     colorless.depth_format.reset();
-    EXPECT_EQ(static_cast<int>(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnknownAttachment));
+    EXPECT_EQ(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::UnknownAttachment);
 }
 
 TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
@@ -402,19 +399,18 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
 
     // NOTHING captured: the format is still the answer, because a frame cannot fix it. Reporting "not captured"
     // here would send a caller off to run another frame that cannot change anything.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::UnreadableFormat);
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::UnreadableFormat);
 
     state.color_captured = true;
     state.depth_captured = true;
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat))
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::UnreadableFormat)
         << "capturing more changes nothing: the format table is what says so";
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
+    EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }), ReadbackRefusal::UnreadableFormat);
 
     EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
     EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
     EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-    EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::None), "none");
 }
 
 TEST(CoreReadbackTest, ANarrowColourFormatIsServableLikeAColour)
@@ -430,10 +426,10 @@ TEST(CoreReadbackTest, ANarrowColourFormatIsServableLikeAColour)
         ReadbackState state;
         state.color_attachments = 1U;
         state.color_format      = narrow;
-        EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured))
+        EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), ReadbackRefusal::NotCaptured)
             << "a narrow attachment is a product, not an unreadable format";
         state.color_captured = true;
-        EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
+        EXPECT_EQ(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }), std::nullopt);
     }
 }
 

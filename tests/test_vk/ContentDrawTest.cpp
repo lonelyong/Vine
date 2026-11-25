@@ -60,6 +60,7 @@ using vn::graphics::AttachmentPolicy;
 using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -75,7 +76,6 @@ using vn::graphics::PassDraw;
 using vn::graphics::PassRenderState;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
-using vn::graphics::ReadbackResult;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderState;
 using vn::graphics::RenderTarget;
@@ -364,9 +364,9 @@ TEST(VkContentDrawTest, ATriangleIsDrawnIntoTheTargetAndProbed)
     const PresentOutcome outcome = backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
     EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the device presents nothing yet; drawing into a target is not presenting";
 
-    std::vector<std::uint8_t> pixels;
-    ReadbackResult            why = ReadbackResult::Failed;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "readback refused: " << static_cast<int>(why);
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok()) << "readback refused: " << static_cast<int>(read.status);
+    const std::vector<std::uint8_t>& pixels = read.values;
     ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
 
     // THE TRIANGLE'S COLOUR, where the triangle is: the clip-space triangle covers the centre of the picture.
@@ -411,8 +411,9 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
 
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::vector<std::uint8_t>& pixels = read.values;
     // The DEFAULT material: its values are the block's defaults (0.8 grey), so a command with no material shades
     // exactly like content with a default one - the property the shared defaults exist for.
     const std::array<int, 4> centre = pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
@@ -578,9 +579,9 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
     draw.commands = commands;
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
         << "the base-colour texture was not sampled at set 0 binding 1";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
@@ -623,9 +624,9 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     draw.light_values = vn::graphics::LightSet::create({ ambient });
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
         << "the ambient light did not reach the light block";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
@@ -677,11 +678,11 @@ TEST(VkContentDrawTest, AFullscreenCopySamplesTheSourceTarget)
     const PresentOutcome outcome              = backend->executeFrame(fullscreenFrame(destination.get(), std::move(fullscreen_draw)));
     EXPECT_EQ(outcome, PresentOutcome::Skipped);
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+    const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the full-screen copy did not sample the source's drawn pixel";
-    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
+    EXPECT_EQ(pixelAt(read.values, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -747,11 +748,11 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
     frame.passes.push_back(std::move(entry));
     EXPECT_EQ(backend->executeFrame(frame), PresentOutcome::Skipped);
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+    const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the full-screen packet was discarded by a depth test it does not have";
-    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
+    EXPECT_EQ(pixelAt(read.values, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -816,9 +817,9 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     frame.passes.push_back(std::move(entry));
     backend->executeFrame(frame);
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    const std::array<int, 4> centre = pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
     EXPECT_LE(std::abs(centre[0] - 127), 2) << "the destination's red did not survive the half-opacity draw";
     EXPECT_LE(std::abs(centre[1] - 128), 2) << "the blended draw's green did not reach the pixel";
     EXPECT_EQ(centre[2], 0);
@@ -893,9 +894,9 @@ TEST(VkContentDrawTest, AStateChangeIsACommandNotAPipeline)
         frame.passes.push_back(std::move(entry));
         backend->executeFrame(frame);
 
-        std::vector<std::uint8_t> pixels;
-        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-        return pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        EXPECT_TRUE(read.ok());
+        return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
     };
 
     const std::array<int, 4> blended = drawOnce(true);
@@ -985,9 +986,9 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
         draw.commands = commands;
         backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
-        std::vector<std::uint8_t> pixels;
-        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-        return pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        EXPECT_TRUE(read.ok());
+        return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
     };
 
     EXPECT_EQ(sampledCentre(kCubePosXFragment), (std::array<int, 4>{ 255, 0, 0, 255 })) << "+X must sample the PosX face";

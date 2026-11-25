@@ -58,6 +58,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -237,8 +238,9 @@ struct Ran {
     Ran ran;
     ran.present = backend.executeFrame(frame, nullptr);
     ran.report  = backend.frameReport();
-    const vn::graphics::ReadbackOutcome outcome = backend.readColorBuffer(target, 0, ran.pixels);
-    ran.read    = outcome.ok();
+    const ColorReadback read = backend.readColorBuffer(target, 0);
+    ran.pixels               = read.values;
+    ran.read                 = read.ok();
     return ran;
 }
 

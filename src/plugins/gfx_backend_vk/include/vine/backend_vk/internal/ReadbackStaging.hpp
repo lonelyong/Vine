@@ -60,7 +60,7 @@ struct StagingRun {
  *   point. "How" is the same for colour and depth; "what" is the caller's. The order cannot be skipped: `commands()`
  *   records, `run()` is the ONE submit and wait, `bytes()` answers only after it ran, and the destructor releases the
  *   objects in the only order that is valid.
- * - IT DECIDES NOTHING: no diagnostic and no `ReadbackResult`; the device maps `StagingRefusal` / `StagingRun` onto
+ * - IT DECIDES NOTHING: no diagnostic and no `ReadbackStatus`; the device maps `StagingRefusal` / `StagingRun` onto
  *   its own answer (and reports a lost device once, see `Device::noteDeviceLost`).
  * - MEMORY: the buffer is a SLICE of the device pool (see MemoryAllocator), bound at that offset and reached through
  *   the pool's persistent mapping - the same arrangement every other buffer here uses, so a copy does not allocate a

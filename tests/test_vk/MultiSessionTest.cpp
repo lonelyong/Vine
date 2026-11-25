@@ -54,6 +54,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawItem;
@@ -321,9 +322,9 @@ TEST(VkMultiSessionTest, TwoDriversShadeWithTheirOwnDefaultProgram)
         // The device's own driver, through the device (the shape a direct caller uses).
         const intrusive_ptr<RenderTarget> target = makeTarget(u8"multi_first");
         (void)backend->executeFrame(drawingFrame(target.get(), programlessDraw(geometry)), nullptr);
-        std::vector<std::uint8_t> pixels;
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-        const std::array<int, 4> centre = centreOf(pixels);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        ASSERT_TRUE(read.ok());
+        const std::array<int, 4> centre = centreOf(read.values);
         EXPECT_GE(centre[0], 254) << "the first driver's red program did not shade its frame";
         EXPECT_LE(centre[1], 1);
         EXPECT_LE(centre[2], 1);
@@ -333,9 +334,9 @@ TEST(VkMultiSessionTest, TwoDriversShadeWithTheirOwnDefaultProgram)
         // The second driver, driven directly: its own default program, its own frame.
         const intrusive_ptr<RenderTarget> target = makeTarget(u8"multi_second");
         (void)second->executeFrame(drawingFrame(target.get(), programlessDraw(geometry)), nullptr);
-        std::vector<std::uint8_t> pixels;
-        ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-        const std::array<int, 4> centre = centreOf(pixels);
+        const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        ASSERT_TRUE(read.ok());
+        const std::array<int, 4> centre = centreOf(read.values);
         EXPECT_GE(centre[1], 254) << "the second driver's green program did not shade its frame";
         EXPECT_LE(centre[0], 1);
         EXPECT_LE(centre[2], 1);
@@ -383,12 +384,12 @@ TEST(VkMultiSessionTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
     red_driver.join();
     green_driver.join();
 
-    std::vector<std::uint8_t> red_pixels;
-    std::vector<std::uint8_t> green_pixels;
-    ASSERT_TRUE(backend->readColorBuffer(red_target.get(), 0, red_pixels));
-    ASSERT_TRUE(backend->readColorBuffer(green_target.get(), 0, green_pixels));
-    const std::array<int, 4> red   = centreOf(red_pixels);
-    const std::array<int, 4> green = centreOf(green_pixels);
+    const ColorReadback red_read   = backend->readColorBuffer(red_target.get(), 0);
+    const ColorReadback green_read = backend->readColorBuffer(green_target.get(), 0);
+    ASSERT_TRUE(red_read.ok());
+    ASSERT_TRUE(green_read.ok());
+    const std::array<int, 4> red   = centreOf(red_read.values);
+    const std::array<int, 4> green = centreOf(green_read.values);
     EXPECT_GE(red[0], 254) << "the two drivers' pictures were mixed (red lost its own colour)";
     EXPECT_LE(red[1], 1);
     EXPECT_GE(green[1], 254) << "the two drivers' pictures were mixed (green lost its own colour)";
@@ -419,9 +420,9 @@ TEST(VkMultiSessionTest, ADriverBorrowedBeforeInitializeComesUpWithTheDevice)
     const intrusive_ptr<RenderTarget> target   = makeTarget(u8"early_driver");
     (void)early->executeFrame(drawingFrame(target.get(), programlessDraw(geometry)), nullptr);
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[1], 254) << "the driver borrowed before initialize() never came up";
 
     device->releaseFrameDriver(*early);
@@ -451,9 +452,9 @@ TEST(VkMultiSessionTest, ReleasingTheDevicesOwnDriverIsANoOpAndAnotherDriverCanB
     again->setDefaultContentProgram(greenProgram());
     const intrusive_ptr<RenderTarget> target = makeTarget(u8"after_release");
     (void)again->executeFrame(drawingFrame(target.get(), programlessDraw(makeTriangle())), nullptr);
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_GE(centreOf(pixels)[1], 254) << "a driver borrowed after a release never came up";
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_GE(centreOf(read.values)[1], 254) << "a driver borrowed after a release never came up";
     device->releaseFrameDriver(*again);
 
     backend->shutdown();
@@ -495,10 +496,9 @@ TEST(VkMultiSessionTest, AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt)
     // THE HOST VERBS, from this thread, while that frame body runs: none may fail or crash.
     int releases = 0;
     for (int attempt = 0; attempt < 10; ++attempt) {
-        std::vector<std::uint8_t> pixels;
-        EXPECT_TRUE(backend->readColorBuffer(own_target.get(), 0, pixels))
-            << "a readback raced the frame in flight (it should have waited)";
-        EXPECT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize) * kTargetSize * 4U);
+        const ColorReadback read = backend->readColorBuffer(own_target.get(), 0);
+        EXPECT_TRUE(read.ok()) << "a readback raced the frame in flight (it should have waited)";
+        EXPECT_EQ(read.values.size(), static_cast<std::size_t>(kTargetSize) * kTargetSize * 4U);
         releases += device->releaseContent(geometry.get()) ? 1 : 0;
         std::this_thread::yield();
     }
@@ -507,9 +507,9 @@ TEST(VkMultiSessionTest, AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt)
 
     // The busy driver still draws after the releases (its next frame re-uploads what was let go).
     (void)second->executeFrame(drawingFrame(busy_target.get(), programlessDraw(geometry)), nullptr);
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(busy_target.get(), 0, pixels));
-    EXPECT_GE(centreOf(pixels)[1], 254) << "a release during the other driver's frame broke its next picture";
+    const ColorReadback read = backend->readColorBuffer(busy_target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_GE(centreOf(read.values)[1], 254) << "a release during the other driver's frame broke its next picture";
 
     device->releaseFrameDriver(*second);
     backend->shutdown();
@@ -547,9 +547,9 @@ TEST(VkMultiSessionTest, TheDefaultProgramMayChangeWhileAnotherDriverFrames)
     driver.join();
 
     (void)backend->executeFrame(drawingFrame(own_target.get(), programlessDraw(geometry)), nullptr);
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(own_target.get(), 0, pixels));
-    EXPECT_GE(centreOf(pixels)[1], 254) << "the live program switch was lost while the other driver framed";
+    const ColorReadback read = backend->readColorBuffer(own_target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_GE(centreOf(read.values)[1], 254) << "the live program switch was lost while the other driver framed";
 
     device->releaseFrameDriver(*second);
     backend->shutdown();
@@ -631,9 +631,9 @@ TEST(VkMultiSessionTest, AFrameBodyDoesNotWaitForAnotherDriversFrame)
     EXPECT_TRUE(second_finished_inside.load()) << "the second driver's frame could only run after the first one ended";
 
     // AND THE SECOND DRIVER'S PICTURE IS STILL ITS OWN after that overlap.
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(warm_target.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(warm_target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[1], 254) << "the overlapped frame did not draw its program's green";
     EXPECT_LE(centre[0], 1);
     EXPECT_LE(centre[2], 1);
@@ -723,9 +723,9 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
 
     // THE FRAME DREW WITH WHAT IT HAD RESOLVED: the release parked the program and the geometry, it did not pull them
     // out from under the command buffer that names them.
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(blocked_target.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(blocked_target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the frame lost the content a release announced while it was in flight";
     EXPECT_LE(centre[1], 1);
 
@@ -738,8 +738,8 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
     EXPECT_GE(device->retirementNumbers().pending, 1U) << "the released objects were destroyed while the frame was in flight";
 
     // THE SPARE TARGET IS GONE (the release answered as if it were never built), and the device still frames.
-    std::vector<std::uint8_t> spare_pixels;
-    EXPECT_FALSE(backend->readColorBuffer(spare_target.get(), 0, spare_pixels)) << "the released target was still readable";
+    const ColorReadback spare_read = backend->readColorBuffer(spare_target.get(), 0);
+    EXPECT_FALSE(spare_read.ok()) << "the released target was still readable";
     EXPECT_EQ(device->retirementNumbers().device_waits, waits) << "a refused readback never stops the device";
 
     backend->setDiagnosticSink({});
@@ -779,16 +779,16 @@ TEST(VkMultiSessionTest, EachDriversTargetReadsBackItsOwnLastCompletedFrame)
         ASSERT_EQ(first, PresentOutcome::Skipped);
         ASSERT_EQ(next, PresentOutcome::Skipped);
 
-        std::vector<std::uint8_t> own_pixels;
-        ASSERT_TRUE(backend->readColorBuffer(own_target.get(), 0, own_pixels)) << "round " << round;
-        const std::array<int, 4> own = centreOf(own_pixels);
+        const ColorReadback own_read = backend->readColorBuffer(own_target.get(), 0);
+        ASSERT_TRUE(own_read.ok()) << "round " << round;
+        const std::array<int, 4> own = centreOf(own_read.values);
         EXPECT_GE(own[0], 254) << "round " << round << ": the own target lost its red";
         EXPECT_LE(own[1], 1);
         EXPECT_LE(own[2], 1);
 
-        std::vector<std::uint8_t> other_pixels;
-        ASSERT_TRUE(backend->readColorBuffer(busy_target.get(), 0, other_pixels)) << "round " << round;
-        const std::array<int, 4> other = centreOf(other_pixels);
+        const ColorReadback other_read = backend->readColorBuffer(busy_target.get(), 0);
+        ASSERT_TRUE(other_read.ok()) << "round " << round;
+        const std::array<int, 4> other = centreOf(other_read.values);
         EXPECT_GE(other[1], 254) << "round " << round << ": a readback answered another target's frame";
         EXPECT_LE(other[0], 1);
         EXPECT_LE(other[2], 1);
@@ -819,7 +819,7 @@ TEST(VkMultiSessionTest, AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt
 
     std::atomic<bool>            asked{ false };
     std::atomic<bool>            refused{ false };
-    vn::graphics::ReadbackResult reason{ vn::graphics::ReadbackResult::Ok };
+    vn::graphics::ReadbackStatus reason{ vn::graphics::ReadbackStatus::Ok };
     std::size_t                  handed{ 1234U };
 
     backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
@@ -829,9 +829,10 @@ TEST(VkMultiSessionTest, AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt
         if (asked.exchange(true)) {
             return; // only the first refusal asks
         }
-        std::vector<std::uint8_t> pixels;
-        refused.store(!backend->readColorBuffer(target.get(), 0, pixels, &reason));
-        handed = pixels.size();
+        const vn::graphics::ColorReadback read = backend->readColorBuffer(target.get(), 0);
+        reason                                 = read.status;
+        refused.store(!read.ok());
+        handed = read.values.size();
     });
 
     // ONE GOOD CALL (the target is built and the frame is inside its body) and one program-less call, whose refusal
@@ -843,8 +844,8 @@ TEST(VkMultiSessionTest, AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt
 
     EXPECT_TRUE(asked.load()) << "the frame's refusal never reached the sink";
     EXPECT_TRUE(refused.load()) << "a readback answered from inside the frame body (it should have been refused)";
-    EXPECT_EQ(reason, vn::graphics::ReadbackResult::Failed) << "the inside-frame refusal means the verb did not run";
-    EXPECT_EQ(handed, 0U) << "a refused readback must not touch the host's vector";
+    EXPECT_EQ(reason, vn::graphics::ReadbackStatus::Failed) << "the inside-frame refusal means the verb did not run";
+    EXPECT_EQ(handed, 0U) << "a refused readback hands back no picture";
 
     backend->setDiagnosticSink({});
     backend->shutdown();
@@ -901,12 +902,11 @@ TEST(VkMultiSessionTest, AReadbackWaitsForTheFrameInFlightAndCountsTheWait)
     }
     ASSERT_TRUE(sink_entered.load()) << "the frame never reached its refusal";
 
-    std::promise<void>        read_done;
-    std::future<void>         read_future = read_done.get_future();
-    std::vector<std::uint8_t> pixels;
-    bool                      read_ok = false;
-    std::thread               reader([&]() {
-        read_ok = backend->readColorBuffer(target.get(), 0, pixels);
+    std::promise<void> read_done;
+    std::future<void>  read_future = read_done.get_future();
+    ColorReadback      read{};
+    std::thread        reader([&]() {
+        read = backend->readColorBuffer(target.get(), 0);
         read_done.set_value();
     });
 
@@ -920,8 +920,8 @@ TEST(VkMultiSessionTest, AReadbackWaitsForTheFrameInFlightAndCountsTheWait)
     reader.join();
 
     EXPECT_EQ(status, std::future_status::timeout) << "the readback did not wait for the frame in flight (F7)";
-    ASSERT_TRUE(read_ok) << "the readback failed after the frame it waited for ended";
-    const std::array<int, 4> centre = centreOf(pixels);
+    ASSERT_TRUE(read.ok()) << "the readback failed after the frame it waited for ended";
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the readback did not see the frame it waited for";
     EXPECT_LE(centre[1], 1);
 
@@ -974,28 +974,26 @@ TEST(VkMultiSessionTest, AReadbackRacingARebuiltTargetAnswersAValueItCanStandBeh
     std::size_t       reads       = 0;
     std::size_t       successes   = 0;
     while (!done.load(std::memory_order_acquire)) {
-        std::vector<std::uint8_t>    pixels;
-        vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
-        const bool                   got = backend->readColorBuffer(target.get(), 0, pixels, &why);
+        const vn::graphics::ColorReadback read = backend->readColorBuffer(target.get(), 0);
         ++reads;
         // "Not ready yet" is always a legal answer (a frame may have rebuilt the target a moment ago); every other
         // failure would be a claim about a target that exists, so none may appear here.
-        EXPECT_TRUE(got || why == vn::graphics::ReadbackResult::NotReady)
-            << "a readback racing a rebuild answered " << static_cast<int>(why);
-        if (!got) {
+        EXPECT_TRUE(read.ok() || read.status == vn::graphics::ReadbackStatus::NotReady)
+            << "a readback racing a rebuild answered " << static_cast<int>(read.status);
+        if (!read.ok()) {
             continue;
         }
         ++successes;
-        EXPECT_TRUE(pixels.size() == small_bytes || pixels.size() == large_bytes)
-            << "a readback answered with an extent no frame ever drew (" << pixels.size() << " bytes)";
-        if (pixels.size() < 4U) {
+        EXPECT_TRUE(read.values.size() == small_bytes || read.values.size() == large_bytes)
+            << "a readback answered with an extent no frame ever drew (" << read.values.size() << " bytes)";
+        if (read.values.size() < 4U) {
             continue;
         }
         // THE PICTURE IS THE ONE A FINISHED FRAME LEFT: the clear colour, never a half-built or half-copied image.
-        EXPECT_NEAR(pixels[0], 64, 2);
-        EXPECT_NEAR(pixels[1], 128, 2);
-        EXPECT_NEAR(pixels[2], 191, 2);
-        EXPECT_EQ(pixels[3], 255);
+        EXPECT_NEAR(read.values[0], 64, 2);
+        EXPECT_NEAR(read.values[1], 128, 2);
+        EXPECT_NEAR(read.values[2], 191, 2);
+        EXPECT_EQ(read.values[3], 255);
     }
     driver.join();
 
@@ -1080,9 +1078,9 @@ TEST(VkMultiSessionTest, AReleaseRacingTheFramesClaimsNeverLeavesAPassWithoutATa
 
     // THE LAST FRAME STILL DRAWS: the target is a description, and a release only changes what is resident.
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the frame after the race lost its picture";
     EXPECT_LE(centre[1], 1);
 
@@ -1319,9 +1317,9 @@ void main()
     ASSERT_TRUE(sink_entered.load()) << "the frame never reported the program-less draw, so the release never happened";
     ASSERT_TRUE(released.load()) << "the release never ran";
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the copy did not sample the source the frame had claimed (its record was lost to the release)";
     EXPECT_LE(centre[1], 1);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 1U)
@@ -1400,9 +1398,9 @@ TEST(VkMultiSessionTest, AFrameKeepsTheContentItResolvedUntilTheFrameEnds)
 
     // THE FRAME THAT RAN BESIDE THE RELEASE STILL DREW: its content is a description, and what it resolved stayed valid
     // at least until it was submitted.
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(destination.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the recording frame lost its picture";
     EXPECT_LE(centre[1], 1);
 
@@ -1463,9 +1461,9 @@ TEST(VkMultiSessionTest, AReleaseRacingAFramesContentNeverLeavesACommandBufferNa
     // THE LAST FRAME STILL DRAWS: the content is a description, and a release only changes what is resident - the next
     // frame uploads what left and reuses what compiled.
     ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    const std::array<int, 4> centre = centreOf(pixels);
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the frame after the race lost its picture";
     EXPECT_LE(centre[1], 1);
 

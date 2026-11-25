@@ -50,14 +50,14 @@ enables such as `depthBiasEnable`, so an enable must be fixed together with the 
 There is **one** list, declared where the pipeline is built (`ContentCaches`'s `buildPipeline`) and issued by one recorder helper (`ContentDraw::recordRasterState`): the floor requires `VK_EXT_extended_dynamic_state3`, so every item a pipeline key used to bake is a command today (`T54`).
 The witness that the rule has teeth is `../bugs/vsg-depth-bias-not-declared-dynamic.md`: the content pipeline carried a second copy of the list without `DEPTH_BIAS` and without the enable, so `setPolygonOffset` was a silent no-op until 2026-11-21.
 
-2.9 **Capabilities are two questions, readback has one "which image"**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
+2.9 **Capabilities are two questions, readback has one "which image" and one answer**: `Capabilities` consists of two values, `Features` (is it supported) and `Limits` (how large is the maximum);
 the limit fields are `Capabilities::limits.*` (source-level, BC-11), and the feature questions are `Features::supports` / `Features::bit` with `Features::Feature` as the enum.
-The transitive bit-set spelling on `Capabilities` was deleted once its migration was done (BC-32): one question has one spelling. Both readback verbs `readColorBuffer` / `readDepthBuffer` take one `ImageRef` — the same vocabulary as a pass input's "which image";
-the old `(target, attachment)` spelling is kept for one release and forwards (BC-16),
-and so is the old answer shape (`bool` + `ReadbackResult*`): the answer is now the return value,
-`ReadbackOutcome` (its `result` is the four-state `ReadbackResult`), and the two-answer shims are
-`[[deprecated]]` for one release. Why: `G4` (one question, one answer) and `G6` (one "which image" does not get
-two spellings).
+The transitive bit-set spelling on `Capabilities` was deleted once its migration was done (BC-32): one question has one spelling. Both readback verbs `readColorBuffer` / `readDepthBuffer` take one `ImageRef` - the same vocabulary as a pass input's "which image" (BC-16); `readColorBuffer(target, attachment = 0)` and `readDepthBuffer(target)` are short spellings of the same verbs, not a second readback path.
+
+**The answer is one value** (`BC-41`, 2026-11-25): a verb returns `ColorReadback` / `DepthReadback` - `ReadbackResult<T>`, the classification (`ReadbackStatus`: `Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`) together with the picture it classifies, `values` empty on every refusal. Nothing is an out-parameter any more: the `bool` + `std::vector&` + `ReadbackStatus*` shapes and the payload-less `ReadbackOutcome` wrapper are deleted, not deprecated (the batch above had kept them "for one release"; nothing shipped with them, and a second spelling would have survived in every caller and every guide table - `G1`).
+Why: `G3` (ask, configure, answer readable in one pass), `G4` (a refused read cannot leave a vector a caller reads as this frame's picture), `G6` (`PlanResult` and `FrameCallOutcome` are the same shape: an answer carries its status and its product).
+The naming rule it completes: a verb with NO product returns a `*Result` code (`SurfaceTargetResult`, `BackendRegistrationResult`); a verb that HAS a product returns a `*Result` carrying its `Status` (`PlanResult`, `FrameResult`, `ReadbackResult<T>`) - which is why the code itself is `ReadbackStatus`.
+The seam keeps its finer vocabulary and loses its sentinel: `readbackOf()` answers `std::optional<ReadbackRefusal>` (`nullopt` = servable, one spelling for one fact) and `readbackStatusOf()` is the only projection onto the host's status.
 
 2.10 **A public name states the thing, not the artifact that produced it** (naming, `G1` / `G4` / `G12`; audit-4 `T-12`, 2026-11-18):
 five spellings changed, one migration note each, and **no `[[deprecated]]` alias was kept** - the module promises no source or ABI
@@ -78,7 +78,7 @@ every search, every guide table and every reader's head, which is the cost this 
 - Why now: the third round registered all five (`C-A3-02` / `C-A3-03` / `C-A3-08`, `A3-17`) and the fourth round corrected the
   register first - two of the words it had listed (`releaseResidency`, `SessionId`) no longer existed, so the batch was smaller than
   recorded and could be taken in one go.
-- Rejected: keeping the old spellings as deprecated aliases (the shape B4 used for the readback answer). B4 migrated a *shape*
+- Rejected: keeping the old spellings as deprecated aliases (the shape B4 first used for the readback answer, and BC-41 later deleted). B4 migrated a *shape*
   whose in-tree callers still existed; a migrated *word* has no such callers left after the sweep, and the alias is exactly the
   double spelling the guide's 5.2 table warns about (`G1`). Also rejected: renaming only the cheap words - the register is read as
   one vocabulary, and a half-renamed pair (`DrawItem` beside `DrawDescription`) would be worse than either end.
@@ -297,7 +297,7 @@ that same order, so a wire is resolved once and reported once.
 | F2 | Depth attachment | `attachDepth(D16/D24/D32/D32F)`. |
 | F3 | Shared depth | `setDepthPromotion(false)` + `shareDepth(DepthView)`; the lender draws first, the borrower LOADs. |
 | F4 | Validity | At least one own attachment + a positive size; borrowed depth does not count as its own. |
-| F5 | Readback | `readColorBuffer` / `readDepthBuffer`, both take one `ImageRef` (it names "which image") and return `ReadbackOutcome` (the answer is the return value; `result` carries `Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`). The old `(target, index)` spelling and the old `bool` + `ReadbackResult*` shape are deprecated shims for one release (BC-16). |
+| F5 | Readback | `readColorBuffer` / `readDepthBuffer`, both take one `ImageRef` (it names "which image") and return `ColorReadback` / `DepthReadback` = `ReadbackResult<T>`: `status` (`Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`) together with `values`, populated exactly on `Ok` (BC-41). `readColorBuffer(target, attachment = 0)` / `readDepthBuffer(target)` are short spellings of the same verbs (BC-16). |
 
 ### 3.2 MSAA
 
@@ -505,6 +505,13 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 ### 9.3 Compatibility / migration
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
+
+2026-11-25 - the readback answer is one value (`BC-41`): `readColorBuffer` / `readDepthBuffer` return
+`ColorReadback` / `DepthReadback` (`ReadbackResult<T>` - the status together with the picture it classifies). What a host must
+change: drop the out-vector and the `why` pointer - `const ColorReadback read = device->readColorBuffer(target, 0);` then
+`read.ok()`, `read.status`, `read.values`. `ReadbackOutcome`, `ReadbackResult` (the code, now `ReadbackStatus`) and every
+`bool` + out-parameter overload are deleted, not deprecated: every in-tree consumer moved in the same commit and the module
+promises no source stability.
 
 2026-11-25 - `T59` landed: the colour vocabulary is `channels x family` (nine values, 2.12), the 8-bit family reads back at one
 byte per channel, and a colour format the device does not back is refused by name. What a host must change: nothing that used

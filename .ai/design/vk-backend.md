@@ -689,9 +689,9 @@ and every cache has a witness a test can read.**
 ### 3.1.11 F11 Readback
 
 - **Behaviour**: `ReadbackStaging` is one per call and **carries its own command pool and fence** (`C7`: readback borrows no session's frame machinery); a colour
-  readback requires the target attachment to be `R8G8B8A8_UNORM`, and a depth readback turns D32 into a float array; the answer is the
-  four-state `ReadbackResult` (`NotReady` / `Unsupported` / `Invalid` / `Failed`) returned as `ReadbackOutcome` (the deprecated
-  `bool` + out-parameter shim forwards to it, BC-16). Readback takes the body gate EXCLUSIVE (the device's "between frames")
+  readback requires the target attachment to be `R8G8B8A8_UNORM`, and a depth readback turns D32 into a float array; the answer is ONE VALUE -
+  `ColorReadback` / `DepthReadback` (`ReadbackResult<T>`): the `ReadbackStatus` (`Ok` / `NotReady` / `Unsupported` / `Invalid` / `Failed`) together with
+  the picture it classifies, `values` empty on every refusal (`BC-41`). Readback takes the body gate EXCLUSIVE (the device's "between frames")
   and **counts one** `deviceWaits()`; a refusal answerable before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format, borrowed depth) does
   not stop the device; a read called back from inside a frame body answers `Failed` (`FrameBodyDepth`, never waiting for itself).
 - **Which formats can be read is a classification, not a surprise**: pure depth formats (D16 / D32 / D32F, MSAA resolving its

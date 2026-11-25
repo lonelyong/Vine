@@ -50,6 +50,7 @@ using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
+using vn::graphics::ColorReadback;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -233,11 +234,11 @@ TEST(VkBuiltinProgramTest, TheEngineUnlitProgramDrawsItsMaterialColour)
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, red) })));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the engine's unlit program did not shade the centre with the material's base colour";
-    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the corner is the pass' clear";
+    EXPECT_EQ(pixelAt(read.values, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the corner is the pass' clear";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U)
         << "the engine's own text has to compile here, shadow ABI and all";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -259,9 +260,9 @@ TEST(VkBuiltinProgramTest, ABaseColorMapCompilesAndSamplesTheTexturedVariant)
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
         << "the engine's `VN_TEXTURED` variant did not sample the base-colour map";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -283,9 +284,9 @@ TEST(VkBuiltinProgramTest, AVertexColourChannelModulatesTheAlbedoOnItsOwnVariant
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the engine's `VN_VERTEX_COLOR` variant did not modulate the white material with the authored colour";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -327,11 +328,11 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command })));
 
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the first instance is not where its matrix places it";
-    EXPECT_EQ(pixelAt(pixels, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the second instance is not where its matrix places it";
-    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, 54), (std::array<int, 4>{ 0, 0, 0, 255 }))
+    const ColorReadback read = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the first instance is not where its matrix places it";
+    EXPECT_EQ(pixelAt(read.values, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the second instance is not where its matrix places it";
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, 54), (std::array<int, 4>{ 0, 0, 0, 255 }))
         << "the un-instanced position drew something: the instance matrices were ignored";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -344,9 +345,10 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
     EXPECT_EQ(streamsLive(backend->frameReport()), before - 1U) << "the released instance stream stayed resident";
 
     backend->executeFrame(frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command })));
-    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
-    EXPECT_EQ(pixelAt(pixels, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the re-uploaded instance stream drew nothing";
-    EXPECT_EQ(pixelAt(pixels, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 }));
+    const ColorReadback reread = backend->readColorBuffer(target.get(), 0);
+    ASSERT_TRUE(reread.ok());
+    EXPECT_EQ(pixelAt(reread.values, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the re-uploaded instance stream drew nothing";
+    EXPECT_EQ(pixelAt(reread.values, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 }));
     EXPECT_EQ(streamsLive(backend->frameReport()), before) << "the next frame did not bring the instance stream back";
 
     backend->shutdown();

@@ -862,9 +862,12 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 整数片段输出，是另一套 shader 契约）。产品直接对着它选：**灰度 / 覆盖率掩码用 `R8`**，**亮度、SSAO、深度切片用
 `R16F` / `R32F`**，**速度缓冲、八面体法线用 `RG16F`**。着色器照旧写 `vec4`，附件只保留自己声明的通道，多出的分量被丢掉。
 
-读回的两半规则不同（`colorReadbackOf` 就是那张表）：
+读回的两半规则不同（`colorReadbackOf` 就是那张表），而**答案是一个值**：`readColorBuffer` / `readDepthBuffer` 返回
+`ColorReadback` / `DepthReadback`（`ReadbackResult<T>`）——`status`（`Ok` / `Unsupported` / `NotReady` / `Invalid` / `Failed`）
+和它分类的那张图一起回来，`values` 只在 `Ok` 时有内容，所以被拒绝的读回不可能让调用者的旧缓冲区被当成这一帧的画面
+（`.ai/design/graphics-rendering.md` 2.9、`ADR-2026-11-25-readback-answer-is-one-value`）：
 
-* **8 位族一个通道一个字节**，所以一个 texel 是 1 / 2 / 4 字节——`R8` 的掩码和 `RGBA8` 的颜色一样能读回，`pixels.size()`
+* **8 位族一个通道一个字节**，所以一个 texel 是 1 / 2 / 4 字节——`R8` 的掩码和 `RGBA8` 的颜色一样能读回，`read.values.size()`
   等于 `width * height * 通道数`。按 `* 4` 去索引一个 `R8` 目标会读错步长（见 `.ai/design/graphics-rendering.md` `P4`）。
 * **浮点族能画能采、暂时不能读回**：读回是「原样拷贝 texel、不做转换」，而一个字节数说不清半浮点/全浮点，所以答案是
   `UnreadableFormat`；浮点读回要等自己的解码器（不是把字节硬塞进 8 位契约）。

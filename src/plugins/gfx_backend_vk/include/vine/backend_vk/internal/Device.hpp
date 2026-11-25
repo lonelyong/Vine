@@ -258,9 +258,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @brief Reads back a colour attachment of an off-screen target this device drew into.
      *
      * @details
-     * - M1 answers the targets it built, as packed RGBA8 (the SDK's readback contract), and nothing else: another colour
-     *   format, an attachment index above 0, a target it never saw or a target whose attachments are not built answer
-     *   the matching `ReadbackResult` instead of a picture.
+     * - It answers the targets it built, as the packed bytes of the attachment's own 8-bit format (the SDK's readback
+     *   contract), and nothing else: a float format, an attachment index the target does not have, a target it never
+     *   saw or a target whose attachments are not built answer the matching `ReadbackStatus`, with an empty picture.
      * - The copy is synchronous: one command buffer, one fence, the pixels the last frame left. THE MACHINERY IS THE
      *   READBACK'S OWN (`ReadbackStaging`'s command pool and fence), so a readback never borrows a frame driver's
      *   command buffer (C7 of `.ai/design/graphics-sessions.md`).
@@ -271,12 +271,12 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   answers `Failed` instead of waiting for the frame it is itself inside; read from the host's own thread, after
      *   the frame.
      *
-     * @param image      Image to read: a bound `Kind::Color` image (borrowed, may not be null); a depth image is
-     *                   refused as Invalid.
-     * @param outPixels  Receives `width * height * 4` bytes on success (untouched on every refusal).
-     * @return The answer; `Ok` when the pixels were read.
+     * @param image Image to read: a bound `Kind::Color` image (borrowed, may not be null); a depth image is refused
+     *              as Invalid.
+     * @return The answer: `Ok` and `width * height * bytes_per_texel` packed bytes, or the classification that says
+     *         why there are none (the picture is empty on every refusal).
      */
-    vn::graphics::ReadbackOutcome readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels) override;
+    [[nodiscard]] vn::graphics::ColorReadback readColorBuffer(const vn::graphics::ImageRef& image) override;
 
     using vn::graphics::RenderDevice::readColorBuffer;
 
@@ -295,14 +295,13 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   answers Unsupported instead of decoding bytes that are not depths - the reference backend answers the same way.
      * - A BORROWED depth (`RenderTarget::shareDepth`) answers Unsupported: the image belongs to the lender, and the
      *   SDK's rule is that it is read through the SOURCE target.
-     * - Only a successful read changes @p outDepths; every refusal (Invalid / NotReady / Unsupported / Failed) leaves
-     *   it untouched and costs no submission.
+     * - Only a successful read answers with values; every refusal (Invalid / NotReady / Unsupported / Failed) answers
+     *   an empty picture and costs no submission.
      *
-     * @param image     Image to read: a bound `Kind::Depth` image (borrowed; null or a colour image is refused as Invalid).
-     * @param outDepths Receives `width * height` depths on success.
-     * @return The answer; `Ok` when the depths were read.
+     * @param image Image to read: a bound `Kind::Depth` image (borrowed; null or a colour image is refused as Invalid).
+     * @return The answer: `Ok` and `width * height` depths, or the classification that says why there are none.
      */
-    vn::graphics::ReadbackOutcome readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths) override;
+    [[nodiscard]] vn::graphics::DepthReadback readDepthBuffer(const vn::graphics::ImageRef& image) override;
 
     using vn::graphics::RenderDevice::readDepthBuffer;
 

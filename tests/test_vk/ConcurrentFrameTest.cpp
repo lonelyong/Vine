@@ -31,6 +31,7 @@ using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::String;
 using vn::graphics::AttachmentPolicy;
+using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
@@ -117,17 +118,17 @@ TEST(VkConcurrentFrameTest, TwoThreadsDriveOneDeviceAndBothPicturesAreRight)
 
     // AND EACH PICTURE IS THE ONE ITS OWN THREAD DREW: serialising must not mix the frames up (that would be the
     // symptom of a shared command buffer carrying the other thread's pass).
-    std::vector<std::uint8_t> pixels;
-    ASSERT_TRUE(backend->readColorBuffer(target_a.get(), 0, pixels));
-    ASSERT_GE(pixels.size(), 4U);
-    EXPECT_EQ(pixels[0], 255) << "the first target is not the red its thread cleared it to";
-    EXPECT_EQ(pixels[1], 0);
+    const ColorReadback red = backend->readColorBuffer(target_a.get(), 0);
+    ASSERT_TRUE(red.ok());
+    ASSERT_GE(red.values.size(), 4U);
+    EXPECT_EQ(red.values[0], 255) << "the first target is not the red its thread cleared it to";
+    EXPECT_EQ(red.values[1], 0);
 
-    pixels.clear();
-    ASSERT_TRUE(backend->readColorBuffer(target_b.get(), 0, pixels));
-    ASSERT_GE(pixels.size(), 4U);
-    EXPECT_EQ(pixels[0], 0) << "the second target is not the green its thread cleared it to";
-    EXPECT_EQ(pixels[1], 255);
+    const ColorReadback green = backend->readColorBuffer(target_b.get(), 0);
+    ASSERT_TRUE(green.ok());
+    ASSERT_GE(green.values.size(), 4U);
+    EXPECT_EQ(green.values[0], 0) << "the second target is not the green its thread cleared it to";
+    EXPECT_EQ(green.values[1], 255);
 
     backend->shutdown();
 }
