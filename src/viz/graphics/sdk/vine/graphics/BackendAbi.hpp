@@ -38,8 +38,11 @@
  *      frozen here.
  *      A module built before this header states no revision at all and is refused as such, which is the one
  *      compatibility event this batch carries (every in-tree backend is rebuilt with it).
+ * 2u - `BC-43`: `ResolvedCommandState` lost the `origin` table and `topology_origin` (the seven-field provenance
+ *      value had no consumer outside the tests, see `graphics-rendering.md` 9.3), so a backend built against 1u reads
+ *      a different layout of a value it is handed per command.
  */
-#define VN_RENDER_BACKEND_ABI_VERSION 1u
+#define VN_RENDER_BACKEND_ABI_VERSION 2u
 
 VN_GRAPHICS_NS_BEGIN
 

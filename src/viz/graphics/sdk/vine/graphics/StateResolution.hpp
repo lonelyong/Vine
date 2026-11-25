@@ -54,31 +54,6 @@ inline bool operator!=(const ResolvedRenderState& lhs, const ResolvedRenderState
 }
 
 /**
- * @brief Which layer decided one resolved state item.
- *
- * Every item of a resolved state came from exactly one place, and saying which one is what turns "why is this
- * drawn in Line?" from a code-reading exercise into a fact (see resolveRenderState).
- */
-enum class StateOrigin
-{
-    Default, // Nobody said: the engine's default for that item.
-    Content, // A StateNode on the command's path authored it (the content's own word).
-    Pass,    // The pass that draws it (see PassRenderState).
-    Data,    // The DATA said it (a primitive's topology): not a state anybody authored.
-};
-
-/** @brief The origin of every item of a resolved state (one per item, in the same order as ResolvedRenderState). */
-struct VN_GRAPHICS_API RenderStateOrigin {
-    StateOrigin depth{ StateOrigin::Default };         // Where the depth state came from.
-    StateOrigin cullMode{ StateOrigin::Default };      // Where the cull mode came from.
-    StateOrigin blend{ StateOrigin::Default };         // Where the blend state came from.
-    StateOrigin polygonMode{ StateOrigin::Default };   // Where the rasterisation mode came from.
-    StateOrigin polygonOffset{ StateOrigin::Default }; // Where the depth bias came from.
-    StateOrigin pointSize{ StateOrigin::Default };     // Where the point size came from.
-    StateOrigin lineWidth{ StateOrigin::Default };     // Where the line width came from.
-};
-
-/**
  * @brief What a PASS says about the content it draws.
  *
  * @details
@@ -110,16 +85,13 @@ struct VN_GRAPHICS_API PassRenderState {
     std::optional<Topology> topology{};
 };
 
-/** @brief One command's FINAL state in one pass, the assembly it draws with, and the layer each came from. */
+/** @brief One command's FINAL state in one pass, and the assembly it draws with. */
 struct VN_GRAPHICS_API ResolvedCommandState {
-    ResolvedRenderState state;  // The final state (defaults filled in).
-    RenderStateOrigin   origin; // Which layer decided each item of it.
+    ResolvedRenderState state; // The final state (defaults filled in).
     /// The EFFECTIVE primitive assembly: the PRIMITIVE's own value (see Primitive.hpp), or the pass' override
     /// of it for the whole view. It is a DATA fact rather than state, which is why it sits BESIDE @ref state -
-    /// and why `topology_origin` has no `Default`: the data states one, or the pass overrides it.
-    Topology    topology{ Topology::Triangles };
-    /// Which layer stated @ref topology (`Data` or `Pass`).
-    StateOrigin topology_origin{ StateOrigin::Data };
+    /// and why it has no "nobody said" case: the data states one, or the pass overrides it.
+    Topology topology{ Topology::Triangles };
 };
 
 /**
@@ -127,8 +99,7 @@ struct VN_GRAPHICS_API ResolvedCommandState {
  *
  * @details
  * - The table: `pass override > content (the folded StateNodes) > defaults`.
- * - One place and one test table; a caller wanting to know WHY an item has its value reads `origin` instead
- *   of reconstructing the layering. Everything consuming state goes through here: the geometry/state a
+ * - One place and one test table. Everything consuming state goes through here: the geometry/state a
  *   backend bakes into a pipeline variant, the dynamic state it diffs per command, and any diagnostic that
  *   has to explain a picture.
  * - The assembly travels in the SAME answer but not in the same field: `state` is what a StateNode may
@@ -141,7 +112,7 @@ struct VN_GRAPHICS_API ResolvedCommandState {
  * @param data_topology The PRIMITIVE's topology (see Primitive.hpp): the data's own word, which the pass may
  *                 override but a StateNode cannot (topology is not state - it says how this draw consumes its
  *                 vertex/index data).
- * @return The final state, the origin of each item, and the effective assembly.
+ * @return The final state and the effective assembly.
  */
 VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology);
 
@@ -153,8 +124,8 @@ VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& autho
  * tool, a test, a host reading its own scene) uses it directly.
  *
  * It is NOT a `resolve*` in the vocabulary of `graphics-scene.md` 2.12: that verb takes a value AND a context
- * and answers `origin` as well, while this one takes a value alone and fills what nobody stated. The name is
- * how a reader tells the two apart without opening the header.
+ * (a pass, the data's topology) and applies the priority table, while this one takes a value alone and fills
+ * what nobody stated. The name is how a reader tells the two apart without opening the header.
  *
  * @param state Folded optional state (see collectRenderState).
  * @return Concrete state with defaults applied - the STATE half of a pipeline-variant key.

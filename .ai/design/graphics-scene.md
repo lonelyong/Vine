@@ -31,7 +31,9 @@ This file defines the current design of the graphics scene graph: nodes, state, 
 
 2.1 **Strict tree**: `Group::addChild` detaches from the old parent automatically and refuses cycles; in one traversal a node has exactly one world matrix.
 2.2 **Folding rules fixed**: visibility is a hard gate, opacity multiplies, layer and drawOrder follow nearest declaration wins, state overrides per item.
-2.3 **State has one resolution point**: `resolveRenderState(authored, pass, data_topology)` reports the origin of every item.
+2.3 **State has one resolution point**: `resolveRenderState(authored, pass, data_topology)` is the one
+implementation of the priority table (`pass override > content > defaults`), and it answers the effective
+assembly beside the state.
 2.3.1 **A depth band belongs to the pass, not to the node**: `PassDesc::depth_range` in a declaration maps one pass's draws into a segment of the depth buffer;
 a node cannot carry it, because two subtrees mapping the same framebuffer would take the unique meaning away from a pixel's depth value (without a per-pixel tag
 there is no inverse, and picking has no unique answer). The mapping is order-preserving, but a remapped depth **is no longer a distance**: if the writers of one target use different ranges,
@@ -70,7 +72,7 @@ through three named steps, and a helper is spelled by **which inputs it takes**,
 `collect*` folds the tree into one authored value (`collectRenderState(node)` answers the still-optional block,
 whose unset items mean "nobody on that path said anything", not "the default"); `resolve*` applies **one context**
 to an authored value (`resolveRenderState(authored, pass, data_topology)` answers the final state *and* the
-`origin` of every item — one implementation of the priority table); `effective*` is the **one-step composition**
+effective assembly — one implementation of the priority table); `effective*` is the **one-step composition**
 a caller usually wants (`effectiveRenderState(node)` equals `applyStateDefaults(collectRenderState(node))`, and
 `effectiveProgram` / `effectiveMaterial` are the same shape for a single-valued property, whose search ends at
 the first override because a program or a material replaces the shading wholesale rather than one item of it).
@@ -104,7 +106,7 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 | F8 | Layers | Nearest declaration wins; `clearLayers()` restores inheritance; default `kDefaultLayer`. |
 | F9 | drawOrder | Nearest declaration wins; the outer sort key within a pass (higher = drawn later). |
 | F10 | material / program | Primitive > geometry-level default > nearest `StateNode` > pass. |
-| F11 | State | Every item optional; `StateOrigin::Content / Pass / Data / Default` records the origin. The ASSEMBLY (topology) is a data fact and reports its own origin beside the state (`ResolvedCommandState::topology_origin`: `Data` or `Pass`). |
+| F11 | State | Every item optional; the priority table (`pass override > content > defaults`) has ONE implementation (`resolveRenderState`), and the ASSEMBLY (topology) is a data fact that travels beside the state in `ResolvedCommandState`. |
 
 ### 3.3 Collection
 

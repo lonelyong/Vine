@@ -512,6 +512,15 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
 
+2026-11-25 - the state-provenance table is deleted (`BC-43`): `StateOrigin`, `RenderStateOrigin`,
+`ResolvedCommandState::origin` and `ResolvedCommandState::topology_origin` are gone, and `resolveRenderState` now answers
+"the final state and the effective assembly" only. Why: the seven-field provenance value was written for every command in
+every frame and read by nothing outside the tests - no report part, no `FrameTable` row and no host accessor exposed it, so
+its own claim ("why is this drawn in Line?") had no reader (`G8` / `G10`, the class `BC-26` / `BC-27` closed the same way).
+What a host must change: read `state` and `topology` only; a tool that wants the priority table reads `graphics-scene.md`
+2.12/§4.1, which states the layering once. `ResolvedCommandState` crosses the backend seam, so
+`VN_RENDER_BACKEND_ABI_VERSION` moved to `2u` and every module that builds that value must be rebuilt.
+
 2026-11-25 - the readback vocabulary has one classifier and names the image (`BC-42`): `readColorBuffer` / `readDepthBuffer`
 become `readColorImage` / `readDepthImage` (a target holds images, not buffers), `colorReadbackOf` / `depthReadbackOf`
 become `colorBytesPerTexel` / `depthBytesPerTexel` returning `std::optional<std::uint32_t>` (`std::nullopt` = no packing),
