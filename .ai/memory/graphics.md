@@ -2526,3 +2526,27 @@
   half; the surface mixes three header granularities with no stated rule or index.
 - **Verdict**: the code rounds have converged; what is left is corpus upkeep and one public fact with no consumer.
   Steps 1-2 of §5 are doc-only, step 3 (`L3`) is the only code batch.
+
+## 2026-11-25 - review 10 landed: the corpus, BC-43 and BC-44
+
+- **What changed, in four commits**: `d59b7585` (2.11 rewritten as decision site + grep with four new axes, 2.17 the
+  closed/open split, 2.18 a header is named after what a host writes, three stale counts deleted, the count rule in the
+  design-docs skill), `4140cd15` (`BC-43`: `StateOrigin` / `RenderStateOrigin` / `origin` / `topology_origin` deleted,
+  ABI `2u`), `7990b2d9` (the rule that decides when a device verb may carry a default, plus `releaseRenderTarget`'s
+  sentence), `a8569946` (`BC-44`: `ImageSource.hpp` -> `ImageInput.hpp`).
+- **The two refinements the batches made to the review's plan**: the `L2` regex gate was WITHDRAWN - the population is
+  ~40 legitimate `SomeTest.cpp (N cases)` sites, and a check that must be switched off is worse than none; the rule is
+  the writer's (skill) and the three stale counts were simply deleted. `L7` needed no file moves: 2.18 states the
+  granularity rule and the guide's §5.1 table is the index.
+- **Traps worth keeping**:
+  - `multi_replace_string_in_file` again reported a FILE-level success while one entry silently failed (`2.11`'s
+    replacement did not apply; only a `grep` showed the old table still there). Verify each entry, not the file.
+  - `clang-format-diff-23 -p1` output must be applied with `git apply -p0` (git apply defaults to `-p1`, which strips
+    `src/` and fails); generate it with `git diff -U0 --no-prefix` and apply with `-p0`.
+  - The `<!-- drift-ok -->` marker is matched PER LINE: it has to sit on the line that names the deleted symbol, not on
+    the paragraph's next line.
+  - clang-23 SEGFAULTED once (SIGBUS in `ParseSwitchStatement`) on `GraphicsTest.cpp` under the parallel build; the
+    identical source rebuilt clean on retry, so it is an environment/compiler fault - retry once and only then look for
+    a code cause.
+- **Evidence**: build 0 errors / 0 warnings; `test_graphics` 647 cases / `test_vk` 220 cases green after each code
+  batch; 11 gates exit 0 (ai-docs strict included); `clang-format-diff` 0 hunks; tree clean.

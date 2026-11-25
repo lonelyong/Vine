@@ -333,6 +333,33 @@ What this round does **not** add to the backlog: `L1`-`L2` are corrections of cl
 item that could become a backlog entry, and only if the owner chooses (a) - a debug report part - since that
 is a new mechanism without a consumer today.
 
+**What happened afterwards (2026-11-25, same day).** Steps 1-6 landed, in four commits:
+
+- `d59b7585` - `L1`: 2.11's rows now name the DECISION SITE plus a propagation grep, the four missing axes
+  (a `PassStage`, a `Topology`, a built-in `ShadingMode`, a content node type) were added, and the criterion was
+  restated (a closed enum is an ordinary batch; only the core model needs an ADR). `L2`: the count rule went into
+  the design-docs skill and the three stale counts were deleted rather than corrected (2.9's seam size now names
+  `SEAM_SHARED_HEADERS`; the two `test_vk` counts name `measure_graphics_claims.py`). `L4`: new 2.17 states the
+  closed / open / configurable split. `L7`: new 2.18 states the header granularity and naming rule.
+- `4140cd15` - `L3`: `StateOrigin`, `RenderStateOrigin`, `ResolvedCommandState::origin` and `::topology_origin`
+  deleted (`BC-43`), `VN_RENDER_BACKEND_ABI_VERSION` to `2u`, the 19 test assertions removed and the two tests
+  restated, `graphics-scene.md` 2.3 / 2.12 / F11 and the guide's §3 aligned.
+- `7990b2d9` - `L5`: the default-verb rule in `RenderDevice`'s class note, `releaseRenderTarget`'s sentence, and
+  2.15 pointing at that sentence as the rule's one home.
+- `a8569946` - `L6`: `ImageSource.hpp` -> `ImageInput.hpp` (`BC-44`).
+
+Two of the plan's steps changed shape, and the reason is the §1.2 rule of evidence:
+
+- **`L2`'s regex gate was withdrawn.** Measured before writing it: ~40 legitimate sites read
+  `SomeTest.cpp (N cases)`, so a `check_design_docs.py` rule would fire on them and be switched off - worse than
+  none (that is `G8` applied to a gate). The rule is the writer's, and the three stale counts are gone.
+- **`L7` needed no file moves.** 2.18 states the rule and the guide's §5.1 table stays the index; moving 101
+  headers would be churn (`G8`), which is what the finding itself said.
+
+`L3` was decided as (b) - delete - because no debug view is planned and the state table's prose already says the
+priority; the review's own recommendation.
+
+
 ## 6. Verification recipes
 
 | Check | What it proves |
