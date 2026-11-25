@@ -10,7 +10,7 @@
  *   - the pixel INSIDE the triangle is the shader's colour and the pixel outside is the pass' clear, which is what
  *     tells "the triangle was drawn" apart from "the target was cleared and nothing happened";
  *   - M4 adds the three content blocks and the full-screen path: the material's base colour and its base-colour
- *     texture, the ambient light, a screen copy of a target's pixels, and an ordered half-opacity draw (blend).
+ *     texture, the ambient light, a full-screen copy of a target's pixels, and an ordered half-opacity draw (blend).
  *
  * The device cases skip on a machine with no Vulkan device, like every device case in this repository.
  */
@@ -281,8 +281,8 @@ void main()
     return frame;
 }
 
-/// @brief A frame with ONE pass that clears NOTHING and issues @p draw (the screen-pass shape).
-[[nodiscard]] FrameDescription screenFrame(RenderTarget* target, DrawPacket draw)
+/// @brief A frame with ONE pass that clears NOTHING and issues @p draw (the full-screen-pass shape).
+[[nodiscard]] FrameDescription fullscreenFrame(RenderTarget* target, DrawPacket draw)
 {
     FrameDescription frame;
 
@@ -674,15 +674,14 @@ TEST(VkContentDrawTest, AFullscreenCopySamplesTheSourceTarget)
     fullscreen_draw.source               = source.get();
     fullscreen_draw.program              = copy;
     fullscreen_draw.program_description  = copy->description();
-    const PresentOutcome outcome     = backend->executeFrame(screenFrame(destination.get(), std::move(fullscreen_draw)));
+    const PresentOutcome outcome              = backend->executeFrame(fullscreenFrame(destination.get(), std::move(fullscreen_draw)));
     EXPECT_EQ(outcome, PresentOutcome::Skipped);
 
     std::vector<std::uint8_t> pixels;
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
     EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
-        << "the screen copy did not sample the source's drawn pixel";
-    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 }))
-        << "the screen copy did not sample the source's cleared corner";
+        << "the full-screen copy did not sample the source's drawn pixel";
+    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -698,7 +697,7 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
     // deferred chain's composite BORROWS the G-buffer's depth, so present and the G-buffer previews "recorded and
     // drew nothing" while the HUD content (DepthPolicy::Disabled) stayed visible.
     //
-    // DEFAULT PASS STATE ON PURPOSE (see screenFrame, which states Disabled explicitly): the shape under test is the
+    // DEFAULT PASS STATE ON PURPOSE (see fullscreenFrame, which states Disabled explicitly): the shape under test is the
     // one the engine's own chain passes hand over.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
@@ -752,8 +751,7 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
     ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
     EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the full-screen packet was discarded by a depth test it does not have";
-    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 }))
-        << "the screen copy did not sample the source's cleared corner";
+    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
@@ -1042,10 +1040,10 @@ TEST(VkContentDrawTest, AShadowedFullFullscreenPassGetsTheEngineShadowBindings)
     fullscreen_draw.source              = source.get();
     fullscreen_draw.program             = lit;
     fullscreen_draw.program_description = lit->description();
-    EXPECT_EQ(backend->executeFrame(screenFrame(destination.get(), std::move(fullscreen_draw))), PresentOutcome::Skipped);
+    EXPECT_EQ(backend->executeFrame(fullscreenFrame(destination.get(), std::move(fullscreen_draw))), PresentOutcome::Skipped);
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
-        << "the screen set must offer the engine's shadow pair (see ContentDraw::makeScreenSet)";
+        << "the full-screen set must offer the engine's shadow pair (see FrameScratch::fullscreenSetFor)";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     const auto report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());

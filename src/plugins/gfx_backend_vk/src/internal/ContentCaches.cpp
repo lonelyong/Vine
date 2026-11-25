@@ -160,9 +160,9 @@ struct ContentCaches::Impl {
     /// draw) and the full-screen set (the source's attachments at 0..N-1, lights at 6).
     VkDescriptorSetLayout content_set_layout{ VK_NULL_HANDLE };
     VkDescriptorSetLayout draw_set_layout{ VK_NULL_HANDLE };
-    VkDescriptorSetLayout screen_set_layout{ VK_NULL_HANDLE };
+    VkDescriptorSetLayout fullscreen_set_layout{ VK_NULL_HANDLE };
     VkPipelineLayout      content_pipeline_layout{ VK_NULL_HANDLE };
-    VkPipelineLayout      screen_pipeline_layout{ VK_NULL_HANDLE };
+    VkPipelineLayout      fullscreen_pipeline_layout{ VK_NULL_HANDLE };
     /**
      * @brief The session's pipeline cache (see create).
      *
@@ -175,7 +175,7 @@ struct ContentCaches::Impl {
     VkPipelineCache pipeline_cache{ VK_NULL_HANDLE };
 
     /// The engine's full-screen vertex stage (the fragment stage of a full-screen draw is the draw's own program).
-    vn::graphics::ShaderProgramDescriptionPtr screen_vertex{};
+    vn::graphics::ShaderProgramDescriptionPtr fullscreen_vertex{};
     /// The sampled images and samplers the material slots read.
     ContentImages images{};
 
@@ -1017,24 +1017,26 @@ struct ContentCaches::Impl {
     }
 
     /**
-     * @brief Gets (or builds) the pipeline of a SCREEN draw: the engine's full-screen vertex stage + the draw's
+     * @brief Gets (or builds) the pipeline of a FULL-SCREEN draw: the engine's full-screen vertex stage + the draw's
      *        fragment stage, with no vertex input.
      *
      * @param fragment          The compiled FRAGMENT program (its description is the key's program half).
-     * @param vertex            The compiled full-screen vertex stage (see `screen_vertex`).
+     * @param vertex            The compiled full-screen vertex stage (see `fullscreen_vertex`).
      * @param compatibility     The destination's pipeline compatibility.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline's share, or empty.
      */
-    [[nodiscard]] std::shared_ptr<PipelineHandle>
-    ensureScreenPipeline(const ProgramEntry& fragment, const ProgramEntry& vertex, const vn::graphics::RenderPassCompatibility& compatibility, vn::String& why)
+    [[nodiscard]] std::shared_ptr<PipelineHandle> ensureFullscreenPipeline(const ProgramEntry&                          fragment,
+                                                                           const ProgramEntry&                          vertex,
+                                                                           const vn::graphics::RenderPassCompatibility& compatibility,
+                                                                           vn::String&                                  why)
     {
         if (vertex.vertex == VK_NULL_HANDLE) {
             why = vn::String(u8"vk: the full-screen vertex stage could not be compiled");
             return nullptr;
         }
         if (fragment.fragment == VK_NULL_HANDLE) {
-            why = vn::String(u8"vk: a screen program needs a fragment stage");
+            why = vn::String(u8"vk: a full-screen program needs a fragment stage");
             return nullptr;
         }
 
@@ -1051,7 +1053,7 @@ struct ContentCaches::Impl {
                              fragment.fragment_entry,
                              {},
                              {},
-                             screen_pipeline_layout,
+                             fullscreen_pipeline_layout,
                              why);
     }
 
@@ -1191,12 +1193,12 @@ struct ContentCaches::Impl {
      * @param builds            This frame's book: the pipeline this resolves is borrowed for the frame's life.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&              draw,
-                                  const vn::graphics::PassDraw&                pass,
-                                  const vn::graphics::RenderPassCompatibility& compatibility,
-                                  FrameHead::DrawPlan&                         plan,
-                                  ContentRefusal&                              refusal,
-                                  FrameBuilds&                                 builds)
+    [[nodiscard]] bool planFullscreen(const vn::graphics::DrawPacket&              draw,
+                                      const vn::graphics::PassDraw&                pass,
+                                      const vn::graphics::RenderPassCompatibility& compatibility,
+                                      FrameHead::DrawPlan&                         plan,
+                                      ContentRefusal&                              refusal,
+                                      FrameBuilds&                                 builds)
     {
         plan      = FrameHead::DrawPlan{}; // see planCommand(DrawItem): an empty plan is "this draw records nothing"
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
@@ -1206,7 +1208,7 @@ struct ContentCaches::Impl {
         }
         if (fragment_description == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           contentRefusalCode(ContentRefusalCause::ScreenNoProgram),
+                           contentRefusalCode(ContentRefusalCause::FullscreenNoProgram),
                            vn::String(u8"vk: a full-screen draw named no fragment program"));
             return false;
         }
@@ -1215,14 +1217,14 @@ struct ContentCaches::Impl {
         ProgramEntry* const       fragment = ensureProgram(fragment_description.get(), ProgramVariant{}, build_why);
         if (fragment == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           contentRefusalCode(ContentRefusalCause::ScreenProgramRefused),
-                           build_why.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(build_why));
+                           contentRefusalCode(ContentRefusalCause::FullscreenProgramRefused),
+                           build_why.empty() ? vn::String(u8"vk: the full-screen fragment program could not be compiled") : std::move(build_why));
             return false;
         }
-        ProgramEntry* const vertex = ensureProgram(screen_vertex.get(), ProgramVariant{}, build_why);
+        ProgramEntry* const vertex = ensureProgram(fullscreen_vertex.get(), ProgramVariant{}, build_why);
         if (vertex == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           contentRefusalCode(ContentRefusalCause::ScreenProgramRefused),
+                           contentRefusalCode(ContentRefusalCause::FullscreenProgramRefused),
                            build_why.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(build_why));
             return false;
         }
@@ -1233,16 +1235,16 @@ struct ContentCaches::Impl {
         // fragment. The destinations that expose this are exactly the ones the reference backend's M4b rule names: a
         // window pass' depth attachment clears D24 to 0 (far), and the deferred chain's composite BORROWS the G-buffer's
         // depth. The pass' depth policy is about the CONTENT it draws into that target, not about this call.
-        vn::graphics::PassRenderState screen_state = pass.state;
-        screen_state.depth                         = vn::graphics::DepthPolicy::Disabled;
-        plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, screen_state, vn::graphics::Topology::Triangles);
+        vn::graphics::PassRenderState fullscreen_state = pass.state;
+        fullscreen_state.depth                         = vn::graphics::DepthPolicy::Disabled;
+        plan.resolved          = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, fullscreen_state, vn::graphics::Topology::Triangles);
         plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
         vn::String pipeline_why;
-        const std::shared_ptr<PipelineHandle> pipeline_handle = ensureScreenPipeline(*fragment, *vertex, compatibility, pipeline_why);
+        const std::shared_ptr<PipelineHandle> pipeline_handle = ensureFullscreenPipeline(*fragment, *vertex, compatibility, pipeline_why);
         if (pipeline_handle == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           contentRefusalCode(ContentRefusalCause::ScreenPipelineRefused),
-                           pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why));
+                           contentRefusalCode(ContentRefusalCause::FullscreenPipelineRefused),
+                           pipeline_why.empty() ? vn::String(u8"vk: the full-screen pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
         plan.pipeline = pipeline_handle->pipeline;
@@ -1371,11 +1373,11 @@ struct ContentCaches::Impl {
                 table->vkDestroyPipelineLayout(device, content_pipeline_layout, nullptr);
                 content_pipeline_layout = VK_NULL_HANDLE;
             }
-            if (screen_pipeline_layout != VK_NULL_HANDLE) {
-                table->vkDestroyPipelineLayout(device, screen_pipeline_layout, nullptr);
-                screen_pipeline_layout = VK_NULL_HANDLE;
+            if (fullscreen_pipeline_layout != VK_NULL_HANDLE) {
+                table->vkDestroyPipelineLayout(device, fullscreen_pipeline_layout, nullptr);
+                fullscreen_pipeline_layout = VK_NULL_HANDLE;
             }
-            for (VkDescriptorSetLayout* layout : { &content_set_layout, &draw_set_layout, &screen_set_layout }) {
+            for (VkDescriptorSetLayout* layout : { &content_set_layout, &draw_set_layout, &fullscreen_set_layout }) {
                 if (*layout != VK_NULL_HANDLE) {
                     table->vkDestroyDescriptorSetLayout(device, *layout, nullptr);
                     *layout = VK_NULL_HANDLE;
@@ -1385,7 +1387,7 @@ struct ContentCaches::Impl {
         table             = nullptr;
         device            = VK_NULL_HANDLE;
         allocator         = nullptr;
-        screen_vertex     = nullptr;
+        fullscreen_vertex   = nullptr;
         stream_builds_      = 0;
         stream_bytes_       = 0;
         stream_releases_    = 0;
@@ -1586,31 +1588,31 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
         return false;
     }
 
-    // THE FULL-SCREEN SET (set 0 of a screen program): the source's colour attachments at 0..4, the lights at 6, and
+    // THE FULL-SCREEN SET (set 0 of a full-screen program): the source's colour attachments at 0..4, the lights at 6, and
     // the SAME shadow pair the content set declares at 7/8 - a full-screen pass whose fragment is the engine's forward
-    // shading states both, so the layout has to offer them (see FrameScratch::buildScreenSet for what is bound there).
-    VkDescriptorSetLayoutBinding screen_bindings[8]{};
-    for (std::uint32_t slot = 0; slot < detail::kScreenSamplerBindings; ++slot) {
-        screen_bindings[slot].binding         = slot;
-        screen_bindings[slot].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        screen_bindings[slot].descriptorCount = 1U;
-        screen_bindings[slot].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    // shading states both, so the layout has to offer them (see FrameScratch::buildFullscreenSet for what is bound there).
+    VkDescriptorSetLayoutBinding fullscreen_bindings[8]{};
+    for (std::uint32_t slot = 0; slot < detail::kFullscreenSamplerBindings; ++slot) {
+        fullscreen_bindings[slot].binding         = slot;
+        fullscreen_bindings[slot].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        fullscreen_bindings[slot].descriptorCount = 1U;
+        fullscreen_bindings[slot].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     }
-    screen_bindings[5].binding         = 6U;
-    screen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    screen_bindings[5].descriptorCount = 1U;
-    screen_bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    screen_bindings[6].binding         = kShadowMapBinding;
-    screen_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    screen_bindings[6].descriptorCount = 1U;
-    screen_bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-    screen_bindings[7].binding         = kShadowBlockBinding;
-    screen_bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    screen_bindings[7].descriptorCount = 1U;
-    screen_bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fullscreen_bindings[5].binding         = 6U;
+    fullscreen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    fullscreen_bindings[5].descriptorCount = 1U;
+    fullscreen_bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    fullscreen_bindings[6].binding         = kShadowMapBinding;
+    fullscreen_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    fullscreen_bindings[6].descriptorCount = 1U;
+    fullscreen_bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fullscreen_bindings[7].binding         = kShadowBlockBinding;
+    fullscreen_bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    fullscreen_bindings[7].descriptorCount = 1U;
+    fullscreen_bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
     layout_info.bindingCount = 8U;
-    layout_info.pBindings    = screen_bindings;
-    if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->screen_set_layout) != VK_SUCCESS) {
+    layout_info.pBindings                  = fullscreen_bindings;
+    if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->fullscreen_set_layout) != VK_SUCCESS) {
         impl->destroyAll();
         return false;
     }
@@ -1633,12 +1635,12 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
         return false;
     }
 
-    // THE SCREEN LAYOUT: set 0 only (a full-screen program reads no camera push).
+    // THE FULL-SCREEN LAYOUT: set 0 only (a full-screen program reads no camera push).
     pipeline_info.setLayoutCount         = 1U;
-    pipeline_info.pSetLayouts            = &impl->screen_set_layout;
+    pipeline_info.pSetLayouts            = &impl->fullscreen_set_layout;
     pipeline_info.pushConstantRangeCount = 0U;
     pipeline_info.pPushConstantRanges    = nullptr;
-    if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->screen_pipeline_layout) != VK_SUCCESS) {
+    if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->fullscreen_pipeline_layout) != VK_SUCCESS) {
         impl->destroyAll();
         return false;
     }
@@ -1668,10 +1670,10 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
         return false;
     }
 
-    // The engine's full-screen vertex stage: the interface every screen fragment stage is written against.
+    // The engine's full-screen vertex stage: the interface every full-screen fragment stage is written against.
     const vn::intrusive_ptr<vn::graphics::ShaderProgram> fullscreen = vn::graphics::fullscreenVertexProgram();
-    impl->screen_vertex = fullscreen != nullptr ? fullscreen->description() : vn::graphics::ShaderProgramDescriptionPtr{};
-    return impl->screen_vertex != nullptr;
+    impl->fullscreen_vertex = fullscreen != nullptr ? fullscreen->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+    return impl->fullscreen_vertex != nullptr;
 }
 
 void ContentCaches::destroy() noexcept
@@ -1713,9 +1715,9 @@ VkDescriptorSetLayout ContentCaches::drawSetLayout() const noexcept
     return impl->draw_set_layout;
 }
 
-VkDescriptorSetLayout ContentCaches::screenSetLayout() const noexcept
+VkDescriptorSetLayout ContentCaches::fullscreenSetLayout() const noexcept
 {
-    return impl->screen_set_layout;
+    return impl->fullscreen_set_layout;
 }
 
 VkPipelineLayout ContentCaches::contentPipelineLayout() const noexcept
@@ -1723,9 +1725,9 @@ VkPipelineLayout ContentCaches::contentPipelineLayout() const noexcept
     return impl->content_pipeline_layout;
 }
 
-VkPipelineLayout ContentCaches::screenPipelineLayout() const noexcept
+VkPipelineLayout ContentCaches::fullscreenPipelineLayout() const noexcept
 {
-    return impl->screen_pipeline_layout;
+    return impl->fullscreen_pipeline_layout;
 }
 
 bool ContentCaches::planCommand(const vn::graphics::DrawItem&                  command,
@@ -1741,16 +1743,16 @@ bool ContentCaches::planCommand(const vn::graphics::DrawItem&                  c
     return impl->planCommand(command, pass, default_program, compatibility, plan, refusal, builds);
 }
 
-bool ContentCaches::planScreen(const vn::graphics::DrawPacket&              draw,
-                               const vn::graphics::PassDraw&                pass,
-                               const vn::graphics::RenderPassCompatibility& compatibility,
-                               FrameHead::DrawPlan&                         plan,
-                               ContentRefusal&                              refusal,
-                               const Lock&                                  held,
-                               FrameBuilds&                                 builds)
+bool ContentCaches::planFullscreen(const vn::graphics::DrawPacket&              draw,
+                                   const vn::graphics::PassDraw&                pass,
+                                   const vn::graphics::RenderPassCompatibility& compatibility,
+                                   FrameHead::DrawPlan&                         plan,
+                                   ContentRefusal&                              refusal,
+                                   const Lock&                                  held,
+                                   FrameBuilds&                                 builds)
 {
     (void)held; // see planCommand
-    return impl->planScreen(draw, pass, compatibility, plan, refusal, builds);
+    return impl->planFullscreen(draw, pass, compatibility, plan, refusal, builds);
 }
 
 ContentCaches::Lock ContentCaches::lock() const

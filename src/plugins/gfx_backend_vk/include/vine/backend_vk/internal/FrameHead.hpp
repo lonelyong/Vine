@@ -68,7 +68,7 @@ struct ShadowSource {
  * - WHAT IT IS NOT. It is not a cache (see `ContentCaches`), and it is not the frame's scratch (see `FrameScratch`):
  *   a head lives for one frame, belongs to one frame driver, and is discarded with it.
  *
- * @see `ContentCaches::planCommand` / `planScreen` (what fills a plan), `ContentDraw` (the recorder that reads it).
+ * @see `ContentCaches::planCommand` / `planFullscreen` (what fills a plan), `ContentDraw` (the recorder that reads it).
  */
 class FrameHead final {
   public:

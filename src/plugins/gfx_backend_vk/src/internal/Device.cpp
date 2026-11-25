@@ -1342,7 +1342,7 @@ bool Device::FrameDriver::createScratch() noexcept
                           owner.caches.uniformAlignment(),
                           owner.caches.contentSetLayout(),
                           owner.caches.drawSetLayout(),
-                          owner.caches.screenSetLayout());
+                          owner.caches.fullscreenSetLayout());
 }
 
 void Device::FrameDriver::destroy() noexcept
@@ -1692,7 +1692,7 @@ void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::Frame
             if (description.kind == vn::graphics::DrawKind::Fullscreen) {
                 call.plans.resize(1U);
                 FrameHead::DrawPlan& plan = call.plans.front();
-                (void)owner.caches.planScreen(description, pass_draw, pass_head.target.compatibility(), plan, call.refusal, cache_lock, frame_builds);
+                (void)owner.caches.planFullscreen(description, pass_draw, pass_head.target.compatibility(), plan, call.refusal, cache_lock, frame_builds);
                 // The destination's stand-in and shadow sampler: a full-screen draw samples the target it names, so its
                 // slots are the source's views (assembled where the source is), not a material's.
                 owner.caches.resolveTextures(nullptr, commands, head, plan, call.refusal, cache_lock, uploadBatch(), frame_builds);
@@ -1972,7 +1972,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // records image barriers and copies, neither legal inside a rendering instance - which is why the head runs
         // before the first pass begins. Nothing here consults the caches.
 
-        // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
+        // A SOURCE A FULL-SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
         // barrier is unambiguously allowed (before any rendering instance begins). ONE SOURCE, ONE DEPENDENCY: its
         // pictures move together (`BarrierBatch`), so a pass sampling a four-attachment G-buffer states one command
         // rather than four - and every record it writes stays in step with the barrier that moves it.
@@ -2063,7 +2063,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 // resolved (see resolveReadSet), which the pass slot keeps alive for the whole pass. A source this
                 // device never built stays null and answers an empty span, which makes the recorder report (and skip)
                 // the draw.
-                ContentDraw::ScreenSource source{};
+                ContentDraw::FullscreenSource source{};
                 if (const std::shared_ptr<TargetObjects>& source_entry = pass_run.sources[draw_index]; source_entry != nullptr) {
                     source.views = source_entry->color_views;
                 }

@@ -88,10 +88,11 @@ built, not a scene (`BC-34` / `BC-35`).
 `ImageInput` states one identity through `byImage` / `byTarget` / `byName` / `byTexture`, and resolution, edges, wiring
 checks, the frame table and `Plan::describe` read it (`graphics-rendering.md` 2.13,
 `ADR-2026-11-25-one-input-list-per-pass`); `input_names` / `input_targets` are gone.
-
-| # | Item | What | Trigger | Source |
-|---|---|---|---|---|
-| T57 | The backend's internal screen vocabulary | Backend-private names still say "screen" for a full-screen program or draw: vk's `ContentAbi::kScreenSamplerBindings` / `ContentDraw::ScreenSource` / `ensureScreenPipeline` / `buildScreenSet` / `ContentRefusalCause::Screen*` with their `vk.content.screen_*` codes. The SDK and the program layer say `Fullscreen` since `T49`; this half was left out because the refusal causes ARE diagnostic codes (identity a host matches, `scripts/diagnostic_codes.txt`), which is a diagnostic revision rather than a word sweep | the next batch that touches vk's full-screen pipeline/descriptor layout or the diagnostic-code registry, or a reader naming the backend plumbing as the mixture | `BC-33` in `../design/graphics-rendering.md`, `ContentRefusal.hpp`, `ContentImages.hpp` |
+`T57` (the backend's internal screen vocabulary) also landed 2026-11-25: vk's full-screen plumbing says `Fullscreen`
+(`kFullscreenSamplerBindings`, `ContentDraw::FullscreenSource`, `ContentCaches::ensureFullscreenPipeline` /
+`planFullscreen` / `fullscreenSetLayout` / `fullscreenPipelineLayout`, `FrameScratch::fullscreenSetFor` /
+`buildFullscreenSet`, `ContentRefusalCause::Fullscreen*`). The four `vk.content.screen_*` diagnostic codes keep their
+spelling - a code is identity a host matches (`BC-40`, `vk-backend.md` F14).
 
 ## 3. The first command of the next session
 

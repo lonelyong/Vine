@@ -75,7 +75,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - ONE CONTIGUOUS SPAN because the set binds 0..N-1 as one call (`vkUpdateDescriptorSets` over the same array),
      *   which is also why `PassRole` keeps its views in their own span.
      */
-    struct ScreenSource {
+    struct FullscreenSource {
         std::span<const VkImageView> views{}; // The source's attachment views, bound at set 0 bindings 0..N-1.
     };
 
@@ -216,14 +216,14 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param scope   The pass' recording scope (see DrawScope): command buffer, rectangle, head and shadow.
      * @param draw    The full-screen draw (its fragment program and camera are read; borrowed).
      * @param plan    The resolved program and state, from the frame head.
-     * @param source  The source target's views (see ScreenSource), in attachment order.
+     * @param source  The source target's views (see FullscreenSource), in attachment order.
      * @param refusal Receives the reason when the draw was skipped (cleared on entry), or null.
      */
-    void recordFullscreen(const DrawScope&                        scope,
-                          const vn::graphics::DrawPacket&         draw,
-                          const FrameHead::DrawPlan&                plan,
-                          ScreenSource                              source,
-                          ContentRefusal*                           refusal = nullptr);
+    void recordFullscreen(const DrawScope&                scope,
+                          const vn::graphics::DrawPacket& draw,
+                          const FrameHead::DrawPlan&      plan,
+                          FullscreenSource                source,
+                          ContentRefusal*                 refusal = nullptr);
 
   private:
     /**

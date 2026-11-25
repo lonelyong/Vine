@@ -59,7 +59,7 @@ inline constexpr std::uint32_t kShadowMapBinding   = 7U;
 inline constexpr std::uint32_t kShadowBlockBinding = 8U;
 
 /// @brief The full-screen ABI's sampler bindings: bindings 0..4 (four colour attachments and depth).
-inline constexpr std::uint32_t kScreenSamplerBindings = 5U;
+inline constexpr std::uint32_t kFullscreenSamplerBindings = 5U;
 
 /**
  * @brief How a shadow map is read: nearest texels, clamped to the edge, no mip interpolation.

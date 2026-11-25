@@ -7,13 +7,17 @@ const char8_t* contentRefusalCode(const ContentRefusalCause cause) noexcept
     // ONE TABLE, NO `default`: a cause added to the enum cannot reach a release without a code here - that is
     // the compile-time half of "a refusal always names its cause" (D-22). The strings are the `vk.content.*`
     // family in scripts/diagnostic_codes.txt and are never reworded.
+    //
+    // THE FOUR FULL-SCREEN CAUSES KEEP THEIR `screen` SPELLING: a code is identity a host matches, so the
+    // enumerator (an internal name) says what the draw IS while the code keeps the spelling it shipped with
+    // (BC-40, ../design/vk-backend.md).
     switch (cause) {
     case ContentRefusalCause::NoProgram: return u8"vk.content.no_program";
     case ContentRefusalCause::ProgramRefused: return u8"vk.content.program_refused";
-    case ContentRefusalCause::ScreenNoProgram: return u8"vk.content.screen_no_program";
-    case ContentRefusalCause::ScreenProgramRefused: return u8"vk.content.screen_program_refused";
-    case ContentRefusalCause::ScreenPipelineRefused: return u8"vk.content.screen_pipeline_refused";
-    case ContentRefusalCause::ScreenNoSource: return u8"vk.content.screen_no_source";
+    case ContentRefusalCause::FullscreenNoProgram: return u8"vk.content.screen_no_program";
+    case ContentRefusalCause::FullscreenProgramRefused: return u8"vk.content.screen_program_refused";
+    case ContentRefusalCause::FullscreenPipelineRefused: return u8"vk.content.screen_pipeline_refused";
+    case ContentRefusalCause::FullscreenNoSource: return u8"vk.content.screen_no_source";
     case ContentRefusalCause::GeometryRefused: return u8"vk.content.geometry_refused";
     case ContentRefusalCause::NoGeometry: return u8"vk.content.no_geometry";
     case ContentRefusalCause::PrimitiveAbsent: return u8"vk.content.primitive_absent";

@@ -3,7 +3,7 @@
  *
  * WHAT THE TWO CASES PIN, and why each is a different question:
  *   - THE WHOLE FRAME: one scene pass writes the canonical four-attachment G-buffer (RGBA16F x4 + D24) through
- *     `ChainPresets::defaultGbufferGeometryProgram()`, and one SCREEN pass shades it through
+ *     `ChainPresets::defaultGbufferGeometryProgram()`, and one FULL-SCREEN pass shades it through
  *     `ChainPresets::defaultDeferredLightProgram()` - sampling the G-buffer's four colour attachments at set 0
  *     bindings 0..3 and the light block at set 0 binding 6. The centre of the result must be LIT, which is the only
  *     thing that tells "the deferred chain ran" apart from "two targets were cleared".
@@ -218,7 +218,7 @@ struct Scene {
 
 /// @brief The frame: the G-buffer pass, then the deferred lighting pass that samples it.
 ///
-/// The lighting pass DECLARES the G-buffer as an input (`FrameDescription::Pass::inputs`) and names it as the screen
+/// The lighting pass DECLARES the G-buffer as an input (`FrameDescription::Pass::inputs`) and names it as the full-screen
 /// draw's source - the two halves of one statement, and the one this backend reads the sampled attachments from.
 [[nodiscard]] FrameDescription deferredFrame(const Scene& scene)
 {
@@ -446,7 +446,7 @@ TEST(VkDeferredTest, EveryGbufferAttachmentWasWritten)
         const intrusive_ptr<ShaderProgram> copy = vn::graphics::fullscreenCopyProgram(
             attachment,
             attachment == 2 ? vn::graphics::FullscreenCopyChannels::Alpha : vn::graphics::FullscreenCopyChannels::All);
-        ASSERT_NE(copy, nullptr) << "the SDK ships the screen copy program";
+        ASSERT_NE(copy, nullptr) << "the SDK ships the full-screen copy program";
 
         (void)backend->executeFrame(copyFrame(scene.gbuffer.get(), destination.get(), copy), nullptr);
 
@@ -478,7 +478,7 @@ TEST(VkDeferredTest, EveryGbufferAttachmentWasWritten)
         << "the normal attachment and the base-colour attachment read the same pixel: the copy did not follow the index";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U)
-        << "the four screen copy programs have to compile on this backend";
+        << "the four full-screen copy programs have to compile on this backend";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
         << "a copy of a G-buffer attachment was skipped";
 

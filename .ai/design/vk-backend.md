@@ -226,7 +226,7 @@ and every cache has a witness a test can read.**
   that `vk.device.reentry`). Around it sits a set of small locks: `clock_mutex` (`DeviceClock` + `RetirementQueue`, both SDK value types still documented as not
   thread-safe, a multi-threaded device supplying its own lock, `P4`), one for the allocator, one for the target map, one for the report sink, one for each session's default
   program, one for the surface list. `FrameTimeline` supports several open frames (a number is minted when a frame opens). Texture staging and replaced images belong to
-  their driver by `ContentImages::BatchId`, and a replaced image parks to the watermark. Sampled targets (a screen source / a pass input) also take a target lease.
+  their driver by `ContentImages::BatchId`, and a replaced image parks to the watermark. Sampled targets (a full-screen source / a pass input) also take a target lease.
   **Cases**: `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`,
   `VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`.
 - **Release**: `releaseContent` (three overloads) and `releaseRenderTarget` do not take the body gate: they wait for one cache operation only (the lock the frame head's
@@ -598,7 +598,7 @@ and every cache has a witness a test can read.**
   contended target. The depth
   ATTACHMENT and the depth RESOLVE PICTURE keep separate layout records, because sampling the picture does not move the sample
   buffer - and every other image has its own record too (`color_layouts` per picture, `multisample_color_layouts` per sample buffer), which
-  is what lets a colour picture a screen draw sampled return to the attachment layout on its own.
+  is what lets a colour picture a full-screen draw sampled return to the attachment layout on its own.
 - **A target it cannot build is named at BUILD time**: a target with no usable extent answers `vk.target.size_unknown` and a borrowed
   depth of another extent answers `vk.target.borrow_extent_mismatch` when the host announces it, so the reason arrives with the
   announcement rather than at the first resize (a capability, not a difference - review 8 `K6`).
@@ -642,7 +642,7 @@ and every cache has a witness a test can read.**
 - **Behaviour**: the vertex stage from `fullscreenVertexProgram()` + the caller's fragment stage; the source's colour attachments bind to set 0's 0..N-1, the shadow map
   and the light block to 7 / 8; `planScreen()` **forces** `DepthPolicy::Disabled`.
 - **Constraints**: `C7`, `N3`.
-- **Acceptance**: `ContentDrawTest`'s `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`, `ShadowTest`'s
+- **Acceptance**: `ContentDrawTest`'s `AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays`, `ShadowTest`'s
   `AFullscreenPassShadesWithTheMapItResolved`, `DeferredTest`.
 - **Caveat**: `P1`, `P2`.
 
@@ -665,7 +665,7 @@ and every cache has a witness a test can read.**
 
 ### 3.1.9 F9 Descriptor-set cache
 
-- **Behaviour**: content sets are cached by (the five texture views + the shadow map), screen sets by (the source view + the shadow map), and the per-draw set is one per
+- **Behaviour**: content sets are cached by (the five texture views + the shadow map), full-screen sets by (the source view + the shadow map), and the per-draw set is one per
   ring generation; the pool is created with `FREE_DESCRIPTOR_SET`, entries are released one by one, and one unused for 600 frames is swept every 120 frames.
 - **Constraints**: `C5`, `N1`.
 - **Acceptance**: `VkUniformRingTest.*`; the mutation that turns the cache off makes both cost-model cases red at once.
@@ -735,6 +735,9 @@ and every cache has a witness a test can read.**
 - **Behaviour**: `frameReport()` gathers one frame's counters, progress, uploads and timings, plus the pool's byte account (a now-fact, not a frame fact);
   `prepareFrame` answers a `PrepareReport`; driver messages and backend
   refusals take the same diagnostic route; every condition has one `ReportOnce`.
+- **Frozen code spellings** (`BC-40`): the four `vk.content.screen_*` codes keep the word `screen` although the
+  internal vocabulary says `Fullscreen` since `T57`. A code is what a HOST matches, so it keeps the spelling it
+  shipped with; only the enumerator (`ContentRefusalCause::Fullscreen*`) is internal and renamable.
 - **Constraints**: `R3`, `R4`.
 - **Acceptance**: `BackendTest`, `ContentDrawTest`'s diagnostic-count assertions.
 - **Caveat**: `P8` (a report field must not live in an object that gets destroyed).
@@ -868,10 +871,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - How it fails: the fullscreen triangle sits at z = 0 (the Reverse-Z far plane); inheriting the pass' `TestAndWrite` discards the whole block with **zero VUIDs**.
 - How to detect it: the recorder says `recorded=1` per call but the picture is the clear colour; `readColorBuffer` equals the background everywhere.
-- How to prevent it: `planScreen()` forces `DepthPolicy::Disabled`; the case `AScreenCopyIsDrawnWhateverThePassDepthPolicySays` pins it with a fixture of "default pass
+- How to prevent it: `planFullscreen()` forces `DepthPolicy::Disabled`; the case `AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays` pins it with a fixture of "default pass
   state + a target with depth" (the old fixture set Disabled explicitly, which is exactly why it did not catch this).
 
-### 6.2 P2 The screen set must bind the shadow map the pass resolved
+### 6.2 P2 The full-screen set must bind the shadow map the pass resolved
 
 - How it fails: binding 7/8 existing ≠ binding the right map; a white stand-in + a zero block makes the deferred path "shaded in forward, unshaded in deferred", with no
   diagnostic.
@@ -981,7 +984,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   that says "the attachment is never sampled" drops the SHADER_READ_ONLY -> depth attachment barrier, and the next frame reports
   `VUID-vkCmdBeginRendering-pRenderingInfo-09588` (MEASURED on the application's `open_demo`, 2026-11-24;
   `VkShadowTest.ASingleSampledMapDrawnAgainStatesItsDepthAgain` is red without it). The COLOUR HALF is the same rule on the other
-  attachment: a picture a screen draw sampled must return to the attachment layout before the next pass writes it, and answering
+  attachment: a picture a full-screen draw sampled must return to the attachment layout before the next pass writes it, and answering
   "colour attachment" for every picture reports `VUID-vkCmdBeginRendering-pRenderingInfo-09592` plus `vkCmdDraw-None-09600`
   (MEASURED; `VkDeferredTest.TheDeferredFrameIsDrawnAgainAfterItsGbufferWasSampled` is red, at one sample and at the device's
   maximum). One record per image is what makes both halves unrepresentable rather than fixed.

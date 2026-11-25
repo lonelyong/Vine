@@ -43,7 +43,7 @@ inline constexpr std::size_t kMaxColorAttachments = 8U;
  *   a value (@ref PassImage); a role with one image per colour attachment is three parallel spans (@ref PassRole) - see
  *   there for why it is not an array of structs.
  * - ONE RECORD PER IMAGE, WHICH IS WHY A ROLE'S STARTING LAYOUTS ARE PARALLEL TO ITS IMAGES. Two colour images of one
- *   set may be in different places (a readback touches one, a screen draw samples all), so the value that fits is one
+ *   set may be in different places (a readback touches one, a full-screen draw samples all), so the value that fits is one
  *   entry per image, not one value for the set. The owner passes its own records and stores them back after the call.
  * - A RESOLVE TARGET IS NOT AN ATTACHMENT. A multisampled set draws into sample buffers and resolves into the
  *   pictures: the picture is stated on the sample buffer's attachment info (`resolveMode` / `resolveImageView`), which
@@ -82,7 +82,7 @@ struct PassImage {
  * @details
  * - WHY THREE SPANS AND NOT ONE `std::span<const PassImage>` (`G10`). The three are written together by their owner and
  *   read together here, but a full-screen draw binds the views as ONE contiguous `VkImageView` span (see
- *   `ContentDraw::ScreenSource`), and an array of structs would have to be copied into scratch storage on every pass -
+ *   `ContentDraw::FullscreenSource`), and an array of structs would have to be copied into scratch storage on every pass -
  *   an allocation on the recording path, which this backend counts and forbids.
  * - THE THREE ARE THE SAME LENGTH, in the same order, for the same attachments: the owner sizes them together
  *   (`TargetObjects::createAttachments`) and `beginPass` hands over its own vectors, so `size()` is the one number and

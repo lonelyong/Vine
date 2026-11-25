@@ -22,7 +22,7 @@ struct FrameScratch::Impl {
     /// The device's set layouts (borrowed: the caches own them and outlive this scratch).
     VkDescriptorSetLayout content_set_layout{ VK_NULL_HANDLE };
     VkDescriptorSetLayout draw_set_layout{ VK_NULL_HANDLE };
-    VkDescriptorSetLayout screen_set_layout{ VK_NULL_HANDLE };
+    VkDescriptorSetLayout fullscreen_set_layout{ VK_NULL_HANDLE };
     /// The pool the set cache allocates from: freed PER ENTRY, because a cached set outlives the frame that built it.
     VkDescriptorPool descriptor_pool{ VK_NULL_HANDLE };
 
@@ -56,7 +56,7 @@ struct FrameScratch::Impl {
      * @details
      * - A SET IS A BINDING OF RESOURCES, NOT OF A DRAW: with the constants bound through dynamic offsets, a content
      *   set depends only on the five texture VIEWS, the five texture SAMPLERS they are read with, and the shadow map's
-     *   view and sampler; a screen set on the source's views and the same shadow pair. Both are stable across draws AND
+     *   view and sampler; a full-screen set on the source's views and the same shadow pair. Both are stable across draws AND
      *   frames, which is what makes them cacheable at all (F2 of the review: they used to be allocated per draw, per
      *   frame).
      * - THE SAMPLERS ARE PART OF THE KEY because they are part of the VALUE. A `VkDescriptorImageInfo` names a view AND
@@ -64,10 +64,10 @@ struct FrameScratch::Impl {
      *   through two authored samplers (`Material::setTexture(slot, texture, sampler)`): a key that stopped at the view
      *   served the first material's sampler to the second, which is silent wrongness rather than a cache miss (`G4`:
      *   a key must name everything the cached value depends on).
-     * - `screen` is part of the key because the two layouts are different objects even when they name the same views.
+     * - `fullscreen` is part of the key because the two layouts are different objects even when they name the same views.
      */
     struct SetKey {
-        bool                                           screen{ false };
+        bool                                            fullscreen{ false };
         std::array<VkImageView, detail::kTextureSlots>  views{};
         std::array<VkSampler, detail::kTextureSlots>    samplers{};
         VkImageView                                    shadow{ VK_NULL_HANDLE };
@@ -75,8 +75,8 @@ struct FrameScratch::Impl {
 
         [[nodiscard]] bool operator<(const SetKey& other) const
         {
-            if (screen != other.screen) {
-                return screen < other.screen;
+            if (fullscreen != other.fullscreen) {
+                return fullscreen < other.fullscreen;
             }
             if (views != other.views) {
                 return views < other.views;
@@ -301,11 +301,11 @@ struct FrameScratch::Impl {
      * @param shadow_sampler The map's sampler.
      * @return The set, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet buildScreenSet(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
-                                                 const VkImageView                                        shadow_view,
-                                                 const VkSampler                                          shadow_sampler) const
+    [[nodiscard]] VkDescriptorSet buildFullscreenSet(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
+                                                     const VkImageView                                               shadow_view,
+                                                     const VkSampler                                                 shadow_sampler) const
     {
-        const VkDescriptorSet set = allocateSet(screen_set_layout);
+        const VkDescriptorSet set = allocateSet(fullscreen_set_layout);
         if (set == VK_NULL_HANDLE) {
             return set;
         }
@@ -455,13 +455,13 @@ struct FrameScratch::Impl {
     }
 
     /** @brief The key a set is cached under (see SetKey). */
-    [[nodiscard]] static SetKey keyOf(const bool                                                       screen,
+    [[nodiscard]] static SetKey keyOf(const bool                                                      fullscreen,
                                       const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
-                                      const VkImageView                                                shadow,
-                                      const VkSampler                                                  shadow_sampler) noexcept
+                                      const VkImageView                                               shadow,
+                                      const VkSampler                                                 shadow_sampler) noexcept
     {
         SetKey key;
-        key.screen = screen;
+        key.fullscreen = fullscreen;
         for (std::size_t slot = 0; slot < detail::kTextureSlots; ++slot) {
             key.views[slot]    = slots[slot].imageView;
             key.samplers[slot] = slots[slot].sampler;
@@ -498,11 +498,10 @@ struct FrameScratch::Impl {
     }
 
     /** @brief The full-screen set for one call's source and map (see buildScreenSet). */
-    [[nodiscard]] VkDescriptorSet screenSetFor(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
-                                               const VkImageView                                        shadow_view,
-                                               const VkSampler                                          shadow_sampler)
+    [[nodiscard]] VkDescriptorSet
+    fullscreenSetFor(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots, const VkImageView shadow_view, const VkSampler shadow_sampler)
     {
-        return cachedSet(keyOf(true, slots, shadow_view, shadow_sampler), [&] { return buildScreenSet(slots, shadow_view, shadow_sampler); });
+        return cachedSet(keyOf(true, slots, shadow_view, shadow_sampler), [&] { return buildFullscreenSet(slots, shadow_view, shadow_sampler); });
     }
 
     /** @brief The per-draw set: one handle per ring generation (its only binding is the ring's draw block). */
@@ -528,17 +527,16 @@ FrameScratch::~FrameScratch()
     destroy();
 }
 
-bool FrameScratch::create(const VolkDeviceTable&     table,
-                          const VkDevice             device,
-                          MemoryAllocator&           allocator,
-                          const std::uint32_t        uniform_alignment,
+bool FrameScratch::create(const VolkDeviceTable&      table,
+                          const VkDevice              device,
+                          MemoryAllocator&            allocator,
+                          const std::uint32_t         uniform_alignment,
                           const VkDescriptorSetLayout content_set_layout,
                           const VkDescriptorSetLayout draw_set_layout,
-                          const VkDescriptorSetLayout screen_set_layout)
+                          const VkDescriptorSetLayout fullscreen_set_layout)
 {
     destroy();
-    if (device == VK_NULL_HANDLE || content_set_layout == VK_NULL_HANDLE || draw_set_layout == VK_NULL_HANDLE ||
-        screen_set_layout == VK_NULL_HANDLE) {
+    if (device == VK_NULL_HANDLE || content_set_layout == VK_NULL_HANDLE || draw_set_layout == VK_NULL_HANDLE || fullscreen_set_layout == VK_NULL_HANDLE) {
         return false;
     }
 
@@ -548,7 +546,7 @@ bool FrameScratch::create(const VolkDeviceTable&     table,
     impl->uniform_alignment  = uniform_alignment != 0U ? uniform_alignment : detail::kDefaultUniformAlignment;
     impl->content_set_layout = content_set_layout;
     impl->draw_set_layout    = draw_set_layout;
-    impl->screen_set_layout  = screen_set_layout;
+    impl->fullscreen_set_layout = fullscreen_set_layout;
 
     // ONE POOL FOR THE SET CACHE (see Impl::sets): a set is a BINDING OF RESOURCES, so the pool holds one per
     // (texture set, shadow map) instead of one per draw - and it is freed PER ENTRY (FREE_DESCRIPTOR_SET) rather than
@@ -556,10 +554,10 @@ bool FrameScratch::create(const VolkDeviceTable&     table,
     VkDescriptorPoolSize pool_sizes[2]{};
     pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     // material, lights and the shadow block per content set; the draw block per draw set; lights and the shadow block
-    // per screen set - four is the worst case per cached set.
+    // per full-screen set - four is the worst case per cached set.
     pool_sizes[0].descriptorCount = detail::kMaxCachedSets * 4U;
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    // five material slots + the shadow map per content set; five sampled inputs + the shadow map per screen set.
+    // five material slots + the shadow map per content set; five sampled inputs + the shadow map per full-screen set.
     pool_sizes[1].descriptorCount = detail::kMaxCachedSets * 2U * (detail::kTextureSlots + 1U);
 
     VkDescriptorPoolCreateInfo pool_info{};
@@ -600,7 +598,7 @@ void FrameScratch::destroy() noexcept
     impl->allocator          = nullptr;
     impl->content_set_layout = VK_NULL_HANDLE;
     impl->draw_set_layout    = VK_NULL_HANDLE;
-    impl->screen_set_layout  = VK_NULL_HANDLE;
+    impl->fullscreen_set_layout = VK_NULL_HANDLE;
     impl->ring_builds_       = 0;
     impl->set_builds_        = 0;
     impl->frame_index        = 0;
@@ -672,11 +670,11 @@ VkDescriptorSet FrameScratch::contentSetFor(const std::array<VkDescriptorImageIn
     return impl->contentSetFor(slots, shadow_view, shadow_sampler);
 }
 
-VkDescriptorSet FrameScratch::screenSetFor(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
-                                           const VkImageView                                        shadow_view,
-                                           const VkSampler                                          shadow_sampler)
+VkDescriptorSet FrameScratch::fullscreenSetFor(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
+                                               const VkImageView                                               shadow_view,
+                                               const VkSampler                                                 shadow_sampler)
 {
-    return impl->screenSetFor(slots, shadow_view, shadow_sampler);
+    return impl->fullscreenSetFor(slots, shadow_view, shadow_sampler);
 }
 
 VkDescriptorSet FrameScratch::drawSetFor()

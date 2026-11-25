@@ -1193,15 +1193,15 @@ void main()
         }
     });
 
-    DrawPacket screen;
-    screen.kind                = DrawKind::Fullscreen;
-    screen.view.camera         = identityCamera();
-    screen.source              = source.get();
-    screen.program             = copy;
-    screen.program_description = copy->description();
+    DrawPacket fullscreen;
+    fullscreen.kind                = DrawKind::Fullscreen;
+    fullscreen.view.camera         = identityCamera();
+    fullscreen.source              = source.get();
+    fullscreen.program             = copy;
+    fullscreen.program_description = copy->description();
 
     std::vector<DrawPacket> draws;
-    draws.push_back(std::move(screen));
+    draws.push_back(std::move(fullscreen));
     draws.push_back(programlessDraw(geometry)); // names no program: the refusal holds the frame at the sink
 
     PresentOutcome outcome = PresentOutcome::Lost;
@@ -1244,7 +1244,7 @@ TEST(VkMultiSessionTest, AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampled
     // THE READ SET IS RESOLVED AT THE CLAIM (`K7`, review 9). A frame CLAIMED the source it samples, but the record
     // itself was looked up AGAIN inside the record loop - per pass and per source, under the target map's lock - so a
     // release landing between the claim and that second call emptied the frame's answer: the copy was refused with
-    // `ScreenNoSource` ("named no source target" - a sentence about the frame's own declaration) and the destination
+    // `FullscreenNoSource` ("named no source target" - a sentence about the frame's own declaration) and the destination
     // kept its clear. The record is now resolved with the write set and kept by the pass slot, and the record loop
     // takes no target-map lock at all.
     //

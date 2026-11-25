@@ -99,7 +99,7 @@ struct TargetObjects {
     std::vector<VkImageView>    color_views{};
 
     /// Where each COLOUR PICTURE is, parallel to @ref colors: `Undefined` until a pass has written it, `ColorAttachment`
-    /// after a pass (the resolve counts as one on a multisampled target), `ShaderReadOnly` while a screen draw samples it.
+    /// after a pass (the resolve counts as one on a multisampled target), `ShaderReadOnly` while a full-screen draw samples it.
     std::vector<ImageLayout>    color_layouts{};
 
     /// THE SAMPLE BUFFERS, one per colour attachment, EMPTY on a single-sampled target: the images a multisampled

@@ -573,11 +573,11 @@ void ContentDraw::record(const DrawScope&                         scope,
     }
 }
 
-void ContentDraw::recordFullscreen(const DrawScope&                        scope,
-                                   const vn::graphics::DrawPacket&         draw,
-                                   const FrameHead::DrawPlan&                plan,
-                                   const ScreenSource                        source,
-                                   ContentRefusal* const                     refusal)
+void ContentDraw::recordFullscreen(const DrawScope&                scope,
+                                   const vn::graphics::DrawPacket& draw,
+                                   const FrameHead::DrawPlan&      plan,
+                                   const FullscreenSource          source,
+                                   ContentRefusal* const           refusal)
 {
     ContentRefusal  local;
     ContentRefusal& out = refusal != nullptr ? *refusal : local;
@@ -592,7 +592,7 @@ void ContentDraw::recordFullscreen(const DrawScope&                        scope
     }
     if (source.views.empty()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   contentRefusalCode(ContentRefusalCause::ScreenNoSource),
+                   contentRefusalCode(ContentRefusalCause::FullscreenNoSource),
                    vn::String(u8"vk: a full-screen draw named no source target, so there is nothing to sample"));
         return;
     }
@@ -618,7 +618,7 @@ void ContentDraw::recordFullscreen(const DrawScope&                        scope
     const VkRect2D&       scissor  = scope.scissor;
 
     // THE SLOTS: binding N is the source's attachment N; a binding past the source's count reads the fallback (a
-    // screen program only declares the bindings its own ABI states, so nothing reads them).
+    // full-screen program only declares the bindings its own ABI states, so nothing reads them).
     std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
     for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
         slots[slot_index].sampler     = head.fallback_sampler;
@@ -653,7 +653,7 @@ void ContentDraw::recordFullscreen(const DrawScope&                        scope
 
     const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : head.fallback_view;
     const VkSampler   shadow_sampler = head.shadow_sampler != VK_NULL_HANDLE ? head.shadow_sampler : head.fallback_sampler;
-    const VkDescriptorSet set        = scratch.screenSetFor(slots, shadow_view, shadow_sampler);
+    const VkDescriptorSet set            = scratch.fullscreenSetFor(slots, shadow_view, shadow_sampler);
     if (set == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    contentRefusalCode(ContentRefusalCause::DescriptorSetMissing),
@@ -665,17 +665,10 @@ void ContentDraw::recordFullscreen(const DrawScope&                        scope
     // THE SAME STATE PATH AS THE CONTENT DRAW (see recordCallState), except the bias: this draw is the canonical triangle
     // at the far plane, so it states zero rather than the pass' polygon offset.
     recordCallState(commands, viewport, scissor, resolved, plan.color_attachments, 0.0F, 0.0F);
-    // The screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
+    // The full-screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
     const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + scratch.lightsOffset()),
                                      static_cast<std::uint32_t>(slice + scratch.shadowOffset()) };
-    caches.table().vkCmdBindDescriptorSets(commands,
-                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                         caches.screenPipelineLayout(),
-                                         0U,
-                                         1U,
-                                         &set,
-                                         2U,
-                                         offsets);
+    caches.table().vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, caches.fullscreenPipelineLayout(), 0U, 1U, &set, 2U, offsets);
     // The full-screen triangle: three vertices generated from gl_VertexIndex, no buffer, no index stream.
     caches.table().vkCmdDraw(commands, 3U, 1U, 0U, 0U);
 }

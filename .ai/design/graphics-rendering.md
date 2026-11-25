@@ -108,9 +108,11 @@ realigned to the industry's meaning.
   `FullscreenCopyChannels`, `drawFullscreenProgram`, `buildFullscreenProgramFacts`, `ContentPipeline::createFullscreen`, the
   shader file `builtin_fullscreen_copy.frag` and its generated `kBuiltinFullscreenCopyFrag` (`BC-33`). `screen` now names only
   the WINDOW or screen-space COORDINATES (`Camera::screenToWorldRay`, `fitToScreen`, `RotateToScreen` / `autoScaleToScreen`,
-  post-process effects), which is what the glossary's `screen` row states. What still says "screen" for a full-screen program
-  is backend-private: the vk plugin's pipeline/set plumbing plus its `vk.content.screen_*` diagnostic codes - a diagnostic
-  code is identity, so that half is a batch of its own (`T57` in the backlog).
+  post-process effects), which is what the glossary's `screen` row states. The backend half landed as `T57`
+  (2026-11-25): the vk plugin's pipeline/set/planner plumbing says `Fullscreen` too (`kFullscreenSamplerBindings`,
+  `ContentDraw::FullscreenSource`, `ContentCaches::ensureFullscreenPipeline` / `planFullscreen`,
+  `FrameScratch::fullscreenSetFor`). The four `vk.content.screen_*` diagnostic codes KEEP their spelling - a code is
+  identity a host matches, so the internal name moved and the string did not (`BC-40`).
 - Rejected: keeping the `Capabilities` / `WindowId` forwarders (the glossary had already scheduled them for removal, and the
   module promises no source or ABI stability); renaming `FrameResult` instead of `FrameCallOutcome` ("result" is the word a host
   arrives with, and the odd one out was the CALL's value); renaming `PassKind::Scene` to `Content` (a scene pass draws lines and

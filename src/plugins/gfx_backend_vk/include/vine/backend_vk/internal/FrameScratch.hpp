@@ -29,7 +29,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   belong to the device (`ContentCaches::create` builds them, because a pipeline's layout is shared by every frame).
  *   They are BORROWED: the owner must destroy this scratch before it destroys the layouts and the device.
  * - THE SET CACHE IS THE FRAME'S, and it is safe because a set names resources that are stable across frames: a
- *   content set depends on the five texture views and the shadow map, a screen set on the source's views and the map.
+ *   content set depends on the five texture views and the shadow map, a full-screen set on the source's views and the map.
  *   The per-draw variation arrives as a DYNAMIC OFFSET, so one set serves every draw that names the same resources -
  *   and eviction is a frame count, not a "did anybody use it during this frame" question.
  * - THE RING IS A SLICE OF THE DEVICE'S MEMORY POOL. `slicePointer()` answers the mapped address, and the recorder
@@ -77,7 +77,7 @@ class VN_BACKEND_VK_API FrameScratch final {
                               std::uint32_t          uniform_alignment,
                               VkDescriptorSetLayout  content_set_layout,
                               VkDescriptorSetLayout  draw_set_layout,
-                              VkDescriptorSetLayout  screen_set_layout);
+                              VkDescriptorSetLayout  fullscreen_set_layout);
 
     /** @brief Destroys every object this scratch owns (idempotent; safe before @ref create). */
     void destroy() noexcept;
@@ -138,9 +138,8 @@ class VN_BACKEND_VK_API FrameScratch final {
                                                 VkSampler                                                 shadow_sampler);
 
     /** @brief Answers the full-screen set for one call's source and map (see @ref contentSetFor). */
-    [[nodiscard]] VkDescriptorSet screenSetFor(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots,
-                                               VkImageView                                               shadow_view,
-                                               VkSampler                                                 shadow_sampler);
+    [[nodiscard]] VkDescriptorSet
+    fullscreenSetFor(const std::array<VkDescriptorImageInfo, detail::kTextureSlots>& slots, VkImageView shadow_view, VkSampler shadow_sampler);
 
     /** @brief The per-draw set: one handle per ring generation (its only binding is the ring's draw block). */
     [[nodiscard]] VkDescriptorSet drawSetFor();

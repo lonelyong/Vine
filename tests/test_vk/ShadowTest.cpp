@@ -407,7 +407,7 @@ TEST(VkShadowTest, AFullscreenPassShadesWithTheMapItResolved)
     // The program below samples the map directly and writes its depth, so "which image arrived at binding 7" is a
     // number: the ground's depth over the centre, the caster's over the strip it covers, and 1.0 (the stand-in's
     // white) if the real map never got bound.
-    constexpr const char8_t* kScreenVertex = u8R"(
+    constexpr const char8_t* kFullscreenVertex = u8R"(
 #version 450
 void main()
 {
@@ -436,7 +436,7 @@ void main()
 
     auto read_program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     read_program->setName(u8"vk_shadow_read");
-    read_program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Vertex, String(kScreenVertex), String(u8"main") });
+    read_program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Vertex, String(kFullscreenVertex), String(u8"main") });
     read_program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Fragment, String(kMapReadFragment), String(u8"main") });
 
     // The picture: casters into the map (the same first pass every case here builds), then a source target that only
@@ -485,16 +485,16 @@ void main()
     fullscreen_draw.program             = read_program;
     fullscreen_draw.program_description = read_program->description();
 
-    const intrusive_ptr<vn::graphics::RenderPass> screen_pass_identity(new vn::graphics::RenderPass());
-    FrameDescription::Pass screen_entry;
-    screen_entry.pass = screen_pass_identity.get();
-    screen_entry.order = 2;
-    screen_entry.inputs.push_back(ImageSource::producedTarget(scene.map.get()));
-    PassDraw screen_pass;
-    screen_pass.target = destination.get();
-    screen_pass.packets.push_back(std::move(fullscreen_draw));
-    screen_entry.draw = std::move(screen_pass);
-    frame.passes.push_back(std::move(screen_entry));
+    const intrusive_ptr<vn::graphics::RenderPass> fullscreen_pass_identity(new vn::graphics::RenderPass());
+    FrameDescription::Pass                        fullscreen_entry;
+    fullscreen_entry.pass  = fullscreen_pass_identity.get();
+    fullscreen_entry.order = 2;
+    fullscreen_entry.inputs.push_back(ImageSource::producedTarget(scene.map.get()));
+    PassDraw fullscreen_pass;
+    fullscreen_pass.target = destination.get();
+    fullscreen_pass.packets.push_back(std::move(fullscreen_draw));
+    fullscreen_entry.draw = std::move(fullscreen_pass);
+    frame.passes.push_back(std::move(fullscreen_entry));
 
     const std::vector<std::uint8_t> pixels = runAndRead(*backend, frame, destination.get());
 

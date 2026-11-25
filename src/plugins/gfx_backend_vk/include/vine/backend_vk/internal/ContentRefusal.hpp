@@ -24,10 +24,10 @@ enum class ContentRefusalCause : std::uint8_t
 {
     NoProgram,              // The drawable names no program and the frame has no default one either.
     ProgramRefused,         // A content program could not be turned into a pipeline for this pass.
-    ScreenNoProgram,        // A full-screen draw names no program.
-    ScreenProgramRefused,   // A screen program could not be compiled.
-    ScreenPipelineRefused,  // A screen pipeline could not be created for this pass.
-    ScreenNoSource,         // A full-screen draw names a source target the device does not hold.
+    FullscreenNoProgram,    // A full-screen draw names no program.
+    FullscreenProgramRefused,  // A full-screen program could not be compiled.
+    FullscreenPipelineRefused, // A full-screen pipeline could not be created for this pass.
+    FullscreenNoSource,        // A full-screen draw names a source target the device does not hold.
     GeometryRefused,        // A geometry's streams could not be prepared for this pass.
     NoGeometry,             // The drawable names no geometry.
     PrimitiveAbsent,        // The geometry has no such primitive.
@@ -40,7 +40,7 @@ enum class ContentRefusalCause : std::uint8_t
     NothingToDraw,          // The pass' content listed nothing this frame.
     NoRunnablePass,         // The frame names a pass that has nothing it can record.
     PlanMissing,            // The resolved draw plan for this pass is missing.
-    WrongPath,              // A draw was planned for the other path (content vs screen).
+    WrongPath,              // A draw was planned for the other path (content vs full-screen).
 
     Count, // Number of causes (not a cause itself; lets a test walk the table).
 };

@@ -46,7 +46,7 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT IS NOT. Nothing of the frame: no ring, no descriptor pool, no per-frame counters - those are
  *   `FrameScratch`'s, one per driver, because mixing two frames' slices is a correctness problem while sharing a
  *   compiled pipeline is the point (see `.ai/design/graphics-sessions.md` §3.1.3).
- * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planCommand` / `planScreen` answer what a draw builds with (program, streams,
+ * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planCommand` / `planFullscreen` answer what a draw builds with (program, streams,
  *   pipeline, resolved state, texture slots) and nothing else: the warm-up and the frame head run the SAME
  *   resolution, so a frame cannot ask for something the warm-up would not have built - and the answers CROSS the seam
  *   as values (`FrameHead`), which is what lets the recording path take no lock.
@@ -173,7 +173,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      *   `Lock&`, so "I am holding the cache lock" is enforced by the compiler at the call site instead of by a
      *   comment (`G4`). The lock is acquired through @ref lock, which counts the acquisition - the witness a test uses
      *   to show that a frame's cost does not grow with its draw packets.
-     * - A FRAME HOLDS IT ONCE, at its head: `planCommand` / `planScreen` / `resolveTextures` run there, and everything
+     * - A FRAME HOLDS IT ONCE, at its head: `planCommand` / `planFullscreen` / `resolveTextures` run there, and everything
      *   the recording path needs afterwards is a value (see `FrameHead`).
      * - HOST VERBS (release, progress, `endFrame`) take it internally: they are announcements, not frame work.
      *
@@ -467,11 +467,11 @@ class VN_BACKEND_VK_API ContentCaches final {
     /** @brief Gets set 1's layout of a content program. */
     [[nodiscard]] VkDescriptorSetLayout drawSetLayout() const noexcept;
     /** @brief Gets set 0's layout of a full-screen program. */
-    [[nodiscard]] VkDescriptorSetLayout screenSetLayout() const noexcept;
+    [[nodiscard]] VkDescriptorSetLayout fullscreenSetLayout() const noexcept;
     /** @brief Gets the two-set pipeline layout every content pipeline is built with. */
     [[nodiscard]] VkPipelineLayout contentPipelineLayout() const noexcept;
     /** @brief Gets the one-set pipeline layout every full-screen pipeline is built with. */
-    [[nodiscard]] VkPipelineLayout screenPipelineLayout() const noexcept;
+    [[nodiscard]] VkPipelineLayout fullscreenPipelineLayout() const noexcept;
 
     /**
      * @brief Gets how many `VkPipeline` objects these caches built over their lifetime.
@@ -691,7 +691,7 @@ class VN_BACKEND_VK_API ContentCaches final {
                                    FrameBuilds&                                        builds);
 
     /**
-     * @brief Resolves ONE SCREEN DRAW into @p plan: its fragment program, pipeline and resolved state.
+     * @brief Resolves ONE FULL-SCREEN DRAW into @p plan: its fragment program, pipeline and resolved state.
      *
      * @details
      * - THE PACKET IS THE UNIT here (a full-screen draw has no geometry, material or streams), so this fills the plan's
@@ -709,13 +709,13 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param builds            This frame's book: the pipeline this resolves is borrowed for the frame's life.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planScreen(const vn::graphics::DrawPacket&              draw,
-                                  const vn::graphics::PassDraw&                pass,
-                                  const vn::graphics::RenderPassCompatibility& compatibility,
-                                  FrameHead::DrawPlan&                         plan,
-                                  ContentRefusal&                              refusal,
-                                  const Lock&                                  held,
-                                  FrameBuilds&                                 builds);
+    [[nodiscard]] bool planFullscreen(const vn::graphics::DrawPacket&              draw,
+                                      const vn::graphics::PassDraw&                pass,
+                                      const vn::graphics::RenderPassCompatibility& compatibility,
+                                      FrameHead::DrawPlan&                         plan,
+                                      ContentRefusal&                              refusal,
+                                      const Lock&                                  held,
+                                      FrameBuilds&                                 builds);
 
   private:
     struct Impl;
