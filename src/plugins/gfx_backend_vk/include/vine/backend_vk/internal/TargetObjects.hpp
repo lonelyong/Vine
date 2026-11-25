@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include <vine/backend_vk/backend_vk_global.hpp>
@@ -431,16 +433,77 @@ struct TargetObjects {
 };
 
 /**
+ * @brief EVERY colour format the SDK's vocabulary defines, in declaration order.
+ *
+ * @details
+ * - The list exists so that "every value" is one thing to iterate (`buildableColorFormats`) instead of one thing to
+ *   remember: a value added to `RenderTarget::ColorFormat` is added here, and `colorFormatOf`'s switch reports the
+ *   omission as a warning, so the three cannot drift apart silently.
+ */
+inline constexpr std::array<vn::graphics::RenderTarget::ColorFormat, 9> kColorFormats{
+    vn::graphics::RenderTarget::ColorFormat::RGBA8, vn::graphics::RenderTarget::ColorFormat::RGBA16F, vn::graphics::RenderTarget::ColorFormat::RGBA32F,
+    vn::graphics::RenderTarget::ColorFormat::R8,    vn::graphics::RenderTarget::ColorFormat::RG8,     vn::graphics::RenderTarget::ColorFormat::R16F,
+    vn::graphics::RenderTarget::ColorFormat::RG16F, vn::graphics::RenderTarget::ColorFormat::R32F,    vn::graphics::RenderTarget::ColorFormat::RG32F,
+};
+
+/**
  * @brief Gets the Vulkan format a target's colour attachment asks for.
  *
  * @details
- * - `RGBA8` maps to the linear `R8G8B8A8_UNORM` spelling: the SDL's enum is a PROJECTION (it covers the sRGB spelling
+ * - `RGBA8` maps to the linear `R8G8B8A8_UNORM` spelling: the SDK's enum is a PROJECTION (it covers the sRGB spelling
  *   too, see RenderTarget::ColorFormat), and an off-screen target that a shader samples and a probe reads is linear.
+ * - A ONE- OR TWO-CHANNEL value maps to the Vulkan format of the same channel count and family (`R8` is
+ *   `R8_UNORM`, `RG16F` is `R16G16_SFLOAT`): the vocabulary's `channels x family` rule IS the mapping, so a new value
+ *   has exactly one spelling here and no choice to make.
  *
  * @param format The target's colour format.
  * @return The Vulkan format.
  */
 [[nodiscard]] VkFormat colorFormatOf(vn::graphics::RenderTarget::ColorFormat format) noexcept;
+
+/** @brief Gets the format's spelling for a diagnostic message (never null, never empty).
+ *
+ * @param format The target's colour format.
+ * @return `"RGBA8"` / `"R8"` / ... as the header spells them, or `"unknown"` for a value this build does not know.
+ */
+[[nodiscard]] std::string_view colorFormatName(vn::graphics::RenderTarget::ColorFormat format) noexcept;
+
+/**
+ * @brief Gets the format features a COLOUR TARGET needs: the bits the image usages `buildTarget` asks for must be
+ *        backed by.
+ *
+ * @details
+ * - Three uses, three bits: the pass draws into the image (`COLOR_ATTACHMENT`), a later pass samples it (`SAMPLED`),
+ *   and a readback copies it (`TRANSFER_SRC`). The mask mirrors `buildTarget`'s own usage flags, so "this device can
+ *   build that target" and "the image asks for something the format does not back" cannot be answered differently.
+ *
+ * @return The OR of the feature bits a colour format must offer.
+ */
+[[nodiscard]] std::uint32_t colorTargetFeatures() noexcept;
+
+/** @brief Answers whether @p optimal_tiling_features (a `VkFormatProperties::optimalTilingFeatures` value) serves
+ *         every use a colour target of this backend has.
+ *
+ * @param optimal_tiling_features The device's answer for one format.
+ * @return true when every bit of `colorTargetFeatures()` is present.
+ */
+[[nodiscard]] bool supportsColorTarget(std::uint32_t optimal_tiling_features) noexcept;
+
+/**
+ * @brief Asks the device which of the SDK's colour formats it can build as a target: bit N of the answer is
+ *        `1u << static_cast<std::uint32_t>(format)` for every `kColorFormats[N]` the device serves.
+ *
+ * @details
+ * - READ ONCE PER SESSION (see `TargetTable::Limits`): a format's support is a property of the physical device, and a
+ *   build compares against the answer instead of asking the driver per frame.
+ * - A format whose bits are missing is REFUSED at build time with a diagnostic naming it (`ensure`), not attempted and
+ *   failed obscurely: `vkCreateImage`/pipeline creation would otherwise fail with a validation message no host can
+ *   act on.
+ *
+ * @param physical The physical device (null answers 0: nothing is buildable without a device).
+ * @return The bit set of buildable colour formats.
+ */
+[[nodiscard]] std::uint32_t buildableColorFormats(VkPhysicalDevice physical) noexcept;
 
 /**
  * @brief Gets the Vulkan format a target's depth attachment asks for (0/`UNDEFINED` for "no depth").

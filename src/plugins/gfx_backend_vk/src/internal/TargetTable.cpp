@@ -150,7 +150,7 @@ void TargetTable::open(const Device device, const Limits limits, Report report, 
     limits_ = limits;
     report_ = std::move(report);
     park_   = std::move(park);
-    // A NEW SESSION SAYS NOTHING IT SAID BEFORE: the six refusals are episodes of THIS session's build.
+    // A NEW SESSION SAYS NOTHING IT SAID BEFORE: the eight refusals are episodes of THIS session's build.
     size_unknown_report_.rearm();
     samples_report_.rearm();
     samples_depth_report_.rearm();
@@ -158,6 +158,7 @@ void TargetTable::open(const Device device, const Limits limits, Report report, 
     borrow_source_report_.rearm();
     borrow_extent_report_.rearm();
     too_many_colors_report_.rearm();
+    color_format_report_.rearm();
 }
 
 void TargetTable::close() noexcept
@@ -351,6 +352,31 @@ std::shared_ptr<TargetObjects> TargetTable::ensure(const vn::graphics::RenderTar
         return nullptr;
     }
     too_many_colors_report_.rearm(); // a shape inside the limit: the episode is over
+
+    // A COLOUR FORMAT THE DEVICE CANNOT BACK IS NOT A TARGET, and the answer is the DEVICE's (see
+    // `buildableColorFormats`, read once at `open`). Every colour attachment is drawn into, sampled by a later pass and
+    // copied by a readback, so a device that cannot back one of those uses would fail inside image or pipeline creation
+    // with a message no host can act on - and a format this backend never attempts is a capability question, not a
+    // guess about a spelling. Refused once per episode, naming the format.
+    for (int index = 0; index < target.colorCount(); ++index) {
+        const vn::graphics::RenderTarget::ColorFormat format = target.colorFormat(index);
+        if ((limits_.buildable_color_formats & (1U << static_cast<std::uint32_t>(format))) != 0U) {
+            continue;
+        }
+        if (color_format_report_.shouldReport()) {
+            if (report_) {
+                report_(targetDiagnostic(target,
+                                         vn::graphics::DiagnosticSeverity::Warning,
+                                         vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                         u8"vk.target.color_format_unsupported",
+                                         vn::String(u8"vk: a target asks for a ") + vn::String::fromUtf8(colorFormatName(format)) +
+                                             u8" colour attachment, which this device cannot draw into, sample and copy back (see "
+                                             u8"RenderTarget::ColorFormat); the target was not built"));
+            }
+        }
+        return nullptr;
+    }
+    color_format_report_.rearm(); // every colour format is one this device backs: the episode is over
 
     const auto [entry, inserted] = targets_.try_emplace(&target);
     (void)inserted;

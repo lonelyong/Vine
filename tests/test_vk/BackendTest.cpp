@@ -11,11 +11,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/backend_vk/internal/Device.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 #include <vine/backend_vk/shell/BackendFactory.hpp>
 
 using vn::graphics::DeviceDesc;
@@ -129,4 +131,41 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     EXPECT_TRUE(backend->initialized());
     backend->shutdown();
     EXPECT_FALSE(backend->initialized());
+}
+
+TEST(VkBackendTest, AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse)
+{
+    // THE THREE USES `buildTarget` GIVES A COLOUR IMAGE - drawn into, sampled by a later pass, copied by a readback -
+    // are the three bits a format must offer, so the answer is all-or-nothing: extra support is never a refusal, one
+    // missing bit always is.
+    const std::uint32_t every_use = vn::backend_vk::colorTargetFeatures();
+    EXPECT_TRUE(vn::backend_vk::supportsColorTarget(every_use));
+    EXPECT_TRUE(vn::backend_vk::supportsColorTarget(every_use | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT));
+    EXPECT_FALSE(vn::backend_vk::supportsColorTarget(every_use & ~VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT));
+    EXPECT_FALSE(vn::backend_vk::supportsColorTarget(every_use & ~VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT));
+    EXPECT_FALSE(vn::backend_vk::supportsColorTarget(every_use & ~VK_FORMAT_FEATURE_TRANSFER_SRC_BIT));
+    EXPECT_FALSE(vn::backend_vk::supportsColorTarget(0U));
+
+    // NO DEVICE, NOTHING BUILDABLE (the mask answers 0 rather than throwing or guessing).
+    EXPECT_EQ(vn::backend_vk::buildableColorFormats(VK_NULL_HANDLE), 0U);
+
+    // THE MAPPING IS THE VOCABULARY'S RULE, value by value: the channel count and the family are the Vulkan format's.
+    using ColorFormat = vn::graphics::RenderTarget::ColorFormat;
+    EXPECT_EQ(vn::backend_vk::colorFormatOf(ColorFormat::R8), VK_FORMAT_R8_UNORM);
+    EXPECT_EQ(vn::backend_vk::colorFormatOf(ColorFormat::RG8), VK_FORMAT_R8G8_UNORM);
+    EXPECT_EQ(vn::backend_vk::colorFormatOf(ColorFormat::R16F), VK_FORMAT_R16_SFLOAT);
+    EXPECT_EQ(vn::backend_vk::colorFormatOf(ColorFormat::RG16F), VK_FORMAT_R16G16_SFLOAT);
+    EXPECT_EQ(vn::backend_vk::colorFormatOf(ColorFormat::R32F), VK_FORMAT_R32_SFLOAT);
+    EXPECT_EQ(vn::backend_vk::colorFormatOf(ColorFormat::RG32F), VK_FORMAT_R32G32_SFLOAT);
+    // ... and EVERY value has a defined format, which is what lets a cleared bit in `buildableColorFormats` mean "this
+    // device does not back it" rather than hidden behind an unmapped value.
+    for (const ColorFormat format : vn::backend_vk::kColorFormats) {
+        EXPECT_NE(vn::backend_vk::colorFormatOf(format), VK_FORMAT_UNDEFINED) << vn::backend_vk::colorFormatName(format);
+    }
+
+    // THE NAMES ARE THE HEADER'S SPELLINGS: a diagnostic a host reads names the value it writes.
+    EXPECT_EQ(vn::backend_vk::colorFormatName(ColorFormat::RGBA8), "RGBA8");
+    EXPECT_EQ(vn::backend_vk::colorFormatName(ColorFormat::R8), "R8");
+    EXPECT_EQ(vn::backend_vk::colorFormatName(ColorFormat::RG16F), "RG16F");
+    EXPECT_EQ(vn::backend_vk::colorFormatName(ColorFormat::RG32F), "RG32F");
 }

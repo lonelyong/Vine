@@ -83,6 +83,8 @@ class VN_BACKEND_VK_API TargetTable final {
     struct Limits {
         std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT }; ///< The counts both attachments offer.
         bool          depth_resolve_supported{ false };                 ///< A multisampled depth can be resolved the way this backend states it (`sample0`).
+        /// Bit `1u << static_cast<std::uint32_t>(format)` for every colour format the device can build (see `buildableColorFormats`).
+        std::uint32_t buildable_color_formats{ 0U };
     };
 
     /**
@@ -318,6 +320,7 @@ class VN_BACKEND_VK_API TargetTable final {
     vn::graphics::ReportOnce borrow_source_report_{};
     vn::graphics::ReportOnce borrow_extent_report_{};
     vn::graphics::ReportOnce too_many_colors_report_{};
+    vn::graphics::ReportOnce color_format_report_{};
 };
 
 VN_BACKEND_VK_NS_END

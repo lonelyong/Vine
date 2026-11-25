@@ -230,13 +230,40 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
   devices that can move these states. The next cross-family reader (D3D12) replaces that reading, and a 1.2 device
   without the extensions is refused rather than served a different picture (`BC-37`).
 
+2.12 **A colour format is `channels x family`, and an 8-bit readback is a byte copy of it** (`G1` / `G4` / `G6` / `G9`;
+backlog `T59`): `RenderTarget::ColorFormat` names nine values - 1, 2 or 4 channels of three numeric families (8-bit
+UNORM, 16-bit float, 32-bit float) - because a post-process product is not always a four-channel colour: a coverage or
+SSAO mask is one channel, a luminance or a depth-like slice is `R16F` / `R32F`, a velocity buffer or an octahedral
+normal is two channels.
+
+- The vocabulary is a **CROSS PRODUCT**, not a list of today's targets, so no value is an arbitrary exception. What is
+  deliberately absent says as much as what is present: no three-channel value (`D7`), no integer family (`D8`), no
+  packed 10/11-bit (`D9`), no sRGB spelling (`D4`).
+- The families are two CONTRACTS, not two precisions:
+  - **8-bit** is one byte per channel, so a texel is 1, 2 or 4 bytes and `colorReadbackOf` states exactly that width
+    (`C5`). A mask reads back like a colour does, because it is the same rule - which is what lets a host verify a
+    post-process product rather than only draw it.
+  - **float** renders and samples (an HDR product, a depth-like slice) but is `UnreadableFormat` for a readback: the
+    verb copies texels and converts nothing, and a byte count alone does not describe a half or a full float to a
+    caller decoding bytes (`D10`).
+- **The mapping is the rule**: `R8` is `R8_UNORM`, `RG16F` is `R16G16_SFLOAT`. A value added to the enum is added to
+  the backend's "every value" list (`kColorFormats`) and to `colorReadbackOf`; the two switches report an omission.
+- **A format is a target only when the device backs every use a target has** (`C6`): drawn into, sampled by a later
+  pass and copied by a readback. That is the DEVICE's answer (`vkGetPhysicalDeviceFormatProperties`, asked once at
+  session open), and a target asking for a format the device does not back is refused BY NAME
+  (`vk.target.color_format_unsupported`) instead of being attempted and failing inside image or pipeline creation - the
+  sample-count rule of [`ADR-2026-11-14`](../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md) applied to a
+  format.
+- A shader still writes `vec4` whatever the attachment keeps, so an effect pass needs no second fragment-output
+  contract; the price of that convenience is `P4`.
+
 ## 3. Features
 
 ### 3.1 Targets
 
 | # | Feature | Notes |
 |---|---|---|
-| F1 | Colour attachments | `attachColor(format)`; may be several (MRT / G-buffer). |
+| F1 | Colour attachments | `attachColor(format)`; may be several (MRT / G-buffer). `format` is `channels x family` (nine values, 2.12): the 8-bit family reads back at one byte per channel, the float family renders and samples but is not read back yet. |
 | F2 | Depth attachment | `attachDepth(D16/D24/D32/D32F)`. |
 | F3 | Shared depth | `setDepthPromotion(false)` + `shareDepth(DepthView)`; the lender draws first, the borrower LOADs. |
 | F4 | Validity | At least one own attachment + a positive size; borrowed depth does not count as its own. |
@@ -326,6 +353,8 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 | C2 | produced and imported image sources are not merged; their lifetimes differ. |
 | C3 | Colour splits into linear-light `Colorf` and sRGB-encoded `Color`. |
 | C4 | The engine core's pass description has no shadow field; "this image is a shadow" is declared by the target itself, consumers do not guess from "the first input with depth". |
+| C5 | A colour texel's readback width is its channel count: the 8-bit family is one byte per channel (1 / 2 / 4 bytes), the float family has no byte packing and is `UnreadableFormat`. |
+| C6 | A format is a target only when the device backs colour attachment, sampling AND transfer-source for it; a target asking for anything less is refused by name, never attempted. |
 
 ### 5.2 Requirements (R#)
 
@@ -351,6 +380,7 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 | N9 | The dynamic state a pipeline declares must cover every item the commands write; an item written but not declared takes the create-info baked value (silently). |
 | N10 | Dynamic state cannot change an enable: switches such as `depthBiasEnable` stay in the pipeline and must be fixed together with the state list, not left to the commands alone. |
 | N11 | Alpha-to-coverage is not stated: a Mask fragment on a multisampled target keeps binary edges. On this backend it is ONE switch (`vkCmdSetAlphaToCoverageEnableEXT`, dynamic under the EDS3 floor), so the obstacle is not the backend - coverage is derived from the fragment's first colour output, which is the material's fact (`graphics-material.md` N6, backlog `T58`). |
+| N12 | A shader writes `vec4` into any colour format; the attachment keeps its own channels and drops the rest, so a value added to the vocabulary needs no second fragment-output contract - and a product narrower than four channels is a mask, not a picture with empty channels (`P4`). |
 
 ## 6. Caveats and Traps
 
@@ -373,6 +403,16 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 - How to detect it: the image fed to the shader is not the target whose `shadowOf()` says it is a map; or the map's owner is not in this call's light list.
 - How to prevent it: identity comes only from the target (`setShadowOf` + `setProducerViewProjection`); nothing derives it from input order.
 
+### 6.4 A narrow attachment read as if it were a picture
+
+- How it fails: `readColorBuffer` on an `R8` target answers one byte per texel, and a caller indexing it as RGBA8
+  (`(y * width + x) * 4`) reads a quarter of the picture at the wrong stride; a fragment writing `vec4` into `R8` keeps
+  only `.r`, so a reader of `.g` sees zero and calls the product empty.
+- How to detect it: `pixels.size()` is not `width * height * 4`; a mask reads back all-zero except its first channel; the
+  target's `colorFormat()` differs from the format the probe assumed.
+- How to prevent it: size the read from `colorReadbackOf(format).bytes_per_texel` (never a literal 4), and name the
+  channel the product lives in - `R8` is a mask, not a grey picture with three empty channels (`N12`).
+
 ## 7. Rejected Options
 
 | # | Rejected | Reason |
@@ -383,6 +423,10 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 | D4 | sRGB variants of target formats | Colour space is already solved in the type layer; targets gain no second semantics. See [ADR](../decisions/ADR-2026-10-21-colour-space-in-types.md). |
 | D5 | An engine-automatic shadow subsystem, or a shadow field / `PassStage::Shadow` on `PassDesc` | A shadow is the composition of one or more ordinary passes; the engine only provides the generic `Depth` slot, the image identity and the resolution facts. A field would copy "who casts, how it is read" into the pass model (see §2.7). |
 | D6 | Point/spot shadows / CSM / PCSS | No consumer; point/spot `setCastShadow` builds no pass today and is reported (backlog S6 waits for a real need). |
+| D7 | A three-channel colour format (`RGB8`) | No API family has a three-channel colour ATTACHMENT format (Vulkan's `R8G8B8_*` values are not colour-attachment), so the value would name a product no device can serve. |
+| D8 | An integer colour family (`R8_UINT`, `R32_UINT`) | An integer attachment requires an integer fragment output (`uvec4`) - a different shader-output contract - so it is a shader-ABI batch, not a format-table one. |
+| D9 | A packed 10/11-bit value (`R11G11B10F`, `A2B10G10R10`) | No product here needs the bandwidth, and `channels x family` is what keeps the vocabulary small (`G8`); a real product is the trigger. |
+| D10 | Reading a float colour attachment back as bytes | The verb copies texels and converts nothing; under a byte-count contract a half float misreads every texel after the first. A float readback is a DECODER of its own; `R16F` / `R32F` are drawn and sampled today, and the trigger is a host asking for its product's values. |
 
 ## 8. Tests and Acceptance
 
@@ -394,6 +438,7 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 | T4 | `VkContentDrawTest.AFullscreenCopySamplesTheSourceTarget` / `AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays` / `ABaseColorTextureIsUploadedAndSampled` / `ACubeMapIsUploadedWithEveryFaceAndSampled` / `ColorTest` / `ColorfTest` / `ShaderAbiTest`. |
 | T5 | Shadows: the ground darkens with a casting light; without one the evidence is byte-identical. |
 | T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (witness: `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
+| T7 | Every colour format: `VkContentTargetTest.AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack` (agreement between the device mask and the build path, plus the 8-bit readback values), `VkBackendTest.AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse` (mapping, names, all-or-nothing feature rule), `CoreReadbackTest.ANarrowColourFormatIsServableLikeAColour`, `CoreReadbackTest.TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel`, `RenderTargetTest.MultipleColorAttachments`. |
 
 ## 9. Status and Evolution
 
@@ -408,6 +453,12 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 ### 9.3 Compatibility / migration
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
+
+2026-11-25 - `T59` landed: the colour vocabulary is `channels x family` (nine values, 2.12), the 8-bit family reads back at one
+byte per channel, and a colour format the device does not back is refused by name. What a host must change: nothing that used
+`RGBA8` / `RGBA16F` / `RGBA32F` - their meanings and their readback answers are unchanged (the floats are still
+`UnreadableFormat`); what is new is that `R8` / `RG8` read back, and that a narrow product no longer needs a four-channel
+target to exist.
 
 ## 10. References
 

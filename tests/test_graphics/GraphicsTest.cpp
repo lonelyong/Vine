@@ -3453,6 +3453,23 @@ TEST(RenderTargetTest, MultipleColorAttachments)
     EXPECT_EQ(rt.colorFormat(-1), RenderTarget::ColorFormat::RGBA8);
     EXPECT_TRUE(rt.hasDepth());
     EXPECT_TRUE(rt.isValid());
+
+    // EVERY CHANNEL COUNT IS A TARGET FORMAT (see the enum's note: `channels x family`, no three-channel value). The
+    // fragment output is a vec4 whatever the attachment keeps, so a mask or a velocity buffer is the same shape here.
+    const std::array<RenderTarget::ColorFormat, 6> narrow{
+        RenderTarget::ColorFormat::R8,    RenderTarget::ColorFormat::RG8,  RenderTarget::ColorFormat::R16F,
+        RenderTarget::ColorFormat::RG16F, RenderTarget::ColorFormat::R32F, RenderTarget::ColorFormat::RG32F
+    };
+    RenderTarget product;
+    product.setSize(64, 64);
+    for (const RenderTarget::ColorFormat format : narrow) {
+        product.attachColor(format);
+    }
+    EXPECT_EQ(product.colorCount(), static_cast<int>(narrow.size()));
+    for (std::size_t index = 0; index < narrow.size(); ++index) {
+        EXPECT_EQ(product.colorFormat(static_cast<int>(index)), narrow[index]);
+    }
+    EXPECT_TRUE(product.isValid());
 }
 
 // ============ RenderEngine ============

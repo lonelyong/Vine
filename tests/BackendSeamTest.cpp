@@ -417,18 +417,50 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
     EXPECT_EQ(vn::graphics::detail::refusalName(ReadbackRefusal::None), "none");
 }
 
+TEST(CoreReadbackTest, ANarrowColourFormatIsServableLikeAColour)
+{
+    using vn::graphics::ReadbackKind;
+    using vn::graphics::readbackOf;
+    using vn::graphics::ReadbackRefusal;
+
+    // A post-process product is not always four channels wide. A mask (R8) or a packed pair (RG8) is servable once a
+    // copy is captured, and the only refusal left for a colour value this SDK defines is "not captured yet" - the
+    // format table never refuses the 8-bit family (see colorReadbackOf's note on the two families).
+    for (const RenderTarget::ColorFormat narrow : { RenderTarget::ColorFormat::R8, RenderTarget::ColorFormat::RG8 }) {
+        ReadbackState state;
+        state.color_attachments = 1U;
+        state.color_format      = narrow;
+        EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured))
+            << "a narrow attachment is a product, not an unreadable format";
+        state.color_captured = true;
+        EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
+    }
+}
+
 TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
 {
     using vn::graphics::colorReadbackOf;
     using vn::graphics::depthReadbackOf;
     using vn::graphics::ReadbackFormat;
 
-    // The colour half packs RGBA8 only: the probes are 8-bit probes, and a float attachment converted into one
-    // would be a picture of something the GPU never held.
+    // The colour half serves the 8-bit family, and a texel's width IS its channel count: one byte per channel, so a
+    // coverage mask (R8) reads exactly like a colour (RGBA8) does, one or two bytes per texel.
     EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA8), (ReadbackFormat{ 4U, true }));
-    EXPECT_FALSE(colorReadbackOf(RenderTarget::ColorFormat::RGBA16F).readable);
-    EXPECT_FALSE(colorReadbackOf(RenderTarget::ColorFormat::RGBA32F).readable);
-    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA16F).bytes_per_texel, 0U);
+    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RG8), (ReadbackFormat{ 2U, true }));
+    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::R8), (ReadbackFormat{ 1U, true }));
+
+    // The float family is refused: this table promises "copy the texels, no conversion", and a byte count alone does
+    // not describe a half or a full float to a caller decoding bytes.
+    for (const RenderTarget::ColorFormat floated : { RenderTarget::ColorFormat::RGBA16F,
+                                                     RenderTarget::ColorFormat::RGBA32F,
+                                                     RenderTarget::ColorFormat::R16F,
+                                                     RenderTarget::ColorFormat::RG16F,
+                                                     RenderTarget::ColorFormat::R32F,
+                                                     RenderTarget::ColorFormat::RG32F })
+    {
+        EXPECT_FALSE(colorReadbackOf(floated).readable) << "a float colour attachment has no byte-per-channel packing";
+        EXPECT_EQ(colorReadbackOf(floated).bytes_per_texel, 0U);
+    }
 
     // The depth half: D16 is two bytes (and gets scaled on decode), D32 / D32F four (raw float), and the
     // combined format is refused rather than read as if its first bytes were depth.

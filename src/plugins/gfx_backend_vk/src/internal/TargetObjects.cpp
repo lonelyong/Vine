@@ -111,8 +111,62 @@ VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noe
     case ColorFormat::RGBA8: return VK_FORMAT_R8G8B8A8_UNORM;
     case ColorFormat::RGBA16F: return VK_FORMAT_R16G16B16A16_SFLOAT;
     case ColorFormat::RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case ColorFormat::R8: return VK_FORMAT_R8_UNORM;
+    case ColorFormat::RG8: return VK_FORMAT_R8G8_UNORM;
+    case ColorFormat::R16F: return VK_FORMAT_R16_SFLOAT;
+    case ColorFormat::RG16F: return VK_FORMAT_R16G16_SFLOAT;
+    case ColorFormat::R32F: return VK_FORMAT_R32_SFLOAT;
+    case ColorFormat::RG32F: return VK_FORMAT_R32G32_SFLOAT;
     }
     return VK_FORMAT_UNDEFINED;
+}
+
+std::string_view colorFormatName(const vn::graphics::RenderTarget::ColorFormat format) noexcept
+{
+    using ColorFormat = vn::graphics::RenderTarget::ColorFormat;
+    switch (format) {
+    case ColorFormat::RGBA8: return "RGBA8";
+    case ColorFormat::RGBA16F: return "RGBA16F";
+    case ColorFormat::RGBA32F: return "RGBA32F";
+    case ColorFormat::R8: return "R8";
+    case ColorFormat::RG8: return "RG8";
+    case ColorFormat::R16F: return "R16F";
+    case ColorFormat::RG16F: return "RG16F";
+    case ColorFormat::R32F: return "R32F";
+    case ColorFormat::RG32F: return "RG32F";
+    }
+    return "unknown";
+}
+
+std::uint32_t colorTargetFeatures() noexcept
+{
+    // THE USES `buildTarget` GIVES A COLOUR IMAGE, as the feature bits that must back them: drawn into, sampled by a
+    // later pass, copied by a readback. Requiring all three is what makes "a built target can be read back" true
+    // rather than hoped for.
+    return VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+}
+
+bool supportsColorTarget(const std::uint32_t optimal_tiling_features) noexcept
+{
+    // ONE MISSING BIT is one use the format cannot serve - a pipeline that cannot draw into it, a sampler that cannot
+    // read it, or a copy that cannot fetch it - so a partial answer is not a target.
+    return (optimal_tiling_features & colorTargetFeatures()) == colorTargetFeatures();
+}
+
+std::uint32_t buildableColorFormats(const VkPhysicalDevice physical) noexcept
+{
+    std::uint32_t buildable = 0U;
+    if (physical == VK_NULL_HANDLE) {
+        return buildable;
+    }
+    for (const vn::graphics::RenderTarget::ColorFormat format : kColorFormats) {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(physical, colorFormatOf(format), &properties);
+        if (supportsColorTarget(properties.optimalTilingFeatures)) {
+            buildable |= 1U << static_cast<std::uint32_t>(format);
+        }
+    }
+    return buildable;
 }
 
 VkFormat depthFormatOf(const vn::graphics::RenderTarget::DepthFormat format) noexcept

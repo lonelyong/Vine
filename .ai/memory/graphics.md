@@ -2447,3 +2447,24 @@
 - **What still holds**: for a given configuration, "which registration owns a name" must follow the module identity
   (name + `VN_RENDER_BACKEND_ABI_VERSION`), never the load order; a policy value that means "last one loaded wins" is
   excluded. The route the policy will report on already exists: `RenderBackendRegistry::diagnostics()`.
+
+## 2026-11-25 - the colour vocabulary is `channels x family` (backlog T59 retired)
+
+- **What was missing**: `ColorFormat` had three four-channel values, so an SSAO/coverage mask, a luminance buffer, a
+  velocity buffer or a depth-like slice had no target to live in - a post-process product that is not a colour could
+  not be expressed at all.
+- **What landed**: nine values (`R8` / `RG8`, `R16F` / `RG16F`, `R32F` / `RG32F` are new); the rule is `channels x family`
+  (1/2/4 x 8-bit UNORM / 16-bit float / 32-bit float), stated once in the enum's own note. `colorReadbackOf` now states
+  one byte per channel for the 8-bit family (1/2/4 bytes), so a mask reads back like a colour; the float family still
+  answers `UnreadableFormat` (a byte count does not describe a float texel - `D10`).
+- **What the device decides**: a colour format is a target only when `vkGetPhysicalDeviceFormatProperties` backs colour
+  attachment + sampled + transfer-source for it (the exact usage mask `buildTarget` asks for). The mask is computed once
+  at session open (`buildableColorFormats` -> `TargetTable::Limits`), so the build path is an AND and not a driver call
+  per frame; a refused format reports `vk.target.color_format_unsupported` once per episode and names the value.
+- **The trap**: a narrow attachment is a mask, not a picture with three empty channels - size a read with
+  `colorReadbackOf(format).bytes_per_texel`, never a literal 4, or the probe walks a quarter of the image at the wrong
+  stride (`graphics-rendering.md` `P4`).
+- **Cost of a new value, measured**: the enum + `kColorFormats` (backend "every value" list) + `colorFormatOf` +
+  `colorFormatName` + `colorReadbackOf` + the extension-point table in `graphics-architecture.md` 2.11 (now 5 places).
+- **Evidence**: ctest `test_graphics` (649 cases) and `test_vk` (222 cases) green; the device case asserts that a value builds exactly when the
+  device mask has its bit and reads the 8-bit family's centre/corner texels; gates green.

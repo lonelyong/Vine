@@ -89,7 +89,7 @@
 | 阴影（方向光） | ✅ | `VkShadowTest` |
 | 延迟链、全屏调用、push 范围 | ✅ | `VkDeferredTest`、`VkUniformRingTest` |
 | 自定义程序（声明式 ABI + 变体 + 实例流） | ✅ | `VkBuiltinProgramTest`、`VkVariantTest`、`VkShaderCompilerTest` |
-| 读回（颜色 RGBA8、纯深度浮点） | ✅ | `VkContentTargetTest`（深度）+ 各像素用例的 `readColorBuffer` |
+| 读回（颜色 8 位族逐通道，1/2/4 字节；纯深度浮点） | ✅ | `VkContentTargetTest`（各格式 + 深度）+ 各像素用例的 `readColorBuffer` |
 | 窗口（采纳宿主表面、跟随 resize、丢帧自愈） | ✅ | `VkWindowPresentTest`（Win32 上读的是合成器） |
 | 多窗口 / 一个设备多个引擎 | ✅ | `VkMultiSessionTest`、`VkConcurrentFrameTest` |
 | 驻留账与释放 | ✅ | `VkResidencyTest`、`VkResidenceWireTest` |

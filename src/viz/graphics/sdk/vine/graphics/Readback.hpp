@@ -27,7 +27,8 @@
  *   - `NotCaptured` - this backend can serve it once a frame records the copy, so a caller may retry
  *     after the next frame;
  *   - `UnreadableFormat` - this backend will never serve it for this target, whatever frames run (a
- *     combined depth/stencil attachment has no plain depth copy, and the colour half packs RGBA8 only);
+ *     combined depth/stencil attachment has no plain depth copy, and the colour half has no packing for a float
+ *     texel);
  *   - `UnknownAttachment` - the request names something the target does not have.
  * - "Not yet" and "never" are different answers, and a phase that reports the wrong one sends its reader
  *   looking for a bug in the wrong place.
@@ -186,9 +187,12 @@ namespace detail
 /** @brief Gets how a colour format is read back.
  *
  * @details
- * - The readback packs RGBA8 only, and that is the contract the probes are built on: a 16-bit or 32-bit
- *   float attachment has no CPU-side packing here, so it is refused rather than converted into something
- *   that looks like a picture and is not the one the GPU holds.
+ * - THE COLOUR READBACK SERVES THE 8-BIT FAMILY, AND A TEXEL'S WIDTH IS ITS CHANNEL COUNT: one byte per channel, so
+ *   `R8` is 1, `RG8` is 2 and `RGBA8` is 4 bytes per texel - the bytes the attachment holds, in channel order. One
+ *   rule covers a colour and a mask, because both are a byte per channel.
+ * - THE FLOAT FAMILY IS REFUSED (`readable` false, 0 bytes): this table promises "copy the texels, no conversion",
+ *   and a byte count alone does not describe a half or a full float to a caller decoding bytes. A float product is
+ *   read back when a decoder for it lands - not by handing its bits back under an 8-bit contract.
  *
  * @param format The attachment's colour format.
  * @return Bytes per texel and whether it can be read.

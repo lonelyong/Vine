@@ -117,7 +117,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Extension point | Where it touches today (actual files) | Places |
 |---|---|---|
 | A **pass kind** (e.g. compute) | `DrawKind.hpp`'s `DrawKind`; `Plan.cpp`'s validation; `RenderPass.cpp`'s kind → node mapping; a new node class (following `FullscreenPass.cpp`); `EngineCompile.cpp`'s describe; each backend's frame compiler and recorder (switches over `DrawKind`) | 6–8 |
-| A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.cpp`'s `colorFormatOf` / `depthFormatOf`; vk `ContentImages.cpp`'s `formatOf` | 4 |
+| A **pixel format** | `RenderTarget.hpp`'s `ColorFormat` / `DepthFormat`; vk `TargetObjects.hpp`'s `kColorFormats` (drives `colorFormatOf` / `colorFormatName` and the device-support mask); `Readback.cpp`'s `colorReadbackOf` / `depthReadbackOf`; vk `ContentImages.cpp`'s `formatOf` | 5 |
 | A **pass declaration field** | `PassDesc.hpp`; `Plan.cpp` (diff and validation); `FrameDescription.hpp`'s `PassDraw`; each backend's recorder | 4+ |
 | A **content channel** (vertex attribute) | `Geometry.hpp`'s `GeometryDescription` channel table; `ShaderAbi.hpp`'s block layout; vk `ContentDraw.cpp`'s channel → location mapping and vertex format; a new backend's own binding | 4 |
 | A **backend** (and, for a second API FAMILY such as D3D12 or Metal, also its `check_<family>_exposure` gate over the SDK's family spelling and its own shader translation - the SDK keeps ONE shader source language, review 8 `P4`) | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`), the two halves of `RenderBackend`, its own `test_*`, a `check_*_exposure` gate, `RenderBackendRegistry` self-registration | about 6 kinds of file, +2 for a new family |

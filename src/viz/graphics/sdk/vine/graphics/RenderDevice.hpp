@@ -417,18 +417,19 @@ class VN_GRAPHICS_API RenderDevice {
      * - @p image names the target AND which image of it, exactly as a declared pass input does (see ImageRef):
      *   `Kind::Color` with an attachment index, or `Kind::Depth`. Reading pixels changes nothing about the target, and
      *   the image may be borrowed/const - a host reading a target it did not create can still ask for its pixels.
-     * - Synchronously copies the colour attachment into @p outPixels as tightly packed RGBA8 - width * height * 4
-     *   bytes, row-major. A logical RenderTarget holds no GPU pixels, so the transfer belongs to the device that owns
-     *   the attachments.
-     * - THE BYTES ARE THE STORED TEXELS, NO CONVERSION: the four channels are R, G, B, A in that order and hold the
-     *   numbers the colour attachment already contains - no channel swap, no linear/sRGB conversion, no tone mapping.
-     *   An off-screen `ColorFormat::RGBA8` target is a `*_UNORM` image in both backends, so the values are what the
-     *   shading stage wrote.
+     * - Synchronously copies the colour attachment into @p outPixels as tightly packed texels of the attachment's own
+     *   format - width * height * `colorReadbackOf(format).bytes_per_texel` bytes, row-major. A logical RenderTarget
+     *   holds no GPU pixels, so the transfer belongs to the device that owns the attachments.
+     * - THE BYTES ARE THE STORED TEXELS, NO CONVERSION: the channels are R, G, B, A in that order (the first one or
+     *   two of them for `R8` / `RG8`) and hold the numbers the colour attachment already contains - no channel swap,
+     *   no linear/sRGB conversion, no tone mapping. A `ColorFormat::R8` target is a `*_UNORM` image in both
+     *   backends, so the values are what the shading stage wrote, one byte per channel.
      * - ROW 0 IS THE TOP ROW of the attachment: the copy preserves the image's own row order, so a caller indexing
      *   `y * width + x` reads the picture the right way up.
-     * - ANY OTHER COLOUR FORMAT IS `Unsupported`, permanently: which formats a device can pack is a fact about the
-     *   format, not about this frame (see `colorReadbackOf` / `ReadbackRefusal::UnreadableFormat`), and it is RGBA8
-     *   alone today - a float attachment is refused rather than handed back as bytes that would misread every texel.
+     * - A FLOAT COLOUR FORMAT IS `Unsupported`, permanently: which formats a device can pack is a fact about the
+     *   format, not about this frame (see `colorReadbackOf` / `ReadbackRefusal::UnreadableFormat`), and the readable
+     *   family is the 8-bit one - a float attachment is refused rather than handed back as bytes that would misread
+     *   every texel.
      * - The default implementation reports the operation as unsupported; a device that implements readback overrides
      *   it (staging buffer, image-to-buffer copy, queue/fence synchronisation and format conversion).
      * - The answer IS the return value (`ReadbackOutcome`): `Unsupported` (this device never can), `NotReady` (retry
@@ -438,7 +439,7 @@ class VN_GRAPHICS_API RenderDevice {
      *
      * @param image     Image to read: a bound `Kind::Color` image whose attachment is in [0, target->colorCount())
      *                  (borrowed, and const - reading changes nothing about it).
-     * @param outPixels Receives the packed RGBA8 pixels on success.
+     * @param outPixels Receives the packed texels on success (see the width rule above).
      * @return The answer; `Ok` when the pixels were read (see ReadbackOutcome::result for the classification).
      */
     virtual ReadbackOutcome readColorBuffer(const ImageRef& image, std::vector<std::uint8_t>& outPixels)
@@ -477,7 +478,7 @@ class VN_GRAPHICS_API RenderDevice {
      *
      * @param target     Off-screen target whose colour attachment to read (borrowed; null answers Invalid).
      * @param attachment Colour attachment index in [0, target->colorCount()).
-     * @param outPixels  Receives the packed RGBA8 pixels on success.
+     * @param outPixels  Receives the packed texels on success.
      * @return The answer (see readColorBuffer(const ImageRef&, ...)).
      */
     ReadbackOutcome readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels)
@@ -493,7 +494,7 @@ class VN_GRAPHICS_API RenderDevice {
      *   It exists so an out-of-tree caller survives one release; new code reads `ReadbackOutcome::result` instead.
      *
      * @param image     Image to read.
-     * @param outPixels Receives the packed RGBA8 pixels on success.
+     * @param outPixels Receives the packed texels on success.
      * @param why       Receives the classification (Ok when the read happened), or null to ignore.
      * @return true when the pixels were read.
      */

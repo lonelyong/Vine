@@ -850,6 +850,20 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | target 格式是"投影"，离屏取线性拼写 | `vn::graphics::RenderTarget::ColorFormat` 的枚举注释 |
 | 内建 program 不自己套 gamma | `vn::graphics::forwardProgram` 等工厂所在的 `sdk/vine/graphics/BuiltinShaders.hpp` 文件注释 |
 
+**离屏 target 的格式是「通道数 × 数值族」，与颜色空间无关**：`ColorFormat` 一共九个值 = 1 / 2 / 4 个通道 ×
+8 位 UNORM / 16 位浮点 / 32 位浮点（没有三通道值——没有任何 API 家族提供三通道彩色附件；也没有整数族，那需要
+整数片段输出，是另一套 shader 契约）。产品直接对着它选：**灰度 / 覆盖率掩码用 `R8`**，**亮度、SSAO、深度切片用
+`R16F` / `R32F`**，**速度缓冲、八面体法线用 `RG16F`**。着色器照旧写 `vec4`，附件只保留自己声明的通道，多出的分量被丢掉。
+
+读回的两半规则不同（`colorReadbackOf` 就是那张表）：
+
+* **8 位族一个通道一个字节**，所以一个 texel 是 1 / 2 / 4 字节——`R8` 的掩码和 `RGBA8` 的颜色一样能读回，`pixels.size()`
+  等于 `width * height * 通道数`。按 `* 4` 去索引一个 `R8` 目标会读错步长（见 `.ai/design/graphics-rendering.md` `P4`）。
+* **浮点族能画能采、暂时不能读回**：读回是「原样拷贝 texel、不做转换」，而一个字节数说不清半浮点/全浮点，所以答案是
+  `UnreadableFormat`；浮点读回要等自己的解码器（不是把字节硬塞进 8 位契约）。
+* **设备说不能建就是不能建**：后端在会话打开时问一次设备（彩色附件 + 可采样 + 可拷出三项都要），缺哪项就按名字拒绝那个
+  target（`vk.target.color_format_unsupported`），不会先建再在 pipeline 里莫名其妙地失败。
+
 仓库里**第一个按契约改过来的读者是 demo 自己**：`test_data/images` 的六张 JPG 天空面是颜色图，声明从
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
 读数与变异证明见 [`.ai/memory/graphics.md`](../../.ai/memory/graphics.md)（颜色空间那一条）。

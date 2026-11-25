@@ -71,12 +71,19 @@ bool ReadbackFormat::operator==(const ReadbackFormat& other) const noexcept
 
 ReadbackFormat colorReadbackOf(vn::graphics::RenderTarget::ColorFormat format) noexcept
 {
+    using ColorFormat = vn::graphics::RenderTarget::ColorFormat;
     switch (format) {
-    case vn::graphics::RenderTarget::ColorFormat::RGBA8: return ReadbackFormat{ 4U, true };
-    case vn::graphics::RenderTarget::ColorFormat::RGBA16F:
-    case vn::graphics::RenderTarget::ColorFormat::RGBA32F:
-        // No CPU packing here: the readback contract is tightly packed RGBA8, and pretending a float
-        // attachment is one would misread every texel after the first.
+    case ColorFormat::R8: return ReadbackFormat{ 1U, true };
+    case ColorFormat::RG8: return ReadbackFormat{ 2U, true };
+    case ColorFormat::RGBA8: return ReadbackFormat{ 4U, true };
+    case ColorFormat::R16F:
+    case ColorFormat::RG16F:
+    case ColorFormat::R32F:
+    case ColorFormat::RG32F:
+    case ColorFormat::RGBA16F:
+    case ColorFormat::RGBA32F:
+        // No byte packing here: the colour readback copies a UNORM texel (one byte per channel), and a float
+        // attachment handed back as bytes would misread every texel after the first.
         return ReadbackFormat{ 0U, false };
     }
     return ReadbackFormat{ 0U, false };

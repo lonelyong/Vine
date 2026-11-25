@@ -31,6 +31,25 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
     VN_OBJECT_META_DECL;
 
   public:
+    /** @brief A colour attachment's pixel layout: one, two or four channels of one numeric family.
+     *
+     * @details
+     * - THE VOCABULARY IS A CROSS PRODUCT, `channels x family`, stated once so that no value is an arbitrary
+     *   exception: the channel counts are 1, 2 and 4 (a THREE-channel colour attachment is not a format any API
+     *   family offers), and the families are 8-bit UNORM, 16-bit float and 32-bit float.
+     * - WHAT EACH FAMILY IS FOR - the width is the product's own precision, not a preference:
+     *   - 8-bit: a colour, a coverage mask, a weight in [0, 1]. One channel is one byte, so a texel is 1, 2 or 4
+     *     bytes and the colour readback copies those bytes as they are stored (`colorReadbackOf`).
+     *   - 16-bit float: an HDR quantity, a luminance, a depth-like slice - a value that needs RANGE. 32-bit float is
+     *     the same with the precision a downsample or an accumulation needs. Both float families render and sample;
+     *     reading one back answers `UnreadableFormat`, because the byte-per-channel packing a colour readback
+     *     promises does not describe a float texel (see Readback.hpp).
+     * - A SHADER WRITES `vec4` WHATEVER THE CHANNEL COUNT IS: the attachment keeps the channels it declares and drops
+     *   the rest, so an effect pass writing an SSAO mask into `R8` needs no second fragment-output contract.
+     * - NOT A PIXEL-FORMAT MIRROR AND NOT AN UPLOAD FORMAT: no sRGB spelling (colour space is a projection, see
+     *   `Colorf` / `Color`), no integer family (an integer attachment needs an integer fragment output - a different
+     *   shader contract), no packed 10/11-bit colour. A target states what a pass PRODUCES.
+     */
     enum class ColorFormat
     {
         RGBA8,   // 8-bit unsigned normalized RGBA. A PROJECTION: it covers the linear (`*_UNORM`) and the
@@ -38,6 +57,12 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
                  // BACKEND's pick (see the note on the surface below).
         RGBA16F, // 16-bit float RGBA (linear; there is no sRGB spelling of a float format).
         RGBA32F, // 32-bit float RGBA (linear).
+        R8,      // 8-bit UNORM, one channel: a coverage / SSAO mask, a weight, a greyscale product.
+        RG8,     // 8-bit UNORM, two channels: a packed pair of 8-bit products (a low-precision normal.xy, two masks).
+        R16F,    // 16-bit float, one channel: a luminance, an SSAO product, a depth-like slice that needs range.
+        RG16F,   // 16-bit float, two channels: a velocity buffer, an octahedral normal.xy.
+        R32F,    // 32-bit float, one channel: a full-precision depth slice (a Hi-Z level), an accumulation.
+        RG32F,   // 32-bit float, two channels: a velocity buffer at full precision.
     };
 
     enum class DepthFormat

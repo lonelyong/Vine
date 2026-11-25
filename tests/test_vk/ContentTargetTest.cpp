@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include <vine/Buffer.hpp>
@@ -34,12 +35,14 @@
 #include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/Readback.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
 
 #include <vine/backend_vk/internal/Device.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 
 #include "PlanTestSupport.hpp"
 
@@ -891,5 +894,97 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     EXPECT_GT(paintedPixels(), std::size_t{ 4 }) << "the vertices are drawn as points, and `largePoints` lets the size through";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U) << "and the session stayed clean";
+    backend->shutdown();
+}
+
+TEST(VkContentTargetTest, AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    // THE DEVICE'S OWN ANSWER, asked here the way the session asked it at open: a format is a target when it offers
+    // colour attachment, sampling and transfer-source (`colorTargetFeatures`). The loop asserts the AGREEMENT between
+    // this mask and what the build path does, so the case holds on any device rather than only on one that backs all
+    // nine values.
+    const std::uint32_t buildable = vn::backend_vk::buildableColorFormats(device->handles().physical);
+
+    // THE GREYSCALE AND COLOUR PRODUCTS ARE NOT OPTIONAL (both are in Vulkan's mandatory colour-attachment set): the
+    // assertion is what stops the agreement rule below from passing vacuously on a mapping that never reached a format.
+    EXPECT_NE(buildable & (1U << static_cast<std::uint32_t>(RenderTarget::ColorFormat::RGBA8)), 0U);
+    EXPECT_NE(buildable & (1U << static_cast<std::uint32_t>(RenderTarget::ColorFormat::R8)), 0U) << "the greyscale product";
+
+    // A KNOWN, NON-TRIVIAL VALUE: the attachment keeps the channels it declares and drops the rest, which is why the
+    // same fragment stage serves a mask, a velocity pair and a colour.
+    constexpr const char8_t* product_fragment = u8R"(
+#version 450
+layout(location = 0) out vec4 out_color;
+void main() { out_color = vec4(0.5, 0.25, 0.75, 1.0); }
+)";
+
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(product_fragment);
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
+    const std::array<int, 4>           written{ 128, 64, 191, 255 }; // 0.5 / 0.25 / 0.75 / 1.0 in 8-bit UNORM
+    std::uint32_t                      refused = 0U;
+
+    // ONE PASS (AND ONE PIPELINE) PER VALUE, because the attachment set is part of the pipeline's identity.
+    for (const RenderTarget::ColorFormat format : vn::backend_vk::kColorFormats) {
+        const std::string_view            name = vn::backend_vk::colorFormatName(format);
+        const intrusive_ptr<RenderTarget> target(new RenderTarget());
+        target->setName(String(u8"vk_colour_format_target"));
+        target->attachColor(format);
+        target->attachDepth(RenderTarget::DepthFormat::D24);
+        target->setSize(16, 16);
+
+        AttachmentPolicy clear;
+        clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        const vn::graphics::PresentOutcome outcome =
+            backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) }));
+        ASSERT_EQ(outcome, vn::graphics::PresentOutcome::Skipped) << "a pass that cannot build is skipped, not failed: " << name;
+
+        const vn::graphics::ReadbackFormat  packed = vn::graphics::colorReadbackOf(format);
+        std::vector<std::uint8_t>           texels;
+        const vn::graphics::ReadbackOutcome read = backend->readColorBuffer(target.get(), 0, texels);
+        if ((buildable & (1U << static_cast<std::uint32_t>(format))) == 0U) {
+            // REFUSED BY NAME, NOT ATTEMPTED: the target was never built, so nothing can be read and the report says
+            // which format this device does not back.
+            ++refused;
+            EXPECT_EQ(read.result, ReadbackResult::NotReady) << "a refused format never built: " << name;
+            continue;
+        }
+
+        // THE 8-BIT FAMILY IS ONE BYTE PER CHANNEL, so it reads back and its texel width IS its channel count; the
+        // float family renders and samples but has no byte packing (`colorReadbackOf`), and that refusal is the SDK's
+        // rule rather than this pass failing.
+        if (!packed.readable) {
+            EXPECT_EQ(read.result, ReadbackResult::Unsupported) << "a float product has no byte-per-channel packing: " << name;
+            continue;
+        }
+        ASSERT_TRUE(read.ok()) << "format " << name << " refused: " << static_cast<int>(read.result);
+        ASSERT_EQ(texels.size(), std::size_t{ 16U * 16U } * packed.bytes_per_texel) << name;
+        EXPECT_TRUE(packed.bytes_per_texel == 1U || packed.bytes_per_texel == 2U || packed.bytes_per_texel == 4U)
+            << "one byte per channel: 1, 2 or 4 (" << name << ")";
+
+        // THE CENTRE IS THE TRIANGLE: its value survives in the channels the attachment keeps.
+        for (std::uint32_t channel = 0; channel < packed.bytes_per_texel; ++channel) {
+            const std::size_t texel = (std::size_t{ 8U } * 16U + 8U) * packed.bytes_per_texel + channel;
+            EXPECT_LE(std::abs(static_cast<int>(texels[texel]) - written[channel]), 1) << name << " channel " << channel;
+        }
+        // A CORNER SEES ONLY THE CLEAR: zero everywhere, and the clear's opaque alpha where the attachment has one.
+        for (std::uint32_t channel = 0; channel < packed.bytes_per_texel; ++channel) {
+            const std::size_t texel  = (std::size_t{ 1U } * 16U + 1U) * packed.bytes_per_texel + channel;
+            const int         expect = (packed.bytes_per_texel == 4U && channel == 3U) ? 255 : 0;
+            EXPECT_LE(std::abs(static_cast<int>(texels[texel]) - expect), 1) << name << " channel " << channel << " (clear)";
+        }
+    }
+
+    // ONE REPORT PER REFUSED VALUE: the capability is reported once per episode, and an episode is per value the
+    // device answered "no" for - a mask with no "no" in it reports nothing, which is the usual case.
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), refused);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     backend->shutdown();
 }

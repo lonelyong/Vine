@@ -3327,11 +3327,14 @@ bool Device::initialize()
         [impl = impl.get()](std::weak_ptr<const void> named, std::function<void()> destroy) { impl->releaseLater(std::move(named), std::move(destroy)); });
 
     // THE TARGET TABLE'S SESSION (see TargetTable::open): the same park seam the caches got, plus the device facts a
-    // build compares against. A release parks THROUGH the table, so "the entry left the map" and "the images wait for
-    // the watermark" are one call and no caller can do half of it.
+    // build compares against - the sample counts, whether a multisampled depth resolves, and WHICH COLOUR FORMATS this
+    // device backs as targets. The format answer is asked ONCE here (`vkGetPhysicalDeviceFormatProperties` per value),
+    // so a build's check is an AND against the mask rather than a driver call on the frame path. A release parks
+    // THROUGH the table, so "the entry left the map" and "the images wait for the watermark" are one call and no
+    // caller can do half of it.
     impl->target_table.open(
         TargetTable::Device{ impl->device, &impl->device_table, &impl->allocator },
-        TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported },
+        TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported, buildableColorFormats(impl->physical) },
         [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); },
         [impl = impl.get()](std::shared_ptr<TargetObjects> doomed) {
             // THE RECORD IS THE SUBJECT OF THE RELEASE (see Impl::releaseLater): a pass handle or a
@@ -3996,8 +3999,7 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
             // range check, so an index the target does not have is Invalid whether or not anything drew.
             return fail(ReadbackResult::NotReady);
         }
-        if (peek.shape.color_formats[static_cast<std::size_t>(attachment)] !=
-            vn::graphics::RenderTarget::ColorFormat::RGBA8) {
+        if (!vn::graphics::colorReadbackOf(peek.shape.color_formats[static_cast<std::size_t>(attachment)]).readable) {
             return fail(ReadbackResult::Unsupported);
         }
     }
@@ -4034,15 +4036,19 @@ vn::graphics::ReadbackOutcome Device::readColorBuffer(const vn::graphics::ImageR
     }
     const std::size_t   attachment_index = static_cast<std::size_t>(attachment);
     const VkImage       color_image      = images.colors[attachment_index];
-    if (images.colorFormat(attachment_index) != VK_FORMAT_R8G8B8A8_UNORM) {
-        // The readback contract is packed RGBA8; another colour format would need a conversion this step does not write.
+    // ONE TABLE SAYS WHAT A COLOUR READBACK IS - the SDK's, the one `readbackOf` classified the request with - and its
+    // texel width sizes the copy below. An 8-bit attachment is one byte per channel (1, 2 or 4), so a mask reads back
+    // like a picture does; a float format is unreadable there and is refused before the device stops.
+    const vn::graphics::ReadbackFormat packed = vn::graphics::colorReadbackOf(images.desc.shape.color_formats[attachment_index]);
+    if (!packed.readable || packed.bytes_per_texel == 0U) {
         return fail(ReadbackResult::Unsupported);
     }
 
     // THE COPY MECHANISM IS ReadbackStaging's (its own command pool and fence, the staging buffer, submit, wait,
     // mapping); this function says WHAT to copy and what the bytes mean. Where each picture is stays this backend's
     // knowledge (the per-image `color_layouts` records), recorded below through the staging command buffer.
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
+    const VkDeviceSize bytes =
+        static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * static_cast<VkDeviceSize>(packed.bytes_per_texel);
 
     ReadbackStaging staging;
     const StagingRefusal opened =
