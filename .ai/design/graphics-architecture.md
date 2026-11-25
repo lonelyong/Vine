@@ -202,7 +202,9 @@ removing an unregistered pass and removing an already removed pass are the same 
       19 virtuals today, 5 of them pure); a DEFAULTED one is a silent lie, because a backend that forgets to override reports
       the base default, which reads as an honest "no" while meaning "did not answer" - the distinction `ResidencyRow` states
       as "absent is not zero"; and a TYPE cannot be defaulted at all, so promoting one locks it into the ABI where a field
-      would have stayed additive.
+      would have stayed additive. When a VERB may carry a default is stated once, in `RenderDevice`'s class note (a default
+      is legal only when its absence is a true statement about the device), because a forgotten override is the one thing no
+      gate and no test can see.
     * **Applied to residency (`BC-26`)**: `ResidencyKind` speaks the host's content model - `Streams` → `Geometry`,
       `Images` → `Textures`, `MaterialBlocks` → `Materials`, `Halves` → `Programs` - and `Sets` is DELETED because it had no
       producer (one reference in the tree, its own name table). No deprecated aliases, for the reason `BC-17`…`BC-21`

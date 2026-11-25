@@ -159,6 +159,11 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   `VN_RENDER_BACKEND_ABI_VERSION` (`BackendAbi.hpp`) is bumped in the same change, which turns a module that was not
  *   rebuilt into one diagnostic (`engine.backend.abi_mismatch`) instead of a call into the wrong slot.
  *   The default exists so that the recompile a bump demands costs no edit; it never means an old binary keeps working.
+ *   WHEN A DEFAULT IS LEGAL, the absence of an answer has to be a TRUE statement about this device: it hands out no
+ *   window (createSurfaceTarget answers nullptr with `NoPresentation`), it keeps no per-target or per-driver GPU state
+ *   (releaseRenderTarget / releasePass / releaseFrameDriver have nothing to reclaim), or it cannot read back
+ *   (`Unsupported`). A verb whose omission would LEAK a resource or answer the wrong fact stays pure. Nothing else can
+ *   see a forgotten override, which is why a new backend checks its override list against this sentence.
  * - RenderBackend is the aggregate a device that also executes frames and presents through one window implements
  *   today (see its own note); a device is reference-counted through that aggregate, which is what a factory returns.
  */
@@ -341,6 +346,11 @@ class VN_GRAPHICS_API RenderDevice {
      *   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`) parks the free until every session is
      *   past it. Calling this while another thread drives a frame that names the target is the host's error, and the
      *   device cannot see it.
+     *
+     * @note
+     * - The default no-op answers for a device that BUILDS no per-target state (it keeps the target as the host's
+     *   description and allocates nothing for it); a device that creates attachments OVERRIDES this, because what it
+     *   forgot would live until shutdown() and nothing else would report it.
      *
      * @param target The target being removed (borrowed for the call).
      */
