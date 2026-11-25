@@ -188,11 +188,13 @@ SEAM_DOCS = (
     ".ai/design/graphics-architecture.md",  # 2.9, the argument
     "docs/guides/graphics-backends.md",     # 5, the reader's table
 )
-# Measured 2026-11-23, after the reference backend retired (ADR-2026-11-23 D4 step 4): the 35 SDK headers the
-# SHIPPED backend includes directly. Before the retirement this set was the intersection of two backends (25); with one
-# reader it is "what the backend reaches", and the promise rule still makes a change here a decision about the seam
-# or about the model surface, not about the backend that happens to need it.
+# Measured 2026-11-23, after the reference backend retired (ADR-2026-11-23 D4 step 4): the SDK headers the
+# SHIPPED backend includes directly, extended by each batch that widens what it reaches. Before the retirement this set
+# was the intersection of two backends (25); with one reader it is "what the backend reaches", and the promise rule
+# still makes a change here a decision about the seam or about the model surface, not about the backend that happens to
+# need it.
 SEAM_SHARED_HEADERS = frozenset((
+    "BackendAbi.hpp",
     "BuiltinShaders.hpp",
     "DepthRange.hpp",
     "DeviceClock.hpp",

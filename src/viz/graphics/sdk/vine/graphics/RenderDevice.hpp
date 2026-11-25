@@ -154,6 +154,11 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   state intact. A false return never means "partially applied". A false initialize() must not leave a half-built
  *   session behind: the creator calls shutdown() only after a successful initialize(), so the device owns the
  *   cleanup of its own partial state.
+ * - GROWING THIS INTERFACE. A backend is compiled as its own module, so a verb added here is a change to a foreign
+ *   vtable: it ships with a DEFAULT implementation ("not answering keeps the default") and
+ *   `VN_RENDER_BACKEND_ABI_VERSION` (`BackendAbi.hpp`) is bumped in the same change, which turns a module that was not
+ *   rebuilt into one diagnostic (`engine.backend.abi_mismatch`) instead of a call into the wrong slot.
+ *   The default exists so that the recompile a bump demands costs no edit; it never means an old binary keeps working.
  * - RenderBackend is the aggregate a device that also executes frames and presents through one window implements
  *   today (see its own note); a device is reference-counted through that aggregate, which is what a factory returns.
  */

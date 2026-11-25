@@ -350,3 +350,27 @@ future history slimming saves about 1 MiB of a 68 MiB pack in this case, so it i
 Counts after the deletion: `test_vk` 186 cases / 44 suites, `test_graphics` 642 cases / 82 suites, ten gates green,
 `vk_exposure` green. `test_vsg` and its 576 cases are gone, and what they covered was overwhelmingly the retired
 backend itself (64 of its 66 source files include it).
+
+## Amendment 2026-11-25 - T65 landed (the ABI rules and the build identity)
+
+D5 obligation 2 is in. `src/viz/graphics/sdk/vine/graphics/BackendAbi.hpp` states the rule, the handshake and the refusal,
+and the four decisions that were open under it are now made:
+
+- **The rule, in one number**: `VN_RENDER_BACKEND_ABI_VERSION` = 1. Bumped by any change to a virtual set, to the layout of
+  a value type that crosses the boundary, or to a signature; NOT bumped by a new header, a new class or a non-virtual member.
+  A new virtual additionally ships a default implementation, so the recompile a bump demands needs no edit - the default says
+  what a RECOMPILING backend gets, never that an old binary keeps working, which is what the bump prevents.
+- **The identity, in one entry point**: `vineRenderBackendAbi()` (defined once per module by
+  `VN_DECLARE_RENDER_BACKEND_ABI()`) returning a standard-layout `RenderBackendAbi` whose first member is the revision - the
+  `PluginAbi` shape, chosen for the same reason: the answer must be readable before anything the module declares is read.
+- **The enforcement, before the first virtual call**: `RenderBackendRegistry::registerFactory(factory, abi)` refuses
+  `AbiMissing` / `AbiMismatch` without touching the factory, so a stale `.so` becomes `engine.backend.abi_mismatch` on the
+  registry's own diagnostic route instead of the 2026-11-23 segfault. The registry owns that route because a load-time event
+  has no engine to report to yet.
+- **The shim, and its deletion trigger**: the one-argument `registerFactory` overload stays resolvable on purpose. Under
+  `RTLD_LAZY` a missing symbol aborts the process at the call site, which would put the crash back exactly where the rule
+  removed it; it is refused with `AbiMissing` and goes at the next revision bump.
+
+What it costs, honestly: a program that compiles a backend's sources into itself is a module and must define the handshake
+(`tests/test_vk` gained one line); and the refusal cannot name the backend, because naming it is the call the refusal exists
+to avoid - the report names the two revisions instead.

@@ -24,6 +24,12 @@
   这是宿主加载了别的后端插件时的回退行为，不是选择逻辑。
 * 注册表**后注册者胜且不报告**：加载一个同名插件会把内建条目换成插件自己的工厂（`T64` 决定改为“先注册者胜 + 报告”，
   尚未落地）。契约写在 `RenderBackendRegistry::registerFactory` 的头注释里。
+* **模块要报出自己编译时的 SDK ABI**：每个后端模块用 `VN_DECLARE_RENDER_BACKEND_ABI()` 定义一次
+  `vineRenderBackendAbi()`，注册时把 `{abi_version, sdk_version}` 一起交给 `registerFactory`。注册表在**调用工厂的任何
+  虚函数之前**比对 `VN_RENDER_BACKEND_ABI_VERSION`，不一致就不收这个模块，并在注册表自己的 `diagnostics()` 上报
+  `engine.backend.abi_mismatch` / `engine.backend.abi_missing`（加载期还没有引擎，所以这条路由归注册表）。旧模块得到的是
+  一句“重建”，不是崩溃；规则、何时该升版本、为什么报告不能做成虚函数，见
+  [`graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §2.16。
 
 ## 2. 共同契约（宿主不必知道是哪个后端）
 
@@ -109,7 +115,7 @@
   第二个开发者据此自测，不必猜。只有某一个后端读的类型住在该插件的 `internal/` 里，不进 SDK。
 * **接缝没有自己的命名空间**：它是一条性质（"在役后端用到它"）加一份被门禁钉住的清单（`scripts/check_include_hygiene.py`
   的 `SEAM_HEADERS`），而不是 `vn::graphics::backend` 这类别名组——别名会让一个类有两个名字，而在役后端直接 include 的 SDK 头有
-  35 个、机制只有 8 个，别名反而会把清单说小（[ADR-2026-11-18](../../.ai/decisions/ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)）。
+  37 个、机制只有 8 个，别名反而会把清单说小（[ADR-2026-11-18](../../.ai/decisions/ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)）。
   本节与 [`graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §2.9 也被同一道门禁检查：`SEAM_HEADERS`
   里的每个机制，两页都必须点名。
 * 门禁钉住的是**边界的方向**，不是接缝的清单：图形模块不得 include 任何渲染 API 或具体后端（`check_vk_exposure.py` V2）、

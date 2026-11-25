@@ -12,6 +12,7 @@
 #include <vine/geom/spatial/Ray.hpp>
 #include <vine/graphics/AxesMarker.hpp>
 #include <vine/graphics/AxisGizmo.hpp>
+#include <vine/graphics/BackendAbi.hpp>
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
@@ -78,6 +79,11 @@ using vn::Color;
 using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::String;
+
+// The build identity this binary's backend factories declare: one definition per module (see
+// VN_RENDER_BACKEND_ABI_VERSION). The registry checks it exactly as it checks a loaded plugin's, so a test that
+// registers a factory goes through the same gate production does.
+VN_DECLARE_RENDER_BACKEND_ABI()
 using vn::geom::spatial::Aabbd;
 using vn::geom::spatial::Aabbf;
 using vn::imaging::Image;
@@ -8980,7 +8986,7 @@ TEST(RenderBackendRegistryTest, RegisterAndCreateByName)
     auto&                     registry = RenderBackendRegistry::instance();
     static MockBackendFactory factory(u8"mock");
 
-    registry.registerFactory(&factory);
+    ASSERT_EQ(registry.registerFactory(&factory, ::vineRenderBackendAbi()), BackendRegistrationResult::Ok);
     EXPECT_TRUE(registry.has(u8"mock"));
 
     auto backend = registry.create(u8"mock");
@@ -8995,7 +9001,7 @@ TEST(RenderBackendRegistryTest, TheDescriptionReachesTheFactory)
 {
     auto&                     registry = RenderBackendRegistry::instance();
     static MockBackendFactory factory(u8"mockdesc");
-    registry.registerFactory(&factory);
+    ASSERT_EQ(registry.registerFactory(&factory, ::vineRenderBackendAbi()), BackendRegistrationResult::Ok);
 
     // A device is created FOR something (see DeviceDesc): the registry hands the description to the factory that
     // builds it, unchanged, and a factory that is asked twice is told twice.
@@ -9022,7 +9028,7 @@ TEST(RenderBackendRegistryTest, EnumerateNames)
 {
     auto&                     registry = RenderBackendRegistry::instance();
     static MockBackendFactory factory(u8"mock2");
-    registry.registerFactory(&factory);
+    ASSERT_EQ(registry.registerFactory(&factory, ::vineRenderBackendAbi()), BackendRegistrationResult::Ok);
 
     const auto names = registry.names();
     EXPECT_FALSE(names.empty());
@@ -9034,7 +9040,7 @@ TEST(RenderBackendRegistryTest, EnumerateEntries)
 {
     auto&                     registry = RenderBackendRegistry::instance();
     static MockBackendFactory factory(u8"mock4");
-    registry.registerFactory(&factory);
+    ASSERT_EQ(registry.registerFactory(&factory, ::vineRenderBackendAbi()), BackendRegistrationResult::Ok);
 
     const auto entries = registry.entries();
     EXPECT_FALSE(entries.empty());
@@ -9063,6 +9069,66 @@ TEST(RenderBackendRegistryTest, RegistrarSelfRegisters)
     static RenderBackendRegistry::Registrar<MockBackendFactory> registrar;
     // The registrar's constructor self-registers; the factory is embedded.
     EXPECT_TRUE(registry.has(u8"mock3"));
+}
+
+TEST(RenderBackendRegistryTest, TheAbiRuleIsEquality)
+{
+    const RenderBackendAbi same{ VN_RENDER_BACKEND_ABI_VERSION, "1.0.0" };
+    const RenderBackendAbi older{ VN_RENDER_BACKEND_ABI_VERSION - 1u, "0.9.0" };
+    const RenderBackendAbi newer{ VN_RENDER_BACKEND_ABI_VERSION + 1u, "1.1.0" };
+
+    EXPECT_TRUE(isRenderBackendAbiCompatible(&same));
+    EXPECT_FALSE(isRenderBackendAbiCompatible(&older)) << "an older module is as unusable as a newer one";
+    EXPECT_FALSE(isRenderBackendAbiCompatible(&newer));
+    EXPECT_FALSE(isRenderBackendAbiCompatible(nullptr)) << "a module that states nothing cannot be trusted";
+}
+
+TEST(RenderBackendRegistryTest, ABackendBuiltAgainstAnotherRevisionIsRefused)
+{
+    auto&                         registry = RenderBackendRegistry::instance();
+    static MockBackendFactory     factory(u8"mockAbiOther");
+    static const RenderBackendAbi other{ VN_RENDER_BACKEND_ABI_VERSION + 1u, "0.0.0-other" };
+
+    // Refused BEFORE the factory is asked anything: a stale module's vtable and RenderBackendInfo layout are the
+    // reason the gate exists, so not even its name may be read out of it.
+    EXPECT_EQ(registry.registerFactory(&factory, &other), BackendRegistrationResult::AbiMismatch);
+    EXPECT_FALSE(registry.has(u8"mockAbiOther"));
+    EXPECT_EQ(factory.created, 0);
+}
+
+TEST(RenderBackendRegistryTest, ABackendThatStatesNoRevisionIsRefused)
+{
+    auto&                     registry = RenderBackendRegistry::instance();
+    static MockBackendFactory factory(u8"mockAbiMissing");
+
+    // The one-argument overload is what a module built before the rule calls: it must RESOLVE and answer, so the
+    // host gets a sentence instead of a symbol-lookup abort inside that module's own load.
+    EXPECT_EQ(registry.registerFactory(&factory), BackendRegistrationResult::AbiMissing);
+    EXPECT_FALSE(registry.has(u8"mockAbiMissing"));
+}
+
+TEST(RenderBackendRegistryTest, ARefusedBackendIsReportedOnTheRegistriesRoute)
+{
+    auto&                         registry = RenderBackendRegistry::instance();
+    std::vector<RenderDiagnostic> reported;
+    registry.diagnostics().setSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+    const std::uint64_t before = registry.diagnostics().total();
+
+    static MockBackendFactory       factory(u8"mockAbiReported");
+    static const RenderBackendAbi   other{ VN_RENDER_BACKEND_ABI_VERSION + 1u, "0.0.0-other" };
+    const BackendRegistrationResult result = registry.registerFactory(&factory, &other);
+
+    // Cleared before any assertion: the route is process-wide, and a failing expectation must not leave a sink that
+    // captures a local behind for the next test.
+    registry.diagnostics().setSink({});
+
+    ASSERT_EQ(result, BackendRegistrationResult::AbiMismatch);
+    ASSERT_EQ(reported.size(), 1u);
+    EXPECT_EQ(reported[0].code, String(u8"engine.backend.abi_mismatch"));
+    EXPECT_EQ(reported[0].severity, DiagnosticSeverity::Error) << "a backend that never joined is the whole picture";
+    EXPECT_TRUE(reported[0].subject.empty()) << "naming the backend would mean calling the module we just refused";
+    EXPECT_NE(reported[0].message.find(u8"Rebuild that backend module"), String::npos) << "the sentence says what to do";
+    EXPECT_EQ(registry.diagnostics().total(), before + 1u);
 }
 
 TEST(StateNodeTest, NewNodeHasNoState)

@@ -105,6 +105,10 @@ engine.shadow.not_built               — shadow-casting lights have no shadow p
 engine.view.content_mismatch          — the view adopted a pipeline whose passes draw other content: its scene never reaches the surface
 engine.frame.failed                   — the frame's engine half threw: the frame was not drawn, and the report names the exception
 
+# --- engine: a backend module the registry refused (see graphics-architecture.md 2.16) ---
+engine.backend.abi_missing            — the module states no graphics SDK ABI revision (built before the rule existed): rebuild it against this SDK; it was not registered
+engine.backend.abi_mismatch           — the module was built against another graphics SDK ABI revision: rebuild it against this SDK; it was not registered
+
 # --- vk backend: the session ---
 vk.session.device_lost        — a device call answered VK_ERROR_DEVICE_LOST: the session is over, rebuild it
 vk.session.frame_reentry      — a frame or warm-up was started from the thread already driving one: refused (FrameGate)

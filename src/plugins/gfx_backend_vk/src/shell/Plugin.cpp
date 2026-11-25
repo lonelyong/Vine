@@ -5,6 +5,7 @@
 
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>
+#include <vine/graphics/BackendAbi.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/backend_vk/shell/BackendFactory.hpp>
 
@@ -31,7 +32,11 @@ vn::async::Task<void> Plugin::load(vn::appfw::PluginLoadContext* context)
         }
     }
 
-    vn::graphics::RenderBackendRegistry::instance().registerFactory(&s_factory);
+    // THE HOST CHECKS THIS BEFORE IT TRUSTS THE FACTORY (see VN_RENDER_BACKEND_ABI_VERSION): a module built against
+    // another graphics SDK revision has a different RenderBackendFactory vtable, so the revision travels with the
+    // registration instead of being discovered by a crash. A refusal is already reported on the registry's route; this
+    // module can do nothing about a host that is older than itself, so the answer is ignored on purpose.
+    (void)vn::graphics::RenderBackendRegistry::instance().registerFactory(&s_factory, ::vineRenderBackendAbi());
     co_return;
 }
 
@@ -42,6 +47,10 @@ void Plugin::unload(vn::appfw::PluginLoadContext* context)
 }
 
 VN_BACKEND_VK_NS_END
+
+// What the host reads before it calls into this module (see VN_RENDER_BACKEND_ABI_VERSION): one definition per
+// module, next to the plugin's own handshake.
+VN_DECLARE_RENDER_BACKEND_ABI()
 
 VN_DECLARE_PLUGIN(vn::backend_vk::Plugin,
                   u8"7f2b6c1e-3a4d-4c9b-9f60-2d8e5a1b7c34",

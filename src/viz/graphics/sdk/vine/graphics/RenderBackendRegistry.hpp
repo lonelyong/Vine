@@ -8,6 +8,8 @@
 #include <vine/String.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "BackendAbi.hpp"
+#include "Diagnostics.hpp"
 #include "RenderBackend.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -73,6 +75,10 @@ struct VN_GRAPHICS_API RenderBackendInfo {
  *   RenderBackendRegistry, so the application can create a backend by name without a compile-time dependency on the
  *   backend module or its third-party libraries.
  * - A single backend plugin can register several factories, one per implementation.
+ * - THIS VTABLE IS WHAT THE ABI REVISION PROTECTS: a factory is the first object a host touches across a module
+ *   boundary, so the shape it was compiled with is `VN_RENDER_BACKEND_ABI_VERSION` (see BackendAbi).
+ *   The module states that revision through `vineRenderBackendAbi()`, and the registry checks it before calling
+ *   `info()` or `name()` on anything - which is also why the revision cannot be a member of `info()`.
  */
 class VN_GRAPHICS_API RenderBackendFactory {
   public:
@@ -110,12 +116,37 @@ class VN_GRAPHICS_API RenderBackendFactory {
 };
 
 /**
+ * @brief Why a backend registration did or did not take (see RenderBackendRegistry::registerFactory).
+ *
+ * @details
+ * - THE MACHINE ANSWER, so a host or a test gates on it instead of matching a sentence: the sentence travels on the
+ *   registry's own diagnostic route (see RenderBackendRegistry::diagnostics), which is the same split the device's
+ *   createSurfaceTarget uses - a reason out, the words on the channel.
+ * - The refusals are not collapsed into one "failed": each says what has to be rebuilt or rewired, so a host can act
+ *   on it without reading the message.
+ */
+enum class BackendRegistrationResult : std::uint8_t
+{
+    Ok,             // The factory now owns its name.
+    AbiMissing,     // The module stated no SDK revision: it was built before the rule existed - rebuild it.
+    AbiMismatch,    // The module speaks another SDK revision: rebuild it against this one.
+    InvalidFactory, // A null factory, a wiring defect at the caller - reported nowhere.
+};
+
+/**
  * @brief Registry of render backend factories.
  *
  * @details
  * - Backend modules self-register a RenderBackendFactory here (typically via a static Registrar object in the
  *   backend's translation unit).
  * - The application then creates a backend by name without depending on the backend module at compile time.
+ * - A REGISTRATION IS A CROSS-MODULE HAND-OVER, so it is gated: the registering module states the graphics SDK ABI it
+ *   was compiled against (RenderBackendAbi) and this registry refuses a module built against another revision before
+ *   it calls anything that module declares.
+ *   The rule is the SDK's, and its reasons are in `VN_RENDER_BACKEND_ABI_VERSION`; the registry is where it is
+ *   enforced because that is the one place every backend passes through.
+ * - A LOAD-TIME EVENT HAS NO ENGINE YET (a static Registrar runs while the process starts, a plugin registers while
+ *   it loads), so the registry owns the diagnostic route those refusals travel on (see diagnostics).
  */
 class VN_GRAPHICS_API RenderBackendRegistry {
   public:
@@ -128,18 +159,43 @@ class VN_GRAPHICS_API RenderBackendRegistry {
     /** @brief Gets the process-wide registry singleton. */
     static RenderBackendRegistry& instance();
 
-    /** @brief Registers a factory.
+    /** @brief Registers a factory, accepting it only when the module was built against this SDK's ABI revision.
      *
      * @details
+     * - THE CHECK COMES FIRST, and that is the whole reason @p abi is a parameter: a module built against another
+     *   revision has a different `RenderBackendFactory` vtable and a different `RenderBackendInfo` layout, so asking
+     *   it for `info()` or `name()` - even to write a better message - is the call that crashes.
+     *   The registry compares @p abi, and only a compatible module is ever asked anything.
      * - The registry does not own the factory; it must outlive the registry.
-     * - LAST REGISTRATION WINS, SILENTLY: a name already present is REPLACED in place and nothing is reported -
-     *   loading a backend plugin therefore re-points a built-in entry of the same name at the plugin's own
-     *   factory. Code that must exercise the implementation compiled into its binary (the backend parity
-     *   fixture, for one) constructs that backend directly instead of asking this registry.
+     * - STILL LAST-ONE-WINS BETWEEN VALID MODULES: two modules that both speak this revision replace each other in
+     *   registration order, and the replacement is not reported (backlog `T64` holds the decided shape - keep-first
+     *   plus a report - not yet landed).
+     * - A REFUSAL IS COUNTED AND REPORTED on diagnostics(), with one of two stable codes
+     *   (`engine.backend.abi_missing`, `engine.backend.abi_mismatch`) and a sentence naming both revisions.
+     *   The report carries no subject on purpose: naming the backend means calling the module, which is exactly what
+     *   the refusal avoids.
      *
-     * @param factory Factory to register.
+     * @param factory Factory to register; a null one is refused without a report (`InvalidFactory`).
+     * @param abi     The module's handshake, i.e. `vineRenderBackendAbi()` from the module being registered.
+     * @return Ok when the factory now owns its name; otherwise why it was refused (see BackendRegistrationResult).
      */
-    void registerFactory(raw_ptr<RenderBackendFactory> factory);
+    [[nodiscard]] BackendRegistrationResult registerFactory(raw_ptr<RenderBackendFactory> factory, const RenderBackendAbi* abi);
+
+    /** @brief Registers a factory that states no SDK revision: REFUSED, and reported.
+     *
+     * @details
+     * - THE COMPATIBILITY SHIM, AND ITS ONE JOB: a module compiled before `VN_RENDER_BACKEND_ABI_VERSION` existed calls
+     *   this overload, so the call RESOLVES and is refused with a sentence instead of failing as a missing symbol
+     *   inside that module's own load (which aborts the process on Linux, with no message a host can act on).
+     *   It is not a way to register.
+     * - It stays until no module built before the rule can be in the wild; the next revision bump is the natural point
+     *   to delete it, because a module that old is then refused by its revision rather than by its signature.
+     * - Same rule as its sibling: nothing is asked of @p factory, so a stale module is never called into.
+     *
+     * @param factory Factory to register; not read (the module cannot say what it was built against).
+     * @return AbiMissing, always.
+     */
+    [[nodiscard]] BackendRegistrationResult registerFactory(raw_ptr<RenderBackendFactory> factory);
 
     /** @brief Creates a backend by name, told how its device presents.
      *
@@ -162,10 +218,31 @@ class VN_GRAPHICS_API RenderBackendRegistry {
      */
     std::vector<Entry> entries() const;
 
+    /** @brief Gets the registry's own diagnostic route: where a refused registration is reported.
+     *
+     * @details
+     * - A LOAD-TIME EVENT HAS NO ENGINE YET: a backend registers while the process is starting (a static Registrar)
+     *   or while a plugin loads, and neither has an engine to hand a report to.
+     *   The registry therefore owns the one route those reports travel on, and a host that wants the sentence installs
+     *   its sink here BEFORE it loads backend modules (a sink installed later sees the counts, not the words).
+     * - ONE ROUTE, ONE PLACE TO LISTEN (see Diagnostics): the same instance counts and forwards, so a host gates on
+     *   `total()` rather than parsing a log.
+     *
+     * @return The route, borrowed; it lives as long as the process, because the registry is a singleton.
+     */
+    Diagnostics& diagnostics() noexcept;
+
     /** @brief Whether a backend with the given name is registered. */
     bool has(const String& name) const;
 
     /** @brief RAII helper registering a factory on construction.
+     *
+     * @details
+     * - It states the ABI through the handshake rather than taking one: the module that instantiates a Registrar must
+     *   define `vineRenderBackendAbi()` once with VN_DECLARE_RENDER_BACKEND_ABI(), so the revision checked is the one
+     *   that module was compiled against, not the one this header happens to be parsed with.
+     * - A refusal is reported on the registry's route and NOT thrown or asserted: a static registration runs during
+     *   startup, where failing loudly would take the whole process down instead of leaving one backend unavailable.
      *
      * @note Instantiate as a static object in the backend module to self-register.
      */
@@ -174,7 +251,7 @@ class VN_GRAPHICS_API RenderBackendRegistry {
       public:
         Registrar()
         {
-            RenderBackendRegistry::instance().registerFactory(&factory_);
+            (void)RenderBackendRegistry::instance().registerFactory(&factory_, ::vineRenderBackendAbi());
         }
 
       private:

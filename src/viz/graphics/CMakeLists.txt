@@ -1,5 +1,10 @@
 vn_add_library(GRAPHICS_TARGET_NAME Graphics)
 
+# The version a backend module reports as "built against" (RenderBackendAbi::sdk_version).
+# PUBLIC: a backend's own translation unit expands VN_DECLARE_RENDER_BACKEND_ABI(), and what it must report is the SDK
+# it was compiled against - not the host it happens to be loaded into.
+target_compile_definitions(${GRAPHICS_TARGET_NAME} PUBLIC VN_GRAPHICS_VERSION="${PROJECT_VERSION}")
+
 # Source files (src/*.cpp, incl. the HUD overlays AxisGizmo.cpp / FpsOverlay.cpp and the shared
 # axes-marker builder AxesMarker.cpp) are collected from src/ by vn_add_library's glob, which has no
 # CONFIGURE_DEPENDS: add a new file -> reconfigure.

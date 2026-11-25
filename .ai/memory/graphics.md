@@ -2418,3 +2418,22 @@
   Neither derives the bits again. The vk plugin deletes its own `ProgramVariant.{hpp,cpp}` and imports the SDK names,
   so its `internal/` no longer owns a rule - only the use.
 - **Evidence**: `VkVariantTest` 7/7 device-free, ctest `test_vk` and `test_graphics` green, gates green.
+
+## 2026-11-25 - a backend module states its SDK ABI (backlog T65 retired)
+
+- **What was missing**: the backend interfaces are virtual classes with no explicit ABI, so a change to one is a silent
+  break for a module that was already built. Measured 2026-11-23: a stale backend plugin registered and then segfaulted.
+- **What landed**: `sdk/vine/graphics/BackendAbi.hpp` - `VN_RENDER_BACKEND_ABI_VERSION` (what bumps it, and what does not),
+  `RenderBackendAbi{abi_version, sdk_version}` (standard layout, revision first), `isRenderBackendAbiCompatible`,
+  `vineRenderBackendAbi()` + `VN_DECLARE_RENDER_BACKEND_ABI()` (one definition per module). `registerFactory` takes the
+  handshake and refuses `AbiMissing` / `AbiMismatch` BEFORE it calls any virtual; the refusal is reported on the registry's
+  own `diagnostics()` route (`engine.backend.abi_missing` / `engine.backend.abi_mismatch`, severity Error).
+- **The trap**: the report cannot live on the factory (a virtual) or in `RenderBackendInfo` (a layout) - reading either is
+  the crash the check exists to prevent, which is also why the refusal names the two revisions and not the backend. And the
+  one-argument `registerFactory` overload must stay resolvable: under `RTLD_LAZY` a missing symbol aborts the process at the
+  call site, so deleting it would put a crash back where a sentence now is.
+- **The cost, measured**: a program that compiles a backend's sources into itself IS a module and must define the handshake -
+  `tests/test_vk/BackendTest.cpp` needed one line (its link failed with `undefined reference to vineRenderBackendAbi`).
+  Letting `Registrar` pass the header constant instead was rejected: that value can be interposed by another DSO's copy, and
+  it would be a second answer to "what revision is this module?".
+- **Evidence**: ctest `test_graphics` (648 cases, 4 of them new registry cases) and `test_vk` (219 cases) green; gates green.

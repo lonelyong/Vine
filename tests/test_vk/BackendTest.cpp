@@ -24,6 +24,11 @@ using vn::graphics::RenderBackendRegistry;
 using vn::backend_vk::Device;
 using vn::backend_vk::Handles;
 
+// This test compiles the backend's sources into its own module rather than loading the plugin, so it states its build
+// identity exactly as the plugin does (see VN_RENDER_BACKEND_ABI_VERSION): the factory's static registration reports
+// the revision of THIS binary, and the registry checks it like any other module's.
+VN_DECLARE_RENDER_BACKEND_ABI()
+
 TEST(VkBackendTest, TheFactoryRegistersItselfByName)
 {
     // WHAT THIS PINS. "A backend is created by NAME" is the whole reason the seam exists: a host (and the plugin

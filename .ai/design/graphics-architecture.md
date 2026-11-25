@@ -210,6 +210,29 @@ removing an unregistered pass and removing an already removed pass are the same 
     backends, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a second CONSUMER is
     what moves a mechanism there, which is a different trigger from "a second backend exists".
 
+2.16 **A module that compiles against the SDK states the revision it was built against** (ABI, `G4` / `G6` / `G11`): the
+    backend interfaces are virtual classes with no explicit ABI, so a change to one is invisible until a stale module's call
+    lands in the wrong vtable slot. Measured 2026-11-23: a stale backend plugin registered, then segfaulted a registration
+    case, and only a rebuild told it apart from a regression.
+    * **The rule** (`BackendAbi.hpp`, `VN_RENDER_BACKEND_ABI_VERSION`): bump the revision for ANY change to a virtual set, to
+      the layout of a value type that crosses the boundary, or to a signature; do not bump it for an added non-virtual
+      member, a new header or a comment. A NEW virtual also ships a default implementation, so a backend that recompiles
+      needs no edit - "not answering keeps the default" says what a recompiling backend gets, never that an old binary keeps
+      working, which the bump is what prevents.
+    * **How it is enforced**: the module answers `vineRenderBackendAbi()` (one definition per module,
+      `VN_DECLARE_RENDER_BACKEND_ABI()`, next to its registration), and `RenderBackendRegistry::registerFactory` compares that
+      number BEFORE it calls anything the module declares. `factory->name()` is already a virtual call into a possibly
+      foreign vtable, so even the refusal's own message carries no backend name - `engine.backend.abi_mismatch` /
+      `engine.backend.abi_missing` name the two revisions instead (report on the registry's `diagnostics()`, a load-time
+      event that has no engine).
+    * **Why the report is neither a virtual nor a field of `RenderBackendInfo`**: both are reads through the object the check
+      has not vouched for yet, which makes the report itself the crash. The handshake is therefore a C entry point returning
+      a standard-layout value whose first member is the revision - the shape `PluginAbi` already uses in appfw.
+    * **Boundary**: this is about MODULES, not about the SDK's release (`VN_GRAPHICS_VERSION` is diagnostic only). A host that
+      loads backends itself asks `isRenderBackendAbiCompatible`, the same function the registry uses, instead of inventing a
+      second rule. The one-argument `registerFactory` overload is the compatibility shim for a module compiled before the
+      rule: it must stay resolvable, because on Linux a missing symbol aborts the process where a refusal leaves a sentence.
+
 ## 3. Features
 
 ### 3.1 Device, window, area, view, engine
@@ -221,6 +244,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | F3 | Area | `RenderArea`: size + present table; created by `RenderEngine::createArea()`; one area, one picture. |
 | F4 | View | `SceneView`: camera + scene + manipulator + input + the adopted `PassChain`; answers "which pass draws me" (input ownership is in `appfw-render-view.md` §2.1 / §2.4). |
 | F5 | Engine | `RenderEngine`: `initialize` / `shutdown` / `frame() → FrameCallOutcome`, device borrowing, size, capabilities, reports. |
+| F21 | Backend module handshake | `BackendAbi.hpp`: a module states `VN_RENDER_BACKEND_ABI_VERSION` through `vineRenderBackendAbi()`, and `registerFactory` refuses another revision with `engine.backend.abi_mismatch` / `engine.backend.abi_missing` on the registry's `diagnostics()` route. |
 
 ### 3.2 The engine's three facades
 
@@ -284,6 +308,9 @@ removing an unregistered pass and removing an already removed pass are the same 
 | `OutputRegistry::publish()` / `resolve()` / `unpublish()` | Named outputs |
 | `OutputRegistry::transientTarget()` / `transientCount()` | Transients |
 | `DiagnosticsHandle::setSink()` / `count()` / `isClean()` | Diagnostics |
+| `RenderBackendRegistry::registerFactory(factory, abi)` / `(factory)` | The gate: accepts only this module's SDK revision; the one-argument overload refuses when the module states nothing |
+| `RenderBackendRegistry::diagnostics()` | The registry's own route: where a refused registration is reported (a load-time event has no engine) |
+| `isRenderBackendAbiCompatible(abi)` / `vineRenderBackendAbi()` | The rule and the handshake a loader asks before it trusts a module (2.16) |
 
 ### 4.3 `PassChain`
 
@@ -320,6 +347,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | C2 | Pass registration, named outputs, diagnostics and presentation each have one owner, no second list. |
 | C3 | Scheduling is in the engine only; the backend only materialises `FrameDescription.passes`. |
 | C4 | A public SDK header states the CONTRACT, not the survey: it names no concrete backend (`check_vk_exposure.py` V5) and no unit a plugin keeps in its own `internal/` (V6) - the id's meaning is the contract, the table that answers it is that plugin's. The one exception is a diagnostic code, whose prefix is an identity a host matches. |
+| C5 | A backend module states its SDK ABI revision once (`VN_DECLARE_RENDER_BACKEND_ABI()`), and the registry refuses another revision before it calls into the module. A virtual set or a value type that crosses the boundary changes ⇒ `VN_RENDER_BACKEND_ABI_VERSION` is bumped in the same change, and a new virtual ships a default implementation. |
 
 ### 5.2 Requirements (R#)
 
@@ -328,6 +356,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | R1 | A backend must not reorder passes, build its own dependency graph or report cycles. |
 | R2 | `PassChain` only borrows the engine and does not extend its lifetime; the engine dies first ⇒ `isValid()` false. |
 | R3 | One area, one picture; multi-cell layout belongs to the application layer, no second area in the engine. |
+| R4 | A loader (the registry, or a host's own) verifies `isRenderBackendAbiCompatible` before calling any virtual of a backend module; a refusal is reported, never thrown or asserted during startup. |
 
 ### 5.3 Invariants (N#)
 
@@ -340,6 +369,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | N5 | `Camera` carries its own aspect; a pass rectangle inconsistent with the camera shape is reported at compile time. |
 | N6 | The backend materialises `FrameDescription.passes` only; do not reorder or build a dependency graph on the recording path. |
 | N7 | `frame()`'s `FrameCallOutcome` only says whether it ran (Ran / Submitted) or the engine was not up (NotReady + reason); if it ran but drew nothing, read `frameReport()`, do not infer the drawing result from the return value. |
+| N8 | `RenderBackendAbi::abi_version` stays the first member and the struct stays standard layout: a reader reads no other member until the revision matches. |
 
 ## 6. Caveats and Traps
 
@@ -354,7 +384,14 @@ removing an unregistered pass and removing an already removed pass are the same 
 - How it fails: platform differences are written into the engine/application layer, and every platform change forks everywhere.
 - How to detect it: an "if Windows/X11 then …" branch appears.
 - How to prevent it: platform facts stay in the backend, the engine consumes only compiled frame values.
+### 6.3 A stale backend module
 
+- How it fails: a module built against another SDK revision registers, and the first virtual call lands in the wrong vtable
+  slot - a segfault or nonsense, with nothing naming the module (measured 2026-11-23).
+- How to detect it: `engine.backend.abi_mismatch` / `engine.backend.abi_missing` on `RenderBackendRegistry::diagnostics()`, or
+  a backend that is absent from `entries()` although its plugin reports a successful load.
+- How to prevent it: rebuild the module against this SDK. Do NOT "fix" it by reading `RenderBackendInfo` first - that read is
+  the crash the refusal exists to avoid, and it is why the refusal carries no backend name.
 ## 7. Rejected Options
 
 | # | Rejected | Reason |
@@ -366,6 +403,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | D5 | The backend sorting the passes again | Two sortings, two frame vocabularies; scheduling moved up into the engine. See [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md). |
 | D6 | A `FrameBorrowed<T>` marker type on `FrameDescription` | The answer to borrowing is already "own it if you keep it" (`OwnedFrame`); a borrowed window is only one `executeFrame` call wide, and a marker type would pierce `FrameDescription` / `PassDraw` / `ImageSource` and could be bypassed by `auto` (`G8` / `G10`). |
 | D7 | A public GPU resource type, or a polymorphic resource table | A host never names a GPU object, so the type would have no consumer at any backend count; a base class would be a forwarding layer over whichever library creates the object (`G7`), and it would need a device reference on the resource (`G2`). See 2.15 and [ADR-2026-11-10](../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md) option D. |
+| D8 | Reporting the ABI through a virtual (`RenderBackendFactory::abi()`) or a field of `RenderBackendInfo` | Both are reads through the object the check has not vouched for yet: a stale module's vtable or layout makes the report itself the crash. The handshake is a C entry point returning a standard-layout value (`BackendAbi.hpp`, 2.16). |
 
 ## 8. Tests and Acceptance
 
@@ -374,6 +412,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | T1 | `test_graphics` / `test_gui` / `test_core` all green. |
 | T2 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_public_docs.py` 0 findings. |
 | T3 | `test_vk` on the lavapipe + validation device: 0 VUID, no skipped device case, and the window pixels asserted through `TestHostWindow.hpp`. |
+| T4 | The ABI gate: `test_graphics`'s `RenderBackendRegistryTest` covers equality, both refusals and the report on the route; `test_vk` passes with the plugin's own `vineRenderBackendAbi()` (a module that states nothing cannot register). |
 
 ## 9. Status and Evolution
 
@@ -388,6 +427,10 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 ### 9.3 Compatibility / migration
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
+
+2026-11-25: a backend module compiled before `VN_RENDER_BACKEND_ABI_VERSION` existed states no revision and is refused
+(`engine.backend.abi_missing`). Every in-tree backend is rebuilt with this batch; an out-of-tree module adds
+`VN_DECLARE_RENDER_BACKEND_ABI()` once, next to its registration, and passes `vineRenderBackendAbi()` to `registerFactory`.
 
 ## 10. References
 
