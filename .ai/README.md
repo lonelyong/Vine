@@ -255,14 +255,14 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (6)
+## research/ — research and proposals (7)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
 which exist because the third-round audit's open items were left with no home when its page was
 deleted (git is still the archive for the page itself), because a review's findings and deferred
-proposals are a working record for the batch that follows them, and because the fifth, eighth and
-ninth reviews compare against the peer engines at a level a design page cannot carry.
+proposals are a working record for the batch that follows them, and because the fifth and eighth to tenth
+reviews compare against the peer engines at a level a design page cannot carry.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
@@ -301,8 +301,17 @@ ninth reviews compare against the peer engines at a level a design page cannot c
   contradicting sentences, the read set resolved at the claim and held by the pass slot, the per-command
   bind lists and the state shadow across a bind, and filter-then-rank device choice - and the rest are
   backlog `T17` (amended: the cross-driver cache-lock stall and the build-admission vocabulary), `T67`
-  (device-local streams), `T68` (the SDK-owned variant rule) and `T69` (the descriptor ceiling).
-
+  (device-local streams), `T68` (the SDK-owned variant rule) and `T69` (the descriptor ceiling).- `graphics-2026-11-25-review-10.md` — the tenth pass, on the three artefacts the module's discipline rests
+  on rather than on its code: the design corpus, the concept inventory (101 headers, 139 exported types) and
+  the extension surface. Seven findings - the extension table (2.11) names propagation sites, so it has
+  already drifted and is still the table `DrawKind.hpp` sends a developer to; numbers in normative prose have
+  no witness and two are wrong (35 vs 37 seam headers, 186 vs 220 `test_vk` cases); `RenderStateOrigin` is
+  computed for every command and read by nothing outside the tests; the closed/open split of the public enums
+  is nowhere stated; `RenderDevice`'s 14 defaulted verbs have per-verb reasons but no rule, and
+  `releaseRenderTarget`'s default leaks silently; `ImageSource.hpp` is named after the engine's half of a
+  concept a host writes as `ImageInput`; and the surface's three header granularities have no stated rule.
+  Also the measured layering (`G2`: 0 leaks in five directions, 0 API-family dependencies) and the seven
+  things the design does that the peer set does not.
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)

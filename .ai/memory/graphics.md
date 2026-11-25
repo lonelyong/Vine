@@ -2487,3 +2487,42 @@
   request names an image the target does not have), and "no host-visible memory" is answered before the wait
   (`MemoryAllocator::supportsHostVisible`), so a refusal costs no device stop.
 - **Witness**: `VkContentTargetTest.ADepthReadbackAnswersAboutTheImageThatExistsNotALaterDeclaration`.
+
+## 2026-11-25 - review 10: the corpus, the concept inventory, the extension surface
+
+- **What this round read** (and what it did NOT): not the code paths (6/7/9), not the seam with `vsg` leaving (8) -
+  the three artefacts the module's discipline rests on: the 11 normative design pages (5744 lines), the public
+  concept inventory (101 headers / 139 `VN_GRAPHICS_API` types), and the extension surface. Page:
+  `.ai/research/graphics-2026-11-25-review-10.md`; **nothing was changed in the tree** (findings are decisions).
+- **Measured baseline** (`python3 scripts/measure_graphics_claims.py`, the repo's own stick): `RenderEngine.hpp`
+  1198 lines / 59 public signatures / 25 includers; 8 `detail::` mechanisms; `RenderDevice` 19 virtuals (5 pure),
+  executor 4 (1 pure), factory 3 (2 pure); seam = 8 mechanisms in a 37-header shared surface; 107 diagnostic
+  codes; 154 public `bool` answers; `test_graphics` 647/82, `test_vk` 220/46.
+- **`G2` is clean, and it is measured, not read**: SDK → std/base only (0 leaks); 50 API-family words in the SDK
+  with **0 dependencies** (35 prose, 15 `RenderApi` vocabulary); no plugin include of a private `src/**` header
+  (structural: only `sdk/` is on the include root); appfw → graphics 17 one-way, graphics → appfw 0; graphics →
+  other modules 44, all into `src/base`.
+- **L1 - the extension table (2.11) rots and is the table `DrawKind.hpp:31-37` sends a developer to.** Its pass-kind
+  row names `RenderPass.cpp`'s kind→node mapping, which moved to `SessionShape.cpp:338-349` in 2.8's split; "6-8
+  places" is ~9 SDK files + 4 backend sites; four axes have no row (a `PassStage`, a `Topology`, a built-in
+  `ShadingMode`, a content node type). Fix shape: state the DECISION SITE + a **grep** per row; a file list rots,
+  a grep cannot.
+- **L2 - numbers in normative prose have no witness, two are wrong**: `graphics-architecture.md:106-107` says "the
+  shared surface is 35 headers" (gate list = 37); `backlog/graphics.md:17` says `test_vk` "186 cases / 45 suites"
+  and "186/186" (today 220/46). Class = `K9` applied to counts; the measuring script exists, the numbers just do
+  not name it.
+- **L3 - `RenderStateOrigin` is computed and never read outside tests**: `StateResolution.hpp:71` (7 items),
+  written at `StateResolution.cpp:96-132`; every `.origin` read is `tests/test_graphics/GraphicsTest.cpp:9601-11058`;
+  the backend calls `resolveRenderState` (`ContentCaches.cpp:1148,1240`) and uses `.state` only. `G8` + `G10` -
+  same class `BC-26`/`BC-27`/`BC-42` closed by deletion; deleting it is a seam ABI batch.
+- **L4 - which sets are closed on purpose is stated in four different @notes and nowhere as a rule**: closed =
+  `DrawKind`, `PassStage`, `Topology`, `ShadingMode`; open = `PassDesc` fields, host programs, `MaterialValues`
+  subclasses, node types. Peers state the split (WebGPU's topology set, Filament's five shading models). 2.11's
+  "touching the core model needs an ADR" must be restated so a closed member is not "the core model".
+- **L5 - the 14 defaulted `RenderDevice` verbs have per-verb reasons but no rule**, and `releaseRenderTarget`'s
+  default is a bare `(void)target;` - the one whose omission LEAKS. Rule to state: a default is legal only when its
+  absence is a true statement about the device, and every such default says so.
+- **L6/L7 - names**: `ImageSource.hpp` declares `ImageInput` (what a host writes) and is named after the resolved
+  half; the surface mixes three header granularities with no stated rule or index.
+- **Verdict**: the code rounds have converged; what is left is corpus upkeep and one public fact with no consumer.
+  Steps 1-2 of §5 are doc-only, step 3 (`L3`) is the only code batch.
