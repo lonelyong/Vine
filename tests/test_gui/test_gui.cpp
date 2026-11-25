@@ -39,6 +39,7 @@
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QThread>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -606,6 +607,59 @@ class RibbonProbeView final : public guifw::DocumentView {
   private:
     guifw::RenderControl* control_ = nullptr;
 };
+
+// ---------------------------------------------------------------------------
+// 窗口几何用例的环境前提。
+//
+// 窗口管理器（WM）不在这些用例的被测范围内：本机的 WSLg 会话会拒绝程序化的顶层窗口移动，
+// 并用一次 ConfigureNotify 把 pos() 改回原处；共享桌面的窗口还要被 WM 摆位。断言一个几何
+// “结果”之前，先证明这台机器允许该结果发生，否则跳过 —— 失败的是环境，不是被测规则
+// （G11：失败要指对责任方）。
+// ---------------------------------------------------------------------------
+
+/// @brief 有界地处理事件，直到 @p done 为真或 @p timeout_ms 用完。
+template <typename Predicate>
+bool pumpUntil(Predicate done, int timeout_ms = 200)
+{
+    for (int elapsed = 0; !done() && elapsed < timeout_ms; elapsed += 5) {
+        QCoreApplication::processEvents();
+        QThread::msleep(5);
+    }
+    return done();
+}
+
+/// @brief 点坐标的 "(x, y)" 文本，用于失败信息（QPoint 没有给 std::ostream 的 operator<<）。
+///
+/// @param point 要写的点。
+/// @return "(x, y)"。
+QString pointText(const QPoint& point)
+{
+    return QStringLiteral("(%1, %2)").arg(point.x()).arg(point.y());
+}
+
+/// @brief 把顶层窗口挪到 @p target，并观察一小段时间，确认窗口管理器没有把它改回去。
+///
+/// @details
+/// - `QWidget::move()` 会先乐观地写好 `pos()`，所以紧随其后的读数证明不了任何事；拒绝这次放置的
+///   窗口管理器会用 ConfigureNotify 把它改回来（本机 WSLg 正是如此），因此判定要放在事件跑过一圈之后。
+///
+/// @param window 要放置的顶层窗口。
+/// @param target 期望落在的 frame 左上角。
+/// @return 窗口确实停在 @p target 时为 true。
+bool placeWindowExactly(QWidget* window, const QPoint& target)
+{
+    window->move(target);
+
+    bool held = true;
+    for (int elapsed = 0; elapsed < 60; elapsed += 5) {
+        QCoreApplication::processEvents();
+        QThread::msleep(5);
+
+        held = held && window->pos() == target;
+    }
+
+    return held && window->pos() == target;
+}
 
 } // namespace
 
@@ -1458,6 +1512,15 @@ TEST_F(GuiTest, Backstage_DraggingItsBackgroundMovesTheMainWindow)
     ASSERT_NE(window, nullptr);
     ASSERT_NE(main, nullptr);
 
+    // 断言的事实是“主窗口跟着拖动走”，而窗口的最终位置由窗口管理器决定：它一旦拒绝程序化的
+    // move()，拖动就没有可观察的效果。先证一步这台机器的 WM 会照做，否则跳过而不是把 WM 的
+    // 选择记成代码缺陷。
+    const QPoint origin = main->pos();
+    if (!placeWindowExactly(main, origin + QPoint(37, 23))) {
+        GTEST_SKIP() << "窗口管理器不按 move() 移动主窗口（停在 " << pointText(main->pos()).toStdString() << "），拖动没有可断言的效果";
+    }
+    placeWindowExactly(main, origin);
+
     const QPoint before = main->pos();
     const QPoint local(400, 30);
     const QPoint global = window->mapToGlobal(local);
@@ -1475,7 +1538,8 @@ TEST_F(GuiTest, Backstage_DraggingItsBackgroundMovesTheMainWindow)
     EXPECT_EQ(window->pos(), main->mapToGlobal(QPoint(0, 0))) << "覆盖层应在拖动的同时跟上主窗口";
     QCoreApplication::processEvents();
 
-    EXPECT_EQ(main->pos(), before + delta) << "拖动覆盖层空白处应带动主窗口";
+    // 位置要等 WM 应答（一次 ConfigureNotify），不能读刚发出去的请求值。
+    EXPECT_TRUE(pumpUntil([&] { return main->pos() == before + delta; })) << "拖动覆盖层空白处应带动主窗口";
 
     QMouseEvent release(QEvent::MouseButtonRelease, QPointF(local + delta), QPointF(global + delta), Qt::LeftButton,
                         Qt::NoButton, Qt::NoModifier);
@@ -4259,25 +4323,31 @@ TEST(DockGeometryTest, TitleBarStaysReachable)
     const QRect available   = screen->availableGeometry();
     const int   titleHeight = 24;
 
-    // 标题栏矩形（位置会变，每次判前重算）。
-    const auto titleBarRect = [&pane, titleHeight]() { return QRect(pane.pos(), QSize(pane.width(), titleHeight)); };
+    // 标题栏矩形（位置会变，每次判前重算）。用 frameGeometry()：被夹取的就是它。
+    const auto titleBarRect = [&pane, titleHeight]() {
+        const QRect frame = pane.frameGeometry();
+        return QRect(frame.topLeft(), QSize(frame.width(), titleHeight));
+    };
 
     // 完全拖到屏幕外的右下角：拉回来，标题栏必须留在可用区域内。
-    pane.move(available.right() + 400, available.bottom() + 400);
-    if (available.contains(pane.pos())) {
-        GTEST_SKIP() << "窗口管理器不允许把窗口移出屏幕";
+    // 前提先证一步：这台机器的窗口管理器得允许顶层窗口留在屏幕外。WSLg 的会话会把窗口拽回
+    // 屏内（连 move() 都被 ConfigureNotify 改回去），那样“拖出屏幕”这个场景根本建不起来，
+    // 用例失败的会是窗口管理器，不是夹取规则。
+    const QPoint outside(available.right() + 400, available.bottom() + 400);
+    if (!placeWindowExactly(&pane, outside)) {
+        GTEST_SKIP() << "窗口管理器没有把窗口放到屏外 " << pointText(outside).toStdString() << "，实际停在 " << pointText(pane.pos()).toStdString();
     }
     EXPECT_TRUE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
-    EXPECT_TRUE(available.intersects(titleBarRect()));
+    EXPECT_TRUE(pumpUntil([&] { return available.intersects(titleBarRect()); })) << "夹取之后标题栏应留在可用区域内";
 
     // 已经在屏幕内：不动。
-    pane.move(available.left() + 10, available.top() + 10);
+    ASSERT_TRUE(placeWindowExactly(&pane, QPoint(available.left() + 10, available.top() + 10))) << "窗口管理器中途拒绝放置窗口";
     EXPECT_FALSE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
 
     // 只露出一点点：也拉回来。
-    pane.move(available.right() - 1, available.top() + 10);
+    ASSERT_TRUE(placeWindowExactly(&pane, QPoint(available.right() - 1, available.top() + 10))) << "窗口管理器中途拒绝放置窗口";
     EXPECT_TRUE(DockingPaneGeometry::keepTitleBarReachable(&pane, titleHeight));
-    EXPECT_TRUE(available.intersects(titleBarRect()));
+    EXPECT_TRUE(pumpUntil([&] { return available.intersects(titleBarRect()); })) << "夹取之后标题栏应留在可用区域内";
 }
 
 TEST(DockGeometryTest, KeepTitleBarReachableDoesNotMoveChildWidgets)

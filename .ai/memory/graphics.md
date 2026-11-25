@@ -2387,3 +2387,19 @@
   `VkContentDrawTest.TwoAlternatingPipelinesRestateNoState` and
   `VkMultiSessionTest.AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampledSource`; gates: ai-docs strict,
   design-docs, cross-refs, include-hygiene, api-style, vk-exposure, diagnostic-formats, export-annotations.
+
+## 2026-11-25 - the window-manager cases prove their own premise (backlog T47 retired)
+
+- **What was wrong**: two `test_gui` cases read a window's position as if it were the code's answer. A window manager
+  decides it: this session's (WSLg) refuses a programmatic top-level move and reverts `pos()` with a ConfigureNotify,
+  so `DockGeometryTest.TitleBarStaysReachable` could never set up "dragged off screen", and the backstage drag compared
+  `before + delta` against a window that never moved.
+- **The trap worth remembering**: `QWidget::move()` writes `pos()` optimistically (the widget's own crect), so a value
+  read immediately after the call proves nothing; only what is observed after the event round trip is the WM's answer.
+- **Shape of the fix** (test-only, `tests/test_gui/test_gui.cpp`): `placeWindowExactly()` moves and watches 60 ms for
+  the value to hold; `pumpUntil()` waits (bounded) for a settled geometry; a premise the machine cannot provide becomes
+  `GTEST_SKIP` naming the window manager, never an `EXPECT`; the title-bar rect is built from `frameGeometry()` (the
+  rect the rule clamps), and the overlay-follows assertion stays immediate because it is Qt state, not a WM answer.
+- **Evidence**: ctest `test_gui` (offscreen, what the suite runs under) passes, 13.9 s; on this session's real display
+  `TitleBarStaysReachable` skips in 63 ms (the WM refuses the off-screen placement) while the drag case passes in
+  189 ms - both outcomes the backlog asked for, and each failure now names the window manager instead of the code.
