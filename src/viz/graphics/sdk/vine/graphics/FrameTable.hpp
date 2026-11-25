@@ -66,7 +66,11 @@ struct VN_GRAPHICS_API PassRow {
     /// target's depth is no longer a distance field. That is the fact a host reading the table needs in order to
     /// know why one pass draws over another.
     std::optional<DepthRange> depth_range;
-    /// The input names it declared (see RenderPass::addInputName), in declaration order.
+    /// The identity each declared input names, spelled for a reader (`name:GBuffer`, `target:gbuffer`,
+    /// `image:albedo#0`, `texture:D2 256x256`), in declaration order - see ImageInput::description.
+    ///
+    /// This is the WHOLE declaration list, so an input stated by object (a shadow map, an MRT g-buffer)
+    /// appears here too. Text for reading: never a lookup key.
     std::vector<String> inputs;
     /// The name it publishes its result under, or empty (see RenderPass::setOutputName).
     String output;

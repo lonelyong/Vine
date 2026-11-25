@@ -31,7 +31,7 @@ This file defines the current design of graphics rendering: targets, MSAA, image
 
 2.1 **Description separated from GPU resources**: `RenderTarget` is only a description; the backend builds the image from the description.
 2.2 **The sample count is a target property**: `setSamples` → the target's `RenderPassCompatibility` → pipeline key → pass and image.
-2.3 **Two image-source lifetimes**: produced (`ImageRef`) and imported (`Texture`) are not merged; only `ImageSource` resolves the shape uniformly.
+2.3 **Two image-source lifetimes, ONE declaration list**: produced (`ImageRef`) and imported (`Texture`) are not merged; `ImageSource` resolves the shape uniformly, and `PassDesc::inputs` is the one ordered list every reader of a pass walks (2.13).
 2.4 **Colour goes into types**: `Colorf` linear light, `Color` sRGB encoding, one named pair of conversions.
 2.5 **Shading is a thin interface**: GLSL source + typed entry points; `ShaderAbi` is the only contract between C++ and GLSL.
 2.6 **A shadow is an ordinary pass**: the light declares it, the chain builds a depth-only pass, there is no engine-level shadow subsystem.
@@ -257,6 +257,34 @@ normal is two channels.
 - A shader still writes `vec4` whatever the attachment keeps, so an effect pass needs no second fragment-output
   contract; the price of that convenience is `P4`.
 
+2.13 **One list of declared inputs per pass** (`T56`, 2026-11-25; `G1` / `G4` / `G6` / `G11`): what a pass reads is
+`PassDesc::inputs`, one ordered `ImageInput` list, and each entry names ONE identity - `byImage` (one attachment a
+producer binds), `byTarget` (a whole target), `byName` (a late-bound published name) or `byTexture` (an imported
+texture). Resolution, scheduling edges, the wiring checks, the frame table and `Plan::describe` read that same list in
+that same order, so a wire is resolved once and reported once.
+
+- Why the identities stay four: each is the identity SOME author holds. A transient target is created by the engine
+  while it compiles (the author cannot hold it), a host publishes a target under a name, and an imported texture has
+  no producer at all - folding any of them into "a pointer" would delete the only spelling that case has (`G9`).
+- Why one list and not "objects win, names are ignored": the removed rule let a declaration be silently discarded, so
+  the same wire could be resolved from one field and validated, ordered and reported from another - the built-in chain
+  stated the G-buffer twice to compensate, and a shadow map stated by object never appeared in the plan at all. One
+  list makes "stated twice" impossible instead of documented (`G7`).
+- Why named factories and no implicit conversions: the industry's version of this value (Unity's
+  `RenderTargetIdentifier`) accepts its sources through implicit conversions, which is why "which identity did this
+  become" is a known debugging trap; `byImage` / `byTarget` / `byName` / `byTexture` say it at the call site (`G4`).
+  What the entry costs is length, not ambiguity.
+- The declaration is a VALUE (owning handles, private fields, `kind()`); the resolved form is `ImageSource` (three
+  kinds, borrowed). A name is resolved where it is used and does not survive into the frame: the backend answers "what
+  did I get", never "how was it found".
+- Boundary: WHICH identity each rule can judge is a property of the identity, not a convenience - `validatePlan` can
+  only judge a name (a plan has no frame), and the compile judges an object (whether a target was produced is a fact
+  of the frame). Neither rule is judged twice (`G5`), and both read the same list (`N13`).
+- Cost, stated: `ImageInput` is a fat value (one of four handles per entry); a `std::variant` would be smaller, but it
+  would stop mirroring `ImageSource`'s tagged shape for a few dozen bytes per declaration (`G8`, `D13`).
+- The rejected shapes are `D11`-`D16`; the decision record is
+  [`ADR-2026-11-25`](../decisions/ADR-2026-11-25-one-input-list-per-pass.md).
+
 ## 3. Features
 
 ### 3.1 Targets
@@ -288,6 +316,7 @@ normal is two channels.
 | F13 | Narrow binding | `ProducedImage` binds only the declared attachment; `ProducedTarget` keeps the whole target. |
 | F14 | Full-screen ABI | Source colour attachments occupy 0..C-1, depth follows, imported sources fill the remaining bindings in declaration order. |
 | F15 | Sampler | min/mag, mipmap, address, border, anisotropy, lod bias, LOD range; cached by value. |
+| F27 | One input list | `PassDesc::inputs`: one `ImageInput` per declaration, each naming one identity (`byImage` / `byTarget` / `byName` / `byTexture`); resolution, edges, wiring checks, the frame table and `Plan::describe` read that one list in declaration order (2.13). |
 
 ### 3.4 Colour
 
@@ -326,10 +355,11 @@ normal is two channels.
 
 | Interface | Purpose |
 |---|---|
-| `ImageInput(ImageRef)` / `ImageInput(Texture[, Sampler])` | Declaration |
+| `ImageInput::byImage()` / `byTarget()` / `byName()` / `byTexture()` | Declaration (one identity each) |
+| `ImageInput::kind()` / `description()` | Which identity an entry names; the declaration as text |
 | `ImageSource::producedImage()` / `producedTarget()` / `imported()` | Resolution |
 | `Sampler` fields | filter / mipmap / address / border / anisotropy / lod |
-| `RenderPass::addInput(Texture[, Sampler])` / `PassDesc::inputs` | Pass inputs |
+| `PassDesc::inputs` / `RenderPass::inputs()` | Pass inputs (the one list) |
 
 ### 4.3 Shading and shadows
 
@@ -355,6 +385,7 @@ normal is two channels.
 | C4 | The engine core's pass description has no shadow field; "this image is a shadow" is declared by the target itself, consumers do not guess from "the first input with depth". |
 | C5 | A colour texel's readback width is its channel count: the 8-bit family is one byte per channel (1 / 2 / 4 bytes), the float family has no byte packing and is `UnreadableFormat`. |
 | C6 | A format is a target only when the device backs colour attachment, sampling AND transfer-source for it; a target asking for anything less is refused by name, never attempted. |
+| C7 | A pass' inputs are ONE ordered list of `ImageInput`; each entry names one identity, and every reader (resolution, edges, wiring checks, frame table, plan description) reads that list in declaration order. |
 
 ### 5.2 Requirements (R#)
 
@@ -381,6 +412,7 @@ normal is two channels.
 | N10 | Dynamic state cannot change an enable: switches such as `depthBiasEnable` stay in the pipeline and must be fixed together with the state list, not left to the commands alone. |
 | N11 | Alpha-to-coverage is not stated: a Mask fragment on a multisampled target keeps binary edges. On this backend it is ONE switch (`vkCmdSetAlphaToCoverageEnableEXT`, dynamic under the EDS3 floor), so the obstacle is not the backend - coverage is derived from the fragment's first colour output, which is the material's fact (`graphics-material.md` N6, backlog `T58`). |
 | N12 | A shader writes `vec4` into any colour format; the attachment keeps its own channels and drops the rest, so a value added to the vocabulary needs no second fragment-output contract - and a product narrower than four channels is a mask, not a picture with empty channels (`P4`). |
+| N13 | `validatePlan` judges only `ImageInput::byName` entries (a plan has no frame); a target/image identity is judged by the compile that resolves it. Both walk the same `PassDesc::inputs` list, so no input is invisible to one reader and visible to another. |
 
 ## 6. Caveats and Traps
 
@@ -413,6 +445,17 @@ normal is two channels.
 - How to prevent it: size the read from `colorReadbackOf(format).bytes_per_texel` (never a literal 4), and name the
   channel the product lives in - `R8` is a mask, not a grey picture with three empty channels (`N12`).
 
+### 6.5 An empty input, or a name that lost
+
+- How it fails: `ImageInput::byName(u8"")` declares nothing (`Kind::None`); it keeps its slot in the binding order
+  but resolves to an empty source, so a pass whose only "input" was that entry is a pass that draws nothing
+  (`engine.screen.no_input`). Several name entries are a FALLBACK list: the first that resolved is sampled and
+  the rest stay quiet.
+- How to detect it: `inputs[i].kind() == ImageInput::Kind::None`; `Plan::describe()` and the frame table spell
+  such an entry `(empty)`.
+- How to prevent it: state the identity you hold - `byTarget` for a target you own, `byName` for a name you can
+  publish. A name list is a fallback list by design, not an "all of these" list.
+
 ## 7. Rejected Options
 
 | # | Rejected | Reason |
@@ -427,6 +470,12 @@ normal is two channels.
 | D8 | An integer colour family (`R8_UINT`, `R32_UINT`) | An integer attachment requires an integer fragment output (`uvec4`) - a different shader-output contract - so it is a shader-ABI batch, not a format-table one. |
 | D9 | A packed 10/11-bit value (`R11G11B10F`, `A2B10G10R10`) | No product here needs the bandwidth, and `channels x family` is what keeps the vocabulary small (`G8`); a real product is the trigger. |
 | D10 | Reading a float colour attachment back as bytes | The verb copies texels and converts nothing; under a byte-count contract a half float misreads every texel after the first. A float readback is a DECODER of its own; `R16F` / `R32F` are drawn and sampled today, and the trigger is a host asking for its product's values. |
+| D11 | Keep the three input vectors and document the precedence | `G4`/`G1`: a field that can be stated and silently ignored is not a contract, and one input concept with three storages is the defect 2.13 removes. See [ADR](../decisions/ADR-2026-11-25-one-input-list-per-pass.md). |
+| D12 | Resolve names at authoring time and keep objects only | `G9`/`G4`: a transient target exists only after the compile, and a host binding is keyed by name - the object cannot be held when the declaration is written. |
+| D13 | `std::variant` for the four identities | `G6`: `ImageSource` is a tagged struct and the declaration must mirror it; private fields plus factories already make an illegal entry unrepresentable. |
+| D14 | A separate `InputTarget` type beside `ImageInput` | `G1`: one input, two types; the binding order would need two lists again. |
+| D15 | `validatePlan` also checking object identities | `G7`: it would need the host's publication set and the transient identities inside the plan layer, duplicating the compile's wiring rules (`N13`). |
+| D16 | Rename the pair to `PassInput` / `ResolvedInput` | `G1`: the existing pair already says declaration/resolution; renaming buys no distinction and costs every search. |
 
 ## 8. Tests and Acceptance
 
@@ -439,6 +488,7 @@ normal is two channels.
 | T5 | Shadows: the ground darkens with a casting light; without one the evidence is byte-identical. |
 | T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (witness: `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
 | T7 | Every colour format: `VkContentTargetTest.AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack` (agreement between the device mask and the build path, plus the 8-bit readback values), `VkBackendTest.AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse` (mapping, names, all-or-nothing feature rule), `CoreReadbackTest.ANarrowColourFormatIsServableLikeAColour`, `CoreReadbackTest.TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel`, `RenderTargetTest.MultipleColorAttachments`. |
+| T8 | One input list: `PlanTest.TheDescriptionSpellsEveryDeclaredInput` (every identity spelled in one order), `RenderTest.NamedOutputAndInputSlots` (an empty name declares nothing), `RenderPassTest.ObjectTypedOutputAndInputImages` (kinds and declaration order), `OwnedFrameTest.TheOwnedFrameKeepsWhatItsProducersReleased` (a whole target resolves like an imported texture does), `PassChainTest.AShadowThisChainCannotShadeIsReported` (the shadow map appears in the frame table), `FrameScheduleTest.AProducerRunsBeforeAConsumerAnnouncedEarlier` (the edge comes from a target identity). |
 
 ## 9. Status and Evolution
 
@@ -459,6 +509,13 @@ byte per channel, and a colour format the device does not back is refused by nam
 `RGBA8` / `RGBA16F` / `RGBA32F` - their meanings and their readback answers are unchanged (the floats are still
 `UnreadableFormat`); what is new is that `R8` / `RG8` read back, and that a narrow product no longer needs a four-channel
 target to exist.
+
+2026-11-25 - `T56` landed: `PassDesc` states its inputs ONCE (`inputs`, 2.13). What a host must change:
+`input_names` / `input_targets` and `RenderPass::inputNames()` / `inputTargets()` are gone - declare
+`ImageInput::byName` / `byTarget` / `byImage` / `byTexture` in `inputs`, in binding order. `FrameTable::PassRow::inputs`
+still carries `String`s but now spells the whole declaration (`name:X`, `target:X`, `image:label#N`, `texture:D2 WxH`),
+so an input stated by object is visible for the first time. No bootstrap (BC-) is needed: every in-tree consumer moved in
+the same commit and the module promises no source stability.
 
 ## 10. References
 

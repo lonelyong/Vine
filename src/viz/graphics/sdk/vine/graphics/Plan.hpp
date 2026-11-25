@@ -208,10 +208,12 @@ struct VN_GRAPHICS_API Plan {
  * - What it checks, in the order a host reads them: `TooManyPasses`, `EmptyPassName`, `DuplicatePassName`,
  *   `UnknownInput`, `DependencyCycle`. It returns EVERY problem, not the first, so one call tells a host
  *   everything that has to change.
- * - Inputs are matched BY NAME (`PassDesc::input_names` against `PassDesc::output.name`); the object-typed
- *   inputs are identities, not names, so they are checked by the compile that resolves them (see
- *   RenderEngine::frameTable). A pass that names its own output is feedback, not a cycle, and is allowed -
- *   the same rule the compile applies.
+ * - Inputs are matched BY NAME: an `ImageInput::byName` entry is checked against `PassDesc::output.name`
+ *   (and against @p external_outputs); a #Kind::Image / #Kind::Target entry is an IDENTITY, and an
+ *   identity is checked by the compile that resolves it (see RenderEngine::frameTable) - it is
+ *   answerable only there, because whether a target was produced is a fact of the frame. Both readers
+ *   walk the same `PassDesc::inputs` list, so no input exists in one and not the other. A pass that
+ *   names its own output is feedback, not a cycle, and is allowed - the same rule the compile applies.
  *
  * @param plan              The shape to check.
  * @param external_outputs  Names published by someone other than the plan's passes (a host binding, see

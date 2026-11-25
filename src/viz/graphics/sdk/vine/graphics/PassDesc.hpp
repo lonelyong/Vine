@@ -81,13 +81,14 @@ struct VN_GRAPHICS_API PassDesc {
     /// borrow is the mechanism a backend builds its framebuffer from).
     std::optional<DepthView> depth_view;
 
-    /// Fine-grained declared inputs, in declaration order: produced images or imported textures (see
-    /// RenderPass::addInput).
+    /// What this pass READS, in binding order: one entry per declaration, each naming one identity
+    /// (see ImageInput::byImage / byTarget / byName / byTexture).
+    ///
+    /// ONE FIELD for the whole wiring: every reader of the pass - frame resolution, scheduling edges, the
+    /// wiring checks, the frame table and `Plan::describe` - reads THIS list in THIS order, so a wire is
+    /// resolved once and reported once. State the identity you HOLD: a target you own, the ImageRef a
+    /// producer binds, a published name, or an imported texture (design `graphics-rendering.md` 2.13).
     std::vector<ImageInput> inputs;
-    /// Coarse declared inputs, in declaration order (see RenderPass::addInputTarget).
-    std::vector<intrusive_ptr<RenderTarget>> input_targets;
-    /// Name-based declared inputs, in declaration order: the sugar over the object-typed ones.
-    std::vector<String> input_names;
 
     /// Whether this pass clears its target's COLOUR attachments, or unset for the KIND's own policy: a full-screen pass
     /// never clears (it composites over what is already there), a Scene pass does. It is ONE OF TWO independent

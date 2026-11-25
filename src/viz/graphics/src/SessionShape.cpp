@@ -130,7 +130,12 @@ FrameTable SessionShape::frameTable() const
         row.clears_color  = pass->isClearEnabled();
         row.clear_color   = pass->clearColor();
         row.clears_depth  = pass->shouldClearDepth();
-        row.inputs        = pass->inputNames();
+        // The WHOLE declaration list, spelled for a reader: an input stated by object (a shadow map, an
+        // MRT g-buffer) is as much a fact of the frame as one stated by name (see ImageInput::description).
+        row.inputs.reserve(pass->inputs().size());
+        for (const ImageInput& input : pass->inputs()) {
+            row.inputs.push_back(input.description());
+        }
         row.output        = pass->outputName();
         row.record_micros = slot.record_micros;
         if (pass->hasViewport()) {

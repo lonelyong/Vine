@@ -122,7 +122,9 @@
 ### 2.8 A plan is a declaration
 
 - What it is: `Pass = (name, View, Target, state overrides, order, inputs)`; `Target = Transient{name, shape} |
-  Explicit{RenderTarget} | Window` (no target = draw into this area's default framebuffer); `inputs` refer by stable names.
+  Explicit{RenderTarget} | Window` (no target = draw into this area's default framebuffer); `inputs` are the
+  declared reads, each entry naming ONE identity - an image attachment, a whole target, a published name or an
+  imported texture (`graphics-rendering.md` 2.13).
   One engine drives one surface (several windows = several engines sharing one device, see `../decisions/ADR-2026-11-13-one-engine-one-surface.md`).
 - Why: the host publishes "the frame graph I want" and the Session aligns it by name at a frame boundary ⇒ adding or removing a pass needs no add/remove call, and
   "changing the session's shape while a frame is in flight" **cannot be expressed** (`R21`; `G12`).
@@ -166,9 +168,9 @@
 
 ### 2.12 The engine is a frame compiler, not a render graph
 
-- What it is: a pass declares `(target, state, inputs)`; compilation resolves the input names, sorts, allocates transients and emits `FrameDescription`; the backend records that value. No layer derives resource dependencies, inserts barriers, aliases memory, or reorders passes to that effect.
+- What it is: a pass declares `(target, state, inputs)`; compilation resolves the declared inputs, sorts, allocates transients and emits `FrameDescription`; the backend records that value. No layer derives resource dependencies, inserts barriers, aliases memory, or reorders passes to that effect.
 - Why: today's consumers do not need one - a chain is a handful of passes whose order its recipe states, transient sharing is by declared identity + shape (2.8), and barriers are the backend's own table (`vk-backend.md` 2.7). A render graph's mechanism (implicit resource lifetimes, automatic barriers, aliasing) would be a second place deciding what the picture is, with no witness asking for it (`G8`); synchronisation stays where it belongs - behind the seam (`G2`).
-- Boundary: `Transient` borrows a render graph WORD, not its semantics: it names "the shape of canvas this pass needs", the compile shares it by name + shape, and no read/write edge is expressed. Wiring is exactly the input-name system (2.8 / F6). "Pass", "target" and "transient" therefore mean less here than in UE's RDG, Frostbite's FrameGraph or O3DE's pass tree - deliberately.
+- Boundary: `Transient` borrows a render graph WORD, not its semantics: it names "the shape of canvas this pass needs", the compile shares it by name + shape, and no read/write edge is expressed. Wiring is exactly the declared-input list (2.8 / F6). "Pass", "target" and "transient" therefore mean less here than in UE's RDG, Frostbite's FrameGraph or O3DE's pass tree - deliberately.
 - Revisit when a real consumer needs resource lifetimes DERIVED rather than declared (a pass count at which hand-stated order and sharing stop being readable). The reader-facing version of this boundary is `docs/guides/graphics.md` §5.5.
 
 ### 2.13 The frame carries its context, and one clock measures it

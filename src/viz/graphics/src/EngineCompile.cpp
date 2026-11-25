@@ -218,7 +218,7 @@ void SessionShape::scheduleRows()
     // draw, not a substitute for one.
     const auto writes = [](const RenderPass& pass) -> bool {
         if (const auto* screen = obj_cast<FullscreenPass>(&pass)) {
-            return screen->program() != nullptr && (!pass.inputs().empty() || !pass.inputTargets().empty() || !pass.inputNames().empty());
+            return screen->program() != nullptr && !pass.inputs().empty();
         }
         return pass.camera() != nullptr && (pass.content() != nullptr || pass.isClearEnabled());
     };
@@ -242,22 +242,29 @@ void SessionShape::scheduleRows()
         if (pass == nullptr || !pass->isEnabled()) {
             continue;
         }
-        for (const intrusive_ptr<RenderTarget>& target : pass->declaration().input_targets) {
-            add_edges(consumer, target.get());
-        }
-        for (const ImageInput& input : pass->declaration().inputs) {
-            if (raw_ptr<ImageRef> image = input.image(); image != nullptr) {
-                add_edges(consumer, image->target());
-            }
-        }
-        for (const String& name : pass->inputNames()) {
-            for (std::uint32_t producer = 0; producer < count; ++producer) {
-                RenderPass* const writer = plan_rows_[producer].pass;
-                if (producer != consumer && writer != nullptr && writer->isEnabled() && writer->renderTarget() != nullptr && writer->outputName() == name &&
-                    writes(*writer))
-                {
-                    scheduler_->addEdge(producer, consumer);
+        // ONE LOOP over the ONE declaration list: a target identity (whole, or one attachment's) adds the
+        // producer edge by target; a published name adds it by the writer's output name. Nothing here
+        // knows which spelling the author used, and nothing can be stated twice and resolved once.
+        for (const ImageInput& input : pass->inputs()) {
+            switch (input.kind()) {
+            case ImageInput::Kind::Image:
+                if (raw_ptr<ImageRef> image = input.image(); image != nullptr) {
+                    add_edges(consumer, image->target());
                 }
+                break;
+            case ImageInput::Kind::Target: add_edges(consumer, input.target()); break;
+            case ImageInput::Kind::Name:
+                for (std::uint32_t producer = 0; producer < count; ++producer) {
+                    RenderPass* const writer = plan_rows_[producer].pass;
+                    if (producer != consumer && writer != nullptr && writer->isEnabled() && writer->renderTarget() != nullptr &&
+                        writer->outputName() == input.name() && writes(*writer))
+                    {
+                        scheduler_->addEdge(producer, consumer);
+                    }
+                }
+                break;
+            case ImageInput::Kind::Texture: // the host owns it: there is no producer to order against
+            case ImageInput::Kind::None: break;
             }
         }
         if (raw_ptr<RenderTarget> target = pass->renderTarget(); target != nullptr) {
@@ -510,57 +517,73 @@ void SessionShape::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
         return;
     }
 
-    // The object-typed declarations ARE the wiring; a name is the sugar over it. When a pass declares images,
-    // textures or targets, they decide what it gets - one resolved entry per declaration, in declaration order,
-    // an empty ImageSource where nothing produced it - and the names are not consulted at all: one wire stated
-    // twice must not be resolved twice.
-    if (!pass->inputs().empty() || !pass->inputTargets().empty()) {
-        out.reserve(pass->inputs().size() + pass->inputTargets().size());
-        for (const ImageInput& input : pass->inputs()) {
+    // ONE DECLARATION LIST, ONE ENTRY PER ANSWER (see PassDesc::inputs): the kind says which identity the
+    // author stated, so resolution is a switch rather than a precedence rule - a wire stated once is
+    // resolved once. An entry that did not resolve keeps its slot (an empty ImageSource), because the
+    // positions ARE the binding order the backend draws with.
+    const std::vector<ImageInput>& declared = pass->inputs();
+    if (declared.empty()) {
+        return;
+    }
+    out.reserve(declared.size());
+    for (const ImageInput& input : declared) {
+        switch (input.kind()) {
+        case ImageInput::Kind::Image:
             if (raw_ptr<ImageRef> image = input.image(); image != nullptr) {
                 raw_ptr<RenderTarget> target = resolveDeclaredImage(pass, *image);
                 out.push_back(target != nullptr ? ImageSource::producedImage(target, image->attachment(), image->kind() == ImageRef::Kind::Depth)
                                                 : ImageSource{});
             }
-            else if (raw_ptr<Texture> texture = input.texture(); texture != nullptr) {
+            else {
+                out.push_back(ImageSource{});
+            }
+            break;
+        case ImageInput::Kind::Target:
+        {
+            raw_ptr<RenderTarget> target   = input.target();
+            raw_ptr<RenderTarget> resolved = target != nullptr ? resolveDeclaredTarget(pass, target) : nullptr;
+            out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
+            break;
+        }
+        case ImageInput::Kind::Name:
+        {
+            raw_ptr<RenderTarget> resolved = resources_.resolve(input.name());
+            out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
+            break;
+        }
+        case ImageInput::Kind::Texture:
+            if (raw_ptr<Texture> texture = input.texture(); texture != nullptr) {
                 out.push_back(ImageSource::imported(texture, input.sampler()));
             }
             else {
                 out.push_back(ImageSource{});
             }
+            break;
+        case ImageInput::Kind::None: out.push_back(ImageSource{}); break;
         }
-        for (const auto& target : pass->inputTargets()) {
-            raw_ptr<RenderTarget> resolved = target != nullptr ? resolveDeclaredTarget(pass, target.get()) : nullptr;
-            out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
-        }
-        return;
     }
 
-    const auto& names = pass->inputNames();
-    if (names.empty()) {
-        return;
-    }
-    out.reserve(names.size());
-    for (const auto& name : names) {
-        raw_ptr<RenderTarget> resolved = resources_.resolve(name);
-        out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
-    }
-
-    // A declared input nobody published this frame means the pass draws NOTHING (FullscreenPass keeps the first
-    // non-null input and returns early when there is none), so the frame silently misses its content: the
-    // wiring is the engine's job, so it says so. A pass may declare several alternative names (a chain that
-    // falls back), so this only fires when NONE of them resolved - and the compile forgets the problem the
-    // moment one of them resolves, which is what re-arms it.
+    // A NAME IS AN ALTERNATIVE, not a promise: a pass may declare a fallback list of names, so a name that
+    // resolved to nothing while another entry did resolve is not a mistake and stays quiet. Only when
+    // NOTHING in the list resolved does the frame say so - for the first name the pass declared, once per
+    // episode (a mixed list that failed whole already had its object identities reported by
+    // collectUnproducedInputs, so this sentence names the other half of the wiring).
     const bool any_resolved = std::any_of(out.begin(), out.end(), [](const ImageSource& source) { return static_cast<bool>(source); });
     if (any_resolved) {
         return;
     }
-    noteProblem(compileProblem(u8"engine.compile.input_not_produced",
-                               vn::graphics::DiagnosticCategory::ContentSkipped,
-                               String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + names.front() +
-                                   String(u8"' but no pass published it this frame; the pass draws nothing"
-                                          u8" (check the producer's order, its enabled state and its output name)"),
-                               reportedPassName(pass)));
+    for (const ImageInput& input : declared) {
+        if (input.kind() != ImageInput::Kind::Name) {
+            continue;
+        }
+        noteProblem(compileProblem(u8"engine.compile.input_not_produced",
+                                   vn::graphics::DiagnosticCategory::ContentSkipped,
+                                   String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + input.name() +
+                                       String(u8"' but no pass published it this frame; the pass draws nothing"
+                                              u8" (check the producer's order, its enabled state and its output name)"),
+                                   reportedPassName(pass)));
+        break;
+    }
 }
 
 void SessionShape::publishRowOutput(raw_ptr<RenderPass> pass)
@@ -1034,35 +1057,40 @@ void SessionShape::collectUnproducedInputs()
             continue;
         }
 
-        for (const auto& target : pass->inputTargets()) {
-            if (target == nullptr) {
-                continue;
-            }
-            const OutputIdentity identity = OutputIdentity::targetOf(*target);
-            const Declaration*   entry    = wiring_.findFilled(target.get());
-            // A pass reading what it draws into is a feedback loop the backend supports on purpose
-            // (an overlay reading the frame it is about to composite into): never a bogus wire.
-            if (entry != nullptr && entry->pass == pass) {
-                continue;
-            }
-            if (entry != nullptr) {
-                continue; // someone fills it; the scheduler puts that pass before this one
-            }
-            // The structural check speaks for this wire; the collect keeps its subject so the RESOLUTION of the
-            // same input stays quiet about it (see unusableInputReported / reportUnproducedInput).
-            unusable_inputs_this_frame_.emplace(pass, identity);
-            {
-                const String consumer = reportedPassName(pass);
-                const String message  = String(u8"pass '") + consumer + String(u8"' declares the input target '") + targetName(target.get()) +
-                                        String(u8"' but no pass writes it, so nothing fills it");
-                noteProblem(detail::engineProblem(u8"engine.pass.input_target_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
-            }
-        }
-
+        // ONE LOOP over the ONE declaration list (see PassDesc::inputs): a whole-target identity and a
+        // one-image identity have different wiring rules (a target is filled by whatever draws into it, an
+        // image by whatever promises that same image), so the KIND picks the rule - not a second list.
         for (const ImageInput& input : pass->inputs()) {
+            if (input.kind() == ImageInput::Kind::Target) {
+                raw_ptr<RenderTarget> target = input.target();
+                if (target == nullptr) {
+                    continue;
+                }
+                const OutputIdentity identity = OutputIdentity::targetOf(*target);
+                const Declaration*   entry    = wiring_.findFilled(target);
+                if (entry != nullptr) {
+                    // Its own pass or another one: either way something fills it - and a pass reading what it
+                    // draws into is the feedback loop the backend supports on purpose (an overlay reading the
+                    // frame it is about to composite into). The scheduler orders the other pass before this one.
+                    continue;
+                }
+                // The structural check speaks for this wire; the collect keeps its subject so the RESOLUTION of the
+                // same input stays quiet about it (see unusableInputReported / reportUnproducedInput).
+                unusable_inputs_this_frame_.emplace(pass, identity);
+                {
+                    const String consumer = reportedPassName(pass);
+                    const String message  = String(u8"pass '") + consumer + String(u8"' declares the input target '") + targetName(target) +
+                                            String(u8"' but no pass writes it, so nothing fills it");
+                    noteProblem(detail::engineProblem(u8"engine.pass.input_target_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
+                }
+                continue;
+            }
+            if (input.kind() != ImageInput::Kind::Image) {
+                continue; // a name is resolved against the published outputs; an imported texture needs no producer
+            }
             raw_ptr<ImageRef> image = input.image();
             if (image == nullptr) {
-                continue; // an imported texture has no producer/wiring rule to check
+                continue;
             }
             const OutputIdentity identity = OutputIdentity::of(*image);
             // An UNBOUND image can never be delivered (resolveDeclaredImage returns null for it, and
@@ -1140,15 +1168,17 @@ void SessionShape::collectFullscreenPassProblems()
             continue;
         }
 
-        // 2. No input at all (no image, no target, no name): it samples one input and returns without
-        // it. Not "an input that failed to resolve", nor "an input nobody fills" (phase 2).
-        if (pass->inputs().empty() && pass->inputTargets().empty() && pass->inputNames().empty()) {
+        // 2. No input at all: it samples one input and returns without it. Not "an input that failed to
+        // resolve", nor "an input nobody fills" (phase 2).
+        if (pass->inputs().empty()) {
             {
                 noteProblem(detail::engineProblem(u8"engine.screen.no_input",
                                                   vn::graphics::DiagnosticCategory::ContentSkipped,
                                                   String(u8"pass '") + reportedPassName(pass) +
                                                       String(u8"' is a FullscreenPass that declares no input, so it can never draw"
-                                                             u8" (give it addInput / addInputName)")));
+                                                             u8" (state one in PassDesc::inputs - ImageInput::byTarget for a whole"
+                                                             u8" published target, byName for a published name, byTexture for an"
+                                                             u8" imported texture)")));
             }
             continue;
         }

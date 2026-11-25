@@ -144,8 +144,8 @@ TEST(FrameScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
     auto camera = vn::make_intrusive<Camera>();
     auto source = colourTarget();
 
-    PassDesc consumer      = writingPass(u8"consumer", colourTarget(), -100, camera);
-    consumer.input_targets = { source };
+    PassDesc consumer = writingPass(u8"consumer", colourTarget(), -100, camera);
+    consumer.inputs   = { ImageInput::byTarget(source) };
     vn::test::registerPassForTest(*engine, consumer); // announced first, stacked first
     vn::test::registerPassForTest(*engine, writingPass(u8"producer", source, 100, camera));
 
@@ -176,8 +176,8 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
     PassDesc a      = writingPass(u8"a", first, -10, camera);
     PassDesc b      = writingPass(u8"b", second, 0, camera);
     PassDesc alone  = writingPass(u8"alone", colourTarget(), 20, camera);
-    a.input_targets = { second };
-    b.input_targets = { first };
+    a.inputs        = { ImageInput::byTarget(second) };
+    b.inputs        = { ImageInput::byTarget(first) };
     vn::test::registerPassForTest(*engine, a);
     vn::test::registerPassForTest(*engine, b);
     vn::test::registerPassForTest(*engine, alone);
@@ -211,8 +211,8 @@ TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOr
 
     // Declared: the consumer at -10, the producer it reads at 50 - so the declaration order puts the reader
     // first, and only the edge can move the writer ahead of it.
-    PassDesc consumer      = writingPass(u8"consumer", colourTarget(), -10, camera);
-    consumer.input_targets = { source };
+    PassDesc consumer = writingPass(u8"consumer", colourTarget(), -10, camera);
+    consumer.inputs   = { ImageInput::byTarget(source) };
     vn::test::registerPassForTest(*engine, consumer);
     vn::test::registerPassForTest(*engine, writingPass(u8"producer", source, 50, camera));
     engine->frame();

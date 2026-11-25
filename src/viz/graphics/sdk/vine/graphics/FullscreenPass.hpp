@@ -17,10 +17,9 @@ class ShaderProgram;
  * @brief A full-screen (screen-space) pass: it draws a published target's images through a PROGRAM.
  *
  * @details
- * - It renders no scene geometry: it resolves a source RenderTarget from the named-output registry (see
- *   RenderPass::addInputName / resolveInputTextures) and draws a full-screen triangle through its fragment
- *   program (setProgram) into this pass's output target - or the backbuffer when no target is set -
- *   optionally into a sub-viewport rectangle (setViewport).
+ * - It renders no scene geometry: it samples the inputs it received (@ref RenderPass::resolveInputTextures)
+ *   and draws a full-screen triangle through its fragment program (setProgram) into this pass's output target -
+ *   or the backbuffer when no target is set - optionally into a sub-viewport rectangle (setViewport).
  * - A PROGRAM IS REQUIRED and there is no implicit one: a pass with no program draws NOTHING (reported once
  *   at wiring time). The common cases have SDK programs (BuiltinShaders::fullscreenCopyProgram for a copy,
  *   deferredLightProgram for deferred lighting); anything else is a program the host writes - the picture is

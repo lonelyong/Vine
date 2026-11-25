@@ -311,7 +311,7 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     main_desc.content    = content_;
     main_desc.layer_mask = content_layers_;
     if (shadow_map != nullptr) {
-        main_desc.input_targets = { shadow_map };
+        main_desc.inputs = { ImageInput::byTarget(shadow_map) };
     }
     pipeline.addPass(main_desc);
     // Optional transparent content: a depth-on pass stacked right after the
@@ -426,17 +426,16 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         light_desc.kind          = DrawKind::Fullscreen;
         light_desc.camera        = intrusive_ptr<Camera>(camera_);
         light_desc.content       = content_;
-        light_desc.input_names   = { u8"GBuffer" };
         // It reads the WHOLE G-buffer: a fullscreen program receives every colour attachment of its
         // source (plus its depth while that one is sampleable) and picks by binding, so the unit it
-        // consumes is the target — one declaration instead of "name + attachment index".
-        light_desc.input_targets = { gbuffer };
+        // consumes is the target - one declaration (byTarget), and the first produced input is the source.
+        light_desc.inputs        = { ImageInput::byTarget(gbuffer) };
         if (shadow_map != nullptr) {
             // The map goes in as an ordinary INPUT, and its own statement is what makes it a shadow: the
             // target names its light and publishes how to read it (`RenderTarget::setShadowOf` /
             // `setProducerViewProjection`). The shadow ABI puts its two bindings right after the source's own
             // (see BuiltinShaders::deferredLightProgram), and the engine's plan has no shadow field to fill.
-            light_desc.input_targets.push_back(shadow_map);
+            light_desc.inputs.push_back(ImageInput::byTarget(shadow_map));
         }
         light_desc.program                    = std::move(light_program);
         pipeline.addPass(light_desc);
@@ -468,10 +467,9 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     light_desc.camera        = intrusive_ptr<Camera>(camera_);
     light_desc.content       = content_;
     light_desc.target        = Target::explicitTarget(composite);
-    light_desc.input_names   = { u8"GBuffer" };
-    light_desc.input_targets = { gbuffer }; // reads the whole G-buffer (see the comment on the program path)
+    light_desc.inputs        = { ImageInput::byTarget(gbuffer) }; // reads the whole G-buffer (see the comment on the program path)
     if (shadow_map != nullptr) {
-        light_desc.input_targets.push_back(shadow_map);
+        light_desc.inputs.push_back(ImageInput::byTarget(shadow_map));
     }
     light_desc.program    = std::move(light_program);
     // The edge, stated by the pass that draws against it (see DepthView): the composite has no depth of its
@@ -516,8 +514,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // "present the baked target" is an SDK program (BuiltinShaders::fullscreenCopyProgram) rather than a
     // backend-side default (see FullscreenPass::setProgram).
     present_desc.program                    = fullscreenCopyProgram();
-    present_desc.input_names                = { u8"Composite" };
-    present_desc.input_targets              = { composite }; // it presents the whole baked target
+    present_desc.inputs                     = { ImageInput::byTarget(composite) }; // it presents the whole baked target
     pipeline.addPass(present_desc);
 
     pipeline.setOffscreenTarget(std::move(gbuffer));

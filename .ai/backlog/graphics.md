@@ -84,10 +84,13 @@ because a reader named the mixture: the program path now says `Fullscreen` (`ful
 (`PassDesc::depth_mode` → `depth_policy`, `RenderPass::depthMode()` → `depthPolicy()`), because a policy is not a state
 and the old name sat beside `DepthState`; and `ModelScene` → `SceneBuild`, because the value is what `sceneFromModel()`
 built, not a scene (`BC-34` / `BC-35`).
+`T56` (one list of declared inputs) landed 2026-11-25 on an explicit go: `PassDesc::inputs` is the one ordered list, an
+`ImageInput` states one identity through `byImage` / `byTarget` / `byName` / `byTexture`, and resolution, edges, wiring
+checks, the frame table and `Plan::describe` read it (`graphics-rendering.md` 2.13,
+`ADR-2026-11-25-one-input-list-per-pass`); `input_names` / `input_targets` are gone.
 
 | # | Item | What | Trigger | Source |
 |---|---|---|---|---|
-| T56 | One list of declared inputs per pass | `PassDesc` states its inputs three ways (`inputs` of `ImageInput`, `input_targets`, `input_names`); the resolver documents "objects win, names are ignored", yet names are the only thing `validatePlan` checks, the thing the scheduler adds edges for and the only thing `FrameTable` reports - so the built-in chain states one input twice (`ChainBuilder.cpp` `input_names` + `input_targets` for `GBuffer`) and the shadow input never appears in the frame table. One `inputs` vector with a name alternative (`ImageInput::byName`) makes binding, validation, edges and the report read the same list in the same order | the next batch that touches plan authoring or `PassDesc`'s input wiring (it is a schema change with its own ADR) | `PassDesc.hpp`, `EngineCompile.cpp` (`resolveRowInputs`), `ChainBuilder.cpp`, `SessionShape.cpp` |
 | T57 | The backend's internal screen vocabulary | Backend-private names still say "screen" for a full-screen program or draw: vk's `ContentAbi::kScreenSamplerBindings` / `ContentDraw::ScreenSource` / `ensureScreenPipeline` / `buildScreenSet` / `ContentRefusalCause::Screen*` with their `vk.content.screen_*` codes. The SDK and the program layer say `Fullscreen` since `T49`; this half was left out because the refusal causes ARE diagnostic codes (identity a host matches, `scripts/diagnostic_codes.txt`), which is a diagnostic revision rather than a word sweep | the next batch that touches vk's full-screen pipeline/descriptor layout or the diagnostic-code registry, or a reader naming the backend plumbing as the mixture | `BC-33` in `../design/graphics-rendering.md`, `ContentRefusal.hpp`, `ContentImages.hpp` |
 
 ## 3. The first command of the next session

@@ -199,11 +199,10 @@ raw_ptr<FullscreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     // The recipe names the copy program: the SDK's own passes have no implicit shading either, so "present the baked
     // target" is an SDK program (BuiltinShaders::fullscreenCopyProgram) rather than a backend-side default.
     pip_desc.program                       = fullscreenCopyProgram();
-    pip_desc.input_names                   = { output_name };
-    pip_desc.input_targets                 = { target }; // samples the whole published target
+    pip_desc.inputs                        = { ImageInput::byTarget(target) }; // samples the whole published target
     pip_desc.viewport                      = pip;
-    // ONE PLAN, BOTH ROWS: the PiP reads the slot the source publishes, and a plan is checked as a whole (an input no
-    // row of this plan states would be refused).
+    // ONE PLAN, BOTH ROWS: the PiP samples the target the preview row renders into, stated by the identity the
+    // builder holds - there is no name for the plan to check, because the object IS the wire.
     Plan preset;
     preset.passes.push_back(preview_desc);
     preset.passes.push_back(pip_desc);

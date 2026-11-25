@@ -288,19 +288,13 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Gets the declared input names.
+     * @brief Gets what this pass reads, in binding order.
      *
-     * @return The names, in declaration order.
-     */
-    [[nodiscard]] const std::vector<String>& inputNames() const noexcept
-    {
-        return desc_.input_names;
-    }
-
-    /**
-     * @brief Gets the images this pass consumes, in declaration order.
+     * @details
+     * - One entry per declaration, each naming one identity (see ImageInput): the ONE list frame resolution,
+     *   scheduling edges, the wiring checks and the frame table all read.
      *
-     * @return The input declarations (produced images or imported textures), as added.
+     * @return The input declarations, as the pass states them.
      */
     [[nodiscard]] const std::vector<ImageInput>& inputs() const noexcept
     {
@@ -308,26 +302,15 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Gets the whole targets this pass consumes.
-     *
-     * @return The input targets, in declaration order.
-     */
-    [[nodiscard]] const std::vector<intrusive_ptr<RenderTarget>>& inputTargets() const noexcept
-    {
-        return desc_.input_targets;
-    }
-
-    /**
      * @brief Receives the engine-resolved inputs.
      *
      * @details
-     * - Called by the engine once per frame before the pass is described: one entry per declaration, in declaration
-     *   order - the images of inputs() first, then the targets of inputTargets(); a pass that declared neither falls
-     *   back to its inputNames() resolved against the engine's named-output registry.
+     * - Called by the engine once per frame before the pass is described: one entry per declaration, in
+     *   declaration order (see PassDesc::inputs).
      * - An entry stays empty when nothing produced it this frame (reported once per episode).
      * - The sources are BORROWED: whatever produced a target and whatever owns a texture keep them alive.
      *
-     * @param inputs Resolved input sources, in declaration order (names last).
+     * @param inputs Resolved input sources, in declaration order.
      */
     virtual void resolveInputTextures(std::span<const ImageSource> inputs)
     {

@@ -81,7 +81,9 @@ struct OwnedPassDraw {
  *   (@ref ImageInput), and what the pass draws is @ref OwnedPassDraw (the owned twin of PassDraw).
  * - The inputs are declarations rather than resolved sources on purpose: resolving is what the engine does for a
  *   frame it is about to run, and an owned frame states what the host declared. @ref OwnedFrame::borrowed resolves
- *   them the same way a compiled frame carries them.
+ *   them the same way a compiled frame carries them - except a `ImageInput::byName` entry, which names the
+ *   ENGINE's registry and therefore resolves to nothing here: state the identity you hold (byTarget / byImage /
+ *   byTexture) when the frame must outlive its producers.
  */
 struct OwnedPass {
     /// The pass (its identity; held).
@@ -151,14 +153,26 @@ class OwnedFrame {
             entry.order = owned.order;
             entry.inputs.reserve(owned.inputs.size());
             for (const ImageInput& input : owned.inputs) {
-                if (const ImageRef* image = input.image()) {
-                    entry.inputs.push_back(ImageSource::producedImage(image->target(), image->attachment(), image->kind() == ImageRef::Kind::Depth));
-                }
-                else if (const Texture* texture = input.texture()) {
-                    entry.inputs.push_back(ImageSource::imported(texture, input.sampler()));
-                }
-                else {
-                    entry.inputs.emplace_back();
+                switch (input.kind()) {
+                case ImageInput::Kind::Image:
+                    if (const ImageRef* image = input.image()) {
+                        entry.inputs.push_back(ImageSource::producedImage(image->target(), image->attachment(), image->kind() == ImageRef::Kind::Depth));
+                    }
+                    else {
+                        entry.inputs.emplace_back();
+                    }
+                    break;
+                case ImageInput::Kind::Target: entry.inputs.push_back(ImageSource::producedTarget(input.target())); break;
+                case ImageInput::Kind::Texture:
+                    if (const Texture* texture = input.texture()) {
+                        entry.inputs.push_back(ImageSource::imported(texture, input.sampler()));
+                    }
+                    else {
+                        entry.inputs.emplace_back();
+                    }
+                    break;
+                case ImageInput::Kind::Name: // a name lives in the engine's registry; see OwnedPass
+                case ImageInput::Kind::None: entry.inputs.emplace_back(); break;
                 }
             }
             if (owned.draw.has_value()) {

@@ -1225,11 +1225,10 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
     screen.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
     screen.program       = vn::graphics::fullscreenCopyProgram();
-    screen.input_names   = { u8"MultiColor" };
     // The two bake passes above accumulate into one target, so neither of them owns the hand-off
     // (a promise is a claim about WHOSE content a consumer gets): the consumer reads the whole baked
     // target, and the engine answers it from "a pass draws into it", not from a promise.
-    screen.input_targets = { target };
+    screen.inputs        = { vn::graphics::ImageInput::byTarget(target) };
     screen.viewport      = vn::graphics::Viewport{ sx, sy, pip_w, pip_h };
     addDemoPass(*engine, render_control, screen, nullptr, 100);
 }
@@ -1296,10 +1295,9 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
         // sampler binding (fullscreenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
         screen.program     = vn::graphics::fullscreenCopyProgram(attachment, previewChannelsOf(attachment));
-        screen.input_names = { u8"GBuffer" };
         auto image = vn::make_intrusive<vn::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);
-        screen.inputs.emplace_back(image);
+        screen.inputs.push_back(vn::graphics::ImageInput::byImage(image));
         const int x     = 8 + attachment * (pip_w + 8);
         screen.viewport = vn::graphics::Viewport{ x, 8, pip_w, pip_h };
         addDemoPass(*engine, render_control, screen, nullptr, 120 + attachment);
@@ -1348,8 +1346,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     vn::graphics::PassDesc light;
     light.name          = u8"deferred_lighting";
     light.kind          = vn::graphics::DrawKind::Fullscreen;
-    light.input_names   = { u8"GBuffer" };
-    light.input_targets = { target }; // a fullscreen program reads the whole source target
+    light.inputs        = { vn::graphics::ImageInput::byTarget(target) }; // a fullscreen program reads the whole source target
     light.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
     light.program       = vn::graphics::defaultDeferredLightProgram();
     light.viewport      = vn::graphics::Viewport{ 8, 8, pw, ph };
@@ -1546,11 +1543,14 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             // BuiltinShaders::fullscreenCopyProgram), which is what the declared image below is that of, and the
             // CHANNELS it shows are the strip's (see previewChannelsOf).
             preview.program     = vn::graphics::fullscreenCopyProgram(attachment, previewChannelsOf(attachment));
-            preview.input_names = { u8"GBuffer" };
             if (gbuffer != nullptr) {
                 auto image = vn::make_intrusive<vn::graphics::ImageRef>(u8"GBuffer.preview");
                 image->bind(vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer), attachment);
-                preview.inputs.emplace_back(image);
+                preview.inputs.push_back(vn::graphics::ImageInput::byImage(image));
+            }
+            else {
+                // No target to name yet: the published name is the only identity left (a name is late-bound).
+                preview.inputs.push_back(vn::graphics::ImageInput::byName(u8"GBuffer"));
             }
             const int x      = 8 + attachment * (pip_w + 8);
             preview.viewport = vn::graphics::Viewport{ x, 8, pip_w, pip_h }; // the layout step re-fits it to the source's aspect

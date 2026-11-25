@@ -98,6 +98,12 @@ One ADR records one decision: background, options, decision, consequences, evide
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-25-one-input-list-per-pass.md` — **a pass declares its reads once**: `PassDesc::inputs` is one ordered
+  `ImageInput` list and each entry names one identity (`byImage` / `byTarget` / `byName` / `byTexture`), so resolution,
+  scheduling edges, the wiring checks, the frame table and `Plan::describe` read the same list in the same order. The
+  three vectors (and the "objects win, names are ignored" rule) are gone; only a name can be judged by a plan, only an
+  object by the compile, and nothing is judged twice.
+
 - `ADR-2026-11-24-residency-borrowing.md` — **a release ends residency, not the objects**: a target's GPU objects have
   one owner (the device's residency) and are lent to a frame for its life; they are destroyed only when no submitted
   work names them (the park's timeline) and no value the device lent still names them (`use_count` probe, re-asked at a

@@ -419,8 +419,7 @@ compose_pass.order         = 0;
 compose_pass.kind          = DrawKind::Fullscreen;
 compose_pass.camera        = camera;                            // 窗口 pass 的相机决定窗口视角
 compose_pass.program       = fullscreenCopyProgram();            // 画面是**命名**的：纯拷贝用 SDK 的这个程序
-compose_pass.input_names   = { vn::String(u8"SceneColor") };    // 名字形式
-compose_pass.input_targets = { scene_rt };                      // 对象形式（两层在地址上汇合）
+compose_pass.inputs        = { ImageInput::byTarget(scene_rt) };   // 声明的输入：这条线就是这张 target
 
 // 一个计划，两行：一条 pass 读另一条产出的名字，整份校验通过才生效 —— 答案是三态的值。
 const PlanResult applied = engine->applyPlan(Plan{ { scene_pass, compose_pass } }, owner);
@@ -491,8 +490,7 @@ light_pass.order         = 0;
 light_pass.kind          = DrawKind::Fullscreen;
 light_pass.camera        = camera;                  // program 路径**必须**有相机
 light_pass.target        = Target::explicitTarget(composite);
-light_pass.input_names   = { vn::String(u8"GBuffer") };
-light_pass.input_targets = { gbuffer };             // 读整捆：program 按 binding 自己挑
+light_pass.inputs        = { ImageInput::byTarget(gbuffer) };   // 读整捆：program 按 binding 自己挑
 light_pass.program       = defaultDeferredLightProgram();
 
 // ⑤ 前向透明：不清屏（压在光照结果上），只测深度不写。
@@ -515,8 +513,7 @@ present_pass.order         = 2;
 present_pass.kind          = DrawKind::Fullscreen;
 present_pass.camera        = camera;
 present_pass.program       = fullscreenCopyProgram();
-present_pass.input_names   = { vn::String(u8"Composite") };
-present_pass.input_targets = { composite };
+present_pass.inputs        = { ImageInput::byTarget(composite) };
 
 // 四条声明一个计划：名字是身份，差分由引擎做（新增 / 同名原地更新 / 消失的移除）。
 const PlanResult applied = engine->applyPlan(Plan{ { gbuffer_pass, light_pass, forward_pass, present_pass } }, owner);
@@ -620,24 +617,34 @@ return pipeline;
   同一窗口 pass 里**带深度**的一笔；deferred 下它先与不透明结果在离屏 composite 里合成再呈现 ——
   于是"半透明物体被不透明物体挡住"是正确的，而不是无深度地画在最上面。
 
-### 3.7 pass 接线：名字与对象
+### 3.7 pass 接线：一份声明，四种身份
 
-pass 之间传图有两种写法，**可以并用**（两层在地址上汇合）：
+一个 pass 读什么，写在**一个有序列表** `PassDesc::inputs` 里：每个条目只声明**一种身份**，由你手里有什么决定。
+解析、调度边、接线检查、帧表和 `Plan::describe` 读的都是这**同一个列表的同一个顺序**，所以一条线声明一次、
+解析一次、报一次。
 
-- **名字**：生产者 `output.name = "X"`，消费者 `input_names = { "X" }`。每帧把 `X → 该 pass 的
-  renderTarget()` 注册进名字表。
-- **对象**（`ImageRef`）：生产者 `output.image` / `output.whole_target`，消费者
-  `inputs`（`ImageInput`）/ `input_targets`。粒度可到**某一张附件**（`ImageRef` 带颜色/深度与附件号），
-  也可粗到**整捆**（整张 target）—— 带 program 的 `FullscreenPass` 读的是整捆。
-- **导入贴图**（`Texture`）：`addInput(texture)` / `addInput(texture, sampler)`。采样状态属于**这次声明**，
-  所以同一张纹理在不同 pass（或同一 pass 的两次声明）可以用不同的 wrap/filter/mip 设置；不写 sampler
-  时用后端的输入采样器，行为与之前一致。后端的上传仍按 `(texture, revision)` 共享，sampler 按状态值缓存。
-  - **全屏 pass 也能读它**：source 的彩色附件占 `binding 0..C-1`、depth 跟随（跳过文本自己声明的 binding），
-    导入图按**声明顺序**填程序里已经声明的其余 sampler binding（升序）；数量对不上由后端拒绝并报一次，
-    不会静默绑错图。
-  - **cube 也能作 pass 输入**：`addInput(cube)` + 程序在该 binding 声明 `samplerCube`（上传/绑定都按
+| 你手里有 | 写法 | 谁检查它 |
+| --- | --- | --- |
+| 自己的 `RenderTarget` | `ImageInput::byTarget(t)` | 编译期接线（对象恒可检查） |
+| 生产者的 `ImageRef`（某一张附件） | `ImageInput::byImage(ref)` | 编译期接线（未 bind 报 `image_unbound`） |
+| 一个发布名、宿主绑定、transient | `ImageInput::byName("X")` | `applyPlan` 校验（plan 无帧，只能查名字）+ 帧解析 |
+| 导入贴图 | `ImageInput::byTexture(tex, sampler?)` | 不需要生产者 |
+
+- **粒度**：`byImage` 到**某一张附件**（`ImageRef` 带颜色/深度与附件号），`byTarget` / `byName` 是**整捆**
+  （带 program 的 `FullscreenPass` 读的就是整捆）。全屏 ABI：source 的彩色附件占 `binding 0..C-1`、depth 跟随，
+  导入图按**声明顺序**填程序里已经声明的其余 sampler binding（升序）；数量对不上由后端拒绝并报一次，
+  不会静默绑错图。
+- **名字是晚绑定的身份，也是备选列表**：声明多个 `byName` 时按顺序解析，第一个解析成功的就是它读的，其余不报错；
+  全都解析不出来才报一次 `engine.compile.input_not_produced`。
+- **导入贴图的采样状态属于这次声明**：同一张纹理在不同 pass（或同一 pass 的两次声明）可以用不同的 wrap/filter/mip
+  设置；不写 sampler 时用后端的输入采样器。后端的上传仍按 `(texture, revision)` 共享，sampler 按状态值缓存。
+  - **cube 也能作 pass 输入**：`byTexture(cube)` + 程序在该 binding 声明 `samplerCube`（上传/绑定都按
     kind 走，建六层 cube view）；不完整的 cube 会绑**白 cube**并报一次。材质贴图路径同样支持 cube
     （`Material::setTexture(TextureSlot::BaseColor, cube)`，demo 天空盒即此路径）。
+- **一条线不要写两遍**：`byName("X")` 和 `byTarget(同一张)` 同时写就是**两个输入**——旧的三字段设计正是
+  这样让名字被静默丢弃，而校验、调度和帧表又各自读到不同答案。
+- 帧表把每个条目拼成可读文本：`name:X` / `target:X` / `image:label#N` / `texture:D2 WxH`
+  （`ImageInput::description()`），所以按对象声明的输入（shadow 贴图、MRT 某一附件）也看得见。
 
 **帧编译**（`SessionShape::compile`，`RenderEngine::frame` 每帧跑一次）校验结构，并把每个问题**只报一次**
 （同一句话在下一帧不重复；消失后再出现算新情节）：
@@ -1048,7 +1055,7 @@ desc.stage         = PassStage::Transparent;    // 位置由意图决定：passS
 desc.kind          = DrawKind::Fullscreen;         // 怎么执行：Scene（画一个内容场景）/ Fullscreen（全屏三角形 + program）
 desc.camera        = camera.get();
 desc.program       = vn::graphics::fullscreenCopyProgram();
-desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
+desc.inputs        = { vn::ImageInput::byName(u8"Composite") };   // 声明的输入：名字 / target / ImageRef / Texture 四种身份
 desc.output.name   = u8"Presented";
 engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给计划（W9d 起唯一的路）
 ```

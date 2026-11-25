@@ -123,9 +123,11 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
         }
     }
 
-    // THE EDGES ARE THE NAMED INPUTS, nothing else: a dependency is "this pass reads the name that pass
-    // publishes", which is what the compile resolves. The scheduler is the engine's own, so a plan and a
-    // compiled frame cannot disagree about what a cycle is.
+    // THE EDGES A PLAN CAN SEE WITHOUT AN ENGINE ARE THE NAMED ONES: a dependency is "this pass reads the
+    // name that pass publishes", which is what the compile resolves. A target/image identity is a handle,
+    // and "was it produced" is a fact of the frame, so the compile that resolves it judges it (see
+    // validatePlan). Both walk the same PassDesc::inputs list, so no input is visible to one and not the
+    // other.
     detail::FrameScheduler scheduler;
     std::vector<int>       orders;
     orders.reserve(plan.passes.size());
@@ -135,13 +137,17 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
     scheduler.reset(orders);
 
     for (std::size_t consumer = 0; consumer < plan.passes.size(); ++consumer) {
-        for (const String& input : plan.passes[consumer].input_names) {
-            const auto producer = published_by.find(input);
+        for (const ImageInput& input : plan.passes[consumer].inputs) {
+            if (input.kind() != ImageInput::Kind::Name) {
+                continue;
+            }
+            const String& name     = input.name();
+            const auto    producer = published_by.find(name);
             if (producer == published_by.end()) {
-                if (std::find(external_outputs.begin(), external_outputs.end(), input) == external_outputs.end()) {
+                if (std::find(external_outputs.begin(), external_outputs.end(), name) == external_outputs.end()) {
                     problems.push_back(PlanProblem{ PlanProblemCode::UnknownInput,
                                                     plan.passes[consumer].name,
-                                                    String(u8"pass '") + plan.passes[consumer].name + String(u8"' reads '") + input +
+                                                    String(u8"pass '") + plan.passes[consumer].name + String(u8"' reads '") + name +
                                                         String(u8"', which no pass of the plan publishes and no host binding serves") });
                 }
                 continue;
@@ -211,11 +217,11 @@ String Plan::describe() const
                 (pass.target.isExplicit() ? String(u8"explicit")
                                           : (pass.target.isTransient() ? String(u8"transient") : String(u8"window"))) +
                 String(u8" inputs=[");
-        for (std::size_t input = 0; input < pass.input_names.size(); ++input) {
+        for (std::size_t input = 0; input < pass.inputs.size(); ++input) {
             if (input != 0) {
                 text += String(u8", ");
             }
-            text += pass.input_names[input];
+            text += pass.inputs[input].description();
         }
         text += String(u8"] output=") + (pass.output.name.empty() ? String(u8"-") : pass.output.name);
     }

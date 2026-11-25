@@ -369,8 +369,8 @@ TEST(PlanTest, ADuplicateNameIsRefusedWithItsCode)
 TEST(PlanTest, AnUnknownInputIsRefusedWithItsCodeUnlessTheHostServesIt)
 {
     PassDesc main;
-    main.name        = u8"main";
-    main.input_names = { String(u8"composite") };
+    main.name   = u8"main";
+    main.inputs = { ImageInput::byName(String(u8"composite")) };
     Plan shape;
     shape.passes.push_back(main);
 
@@ -388,11 +388,11 @@ TEST(PlanTest, ACycleIsRefusedWithItsCodeAndFeedbackIsNotACycle)
     PassDesc a;
     a.name        = u8"a";
     a.output.name = u8"a-out";
-    a.input_names = { String(u8"b-out") };
+    a.inputs      = { ImageInput::byName(String(u8"b-out")) };
     PassDesc b;
     b.name        = u8"b";
     b.output.name = u8"b-out";
-    b.input_names = { String(u8"a-out") };
+    b.inputs      = { ImageInput::byName(String(u8"a-out")) };
     Plan cycle;
     cycle.passes.push_back(a);
     cycle.passes.push_back(b);
@@ -401,10 +401,28 @@ TEST(PlanTest, ACycleIsRefusedWithItsCodeAndFeedbackIsNotACycle)
     PassDesc feedback;
     feedback.name        = u8"feedback";
     feedback.output.name = u8"self";
-    feedback.input_names = { String(u8"self") };
+    feedback.inputs      = { ImageInput::byName(String(u8"self")) };
     Plan allowed;
     allowed.passes.push_back(feedback);
     EXPECT_TRUE(validatePlan(allowed).empty()) << "reading what you wrote is the feedback pattern, not a cycle";
+}
+
+/*
+ * @brief T56: the description spells the WHOLE declaration list, whatever identity each entry names.
+ */
+TEST(PlanTest, TheDescriptionSpellsEveryDeclaredInput)
+{
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->setName(u8"composite");
+    auto image = intrusive_ptr<ImageRef>(new ImageRef(u8"albedo"));
+    image->bind(target, 1);
+
+    PassDesc pass;
+    pass.name   = u8"light";
+    pass.inputs = { ImageInput::byTarget(target), ImageInput::byImage(image), ImageInput::byName(String(u8"Host")) };
+
+    const String text = Plan{ { pass } }.describe();
+    EXPECT_NE(text.find(u8"inputs=[target:composite, image:albedo#1, name:Host]"), String::npos) << text.as_std_str();
 }
 
 /*

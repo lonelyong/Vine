@@ -88,8 +88,8 @@ PlanResult twoPassOffscreenToWindow(vn::raw_ptr<RenderEngine> engine,
     compose_pass.kind          = DrawKind::Fullscreen;
     compose_pass.camera        = camera;
     compose_pass.program       = fullscreenCopyProgram();
-    compose_pass.input_names   = { vn::String(u8"SceneColor") };
-    compose_pass.input_targets = { scene_rt };
+    // The wire is the object the two rows share: the compose row samples the target the scene row renders into.
+    compose_pass.inputs        = { ImageInput::byTarget(scene_rt) };
 
     const PlanResult applied = engine->applyPlan(Plan{ { scene_pass, compose_pass } }, owner);
     return applied;
@@ -148,8 +148,8 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     light_pass.kind          = DrawKind::Fullscreen;
     light_pass.camera        = camera;
     light_pass.target        = Target::explicitTarget(composite);
-    light_pass.input_names   = { vn::String(u8"GBuffer") };
-    light_pass.input_targets = { gbuffer };
+    // It reads the whole G-buffer: one declaration, stated by the target the gbuffer row renders into.
+    light_pass.inputs        = { ImageInput::byTarget(gbuffer) };
     light_pass.program       = defaultDeferredLightProgram();
 
     PassDesc forward_pass;
@@ -170,8 +170,7 @@ PlanResult deferredFourPass(vn::raw_ptr<RenderEngine> engine,
     present_pass.kind          = DrawKind::Fullscreen;
     present_pass.camera        = camera;
     present_pass.program       = fullscreenCopyProgram();
-    present_pass.input_names   = { vn::String(u8"Composite") };
-    present_pass.input_targets = { composite };
+    present_pass.inputs        = { ImageInput::byTarget(composite) };
 
     const PlanResult applied = engine->applyPlan(Plan{ { gbuffer_pass, light_pass, forward_pass, present_pass } }, owner);
     return applied;
