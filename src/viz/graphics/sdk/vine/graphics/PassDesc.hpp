@@ -15,7 +15,7 @@
 #include "DepthRange.hpp"
 #include "DrawKind.hpp"
 #include "DrawState.hpp"
-#include "ImageSource.hpp"
+#include "ImageInput.hpp"
 #include "Output.hpp"
 #include "PassStage.hpp"
 #include "PolygonMode.hpp"

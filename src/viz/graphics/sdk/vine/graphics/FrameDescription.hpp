@@ -17,7 +17,7 @@
 #include "DrawItem.hpp"
 #include "DrawKind.hpp"
 #include "DrawState.hpp"
-#include "ImageSource.hpp"
+#include "ImageInput.hpp"
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"

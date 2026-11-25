@@ -15,7 +15,7 @@
 
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/FrameTable.hpp>
-#include <vine/graphics/ImageSource.hpp>
+#include <vine/graphics/ImageInput.hpp>
 #include <vine/graphics/Plan.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ReportOnce.hpp>

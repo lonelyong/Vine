@@ -10,10 +10,10 @@
 #include <vine/raw_ptr.hpp>
 
 #include "Camera.hpp"
-#include "FrameDescription.hpp"
-#include "ImageSource.hpp"
-#include "Light.hpp"
 #include "DrawItem.hpp"
+#include "FrameDescription.hpp"
+#include "ImageInput.hpp"
+#include "Light.hpp"
 #include "RenderTarget.hpp"
 #include "ShaderProgram.hpp"
 

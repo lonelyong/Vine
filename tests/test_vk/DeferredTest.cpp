@@ -37,14 +37,14 @@
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/DepthPolicy.hpp>
+#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
-#include <vine/graphics/ImageSource.hpp>
+#include <vine/graphics/ImageInput.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>

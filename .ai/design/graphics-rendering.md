@@ -3,7 +3,7 @@
 > **Status**: current
 > **Last verified**: 2026-11-23
 > **Scope**: targets, MSAA, image sources, colour space, shading and shadows.
-> **Sources**: `RenderTarget.hpp` / `ImageSource.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
+> **Sources**: `RenderTarget.hpp` / `ImageInput.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
 > `ShaderAbi.hpp` / `Light.hpp`.
 > **Backlog**: `../backlog/graphics.md`
 
@@ -511,6 +511,12 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 ### 9.3 Compatibility / migration
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
+
+2026-11-25 - the pass-input header is named after what a host writes (`BC-44`): `ImageSource.hpp` is <!-- drift-ok -->
+`ImageInput.hpp`, and the include path moves with it (`<vine/graphics/ImageInput.hpp>`). Why: the file
+declared the host-written `ImageInput` beside the engine-resolved `ImageSource`, so its name stated the half a host never
+constructs, and the guide had to spell `ImageInput::byTarget` under a header named after the other type (`G12`). What
+a host must change: one include line. The types, their members and the two lifetimes are unchanged.
 
 2026-11-25 - the state-provenance table is deleted (`BC-43`): `StateOrigin`, `RenderStateOrigin`,
 `ResolvedCommandState::origin` and `ResolvedCommandState::topology_origin` are gone, and `resolveRenderState` now answers

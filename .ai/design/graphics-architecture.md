@@ -270,8 +270,8 @@ removing an unregistered pass and removing an already removed pass are the same 
     are only meaningful together, in which case its name says the cluster (`DrawState` is the pipeline-key vocabulary,
     `FrameReport` is the frame's numbers, `FrameDescription` is the frame's value).
     Why: the 101 headers ARE the SDK's map, and the map is read by a host looking for a type (`G4`). A header named after
-    the engine's half of a concept (`ImageSource.hpp` declaring the host-written `ImageInput` beside the resolved
-    `ImageSource`) makes the reader learn which half the file is about, and makes the design page spend a sentence on it.
+    the engine's half of a concept makes the reader learn which half the file is about: the host-written `ImageInput` used
+    to live in a header named after the resolved `ImageSource` (`BC-44` moved it).
     Boundary: no umbrella header and no reorganisation of existing headers - moving 101 files is churn (`G8`), and the
     reader-facing index is `docs/guides/graphics.md` §5.1's translation table.
 
