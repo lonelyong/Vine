@@ -207,6 +207,12 @@ class Buffer : public RefCounted<Buffer<T>> {
      *
      * @warning
      * - Not thread-safe: another thread writing at the same time is a data race, with or without this scope.
+     * - A FRAME MAY READ THESE BYTES ON ANOTHER THREAD (`Buffer` is what the renderer uploads from), and the timing is
+     *   the WRITER's: rewriting the same elements and announcing is safe (the revision orders it), while GROWING or
+     *   REPLACING the storage moves the elements and must not happen while a frame that reads this buffer is in
+     *   flight - grow between frames, or hand over a new buffer object (a new identity). The class holds no lock on
+     *   purpose: one writer owns the bytes, and a value type that locked for it would charge every single-threaded
+     *   producer for a policy only a streaming host needs (see `.ai/decisions/ADR-2026-11-26-buffer-bytes-are-caller-managed.md`).
      */
     class Edit {
       public:

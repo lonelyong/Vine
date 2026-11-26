@@ -102,6 +102,8 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **Why keep polling**: turning every `Buffer::edit()` into a publication would couple "edit" and "frame" tightly, and a publication would have to carry thousands per frame.
 - **Boundary**: the atomic covers only "the counter + the bytes before it"; a host that keeps writing the same bytes **after** announcing (without a new revision) is still outside the contract —
   the frame reads what was written. The frame payload's **content** (shape, material values, program text, lights) does not use this channel; it is all §2.14's values.
+  The storage itself is the writer's to keep still: rewriting the same elements and announcing is the streaming path, while growing or replacing them must wait for the frame (or be handed over as a new `Buffer` object).
+  `Buffer` holds no lock for this — `ADR-2026-11-26-buffer-bytes-are-caller-managed` is the decision and `Buffer<T>::Edit`'s warning is where a host reads it.
   **Regression case**: a threaded engine answers the same picture and says when it landed (`RenderEngineTest.AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded`), and a host verb
   racing another driver's frame waits instead of racing (`VkMultiSessionTest.AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt`); both must be green in a normal build and under TSan
   (before the atomics, TSan reported the `bumpRevision()` vs `revision()` pair).

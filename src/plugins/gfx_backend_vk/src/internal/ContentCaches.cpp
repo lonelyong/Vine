@@ -38,6 +38,12 @@ using detail::vertexFormatOf;
 using vn::graphics::ProgramVariant;
 using vn::graphics::variantOf;
 
+/// @brief One stream buffer a cache entry gave up, with the pool range it was bound into (see ContentCaches' releases).
+struct DoomedStreamBuffer {
+    VkBuffer    buffer{ VK_NULL_HANDLE };
+    MemorySlice memory{};
+};
+
 } // namespace
 
 struct ContentCaches::Impl {
@@ -327,6 +333,10 @@ struct ContentCaches::Impl {
             const std::weak_ptr<const void> named    = previous;
             releaseLater(named, [target = this, entry = std::move(previous)]() mutable { target->destroyBuffer(entry->buffer, entry->memory); });
         }
+        // THE BYTES ARE THE BUFFER'S, READ WHERE THEY ARE: `Buffer` is single-writer and holds no lock (`G10`, see
+        // `Edit`'s note and ADR-2026-11-26). What makes this upload coherent is the caller's rule - a writer rewrites
+        // the same elements and announces, and does not grow the storage while a frame that reads it is in flight - so
+        // the span below is stable for the copy, and the geometry is never copied twice.
         const std::span<const float> floats = buffer.view();
         if (floats.empty()) {
             why = vn::String(u8"vk: an instance stream carries no transforms");
@@ -457,6 +467,13 @@ struct ContentCaches::Impl {
                 // `releaseStreams`). A complete entry pays nothing here. Filling a hole ADDS a buffer to the entry, and
                 // every frame holding it keeps the same entry - so a recorder that copies the handle afterwards reads a
                 // buffer this entry owns (never one a release left behind).
+                //
+                // A BUFFER THAT ANNOUNCED A NEW REVISION IS A HOLE TOO: the bytes were edited in place and announced on
+                // the buffer (`Buffer::setRevision`), which is the announcement this cache listens to for a stream (see
+                // Geometry.hpp's `setRevision` and `Buffer`'s "announcement that decides re-uploads"). The stale
+                // streams are detached first - as a REPLACED entry, because another driver's frame may still name the
+                // old buffers.
+                (void)detachStaleStreams(found->second);
                 if (!fillStreams(*found->second, description, why)) {
                     return failGeometry(found->second, description, std::move(why));
                 }
@@ -540,65 +557,148 @@ struct ContentCaches::Impl {
      */
     [[nodiscard]] bool fillStreams(GeometryEntry& entry, const vn::graphics::GeometryDescription& description, vn::String& why)
     {
-        std::size_t slot = 0;
+        // THE BYTES AND THE COUNT COME FROM THE SAME OBSERVATION: `Buffer`'s own slice rule resolves the run against
+        // the size the writer announced (see `BufferSlice`), and the stream records the buffer revision those bytes came
+        // from - which is what `detachStaleStreams` compares. No lock, no copy: the writer owns the timing (ADR-2026-11-26).
+        std::size_t   slot     = 0;
+        std::uint32_t smallest = std::numeric_limits<std::uint32_t>::max();
         for (const vn::graphics::GeometryChannel& channel : description.channels()) {
-            const std::span<const float> scalars = channel.channel.scalars();
-            if (scalars.empty()) {
-                continue;
+            if (channel.channel.empty()) {
+                continue; // an empty channel has no slot (see shapedFor) and feeds nothing
             }
-            VertexStream& stream = entry.streams[slot];
+            if (slot >= entry.streams.size()) {
+                break; // a channel set wider than the entry's shape is a SHAPE edit: it needs Geometry::setRevision
+            }
+            VertexStream& stream = entry.streams[slot++];
             if (stream.buffer == VK_NULL_HANDLE) {
                 const std::uint32_t components = channel.channel.components;
                 if (vertexFormatOf(components) == VK_FORMAT_UNDEFINED) {
                     why = vn::String(u8"vk: an attribute channel states a component count Vulkan has no format for");
                     return false;
                 }
-                stream.location   = channel.location;
-                stream.components = components;
-                stream.source     = channel.channel.values.get();
-                if (!upload(std::as_bytes(scalars), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, stream.buffer, stream.memory)) {
-                    why = vn::String(u8"vk: a vertex channel could not be uploaded");
-                    return false;
+                // THE REVISION IS READ BEFORE THE BYTES (the pair is a publish, see Buffer): what is copied here is AT
+                // LEAST that revision, so a writer landing in between costs one extra upload later - never stale bytes
+                // labelled as current.
+                const std::uint64_t        revision = channel.channel.values->revision();
+                const std::span<const float> scalars = channel.channel.scalars();
+                if (!scalars.empty()) {
+                    const std::span<const std::byte> bytes = std::as_bytes(scalars);
+                    if (!upload(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, stream.buffer, stream.memory)) {
+                        why = vn::String(u8"vk: a vertex channel could not be uploaded");
+                        return false;
+                    }
+                    stream.location   = channel.location;
+                    stream.components = components;
+                    stream.source     = channel.channel.values.get();
+                    stream.revision   = revision;
+                    stream.bytes      = static_cast<std::uint64_t>(bytes.size());
+                    ++stream_builds_;
+                    stream_bytes_ += stream.bytes;
                 }
-                stream.bytes = static_cast<std::uint64_t>(scalars.size_bytes());
-                ++stream_builds_;
-                stream_bytes_ += stream.bytes;
             }
-            ++slot;
-        }
-
-        // The draw count follows the SMALLEST stream: a vertex index that is in range for one attribute and out of
-        // range for another is undefined behaviour, and the smallest stream is the only count all of them serve.
-        std::uint32_t smallest = std::numeric_limits<std::uint32_t>::max();
-        for (const vn::graphics::GeometryChannel& channel : description.channels()) {
-            if (channel.channel.empty()) {
-                continue;
+            // THE DRAW COUNT FOLLOWS THE SMALLEST STREAM, read from what this entry HOLDS: a vertex index in range for
+            // one attribute and out of range for another is undefined behaviour, and a count derived from the uploaded
+            // bytes cannot name data nobody copied (the live channel used to be re-read here, which a concurrent append
+            // could move between that read and the copy).
+            if (stream.buffer != VK_NULL_HANDLE && stream.components != 0u) {
+                const std::uint64_t stride = static_cast<std::uint64_t>(stream.components) * sizeof(float);
+                const std::uint64_t count  = stride != 0u ? stream.bytes / stride : 0u;
+                smallest = std::min(smallest, static_cast<std::uint32_t>(std::min<std::uint64_t>(count, std::numeric_limits<std::uint32_t>::max())));
             }
-            smallest = std::min(smallest, static_cast<std::uint32_t>(channel.channel.vertexCount()));
         }
-        entry.vertex_count = smallest == std::numeric_limits<std::uint32_t>::max() ? 0U : smallest;
+        entry.vertex_count = smallest == std::numeric_limits<std::uint32_t>::max() ? 0u : smallest;
 
         const std::span<const vn::graphics::Primitive> primitives = description.primitives();
         for (std::size_t index = 0; index < primitives.size(); ++index) {
-            const std::span<const std::uint32_t> indices = primitives[index].indices.span();
-            if (indices.empty()) {
-                continue;
-            }
             IndexStream& stream = entry.indices[index];
             if (stream.buffer != VK_NULL_HANDLE) {
-                continue;
+                continue; // resident: a byte edit is detached by ensureGeometry BEFORE this fill, never mutated in place
             }
-            stream.source = primitives[index].indices.values.get();
-            if (!upload(std::as_bytes(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, stream.buffer, stream.memory)) {
+            const std::uint64_t                       revision = primitives[index].indices.values != nullptr ? primitives[index].indices.values->revision() : 0u;
+            const std::span<const std::uint32_t>      indices  = primitives[index].indices.span();
+            if (indices.empty()) {
+                continue; // the segment covers nothing: the hole is filled by a later frame
+            }
+            const std::span<const std::byte> bytes = std::as_bytes(indices);
+            if (!upload(bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, stream.buffer, stream.memory)) {
                 why = vn::String(u8"vk: an index stream could not be uploaded");
                 return false;
             }
-            stream.count = static_cast<std::uint32_t>(indices.size());
-            stream.bytes = static_cast<std::uint64_t>(indices.size_bytes());
+            stream.source   = primitives[index].indices.values.get();
+            stream.revision = revision;
+            stream.count    = static_cast<std::uint32_t>(indices.size());
+            stream.bytes    = static_cast<std::uint64_t>(bytes.size());
             ++stream_builds_;
             stream_bytes_ += stream.bytes;
         }
         return true;
+    }
+
+    /**
+     * @brief Replaces @p slot with an entry whose streams are HOLES where the buffer announced a new revision, and parks
+     *        the previous entry.
+     *
+     * @details
+     * - WHY THE ENTRY IS REPLACED AND NOT MUTATED: a frame of ANOTHER driver may still name the old buffer (it resolved
+     *   the entry at its head), so the object can only be destroyed when no frame names the entry any more - the same
+     *   reason `releaseStreams` and `failGeometry` move the entry out of every table first.
+     * - WHAT ANNOUNCES A RE-UPLOAD (`G4`): the STREAM's own buffer (`Buffer::setRevision` / the `Edit` scope), never the
+     *   geometry's revision - a shape edit is a new description and therefore a new entry. This is the path
+     *   `Geometry.hpp` and `Buffer.hpp` state, and the one vsg's `StreamKey` used to implement.
+     * - CALLED WITH THE CACHE LOCK HELD, from `ensureGeometry`'s USE path only: a Build fills a fresh entry (no stream
+     *   has a buffer yet) and a Copy owns its own buffers.
+     *
+     * @param slot The table's share of the entry (replaced when anything was stale).
+     * @return How many stream buffers were detached.
+     */
+    std::uint32_t detachStaleStreams(std::shared_ptr<GeometryEntry>& slot)
+    {
+        const auto stale_vertex = [](const VertexStream& stream) {
+            return stream.buffer != VK_NULL_HANDLE && stream.source != nullptr &&
+                   static_cast<const vn::Buffer<float>*>(stream.source)->revision() != stream.revision;
+        };
+        const auto stale_index = [](const IndexStream& stream) {
+            return stream.buffer != VK_NULL_HANDLE && stream.source != nullptr &&
+                   static_cast<const vn::Buffer<std::uint32_t>*>(stream.source)->revision() != stream.revision;
+        };
+        const bool any = std::any_of(slot->streams.begin(), slot->streams.end(), stale_vertex) ||
+                         std::any_of(slot->indices.begin(), slot->indices.end(), stale_index);
+        if (!any) {
+            return 0;
+        }
+
+        std::vector<DoomedStreamBuffer> doomed;
+        auto                            replacement = std::make_shared<GeometryEntry>(*slot);
+        for (VertexStream& stream : replacement->streams) {
+            if (!stale_vertex(stream)) {
+                continue;
+            }
+            doomed.push_back(DoomedStreamBuffer{ stream.buffer, stream.memory });
+            stream.buffer = VK_NULL_HANDLE;
+            stream.memory = MemorySlice{};
+            stream.bytes  = 0;
+        }
+        for (IndexStream& stream : replacement->indices) {
+            if (!stale_index(stream)) {
+                continue;
+            }
+            doomed.push_back(DoomedStreamBuffer{ stream.buffer, stream.memory });
+            stream.buffer = VK_NULL_HANDLE;
+            stream.memory = MemorySlice{};
+            stream.bytes  = 0;
+            stream.count  = 0;
+        }
+        const std::shared_ptr<GeometryEntry> previous = std::move(slot);
+        slot                                          = std::move(replacement);
+        stream_releases_ += static_cast<std::uint32_t>(doomed.size());
+        const std::weak_ptr<const void> named = previous;
+        releaseLater(named, [target = this, entry = previous, buffers = std::move(doomed)]() mutable {
+            (void)entry; // the share whose frames the park waits for; the objects below are the detached handles
+            for (DoomedStreamBuffer& one : buffers) {
+                target->destroyBuffer(one.buffer, one.memory);
+            }
+        });
+        return static_cast<std::uint32_t>(doomed.size());
     }
 
     /**
@@ -1988,22 +2088,18 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     // (a hole is what the next frame refills, so nothing about the geometry stops being live) and the old entry is
     // parked behind its own share count. Mutating the shared entry in place would leave the park's probe counting the
     // table's own share and never destroying anything - which is why the entry moves out of every table first.
-    struct DoomedBuffer {
-        VkBuffer    buffer{ VK_NULL_HANDLE };
-        MemorySlice memory{};
-    };
     std::size_t dropped = 0;
     for (auto& [description, entry] : impl->geometries) {
         (void)description;
-        std::vector<DoomedBuffer> doomed;
+        std::vector<DoomedStreamBuffer> doomed;
         for (const VertexStream& stream : entry->streams) {
             if (stream.source == buffer && stream.buffer != VK_NULL_HANDLE) {
-                doomed.push_back(DoomedBuffer{ stream.buffer, stream.memory });
+                doomed.push_back(DoomedStreamBuffer{ stream.buffer, stream.memory });
             }
         }
         for (const IndexStream& stream : entry->indices) {
             if (stream.source == buffer && stream.buffer != VK_NULL_HANDLE) {
-                doomed.push_back(DoomedBuffer{ stream.buffer, stream.memory });
+                doomed.push_back(DoomedStreamBuffer{ stream.buffer, stream.memory });
             }
         }
         if (doomed.empty()) {
@@ -2029,7 +2125,7 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
         const std::weak_ptr<const void> named = previous;
         impl->releaseLater(named, [target = impl.get(), entry = previous, buffers = std::move(doomed)]() mutable {
             (void)entry; // the share whose frames the park waits for; the objects below are the detached handles
-            for (DoomedBuffer& one : buffers) {
+            for (DoomedStreamBuffer& one : buffers) {
                 target->destroyBuffer(one.buffer, one.memory);
             }
         });

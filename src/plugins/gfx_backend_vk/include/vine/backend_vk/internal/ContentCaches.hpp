@@ -126,6 +126,7 @@ class VN_BACKEND_VK_API ContentCaches final {
         std::uint32_t components{ 0 };
         std::uint64_t bytes{ 0 };       // Bytes copied in (the entry's residency weight).
         const void*   source{ nullptr }; // The `Buffer` this stream was uploaded from (RVALUE identity only).
+        std::uint64_t revision{ 0 };     // The `Buffer` revision the bytes came from (a move means re-upload).
     };
 
     /// @brief One uploaded index stream (per primitive).
@@ -135,6 +136,7 @@ class VN_BACKEND_VK_API ContentCaches final {
         std::uint32_t count{ 0 };
         std::uint64_t bytes{ 0 };       // Bytes copied in (the entry's residency weight).
         const void*   source{ nullptr }; // The `Buffer` this stream was uploaded from (identity only).
+        std::uint64_t revision{ 0 };     // The `Buffer` revision the bytes came from (a move means re-upload).
     };
 
     /// @brief One geometry revision's uploaded streams.

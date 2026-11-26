@@ -475,3 +475,72 @@ TEST(VkResidenceWireTest, AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAg
 
     backend->shutdown();
 }
+
+TEST(VkResidenceWireTest, AVertexBufferThatAnnouncesANewRevisionIsUploadedAgain)
+{
+    // THE ANNOUNCEMENT THAT DECIDES A RE-UPLOAD IS THE BUFFER'S, not the geometry's: `Geometry::setRevision` is about the
+    // SHAPE (which channels, where each reads) and `Buffer::setRevision` - the `Edit` scope's own announcement - is about
+    // the BYTES (see Geometry.hpp's setRevision, GeometryDescription's note, and Buffer's class comment). A host that
+    // animates vertices edits the buffer and announces there; the geometry's revision does not move at all.
+    //
+    // WHAT THIS PINS: the frame after that edit draws the NEW bytes. The cache keys a geometry entry by its DESCRIPTION
+    // (identity + geometry revision), so a stream whose buffer announced has to be detached (replaced entry, old buffers
+    // parked) and refilled - otherwise a vertex edit would stay invisible, which is the defect this case was written for.
+    auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    // THE BYTES ARE THE TEST'S OWN HANDLE (the geometry borrows them), which is what lets the case edit them in place.
+    auto position_buffer = intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        -0.75F, -0.75F, 0.5F, 0.75F, -0.75F, 0.5F, 0.0F, 0.75F, 0.5F }));
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(position_buffer);
+    vn::graphics::Primitive primitive;
+    primitive.topology = Topology::Triangles;
+    primitive.indices  = vn::graphics::Primitive::IndexSpan::whole(
+        intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>{ 0U, 1U, 2U })));
+    geometry->clearPrimitives();
+    geometry->addPrimitive(primitive);
+    geometry->bumpRevision(); // the SHAPE announcement, once, before any frame
+
+    const intrusive_ptr<ShaderProgram> program = redProgram();
+    const intrusive_ptr<RenderTarget>  target  = makeTarget(u8"residence_revision");
+    const vn::graphics::GeometryDescriptionPtr description = geometry->description();
+
+    (void)backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr);
+    const ColorReadback before = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(before.ok());
+    expectRed(before.values, "the frame before the edit");
+
+    // THE EDIT: every vertex moves right, out of the target, announced ON THE BUFFER when the scope ends. The geometry
+    // revision, the description and the verdict of the residence table all stay what they were.
+    {
+        auto edit = position_buffer->edit();
+        float* const values = edit.data();
+        for (std::size_t vertex = 0U; vertex < 3U; ++vertex) {
+            values[vertex * 3U] += 2.5F; // x of each vertex: the triangle leaves the centre
+        }
+    }
+    EXPECT_EQ(geometry->revision(), description->revision()) << "a byte edit must not need a shape announcement";
+
+    (void)backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr);
+    const ColorReadback after = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(after.ok());
+    const std::array<int, 4> centre = centreOf(after.values);
+    EXPECT_LE(centre[0], 1) << "the frame after the edit still drew the bytes uploaded first (red at the centre)";
+    EXPECT_LE(centre[1], 1);
+    EXPECT_LE(centre[2], 1);
+
+    // THE ENTRY WAS NOT REBUILT AS A NEW KEY: the edit is a stream replacement inside a resident geometry, so the table
+    // keeps one claim and one publish - a second build would mean a byte edit had become a shape change.
+    const ResidencyClaims::Numbers numbers = device->residence().numbers();
+    EXPECT_EQ(numbers.claims, 1U) << "a byte edit claimed the geometry again";
+    EXPECT_EQ(numbers.resident, 1U);
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Resident);
+
+    backend->shutdown();
+}

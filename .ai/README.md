@@ -91,12 +91,18 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (89)
+## decisions/ — decision records (ADRs) (90)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
+
+- `ADR-2026-11-26-buffer-bytes-are-caller-managed.md` — **byte content is caller-managed, and `Buffer` holds no
+  lock**: the revision pair orders the bytes (rewrite in place + announce is the streaming path), while growing or
+  replacing the storage must happen between frames or as a new buffer object. An internal `shared_mutex` with a scoped
+  read lease was implemented and rejected: it puts a threading policy in a value type and charges every producer for a
+  case no in-tree host creates. The stream-revision re-upload the investigation produced stays.
 
 - `ADR-2026-11-25-readback-answer-is-one-value.md` — **a readback answers with one value, and has one classifier**:
   `readColorImage` / `readDepthImage` return `ColorReadback` / `DepthReadback` (`ReadbackResult<T>`) - the `ReadbackStatus`
