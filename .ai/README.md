@@ -402,7 +402,7 @@ decision is not to do them (the reason goes into an ADR).
 - `robotics-kinematics.md` — Robotics kinematics facts.
 - `robotics-proximity.md` — Robotics proximity facts.
 
-## bugs/ — bug records (45)
+## bugs/ — bug records (46)
 
 Symptom / root cause / status / files involved / verification, one file per bug; a fixed record keeps
 its history marker, an unfixed one states its status.
@@ -443,6 +443,10 @@ its history marker, an unfixed one states its status.
 - `appfw-posted-message-outlives-application.md` — `reportToUser()` posted a borrowed `UserIO*`; the queued call now asks `Application::current()`, which is cleared before the I/O is released.
 - `vsg-depth-bias-not-declared-dynamic.md`
 - `graphics-renderengine-addpass-null-pass-crash.md`
+- `graphics-default-content-registry-outlived-by-statics.md` — the default `ContentRegistry` was a function-local static,
+  so it was destroyed before the file-scope caches whose destructors release content handles (`AxesMarker`'s prototype
+  vector): a SEGV inside `release()` during `__cxa_finalize`, found by the full-suite TSan run. The registry is immortal
+  now, which is what its header had always promised.
 - `graphics-scene-memo-key-missing-view-basis.md`
 - `graphics-transparent-sort-uses-origin.md`
 - `graphics-layout-step-runs-in-view-destruction.md` — a layout step ran from `~SceneView` and called `RenderControl::view()` on a control whose `Impl` was already destroyed; steps are now dropped first and run only from a geometry event.

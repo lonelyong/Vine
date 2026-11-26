@@ -10,10 +10,21 @@ ContentRegistry::ContentRegistry(std::uint8_t domain) noexcept
 
 ContentRegistry& ContentRegistry::instance() noexcept
 {
-    // Domain 0 is the process default every content object takes its id from. Function-local static: thread-safe
-    // initialisation, no static-init-order dependency on a content object built in another translation unit.
-    static ContentRegistry s_default{ 0 };
-    return s_default;
+    // THE DEFAULT REGISTRY IS NEVER DESTROYED, and that is the point (see the header: "it lives as long as the
+    // process"). Content objects are held by OTHER translation units' statics - AxesMarker's prototype cache is one -
+    // whose destructors run at library finalisation, after a function-local static constructed at first use has already
+    // been destroyed (both are registered in the same finalisation pass, and the later registration runs first). The
+    // registry would then be read after its own destruction while the last handle of such an object is released, which
+    // is a SEGV, not a leak check finding (measured: `test_graphics` under TSan, `__cxa_finalize` ->
+    // `AxesMarker::Prototype::~Prototype` -> `Material::~Material` -> `ContentRegistry::release`; see
+    // `.ai/bugs/graphics-default-content-registry-outlived-by-statics.md`).
+    //
+    // A LEAKED SINGLETON IS THE ONLY SPELLING THAT KEEPS THE PROMISE: a static object is destroyed in an order this
+    // process cannot control, and every alternative (a static buffer, `no_destroy`) is the same leak without the
+    // allocator's bookkeeping. It is reachable from this static pointer, so LeakSanitizer does not report it, and it is
+    // one object per process.
+    static ContentRegistry* const s_default = new ContentRegistry{ 0 };
+    return *s_default;
 }
 
 Handle ContentRegistry::allocateHandle() noexcept

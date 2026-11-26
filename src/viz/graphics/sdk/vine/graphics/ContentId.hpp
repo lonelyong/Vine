@@ -219,6 +219,14 @@ class VN_GRAPHICS_API ContentRegistry {
     /**
      * @brief Gets the process default registry (domain 0).
      *
+     * @details
+     * - IT IS NEVER DESTROYED, which is what its lifetime means here: content objects may be held by another translation
+     *   unit's static (a prototype cache, a host's own table), whose destructor runs during library finalisation - after
+     *   a function-local static constructed at first use would already have been destroyed. A registry that died first
+     *   would be read after its own destruction while that object released its last handle.
+     * - Thread-safe on first use (C++11 function-local static initialisation), and there is no static-init-order
+     *   dependency on a content object built in another translation unit.
+     *
      * @return The registry; it lives as long as the process.
      */
     [[nodiscard]] static ContentRegistry& instance() noexcept;
