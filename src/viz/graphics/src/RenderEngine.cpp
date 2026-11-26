@@ -18,7 +18,7 @@
 #include "FramePump.hpp"
 #include "FrameResources.hpp"
 #include "FrameRunner.hpp"
-#include "FrameScheduler.hpp"
+#include "PassScheduler.hpp"
 #include "PublicationStore.hpp"
 #include "SessionShape.hpp"
 #include "SurfaceLedger.hpp"

@@ -22,7 +22,7 @@
 #include "EngineDiagnostics.hpp"
 #include "FrameExpand.hpp"
 #include "FrameResources.hpp"
-#include "FrameScheduler.hpp"
+#include "PassScheduler.hpp"
 #include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -282,7 +282,7 @@ void SessionShape::scheduleRows()
         }
     }
 
-    const detail::FrameSchedule& schedule = scheduler_->schedule();
+    const detail::PassSchedule& schedule = scheduler_->schedule();
     frame_order_.assign(schedule.order.begin(), schedule.order.end());
 
     // A cycle is a declaration no order can satisfy: its whole component is skipped (every other pass still runs and

@@ -14,7 +14,7 @@ namespace detail
 {
 
 /** @brief The order a frame's passes execute in, and the components that could not be ordered. */
-struct FrameSchedule {
+struct PassSchedule {
     std::vector<std::uint32_t>              order{};   // Indices, in execution order.
     std::vector<std::vector<std::uint32_t>> cycles{};  // One entry per cyclic component: its members.
     std::vector<std::uint32_t>              skipped{}; // Every member of every cycle, flattened.
@@ -36,6 +36,11 @@ struct FrameSchedule {
  * @brief The engine's one pass scheduler: dependencies first, announced order as the tie-break.
  *
  * @details
+ * - WHY "PASS" AND NOT "FRAME" (`G4` / `G12`). This class orders the PASSES inside one frame; it never decides when
+ *   a frame may run. Filament's `FrameScheduler` is that other job (begin/end, vsync, refresh-rate pacing), so the
+ *   borrowed word would tell a reader the opposite of what this does. The order is a property of the pass graph -
+ *   Frostbite compiles one frame graph per frame and Filament sorts its passes in the same place - so the noun here
+ *   is the pass, and `PassSchedule` is its answer.
  * - WHY THE ENGINE OWNS IT. The declared inputs decide when a pass MAY run; the frame is the union of
  *   every registered pass, so the compile is the only place that sees all producers and consumers. A backend
  *   that re-derived the order could disagree with the frame the engine announced, and two orders mean two
@@ -49,7 +54,7 @@ struct FrameSchedule {
  *   a steady frame asks the allocator for nothing (the finding that put this note here is ~27 allocations for
  *   a one-pass pipeline when the tables were locals; see AllocationGate's counting half).
  */
-class FrameScheduler {
+class PassScheduler {
   public:
     /** @brief Rebuilds the graph: one node per pass, in announcement order.
      *
@@ -74,7 +79,7 @@ class FrameScheduler {
      *
      * @return The schedule: what runs, in what order, and which components could not be ordered.
      */
-    [[nodiscard]] const FrameSchedule& schedule();
+    [[nodiscard]] const PassSchedule& schedule();
 
     /** @brief Gets the number of nodes (one per pass of the last reset()). */
     [[nodiscard]] std::size_t nodeCount() const noexcept;
@@ -102,7 +107,7 @@ class FrameScheduler {
     std::vector<std::vector<std::uint32_t>> successors_; // Adjacency: node -> the nodes it must precede.
     std::vector<int>                        order_key_;  // Announced stacking order per node.
     std::vector<std::uint8_t>               excluded_;   // Non-zero = takes no part in this frame.
-    FrameSchedule                           schedule_;   // The last computed answer.
+    PassSchedule                            schedule_;   // The last computed answer.
 
     // The per-frame working memory (see the class note): the Tarjan tables, the component stack and the
     // ready-queue backing store. Members, because a solver that builds them per frame allocates per frame.

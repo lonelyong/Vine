@@ -43,7 +43,7 @@ namespace detail
 {
 
 class FrameResources;
-class FrameScheduler;
+class PassScheduler;
 class FramePump;                     // The frame's numbers, its one-in-flight thread and its answers (see src/FramePump.hpp).
 class PublicationStore;              // The content side of the publication channel (see src/PublicationStore.hpp).
 class SessionShape;                  // The pass table, the plan diff and the compile (see src/SessionShape.hpp).

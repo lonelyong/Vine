@@ -44,7 +44,8 @@
 | retirement, `RetirementQueue` | 退休 | Destroys what the device's completion watermark has passed. |
 | watermark | 水位 | The device's "every frame before this point is done" position. |
 | frame driver, `FrameDriver` | 帧驱动者 | The per-engine frame executor the device hands out. **Use this** (see §2). |
-| frame head, `FrameHead` | 帧首 | The per-frame plan storage the recorder fills. |
+| frame head, `FrameHead` | 帧首 | The per-frame plan storage the recorder fills. backend_vk's own type, not seam vocabulary: one `Packet` per draw packet, one `DrawPlan` per command. |
+| pass scheduler, `PassScheduler` | — | The engine's one ordering point: it sorts the frame's PASSES by declared dependency (`PassSchedule`) and never decides when a frame may run - frame pacing is not this module's job. |
 | body gate, `FrameGate` | 体闸 | `Shared` while a frame body runs, `Exclusive` for host verbs; a re-entrant call is refused. |
 | reentry | 重入 | A host verb called from inside a frame body: refused with a diagnostic, never hung. |
 | episode | 情节 | One condition's report-once cycle (`ReportOnce`): said once, re-armed when it is gone. |

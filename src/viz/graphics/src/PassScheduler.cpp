@@ -1,4 +1,4 @@
-#include "FrameScheduler.hpp"
+#include "PassScheduler.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -19,7 +19,7 @@ constexpr std::uint32_t kUnvisited = 0xFFFFFFFFU;
 
 } // namespace
 
-void FrameScheduler::reset(std::span<const int> orders)
+void PassScheduler::reset(std::span<const int> orders)
 {
     const std::size_t count = orders.size();
 
@@ -41,7 +41,7 @@ void FrameScheduler::reset(std::span<const int> orders)
     }
     std::fill(excluded_.begin(), excluded_.end(), static_cast<std::uint8_t>(0));
 
-    // The answer of the LAST frame is cleared, not replaced: assigning a fresh FrameSchedule would free the
+    // The answer of the LAST frame is cleared, not replaced: assigning a fresh PassSchedule would free the
     // three buffers this one will fill again - and the cycle list is only touched when there really were
     // cycles (a pipeline with a cycle is a configuration error, so that path may allocate; the ordinary
     // frame must not).
@@ -59,7 +59,7 @@ void FrameScheduler::reset(std::span<const int> orders)
     }
 }
 
-void FrameScheduler::addEdge(std::uint32_t before, std::uint32_t after)
+void PassScheduler::addEdge(std::uint32_t before, std::uint32_t after)
 {
     if (before >= successors_.size() || after >= successors_.size()) {
         return;
@@ -71,24 +71,24 @@ void FrameScheduler::addEdge(std::uint32_t before, std::uint32_t after)
     out.push_back(after);
 }
 
-void FrameScheduler::exclude(std::uint32_t node)
+void PassScheduler::exclude(std::uint32_t node)
 {
     if (node < excluded_.size()) {
         excluded_[node] = 1;
     }
 }
 
-std::size_t FrameScheduler::nodeCount() const noexcept
+std::size_t PassScheduler::nodeCount() const noexcept
 {
     return successors_.size();
 }
 
-std::size_t FrameScheduler::excludedCount() const noexcept
+std::size_t PassScheduler::excludedCount() const noexcept
 {
     return static_cast<std::size_t>(std::count(excluded_.begin(), excluded_.end(), static_cast<std::uint8_t>(1)));
 }
 
-std::size_t FrameScheduler::edgeCount() const noexcept
+std::size_t PassScheduler::edgeCount() const noexcept
 {
     std::size_t total = 0;
     for (std::size_t node = 0; node < successors_.size(); ++node) {
@@ -99,7 +99,7 @@ std::size_t FrameScheduler::edgeCount() const noexcept
     return total;
 }
 
-const FrameSchedule& FrameScheduler::schedule()
+const PassSchedule& PassScheduler::schedule()
 {
     // The bookkeeping is cleared, not rebuilt (see the header's working-memory note): a steady frame that
     // assigned fresh containers here would allocate on every frame, which is what the counting half of
@@ -117,7 +117,7 @@ const FrameSchedule& FrameScheduler::schedule()
     return schedule_;
 }
 
-void FrameScheduler::findCycles()
+void PassScheduler::findCycles()
 {
     // Tarjan, iterative: the recursion a textbook version uses would put the pass count on the C++ call
     // stack, and the pass count is the HOST's number, not this backend's. The three tables and the two
@@ -210,7 +210,7 @@ void FrameScheduler::findCycles()
     std::sort(schedule_.skipped.begin(), schedule_.skipped.end());
 }
 
-void FrameScheduler::orderAcyclic()
+void PassScheduler::orderAcyclic()
 {
     const std::size_t node_count = successors_.size();
 
@@ -269,13 +269,13 @@ void FrameScheduler::orderAcyclic()
     }
 }
 
-bool FrameScheduler::selfLoop(std::uint32_t node) const noexcept
+bool PassScheduler::selfLoop(std::uint32_t node) const noexcept
 {
     const std::vector<std::uint32_t>& out = successors_[node];
     return std::find(out.begin(), out.end(), node) != out.end();
 }
 
-bool FrameScheduler::isSkipped(std::uint32_t node) const noexcept
+bool PassScheduler::isSkipped(std::uint32_t node) const noexcept
 {
     // `skipped` is kept sorted (see findCycles), so this is the cheap half of the question.
     return std::binary_search(schedule_.skipped.begin(), schedule_.skipped.end(), node);

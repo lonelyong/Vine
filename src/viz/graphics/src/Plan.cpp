@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "FrameScheduler.hpp"
+#include "PassScheduler.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -128,7 +128,7 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
     // and "was it produced" is a fact of the frame, so the compile that resolves it judges it (see
     // validatePlan). Both walk the same PassDesc::inputs list, so no input is visible to one and not the
     // other.
-    detail::FrameScheduler scheduler;
+    detail::PassScheduler  scheduler;
     std::vector<int>       orders;
     orders.reserve(plan.passes.size());
     for (const PassDesc& pass : plan.passes) {
@@ -161,7 +161,7 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
         }
     }
 
-    const detail::FrameSchedule& schedule = scheduler.schedule();
+    const detail::PassSchedule& schedule = scheduler.schedule();
     for (const std::vector<std::uint32_t>& component : schedule.cycles) {
         String members;
         for (const std::uint32_t node : component) {

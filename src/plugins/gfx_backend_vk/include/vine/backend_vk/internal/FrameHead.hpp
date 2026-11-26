@@ -53,16 +53,23 @@ struct ShadowSource {
  * @brief WHAT ONE FRAME RESOLVED: one `DrawPlan` per draw packet, and the frame-level texture facts every call binds.
  *
  * @details
- * - THE NAME IS THE SEAM'S VOCABULARY (`G6`; ADR-2026-11-16-redesign-seam-and-vocabulary): "the head resolves, the
- *   recording reads" is how the contract phrases it, and the representation behind that phrase is this backend's own -
- *   the SDK has no `DrawPlan` and must not grow one (`G7`).
+ * - WHY THIS NAME, AND WHY IT IS NOT BORROWED (`G12`). Every peer names the value a frame resolves for itself, and no
+ *   two agree: Filament calls it a `CommandStream` (its frame graph's front end writes it, the back end only reads),
+ *   Unreal caches `FMeshDrawCommand`s per view, Frostbite's frame graph is "compiled" into a render list. A borrowed
+ *   noun would therefore be one peer's word with this shape behind it; this one is named after the MOMENT that
+ *   produces it - the frame's HEAD, where every cache is asked exactly once - which is what makes the contract
+ *   sentence true: "the head resolves, the recording reads". The representation behind that phrase is this
+ *   backend's own: the SDK has no `DrawPlan` and must not grow one (`G7`).
+ * - IT IS NOT SEAM VOCABULARY (`G2`). `FrameHead` lives in `backend_vk/internal/`; the ADR that coined the word did so
+ *   while two backends shared the SPELLING (ADR-2026-11-16-redesign-seam-and-vocabulary), and the reference backend has
+ *   since retired. A second backend would spell its own resolved-frame value, not include this declaration.
  * - A HEAD IS A VALUE, AND IT OWNS WHAT IT NAMES (`G4` / `G10`). Everything here was true when the caches were asked
  *   (the buffers, the pipeline, the state, the slots); a release or a replacement that lands while the frame records
  *   cannot change what this frame already resolved, and the objects the values name are parked until the device's
  *   watermark (see `ContentCaches::releaseLater`), so they stay valid for the frame that copied them.
- * - WHAT IS FRAME-LEVEL AND WHAT IS PER CALL. The 1x1 white stand-in and the two samplers are the same for every call
- *   of one frame, so they live HERE (resolved once at the head); the slots a call binds are its own, so they live in
- *   its `DrawPlan`. Recording reads the head and the plan, and asks no cache (`C3`).
+ * - WHAT IS FRAME-LEVEL AND WHAT IS PER PACKET. The 1x1 white stand-in and the two samplers are the same for every
+ *   packet of one frame, so they live HERE (resolved once at the head); the slots a packet binds are its own, so they
+ *   live in its `DrawPlan`. Recording reads the head and the plan, and asks no cache (`C3`).
  * - THE CONTAINERS ARE REUSED ACROSS FRAMES. `beginFrame` / `beginPass` clear the slots and keep their capacity, so a
  *   steady frame resolves without growing the vectors.
  * - WHAT IT IS NOT. It is not a cache (see `ContentCaches`), and it is not the frame's scratch (see `FrameScratch`):
@@ -129,10 +136,19 @@ class FrameHead final {
         }
     };
 
-    /// @brief ONE DRAW PACKET of the frame: its plans (one per command; a full-screen packet has exactly one).
-    struct Call {
+    /**
+     * @brief ONE DRAW PACKET of the frame: its plans (one per command; a full-screen packet has exactly one).
+     *
+     * @details
+     * - WHY IT IS A PACKET AND NOT A CALL (`G1` / `G6`). A "draw call" is ONE submitted draw - the number
+     *   `FrameCounters::draws` and every profiler count - while a packet is one pass' whole request for one view,
+     *   which records as N draws. The SDK spells that same fact `PassDraw::packets` and retired `DrawCall` for exactly
+     *   this reason, so the head uses the same word at the same level: one packet, one `plans` entry per command, and
+     *   the frame's count of them is `draw_packets`.
+     */
+    struct Packet {
         std::vector<DrawPlan> plans{};
-        /// The head's first reason this call could not be resolved (reported where the draw is recorded).
+        /// The head's first reason this packet could not be resolved (reported where the draw is recorded).
         ContentRefusal refusal{};
 
         /** @brief Releases the plans and the refusal; the plans vector keeps its capacity. */
@@ -170,15 +186,17 @@ class FrameHead final {
         /// The shadow map this pass samples, as the claim resolved it - an empty one means "no map".
         ShadowSource shadow{};
 
-        std::vector<Call> draws{};
+        /// The draw packets, in the order the pass states them: one plan per command inside each (see Packet).
+        /// Index-parallel to `draw->packets`, so slot `i` is the same packet described there and resolved here.
+        std::vector<Packet> packets{};
 
         /** @brief Releases every draw packet and the pass' facts; the vectors keep their capacity. */
         void clear() noexcept
         {
-            for (Call& call : draws) {
-                call.clear();
+            for (Packet& packet : packets) {
+                packet.clear();
             }
-            draws.clear();
+            packets.clear();
             entry  = nullptr;
             draw   = nullptr;
             target = PassTarget{};
@@ -215,29 +233,29 @@ class FrameHead final {
     }
 
     /**
-     * @brief Gets the slot for the frame's next pass, sized to @p draw_count draw packets.
+     * @brief Gets the slot for the frame's next pass, sized to @p packet_count draw packets.
      *
-     * @param draw_count How many draw packets the pass states (a hint; the storage only ever grows).
+     * @param packet_count How many draw packets the pass states (a hint; the storage only ever grows).
      * @return The slot to resolve into; valid until the next beginPass or beginFrame.
      */
-    [[nodiscard]] Pass& beginPass(const std::size_t draw_count)
+    [[nodiscard]] Pass& beginPass(const std::size_t packet_count)
     {
         if (used_ == passes_.size()) {
             passes_.emplace_back();
             ++storage_grows_;
         }
         Pass& slot = passes_[used_];
-        for (Call& call : slot.draws) {
-            call.clear();
+        for (Packet& packet : slot.packets) {
+            packet.clear();
         }
-        if (draw_count > slot.draws.capacity()) {
+        if (packet_count > slot.packets.capacity()) {
             ++storage_grows_;
         }
-        slot.draws.resize(draw_count);
+        slot.packets.resize(packet_count);
         // ONE READ SLOT PER PACKET, all null until `resolveReadSet` fills the ones that sample a target: sized HERE so
         // the recording path indexes it without a check, and re-sized over reused storage like every other slot.
         slot.sources.clear();
-        slot.sources.resize(draw_count);
+        slot.sources.resize(packet_count);
         ++used_;
         return slot;
     }

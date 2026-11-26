@@ -109,7 +109,7 @@ intrusive_ptr<RenderTarget> colourTarget()
 /*
  * @brief Without a dependency, the frame keeps the announced order (the engine's own stacking rule).
  */
-TEST(FrameScheduleTest, PassesWithoutDependenciesKeepTheAnnouncedOrder)
+TEST(PassScheduleTest, PassesWithoutDependenciesKeepTheAnnouncedOrder)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
@@ -134,7 +134,7 @@ TEST(FrameScheduleTest, PassesWithoutDependenciesKeepTheAnnouncedOrder)
  * This is the whole reason the order is not the announcement: the producer is announced later and stacked later,
  * and the edge is what puts it first.
  */
-TEST(FrameScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
+TEST(PassScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
@@ -162,7 +162,7 @@ TEST(FrameScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
 /*
  * @brief A cycle is a declaration no order can satisfy: its whole component is skipped, the rest still runs.
  */
-TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
+TEST(PassScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
@@ -199,7 +199,7 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
  * made from the other side - two tables, one picture. This case pins the split: same engine, same frame, two
  * orders, and each one named after the question it answers.
  */
-TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOrder)
+TEST(PassScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOrder)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
@@ -238,7 +238,7 @@ TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOr
  * passes on targets of different counts are two pipelines of one pass kind. This case pins the SDK half -
  * the round trip, the "0 means one" rule, and the value reaching the target's shape.
  */
-TEST(FrameScheduleTest, ATargetsSampleCountTravelsWithItAndDefaultsToOne)
+TEST(PassScheduleTest, ATargetsSampleCountTravelsWithItAndDefaultsToOne)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());

@@ -1714,35 +1714,36 @@ void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::Frame
     }
     for (FrameHead::Pass& pass_head : head.passes()) {
         const PassDraw& pass_draw = *pass_head.draw;
-        for (std::size_t draw_index = 0; draw_index < pass_draw.packets.size(); ++draw_index) {
-            const DrawPacket& description = pass_draw.packets[draw_index];
-            FrameHead::Call&        call        = pass_head.draws[draw_index];
+        for (std::size_t packet_index = 0; packet_index < pass_draw.packets.size(); ++packet_index) {
+            const DrawPacket&  description = pass_draw.packets[packet_index];
+            FrameHead::Packet& packet      = pass_head.packets[packet_index];
             if (description.kind == vn::graphics::DrawKind::Fullscreen) {
-                call.plans.resize(1U);
-                FrameHead::DrawPlan& plan = call.plans.front();
-                (void)owner.caches.planFullscreen(description, pass_draw, pass_head.target.compatibility(), plan, call.refusal, cache_lock, frame_builds);
+                packet.plans.resize(1U);
+                FrameHead::DrawPlan& plan = packet.plans.front();
+                (void)owner.caches.planFullscreen(description, pass_draw, pass_head.target.compatibility(), plan, packet.refusal, cache_lock, frame_builds);
                 // The destination's stand-in and shadow sampler: a full-screen draw samples the target it names, so its
                 // slots are the source's views (assembled where the source is), not a material's.
-                owner.caches.resolveTextures(nullptr, commands, head, plan, call.refusal, cache_lock, uploadBatch(), frame_builds);
+                owner.caches.resolveTextures(nullptr, commands, head, plan, packet.refusal, cache_lock, uploadBatch(), frame_builds);
                 continue;
             }
             if (description.commands == nullptr) {
                 continue;
             }
-            call.plans.resize(description.commands->size());
+            packet.plans.resize(description.commands->size());
             for (std::size_t command_index = 0; command_index < description.commands->size(); ++command_index) {
-                FrameHead::DrawPlan& plan = call.plans[command_index];
+                FrameHead::DrawPlan& plan = packet.plans[command_index];
                 if (!owner.caches.planCommand((*description.commands)[command_index],
                                               pass_draw,
                                               head_program.get(),
                                               pass_head.target.compatibility(),
                                               plan,
-                                              call.refusal,
+                                              packet.refusal,
                                               cache_lock,
-                                              frame_builds)) {
+                                              frame_builds))
+                {
                     continue; // the plan stays empty and `record` skips exactly this command
                 }
-                owner.caches.resolveTextures(plan.material.get(), commands, head, plan, call.refusal, cache_lock, uploadBatch(), frame_builds);
+                owner.caches.resolveTextures(plan.material.get(), commands, head, plan, packet.refusal, cache_lock, uploadBatch(), frame_builds);
             }
         }
     }
@@ -2067,22 +2068,19 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // samples - stated once per pass instead of once per draw.
         const ContentDraw::DrawScope scope = ContentDraw::DrawScope::forPass(commands, target.extent(), frame_head, shadow, draw);
         // WHAT THIS PASS DRAWS: the frame head's plans and resolved bindings, in the draw packet's own order. Every
-        // command inside a call becomes one GPU draw (M3: the plan selected the pipeline, one `DrawItem` = one
-        // indexed draw). The frame's DRAWING-CALL count was taken from the frame's shape above - a call is the
+        // command inside a packet becomes one GPU draw (M3: the plan selected the pipeline, one `DrawItem` = one
+        // indexed draw). The frame's DRAWING-CALL count was taken from the frame's shape above - a packet is the
         // description, not its commands.
         const FrameHead::Pass& pass_head = passes[pass_index];
-        for (std::size_t draw_index = 0; draw_index < draw.packets.size(); ++draw_index) {
-            const DrawPacket& description = draw.packets[draw_index];
-            const FrameHead::Call&  call        = pass_head.draws[draw_index];
+        for (std::size_t packet_index = 0; packet_index < draw.packets.size(); ++packet_index) {
+            const DrawPacket&        description = draw.packets[packet_index];
+            const FrameHead::Packet& packet      = pass_head.packets[packet_index];
             // THE HEAD'S REFUSAL IS REPORTED WHERE THE DRAW IS (see planCommand): the code travels with the sentence
-            // instead of being guessed at the sink, and a call whose later commands DID resolve still records them.
-            if (call.refusal.isRefused()) {
+            // instead of being guessed at the sink, and a packet whose later commands DID resolve still records them.
+            if (packet.refusal.isRefused()) {
                 recording.content_refused = true;
                 if (content_report.shouldReport()) {
-                    owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
-                                                  call.refusal.category(),
-                                                  call.refusal.code(),
-                                                  call.refusal.message()));
+                    owner.report(deviceDiagnostic(DiagnosticSeverity::Warning, packet.refusal.category(), packet.refusal.code(), packet.refusal.message()));
                 }
             }
             ContentRefusal refusal;
@@ -2092,13 +2090,13 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 // device never built stays null and answers an empty span, which makes the recorder report (and skip)
                 // the draw.
                 ContentDraw::FullscreenSource source{};
-                if (const std::shared_ptr<TargetObjects>& source_entry = pass_run.sources[draw_index]; source_entry != nullptr) {
+                if (const std::shared_ptr<TargetObjects>& source_entry = pass_run.sources[packet_index]; source_entry != nullptr) {
                     source.views = source_entry->color_views;
                 }
-                recorder.recordFullscreen(scope, description, call.plans.front(), source, &refusal);
+                recorder.recordFullscreen(scope, description, packet.plans.front(), source, &refusal);
             }
             else {
-                recorder.record(scope, description, call.plans, &refusal);
+                recorder.record(scope, description, packet.plans, &refusal);
             }
             if (refusal.isRefused()) {
                 recording.content_refused = true;
@@ -2451,16 +2449,13 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
         resolveFrameHead(frame_head, warmup_builds);
         // WHAT THE HEAD COULD NOT RESOLVE IS REPORTED HERE, the way the frame path reports it where the draw is.
         for (const FrameHead::Pass& pass_head : frame_head.passes()) {
-            for (const FrameHead::Call& call : pass_head.draws) {
-                if (!call.refusal.isRefused()) {
+            for (const FrameHead::Packet& packet : pass_head.packets) {
+                if (!packet.refusal.isRefused()) {
                     continue;
                 }
                 recording.content_refused = true;
                 if (content_report.shouldReport()) {
-                    owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
-                                                  call.refusal.category(),
-                                                  call.refusal.code(),
-                                                  call.refusal.message()));
+                    owner.report(deviceDiagnostic(DiagnosticSeverity::Warning, packet.refusal.category(), packet.refusal.code(), packet.refusal.message()));
                 }
             }
         }

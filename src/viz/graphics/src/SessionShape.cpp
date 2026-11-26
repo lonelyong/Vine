@@ -15,7 +15,7 @@
 
 #include "EngineDiagnostics.hpp"
 #include "FrameResources.hpp"
-#include "FrameScheduler.hpp"
+#include "PassScheduler.hpp"
 #include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -27,7 +27,7 @@ SessionShape::SessionShape(Diagnostics& diagnostics, PublicationStore& publicati
   : diagnostics_(diagnostics)
   , publications_(publications)
   , resources_(resources)
-  , scheduler_(std::make_unique<FrameScheduler>())
+  , scheduler_(std::make_unique<PassScheduler>())
 {}
 
 SessionShape::~SessionShape() = default;

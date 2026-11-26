@@ -35,7 +35,7 @@ This file defines the current design of the graphics architecture: device, engin
 2.3 **One fact, one home**: pass registration is only `PassRegistry`; named outputs only `OutputRegistry`; diagnostics only
     `DiagnosticsHandle`; presentation only `RenderArea`'s present table.
 2.4 **A device is not a window**: `RenderDevice` owns the GPU device and queues and can serve several windows; window targets are issued by the device.
-2.5 **There is one scheduler implementation**: the engine's `detail::FrameScheduler` sorts; the backend no longer reorders by dependency and no longer reports cycles.
+2.5 **There is one scheduler implementation, and it schedules PASSES**: the engine's `detail::PassScheduler` sorts the frame's passes by declared dependency (`PassSchedule`); the backend no longer reorders by dependency and no longer reports cycles. The noun is the pass, not the frame: this class never decides when a frame may run, and `FrameScheduler` is the name the industry gives to that other job (frame pacing).
 
 2.6 **Content belongs to the pass's declaration**: `PassDesc::content` is the only storage; the engine's slot holds only order / owner / role / transient / timing.
 Why: a pass is one declaration (`RenderPass.hpp`'s "ONE FACT, ONE STORAGE"), the content is written by the declarer and read by the compiler; a second copy in the engine

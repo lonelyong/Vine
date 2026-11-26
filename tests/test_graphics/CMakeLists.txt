@@ -4,7 +4,7 @@ set(SRC_FILE_LIST
 	# tests/BackendSeamTest.cpp for why it is not repeated per backend).
 	${CMAKE_CURRENT_SOURCE_DIR}/../BackendSeamTest.cpp
 	ChainRegistrationTest.cpp
-	FrameScheduleTest.cpp
+	PassScheduleTest.cpp
 	GraphicsTest.cpp
 	HeadlessBackendTest.cpp
 	PlanTest.cpp

@@ -37,7 +37,7 @@ namespace detail
 {
 
 class FrameResources;
-class FrameScheduler;
+class PassScheduler;
 class PublicationStore;
 
 /**
@@ -299,8 +299,8 @@ class SessionShape {
     std::vector<std::uint32_t> frame_order_;
     /// The announced sort key of each plan row, rebuilt by scheduleRows() (the scheduler reads a contiguous span).
     std::vector<int> frame_order_keys_;
-    /// The scheduler's working memory (see FrameScheduler): one per engine, reused every frame.
-    std::unique_ptr<FrameScheduler> scheduler_;
+    /// The scheduler's working memory (see PassScheduler): one per engine, reused every frame.
+    std::unique_ptr<PassScheduler> scheduler_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
     std::vector<CompileProblem> plan_problems_;
     std::vector<CompileProblem> previous_problems_;

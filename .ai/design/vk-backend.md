@@ -352,7 +352,7 @@ and every cache has a witness a test can read.**
   (measured 6 → 10).
 - **Observation point (the other half)**: `Device::contentCacheCounters()` is assembled from two halves — the ring / set numbers come from the device's **own driver**'s
   `FrameScratch`, the rest from `caches.numbers()`. The single-session semantics are value for value what they were before the split (`test_vk` green).
-- **Frame-head storage reuse and its witness (I-02)**: `FrameHead`'s pass / call slots are `clear()`ed rather than rebuilt (`storageGrows()` increases only when capacity is
+- **Frame-head storage reuse and its witness (I-02)**: `FrameHead`'s pass / packet slots are `clear()`ed rather than rebuilt (`storageGrows()` increases only when capacity is
   short); `Device::frameHeadStorageGrows()` exposes it to tests, and `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage` pins it with "3 warm-up frames, then 5
   unchanged". **It proves the head's storage reuse only**, not a whole frame allocating nothing (pipeline keys and content caches have their own allocations, which this page
   neither claims nor measures). `planCommand` clears with `plan.clear()` rather than releasing and rebuilding the reused vector per command.

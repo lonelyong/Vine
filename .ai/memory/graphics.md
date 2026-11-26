@@ -2640,3 +2640,29 @@
   two threads, which is what `Diagnostics` already documented (the two sentences disagreed before).
 - Counts: `test_graphics` 660/660 (84 suites), `test_vk` 223/223 (46 suites); TSan 0 warnings on both; 11 doc/style
   gates + `check_ai_docs.py --strict` green. No ASan run: no ownership or allocation path changed.
+
+## 2026-11-26 - review 14: the frame vocabulary names its question, not a metaphor
+
+Audit first, then two renames and one doc correction. Each name was judged against what the industry calls the same
+thing; changes are only where the second word was a metaphor or named another concept.
+
+- **`FrameHead::Call` -> `FrameHead::Packet`, `Pass::draws` -> `Pass::packets`.** The head held ONE DRAW PACKET under
+  the word the vocabulary retired on 2026-11-20 (`DrawCall` -> `DrawPacket`, `PassDraw::draws` -> `packets`), so one
+  fact had two spellings in two layers and the vk one said the opposite (a packet records as N draws - the number
+  `FrameCounters::draws` counts). The resolved vector stays index-parallel to `draw->packets`, which is the contract
+  (one plan per packet). `beginPass(draw_count)` -> `packet_count`.
+- **`detail::FrameScheduler` -> `detail::PassScheduler`** (with `PassSchedule`, the files, the forward declarations and
+  the suite `PassScheduleTest`). It sorts the frame's PASSES; Filament's `FrameScheduler` is frame pacing (begin/end,
+  vsync, refresh rate), so the old name taught the other concept. Stated in the class note, `graphics-architecture.md`
+  2.5 and a new glossary row.
+- **`FrameHead`'s name note rewritten** - it still claimed "the seam's vocabulary", but the reference backend retired
+  2026-11-23 and this header is `backend_vk/internal/`. It now says why no borrowed word exists (Filament
+  `CommandStream`, UE's cached `FMeshDrawCommand`, Frostbite's compiled frame graph: three peers, three nouns) and that
+  the name is the MOMENT that produces the value - which is what makes "the head resolves, the recording reads" true.
+  The name stays: 24 files / 77 hits, and that phrase is load-bearing.
+- Deliberately kept: `FramePump` (a software pump is a driving loop), `FrameRunner`, `DrawPlan` (the `resolve` verb chain
+  is load-bearing, and the public `Plan` is another layer), `FrameBooks` / `SurfaceLedger` (two accounting metaphors,
+  private and documented - the cheaper fix is tying `FrameBooks` to `FrameReport`, deferred).
+- Verified: build 0 errors (`test_graphics`, `test_vk`, `gfx_backend_vk`); `test_graphics` 660/660 (84 suites),
+  `test_vk` 223/223 (46); 12 doc/style gates + `--strict` exit 0; `clang-format-diff-23` clean. No TSan/ASan run: no
+  ownership, allocation, locking or ABI change (identifiers and comments only).
