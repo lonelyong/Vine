@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <vector>
@@ -488,8 +489,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - A LIFETIME DECISION, made once: switching to EngineThread starts this engine's frame thread, switching back to
      *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
-     *   from inside a FrameUpdate::onFrame() call). A call made from the engine's own frame thread is IGNORED: the mode
-     *   that thread is running under cannot be ended from inside it (`FrameRunner::stop` answers the same).
+     *   from inside a FrameUpdate::onFrame() call).
+     * - A CALL MADE FROM THE ENGINE'S OWN FRAME THREAD CHANGES NOTHING, because the mode that thread is running under
+     *   cannot be ended from inside it (`FrameRunner::stop` answers the same) - and it SAYS SO: the refusal is reported
+     *   once per episode (`engine.threading.refused_from_frame`), so a host that asked for a thread is not left
+     *   believing its frames moved.
      * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
      *   and only the publications, the surface's window half and the device are touched on the other side.
      *
@@ -710,8 +714,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   whose name is empty cannot be stated at all, which is why every plan row must be named.
      *
      * @warning
-     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is
-     *   REFUSED with `PlanResult::refusal == PlanRefusal::Busy` (no partial change).
+     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while this engine is BUILDING a frame (its
+     *   content half: hooks, publication, compile) or ANSWERING one (its engine half on the frame thread) is REFUSED
+     *   with `PlanResult::refusal == PlanRefusal::Busy` (no partial change). Inline and threaded are the same rule;
+     *   the interval is `detail::FramePump::recording`, not "is the frame thread busy".
      *
      * @param plan The shape to apply (see Plan).
      * @return What the call did (see PlanResult): applied, invalid (with every problem), or refused with a reason.
@@ -732,7 +738,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   cannot take a pass somebody else draws.
      *
      * @warning
-     * - A plan is still a shape change: refused with `PlanRefusal::Busy` while a frame is being recorded.
+     * - A plan is still a shape change: refused with `PlanRefusal::Busy` while this engine is building or answering a
+     *   frame (see applyPlan).
      *
      * @param plan  The rows this contributor states (name = identity, as in the whole-session form).
      * @param owner The contributor the rows belong to (an identity; null means the whole session, see above).
@@ -1171,22 +1178,30 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// the engine half, and the answer a host waits for (see detail::FramePump).
     std::unique_ptr<detail::FramePump> pump_;
 
-    /// The episode of the "a session's shape cannot change during a frame" report (see sessionChangeAllowed).
+    /// The episode of the "a session's shape cannot change during a frame" report (see beginShapeChange).
     ReportOnce session_change_episode_;
 
-    /// @brief Answers whether a session-shape change may be applied now, reporting ONE diagnostic per episode when not.
+    /// The episode of "setFrameThreading() was asked from this engine's own frame thread" (see setFrameThreading).
+    ReportOnce frame_thread_change_episode_;
+
+    /// @brief Decides whether a session-shape change may be applied now, and answers the gate that keeps it so.
     ///
     /// @details
     /// - THE ONE PLACE THE RULE IS SPELLED OUT (design graphics-threading.md 2.12, C20): the pass slots, the resources
-    ///   table and the backend's retained state are what the engine thread walks while it records, so a change that
-    ///   lands during a frame is REFUSED rather than applied to a list something is already reading.
+    ///   table and the backend's retained state are what a compile walks - the content half's, inline and on the frame
+    ///   thread alike - so a change that lands inside either half is REFUSED rather than applied to a list something is
+    ///   already reading.
+    /// - WHY IT ANSWERS A LOCK AND NOT A BOOL (`G1`): the decision and the change must be one step. A bare "may I?"
+    ///   that the caller then acts on lets a compile begin between the two, which is exactly the window the old
+    ///   runner-based predicate left open. The gate is the pump's phase lock, so a frame cannot start building between
+    ///   the answer and the apply.
     /// - Private on purpose: it is the engine's own guard, not a question a host asks.
     /// - ONE REPORT PER EPISODE: a host that forgot to wait hears it the first time; an accepted change re-arms it, so a
     ///   second, separate mistake still speaks.
     ///
     /// @param verb Name of the refused call, for the sentence.
-    /// @return true when the caller may proceed.
-    [[nodiscard]] bool sessionChangeAllowed(const char* verb);
+    /// @return The gate to hold while applying (empty: refused, and the episode has been reported if it should speak).
+    [[nodiscard]] std::optional<std::unique_lock<std::mutex>> beginShapeChange(const char* verb);
     /// A frame whose engine half finished on the frame thread and whose per-pass cost still has to reach the plan.
     /// The pump keeps this (see detail::FramePump): the plan is the content half's, so it is written at the one moment
     /// nobody else is in it, right after the next beginFrame waited.

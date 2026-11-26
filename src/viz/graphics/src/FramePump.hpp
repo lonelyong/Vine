@@ -33,8 +33,9 @@ namespace detail
  *   composes passes, surfaces and diagnostics; here it is one unit whose contract is "where does the second half run,
  *   and how does a host learn it finished".
  * - WHAT IT OWNS: the two `EngineFrame` values (the content half fills one while the other is being answered), the
- *   monotonic frame number, the completion counter `waitForFrame` reads, the `FrameRunner`, and the last answered
- *   frame's whole answer - its outcome, its `FrameResult`, and what each of its passes cost.
+ *   monotonic frame number, the PHASE (is a frame being built or answered - see `recording`), the completion counter
+ *   `waitForFrame` reads, the `FrameRunner`, and the last answered frame's whole answer - its outcome, its
+ *   `FrameResult`, and what each of its passes cost.
  * - WHAT IT DOES NOT OWN: the content half, the engine half, the passes and the device. It hands out a frame value and
  *   accepts a job; building and answering stay in the engine (`G7`: the pump absorbs the threading, it does not take
  *   over the frame).
@@ -51,6 +52,39 @@ class FramePump {
     /// One frame's engine half, as far as this class is concerned.
     using Job = FrameRunner::Job;
 
+    /**
+     * @brief ONE FRAME'S (OR ONE PREPARE'S) BUILD: the interval in which this session's shape must not change.
+     *
+     * @details
+     * - WHY IT IS A VALUE AND NOT A FLAG (`G1` / `G10`): "a compile is running" has exactly one owner - the call that
+     *   compiled - and every way out of that call ends it: the ordinary return, an early one, and a host hook that
+     *   throws out of a pass' `describe`. A guard is the only spelling of that which cannot be forgotten, and its
+     *   destructor is the one place the phase is cleared.
+     * - WHAT IT DOES NOT COVER: the ENGINE half. Once the value is handed over, the frame is still open - the shape
+     *   must stay put until it is answered - and that half belongs to the pump's own `answering` fact, not to this
+     *   object (see `recording`).
+     */
+    class Build {
+      public:
+        Build(const Build&)            = delete;
+        Build& operator=(const Build&) = delete;
+
+        /** @brief Ends the build: the shape may change again unless a frame is still being answered (see recording). */
+        ~Build();
+
+        /** @brief Gets the frame value this build fills. */
+        [[nodiscard]] EngineFrame& frame() const noexcept;
+
+      private:
+        friend class FramePump;
+
+        /** @brief Marks @p pump as recording, over @p frame (called by beginFrame / beginBuild). */
+        Build(FramePump& pump, EngineFrame& frame) noexcept;
+
+        FramePump*   pump_{ nullptr };
+        EngineFrame* frame_{ nullptr };
+    };
+
     /** @brief Creates an inline pump with two empty frame values (no thread, no frame built). */
     FramePump();
 
@@ -61,17 +95,32 @@ class FramePump {
     FramePump& operator=(const FramePump&) = delete;
 
   public:
-    /** @brief Waits for the frame in flight, then rotates to the other value and numbers it.
+    /** @brief Waits for the frame in flight, then rotates to the other value, numbers it and marks this session
+     *         as RECORDING.
      *
      * @details
      * - ONE FRAME IN FLIGHT (design 2.12, D12): the previous engine half is finished before this value is handed out,
-     *   so a caller never queues frames and the two halves never touch one frame at once.
+     *   so a caller never queues frames and the two halves never touch one frame at once. That wait happens BEFORE the
+     *   phase is entered, so a shape change landing during it is answered at once (see `recording`) rather than held.
      * - The number is taken HERE, monotonic from 1: it names the frame in `waitForFrame`, and it is what the answer's
-     *   `PresentRecord` carries.
+     *   `PresentRecord` carries. It is atomic because a host may read `frameNumber()` from a thread that does not
+     *   drive frames (a HUD, a benchmark), which is also what lets `wait` tell "not answered yet" from "never built".
      *
-     * @return The frame value this frame fills (reused across frames; its storage survives).
+     * @return The build this frame fills - its value, and the interval the session's shape must not change in. The
+     *         interval ends when the guard goes out of scope; the frame itself stays open until it is answered.
      */
-    EngineFrame& beginFrame();
+    [[nodiscard]] Build beginFrame();
+
+    /** @brief Marks this session as RECORDING without handing out a frame: a PREPARE is a build, not a frame.
+     *
+     * @details
+     * - A PREPARE WALKS THE SAME TABLES A FRAME DOES (see RenderEngine::prepare): it compiles, resolves transients and
+     *   describes every pass, so a shape change landing inside it corrupts exactly what a change during `frame()`
+     *   would. The one difference is that nothing will be answered, so the interval ends with the guard.
+     *
+     * @return The build, over the value the last compile filled (see currentFrame).
+     */
+    [[nodiscard]] Build beginBuild();
 
     /** @brief Gets the frame value the next `prepare()` would fill (no rotation, no number taken).
      *
@@ -120,29 +169,71 @@ class FramePump {
      */
     [[nodiscard]] bool onEngineThread() const noexcept;
 
-    /** @brief Gets whether a job is in flight (always false inline). */
-    [[nodiscard]] bool busy() const;
-
-    /** @brief Chooses where the engine half runs (waits for the frame in flight before switching). */
-    void setThreaded(bool threaded);
-
-    /** @brief Publishes what became of one frame's picture (the packed word a host reads). */
-    void publishPresent(std::uint64_t number, PresentOutcome outcome) noexcept;
-
-    /** @brief Marks frame @p number as answered (what waitForFrame observes). */
-    void markCompleted(std::uint64_t number) noexcept;
-
-    /** @brief Publishes the last answered frame's whole answer: its shape, and what each of its passes cost.
+    /**
+     * @brief Answers whether a frame or a prepare is being BUILT or ANSWERED: the interval the session's shape is fixed in.
      *
      * @details
-     * - ONE LOCK, ONE MOMENT: the outcome word a host polls is its own atomic, but everything read as "the frame's
-     *   answer" - the `FrameResult` and the per-pass cost - lands together, so a table read right after
-     *   `waitForFrame` reports the frame that just finished instead of half of that one and half of the one before.
+     * - TWO FACTS, ONE ANSWER (`G1`): `compiling` - the content half is running on the thread that called
+     *   frame/prepare - and `answering` - a frame was handed to the engine thread and nobody has answered it yet. The
+     *   first is what the runner cannot see: inline there is no runner at all, and in threaded mode it ends before the
+     *   job is even submitted. A gate that asked the runner alone therefore let a shape change into the compile, which
+     *   is the half of the frame that reads the table a change edits (C20 used to say "a frame in flight" and only
+     *   half of it was checked).
+     * - READ FROM ANY THREAD, because a shape change may land from one that does not drive frames (an application pool
+     *   assembling content beside a paint loop). Both facts are atomics, and neither is derived from `runner_` - that
+     *   pointer is replaced by the thread that switches mode.
      *
-     * @param result     What the frame consisted of and what became of its picture.
-     * @param pass_costs What each of its passes cost (copied; the caller's frame value is reused by later frames).
+     * @return true while a build or an answer is outstanding.
      */
-    void publishAnswer(FrameResult result, std::span<const PassCost> pass_costs);
+    [[nodiscard]] bool recording() const;
+
+    /**
+     * @brief Takes the gate a SHAPE CHANGE holds while it decides and applies (see recording).
+     *
+     * @details
+     * - WHY ONE LOCK AT ALL: "nothing is recording, so the shape may change" and "this session is recording now" are
+     *   two statements made by two threads; with no lock around both, the first can be decided while the session is idle
+     *   and the change applied while the compile walks the table it edits. The gate closes that window by making the
+     *   DECISION and the CHANGE one critical section, against the one that flips the phase.
+     * - NEVER HELD FOR A COMPILE: a change is short and a compile is not, so a frame start waits for the former at
+     *   most. This is why it is a lock and not "wait for the frame" - a change is refused (Busy), never queued.
+     *
+     * @return The gate, held for as long as the guard lives.
+     */
+    [[nodiscard]] std::unique_lock<std::mutex> phaseGate();
+
+    /**
+     * @brief Chooses where the engine half runs (waits for the frame in flight before switching).
+     *
+     * @details
+     * - A CALL FROM THE ENGINE THREAD CHANGES NOTHING and answers false: the mode that thread is running under cannot
+     *   be ended from inside it (see FrameRunner::stop). It USED to be a silent no-op, which made "I asked for a
+     *   thread and did not get one" indistinguishable from "it is on a thread already" (`G4`: a verb that can fail
+     *   says so, and the caller decides whether to report it).
+     *
+     * @param threaded Where the engine half runs.
+     * @return true when the mode was applied; false when the caller refused it (the engine thread, or a frame still
+     *         being answered inline).
+     */
+    [[nodiscard]] bool setThreaded(bool threaded);
+
+    /**
+     * @brief Publishes ONE answered frame: the picture's fate, its whole answer, and the completion a host waits for.
+     *
+     * @details
+     * - ONE CALL, ONE MOMENT (`G1` / `G4`): three facts travel with an answer - what became of the picture (the packed
+     *   word `presentRecord` reads), what the frame consisted of and what each of its passes cost (`result` /
+     *   `answeredPassCosts`), and that it is answered at all (`waitForFrame`). Publishing them from three calls let a
+     *   host that polls WITHOUT waiting read one frame's picture beside the previous frame's numbers; they are
+     *   published here, in that order, and the completion is the last (so a wait that returned sees all of it).
+     * - The costs are copied: they live on a frame value the next frame reuses.
+     *
+     * @param number     The frame this answers (see beginFrame).
+     * @param outcome    What became of its picture.
+     * @param result     What it consisted of and reported.
+     * @param pass_costs What each of its passes cost, in slot order (see detail::PassCost).
+     */
+    void publishAnswer(std::uint64_t number, PresentOutcome outcome, FrameResult result, std::span<const PassCost> pass_costs);
 
     /** @brief Gets the last answered frame's whole answer. */
     [[nodiscard]] FrameResult result() const;
@@ -176,8 +267,15 @@ class FramePump {
     std::size_t slot_{ 0 };
     /// The value the last compile filled (what `frameDescription` answers).
     EngineFrame* current_{ nullptr };
-    /// How many frames this pump has handed out (monotonic; 0 before the first one).
-    std::uint64_t number_{ 0 };
+    /// How many frames this pump has handed out (monotonic; 0 before the first one). Atomic because a host reads
+    /// `frameNumber()` from threads that do not drive frames, and because `wait` compares against it.
+    std::atomic<std::uint64_t> number_{ 0 };
+    /// The content half of a frame or prepare is running on the thread that called it (see Build).
+    std::atomic<bool> compiling_{ false };
+    /// A frame was handed to the engine thread and has not been answered (set by submit, cleared by publishAnswer).
+    std::atomic<bool> answering_{ false };
+    /// The gate a shape change holds across its decision and its change, against the phase flip that starts a build.
+    mutable std::mutex phase_mutex_;
     /// The id of the last frame whose engine half finished (read by wait).
     std::atomic<std::uint64_t> completed_{ 0 };
     /// Where the engine half runs; null means inline - the thread exists only when a host asked for one.

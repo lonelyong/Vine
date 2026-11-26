@@ -91,7 +91,7 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (92)
+## decisions/ — decision records (ADRs) (94)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
@@ -105,18 +105,29 @@ keeps the old argument.
   `waitForFrame`, dropped the last frame's, and let a `prepare()` erase one - and meant two different things in the two
   threading modes.
 
+- `ADR-2026-11-26-a-frame-is-recorded-from-its-first-compile.md` — **a frame is recorded from its first compile until its
+  answer, and the pump owns that phase**: `recording()` is two facts (`compiling`, the content half's guard; `answering`,
+  the frame's own answer) instead of "is the runner busy", and a shape change holds the same phase gate across its
+  decision and its change. The runner-shaped predicate was blind to every inline frame and to the whole content half, so
+  `applyPlan` could be applied into the compile that reads the slot table it edits (`ReportOnce` became atomic in the same
+  batch, because two host threads may ask).
+
+- `ADR-2026-11-26-the-frame-report-is-the-frames-answer.md` — **the frame report is the frame's answer, published with
+  it**: the vk driver's books are the recording thread's and `closeFrameBooks` publishes them under a lock, so
+  `frameReport()` reads a CLOSED frame from any thread - where it used to read the live books the frame body was writing
+  (15 TSan reports with the old read). The alternative was a rule every host had to know, which one consumer's source
+  comment had already had to state.
+
 - `ADR-2026-11-26-a-window-frame-owns-the-device-gate.md` — **a window frame keeps the device's frame gate exclusive**:
   present cannot move under the queue's external-synchronisation lock without making a v-sync-blocked present stall every
   other driver's submit, and the window half's refusal episodes are device state. The cost (two windows, or a window and
   an off-screen driver, run their frame bodies one at a time) is stated, and the trigger to revisit is a measured
   two-window render loop.
-
 - `ADR-2026-11-26-buffer-bytes-are-caller-managed.md` — **byte content is caller-managed, and `Buffer` holds no
   lock**: the revision pair orders the bytes (rewrite in place + announce is the streaming path), while growing or
   replacing the storage must happen between frames or as a new buffer object. An internal `shared_mutex` with a scoped
   read lease was implemented and rejected: it puts a threading policy in a value type and charges every producer for a
   case no in-tree host creates. The stream-revision re-upload the investigation produced stays.
-
 - `ADR-2026-11-25-readback-answer-is-one-value.md` — **a readback answers with one value, and has one classifier**:
   `readColorImage` / `readDepthImage` return `ColorReadback` / `DepthReadback` (`ReadbackResult<T>`) - the `ReadbackStatus`
   together with the pixels it classifies, empty on every refusal - so a refused read cannot leave a caller's buffer

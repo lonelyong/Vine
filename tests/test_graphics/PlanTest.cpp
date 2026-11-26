@@ -9,6 +9,7 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/Scene.hpp>
 #include <vine/graphics/WindowPresentTarget.hpp>
 
 #include <vine/intrusive_ptr.hpp>
@@ -16,12 +17,13 @@
 
 #include <gtest/gtest.h>
 
-#include <cstddef>
 #include <condition_variable>
+#include <cstddef>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "PlanTestSupport.hpp"
@@ -661,4 +663,154 @@ TEST(PlanTest, ATargetValueAndAnOutputValueCannotBothBeStated)
     pass.output.whole_target = false;
     pass.output.image        = image;
     EXPECT_TRUE(validatePlan(Plan{ { pass } }).empty()) << "a consistent Target/Output pair must be a valid plan";
+}
+
+/*
+ * @brief "Being recorded" starts with the COMPILE, not with the frame thread - and inline there is no frame thread.
+ *
+ * The gate used to ask the runner, so it was closed only for the engine half: an inline frame never closed it, and a
+ * threaded frame's content half did not either. `SessionShape::applyPlan` erases and inserts slots, and the compile
+ * walks those slots (rows, transients, and the raw `pass` pointers a `FrameDescription` carries into the backend), so
+ * a plan that landed there was applied to a table something was already reading - a dangling pass in the frame value
+ * and a target released under the recording. The sink below is where such a call really comes from: it is host code
+ * invoked from inside `SessionShape::compile`, which is the case `EngineNotReadyReason::Reentrant` exists for.
+ */
+TEST(PlanTest, AFrameRefusesAPlanFromInsideItsOwnCompile)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera      = vn::make_intrusive<Camera>();
+    // NEVER PUBLISHED, so this frame's compile reports it - from inside itself, which is the hook this case needs.
+    auto unpublished = vn::make_intrusive<Scene>();
+
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished));
+
+    PlanResult from_inside;
+    bool       asked = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (asked) {
+            return; // the refusal's own report arrives through the same sink
+        }
+        asked       = true;
+        // THE WORST THING A HOST COULD DO HERE: replace the whole session shape while it is being compiled.
+        from_inside = engine->applyPlan(Plan{});
+    });
+
+    const FrameCallOutcome outcome = engine->frame();
+    EXPECT_TRUE(outcome.ran()) << "inline, the frame is answered before frame() returns";
+    ASSERT_TRUE(asked) << "the case rests on the compile reporting from inside its own build";
+    EXPECT_TRUE(from_inside.refused()) << "a plan was APPLIED to the table the compile was walking";
+    EXPECT_EQ(from_inside.refusal, PlanRefusal::Busy);
+    EXPECT_EQ(engine->passCount(), 1U) << "the shape the frame was built from is still the shape it has";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1U) << "one report for the episode";
+    EXPECT_TRUE(engine->applyPlan(Plan{}).applied()) << "and the same plan applies between frames";
+}
+
+/*
+ * @brief A PREPARE compiles too, so it is a build - the interval the runner never described.
+ *
+ * `prepare()` is not a frame (nothing is answered), which is why it was left outside the old predicate altogether. It
+ * walks the same pass table, resolves the same transients and describes the same passes, so the same corrupting change
+ * could land in it.
+ */
+TEST(PlanTest, APrepareRefusesAPlanFromInsideItsOwnCompile)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera      = vn::make_intrusive<Camera>();
+    auto unpublished = vn::make_intrusive<Scene>();
+
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished));
+
+    PlanResult from_inside;
+    bool       asked = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (asked) {
+            return;
+        }
+        asked       = true;
+        from_inside = engine->applyPlan(Plan{});
+    });
+
+    const PrepareReport report = engine->prepare();
+    EXPECT_NE(report.outcome, PrepareReport::Outcome::NotReady) << "the engine was ready to prepare";
+    ASSERT_TRUE(asked) << "prepare() compiles, so it reports like a frame does";
+    EXPECT_TRUE(from_inside.refused());
+    EXPECT_EQ(from_inside.refusal, PlanRefusal::Busy);
+    EXPECT_EQ(engine->passCount(), 1U);
+}
+
+/*
+ * @brief A plan from ANOTHER thread is refused while the paint thread is inside the compile.
+ *
+ * The shape is edited by the content side, and an application's content assembly may run on its own pool (the demo's
+ * does: "a layout step runs on a resize, and the content assembly runs on a pool"). With the check and the change as two
+ * statements, that thread could decide "nothing is recording" and then apply while the compile had begun - which is a
+ * data race on the slot table, not merely a wrong picture. The decision and the change are one step now, under the gate
+ * the phase flip also takes.
+ */
+TEST(PlanTest, APlanFromAnotherThreadIsRefusedWhileThisOneCompiles)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera      = vn::make_intrusive<Camera>();
+    auto unpublished = vn::make_intrusive<Scene>();
+
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished));
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside   = false;
+    bool                    released = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        std::unique_lock<std::mutex> lock(gate);
+        if (inside) {
+            return; // the refusal's own report (it arrives on the applying thread)
+        }
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    });
+
+    FrameCallOutcome outcome;
+    std::thread      driver([&] { outcome = engine->frame(); });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        changed.wait(lock, [&] { return inside; });
+    }
+
+    // THE OTHER THREAD, WHILE THE COMPILE IS STOPPED INSIDE ITSELF.
+    const PlanResult while_building = engine->applyPlan(Plan{});
+    EXPECT_TRUE(while_building.refused()) << "a plan landed inside another thread's compile";
+    EXPECT_EQ(while_building.refusal, PlanRefusal::Busy);
+    EXPECT_EQ(engine->passCount(), 1U);
+
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        released = true;
+    }
+    changed.notify_all();
+    driver.join();
+
+    EXPECT_TRUE(outcome.ran());
+    EXPECT_EQ(engine->passCount(), 1U) << "the frame kept the shape it was built from";
+    EXPECT_TRUE(engine->applyPlan(Plan{}).applied()) << "the same plan applies once the frame is answered";
 }

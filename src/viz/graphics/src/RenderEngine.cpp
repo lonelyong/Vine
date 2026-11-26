@@ -306,7 +306,12 @@ PrepareReport RenderEngine::prepare()
     // is NOT advanced and no frame number is taken: nothing here is a frame, so the next frame() builds this same
     // slot again from the declarations AS THEY STAND THEN - a camera that moved in between is in it, which is what
     // keeps "prepared" a key rather than a frozen picture.
-    detail::EngineFrame& frame = pump_->currentFrame();
+    //
+    // A PREPARE IS A BUILD TOO (see FramePump::Build): the compile below walks the pass table exactly as a frame's
+    // does, so a shape change landing inside it corrupts the same rows - and it is the half of the interval that the
+    // runner cannot see, because a prepare is answered by nobody.
+    const detail::FramePump::Build build = pump_->beginBuild();
+    detail::EngineFrame&           frame = build.frame();
     buildContentHalf(frame);
     // THE EXPANSION IS PART OF THE ANSWER. A compiled half is keyed per DRAW PACKET (its vertex layout, variant and
     // counts are the command's), so a frame value whose draws carry no collected commands would describe nothing to
@@ -351,7 +356,12 @@ FrameCallOutcome RenderEngine::frame()
     // ONE FRAME IN FLIGHT: with a frame thread, the previous frame's engine half is finished before this frame touches
     // the mirrors or a slot. That is the whole pipeline (1 + 1), and it is why a caller never queues frames: the wait
     // is for the frame BEFORE the one it is about to build, which is normally already done (design 2.12, D12).
-    detail::EngineFrame& next = pump_->beginFrame();
+    //
+    // THE BUILD IS THE INTERVAL A SHAPE CHANGE MUST NOT LAND IN (see FramePump::Build): from here until this call
+    // returns, the session is recording - inline and on the frame thread alike - and a plan applied from anywhere in
+    // that window is refused with Busy rather than walked into the compile's own rows.
+    const detail::FramePump::Build build = pump_->beginFrame();
+    detail::EngineFrame&           next  = build.frame();
     buildContentHalf(next);
 
     if (!pump_->threaded()) {
@@ -365,7 +375,19 @@ FrameCallOutcome RenderEngine::frame()
 
 void RenderEngine::setFrameThreading(FrameThreading mode)
 {
-    pump_->setThreaded(mode == FrameThreading::EngineThread);
+    if (pump_->setThreaded(mode == FrameThreading::EngineThread)) {
+        frame_thread_change_episode_.rearm();
+        return;
+    }
+    // A SWITCH ASKED FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED (see FramePump::setThreaded): the mode a thread is
+    // running under cannot be ended from inside it, and a silent no-op would leave a host believing its frames had
+    // moved. Said once per episode, re-armed by the next switch that lands.
+    if (frame_thread_change_episode_.shouldReport()) {
+        reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_from_frame",
+                                                  DiagnosticCategory::PassProtocolViolation,
+                                                  u8"setFrameThreading() was called from this engine's own frame thread; the mode a "
+                                                  u8"frame is running under cannot be changed from inside it - ask between frames"));
+    }
 }
 
 FrameThreading RenderEngine::frameThreading() const noexcept
@@ -613,14 +635,11 @@ void RenderEngine::reportEngineHalfFailure(detail::EngineFrame& frame, const cha
 
 void RenderEngine::publishFrameAnswer(detail::EngineFrame& frame)
 {
-    // The picture's fate and the frame's id travel as ONE word (see detail::FramePump), and the frame's whole answer
-    // lands beside it: which publication and camera the picture was taken from, what the frame consisted of, and what
-    // it reported. ONE function for an answered frame and a failed one: a host reading the answer must not have to
-    // know which of the two produced it.
-    pump_->publishPresent(frame.number, frame.outcome);
-    // THE FRAME'S WHOLE ANSWER, in one value. A snapshot handle and a camera value are all it shares, so the pump's
-    // lock is held for a copy in both directions - a host never sees half of this frame's answer beside half of the
-    // previous one.
+    // ONE VERB FOR EVERYTHING AN ANSWERED FRAME OWES A HOST (see detail::FramePump::publishAnswer): what became of the
+    // picture (the packed word presentRecord reads), what the frame consisted of, what each of its passes cost, and the
+    // completion waitForFrame blocks on - published in one call, in that order, so a host that polls without waiting
+    // cannot read one frame's picture beside the previous frame's numbers. ONE function for an answered frame and a
+    // failed one: a host reading the answer must not have to know which of the two produced it.
     FrameResult result;
     result.frame          = frame.number;
     result.present        = frame.outcome;
@@ -641,10 +660,10 @@ void RenderEngine::publishFrameAnswer(detail::EngineFrame& frame)
     }
     const std::size_t reported = diagnosticCount();
     result.diagnostics = reported >= frame.diagnostics_before ? static_cast<std::uint64_t>(reported - frame.diagnostics_before) : 0U;
-    // ...AND WHAT THE FRAME COST, IN THE SAME BREATH AND UNDER THE SAME LOCK: a host that reads the table right after
-    // `waitForFrame` must see this frame's numbers, whole, not the previous frame's beside half of this one's.
-    pump_->publishAnswer(std::move(result), frame.pass_costs);
-    pump_->markCompleted(frame.number);
+    // ...AND WHAT THE FRAME COST, IN THE SAME BREATH: the numbers live on this frame's own value (detail::PassCost), so
+    // they reach a host with the answer that names the frame they belong to, and the two halves never write one shared
+    // cell at two different times.
+    pump_->publishAnswer(frame.number, frame.outcome, std::move(result), frame.pass_costs);
 }
 
 std::uint64_t RenderEngine::contentCollectCount() const noexcept
@@ -687,28 +706,39 @@ const FrameDescription& RenderEngine::frameDescription() const noexcept
     return pump_->currentFrame().description;
 }
 
-bool RenderEngine::sessionChangeAllowed(const char* verb)
+std::optional<std::unique_lock<std::mutex>> RenderEngine::beginShapeChange(const char* verb)
 {
-    if (!pump_->busy()) {
-        // Nothing is recording: the change is applied and the episode re-arms,
-        // so a later, separate mistake still speaks once.
+    // THE DECISION AND THE CHANGE ARE ONE CRITICAL SECTION (see FramePump::phaseGate): a frame start flips the phase
+    // under the same gate, so "nothing is recording, so the shape may change" cannot be overtaken by "a compile began
+    // between the check and the change". The old predicate asked the RUNNER, which is blind to the content half - and
+    // inline to the whole frame - so the change landed inside the compile it was meant to be refused by (C20).
+    std::unique_lock<std::mutex> gate = pump_->phaseGate();
+    if (!pump_->recording()) {
+        // Nothing is building or answering: the change is applied and the episode re-arms, so a later, separate mistake
+        // still speaks once.
         session_change_episode_.rearm();
-        return true;
+        return std::optional<std::unique_lock<std::mutex>>(std::move(gate));
     }
+    // THE GATE IS RELEASED BEFORE THE REPORT: a sink is host code and may ask for a shape change itself, and a report
+    // made while holding the gate would make that a self-deadlock instead of the refusal it deserves.
+    gate.unlock();
     if (session_change_episode_.shouldReport()) {
         reportEngineProblem(detail::engineProblem(u8"engine.pass.changed_during_frame",
                                                   DiagnosticCategory::PassProtocolViolation,
-                                                  String(u8"a session's passes cannot change while a frame is being recorded: ") + String::fromUtf8(verb) +
+                                                  String(u8"a session's passes cannot change while a frame is being built or answered: ") +
+                                                      String::fromUtf8(verb) +
                                                       String(u8" was refused (wait for the frame with RenderEngine::waitForFrame, or change "
                                                              "passes between frames)")));
     }
-    return false;
+    return std::nullopt;
 }
 
 void RenderEngine::removePassesOwnedBy(const void* owner) noexcept
 {
-    // The rule is the engine's (the pump knows whether a frame is recording); taking the rows back is the shape's.
-    if (!sessionChangeAllowed("removePass")) {
+    // The rule is the engine's (the pump owns the phase, and the gate makes the decision and the take-back one step);
+    // taking the rows back is the shape's.
+    std::optional<std::unique_lock<std::mutex>> allowed = beginShapeChange("removePass");
+    if (!allowed.has_value()) {
         return;
     }
     shape_->removePassesOwnedBy(owner, device_.get());
@@ -721,10 +751,11 @@ PlanResult RenderEngine::applyPlan(const Plan& plan)
 
 PlanResult RenderEngine::applyPlan(const Plan& plan, const void* owner)
 {
-    // THE SHAPE IS A VALUE, so applying it is one call - but the table it replaces is what a frame may be walking,
-    // so the one rule every shape change obeys still holds here (see sessionChangeAllowed). A busy engine is a
-    // REFUSAL, not a problem with the shape: the plan was not even examined, and the same call works between frames.
-    if (!sessionChangeAllowed("applyPlan")) {
+    // THE SHAPE IS A VALUE, so applying it is one call - but the table it replaces is what a frame may be walking, so
+    // the one rule every shape change obeys still holds here (see beginShapeChange). A busy engine is a REFUSAL, not a
+    // problem with the shape: the plan was not even examined, and the same call works between frames.
+    std::optional<std::unique_lock<std::mutex>> allowed = beginShapeChange("applyPlan");
+    if (!allowed.has_value()) {
         PlanResult refused;
         refused.outcome = PlanResult::Outcome::Refused;
         refused.refusal = PlanRefusal::Busy;

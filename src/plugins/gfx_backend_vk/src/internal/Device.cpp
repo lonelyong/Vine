@@ -677,7 +677,20 @@ class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
     bool          timestamps{ false };
     std::uint64_t clock_frames{ 0 }; ///< Frames this driver has begun (the sampling counter).
     std::uint32_t timestamp_queries{ 0 };
-    FrameBooks    books{};
+    ///
+    /// THE BOOKS THIS FRAME IS WRITING, owned by the thread that runs the frame (see FrameBooks): the frame body
+    /// increments them as it goes - a submit, a fence, a present, a clock read - and `closeFrameBooks` publishes the
+    /// whole value as the frame's answer. A host never reads this field.
+    FrameBooks books{};
+    ///
+    /// THE FRAME'S ANSWER TO "HOW DID IT GO", as the host reads it (see frameReport): the last CLOSED frame's books,
+    /// copied out under `books_mutex` by `closeFrameBooks`. It exists because the alternative is what this backend did
+    /// before - a host reading the live `books` while the frame thread incremented them - and "read it only after
+    /// waitForFrame" was a rule every host had to know, with nothing in the interface saying so (`G7`: the frame's
+    /// numbers are the frame's answer, so they are published with it, exactly like PresentRecord and the pass costs).
+    FrameBooks answered_books{};
+    /// Guards `answered_books`; the frame thread writes it once per frame, any host thread reads it.
+    mutable std::mutex books_mutex{};
     /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
     vn::graphics::ShaderProgramDescriptionPtr default_program{};
     /// Guards `default_program`: a host may announce a program while this driver's frame reads it (S6c-2).
@@ -1383,6 +1396,12 @@ void Device::FrameDriver::destroy() noexcept
     timestamp_queries = 0U;
     clock_frames      = 0U;
     books             = FrameBooks{};
+    {
+        // THE ANSWER GOES WITH THE SESSION: a report read after this driver is destroyed must not describe a frame
+        // whose objects no longer exist.
+        const std::lock_guard<std::mutex> held(books_mutex);
+        answered_books = FrameBooks{};
+    }
     default_program   = nullptr;
 }
 
@@ -1428,6 +1447,14 @@ void Device::FrameDriver::closeFrameBooks(const ContentTotals& before, const vn:
     locking.acquisitions = after.cache_lock_acquisitions - before.cache_lock_acquisitions;
     locking.waits        = after.cache_lock_waits - before.cache_lock_waits;
     books.locking        = locking;
+    // THE FRAME IS ANSWERED (see answered_books): everything it measured - the counters, this frame's uploads, the lock's
+    // cost, and the device time its fence wait made readable - becomes the value a host reads, in ONE copy under the
+    // lock. After this point the frame thread touches `books` no more, which is what makes the answer a closed value
+    // rather than a table someone may still be filling.
+    {
+        const std::lock_guard<std::mutex> held(books_mutex);
+        answered_books = books;
+    }
 }
 
 WindowTarget* Device::FrameDriver::resolvePresenter(vn::graphics::PresentTarget* const present_to) const noexcept
@@ -2543,11 +2570,19 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
 vn::graphics::FrameReport Device::FrameDriver::frameReport() const noexcept
 {
     vn::graphics::FrameReport report;
-    report.counters = books.counters;
-    report.progress = books.progress;
-    report.uploads  = books.uploads; // this frame's own delta; absent until a frame ran
-    report.timing   = books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
-    report.locking  = books.locking; // what it spent on the cache lock; absent until a frame ended
+    //
+    // THE FRAME'S ANSWER, READ AS ONE VALUE (see answered_books): the books are the frame's, and a host asking "how did
+    // it go" while the next frame runs gets the frame that ENDED, whole - never this frame's counters beside last
+    // frame's timings, and never a torn read of a field the frame thread is incrementing. What was closed is closed:
+    // the copy below is the only thing a reader and a frame body share.
+    {
+        const std::lock_guard<std::mutex> held(books_mutex);
+        report.counters = answered_books.counters;
+        report.progress = answered_books.progress;
+        report.uploads  = answered_books.uploads; // the closed frame's own delta; disengaged until a frame ran
+        report.timing   = answered_books.timing;  // the device's own clock; disengaged when it keeps none (see FrameTiming)
+        report.locking  = answered_books.locking; // what that frame spent on the cache lock
+    }
 
     vn::graphics::RetentionStats retention;
     retention.released_nodes = owner.released_nodes;

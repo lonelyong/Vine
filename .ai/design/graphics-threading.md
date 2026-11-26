@@ -4,7 +4,7 @@
 > "an immutable snapshot produced by one publication" and "two atomic revisions". The history (why it used to be that way, which option was rejected) is in
 > `../decisions/ADR-2026-11-12-adopt-graphics-next.md`, `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`
 > and git history; the `C1–C15` and `N1–N14` entries that only served the deleted mechanism are retired, and their numbers are not reused (see §5.1, §5.3).
-> **Last verified**: 2026-11-15
+> **Last verified**: 2026-11-26
 > **Scope**: who owns what of one frame's work on each of the two threads — what the content side and the engine side own, which values may cross the seam, who owns the surface and the swap chain,
 > where parallelism sits, and how shutdown finishes.
 > **Excludes** appfw's general async (`appfw-startup-phases.md`, `async-design.md`) and the Vulkan synchronisation details (`vk-backend.md`).
@@ -201,8 +201,20 @@ There is exactly one answer to "when does this copy expire": the publication val
   - **the UI only "stops paying for expand and present", it is not "no longer throttled by rendering"**: every frame request waits for **the previous frame's engine half**, so at a low frame rate
     the UI's paint cadence is dragged along; input events still land normally between two requests (the accurate reading of R8).
 - **"Wait until this frame" is an explicit action** (`G4`): `waitForFrame(frame_id)` — for screenshots, after a resize settles, for exit, for measurement; the default path
-  `frame()` only guarantees "built and handed over".
-- **A pass' cost is a fact of the FRAME, and it travels with its answer** (`G1` / `G4` / `G10`): the content half times its
+  `frame()` only guarantees "built and handed over".- **A frame is being RECORDED from its first compile until its answer, and the pump owns that phase** (`G1` / `G4`): the
+  content half (hooks, publication, `compileFrame`) and the engine half are one interval, so the session's shape is fixed
+  for all of it - inline as well as threaded. `detail::FramePump` keeps the two facts (`compiling`, owned by the guard a
+  build returns; `answering`, owned by the frame's answer) and answers `recording()`; a shape change
+  (`RenderEngine::beginShapeChange`) holds `FramePump::phaseGate()` across its DECISION and its CHANGE, which is what
+  stops a second thread from applying a plan into a compile that started after the check. The earlier predicate asked the
+  runner, which is false inline and false through the whole content half, so the gate was open exactly where the compile
+  reads the table (ADR-2026-11-26-a-frame-is-recorded-from-its-first-compile).
+- **The frame's numbers are the frame's answer, and none of them is read live from a writer** (`G1` / `G7`): the pass
+  costs ride the frame value and are published with the answer (ADR-2026-11-26-a-pass-cost-belongs-to-the-frame), and the
+  backend's `FrameReport` is the same shape - the frame body writes the books it owns, `closeFrameBooks` publishes them, and
+  `frameReport()` reads the published value (ADR-2026-11-26-the-frame-report-is-the-frames-answer). So a host may read
+  "how did it go" from any thread at any time; `waitForFrame` decides WHICH frame those numbers describe, never whether
+  they are safe to read.- **A pass' cost is a fact of the FRAME, and it travels with its answer** (`G1` / `G4` / `G10`): the content half times its
   describe share, the engine half its expansion, and both land on the frame value (`detail::PassCost`) - `publishFrameAnswer`
   hands them to the pump under the same lock as the rest of the answer. So `frameTable()` read right after
   `waitForFrame(N)` reports N's whole number, a frame still in flight publishes nothing, a `prepare()` cannot rewrite what a
@@ -212,8 +224,7 @@ There is exactly one answer to "when does this copy expire": the publication val
   (ADR-2026-11-26-a-pass-cost-belongs-to-the-frame).
 - **The completion notification is a report, not a callback** (`G10`): a frame's **present outcome** is the `PresentOutcome` value, published with its frame number through
   `RenderEngine::presentRecord()` (packed into one atomic word, readable from any thread at any time). The engine thread **never** calls back into the UI, and never
-  reads back from it. To "wait for frame N to be on screen" call `waitForFrame(N)`; to know "what happened to this frame" read `presentRecord()`.
-- **A frame is always ANSWERED, even when its engine half throws** (`G4` / `G11`): the half is handed over through `RenderEngine::answerEngineHalf`, which reports
+  reads back from it. To "wait for frame N to be on screen" call `waitForFrame(N)`; to know "what happened to this frame" read `presentRecord()`.- **A frame is always ANSWERED, even when its engine half throws** (`G4` / `G11`): the half is handed over through `RenderEngine::answerEngineHalf`, which reports
   `engine.frame.failed` (Error) and answers `PresentOutcome::Failed` - the same `presentRecord` / `frameResult` / completion a drawn frame uses. Neither escaping shape
   is an answer: inline the exception used to reach the host out of `frame()`, and on a frame thread it left the thread function, which is `std::terminate`.
   `FrameRunner` adds one narrower guarantee that does not depend on the caller: a job that throws still releases the one-in-flight handshake (and is counted by
@@ -436,7 +447,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | C17 | A surface event is applied once at the frame head; the swap chain is rebuilt on the engine thread only; the UI side writes no engine-side state. |
 | C18 | The version does not advance inside a batch: after `beginEdit()` and before the outermost `endEdit()`, publication stays where it is — a frame landing mid-batch **publishes nothing** and draws the state at the batch's start; the whole batch lands as **one** publication on the frame after `endEdit()`. |
 | C19 | Material crosses the frame as a **value**: a command carries a `MaterialDescriptionPtr` (`revision` + resolved parameters), and the engine side reads the value only, not `Material::resolved()`. The values are taken on the content side, and not inside a batch. |
-| C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: with a frame in flight, `applyPlan` (in any form) always answers `PlanResult::Refused` + `PlanRefusal::Busy` (`sessionChangeAllowed`), and reports **one** `PassProtocolViolation` per episode. |
+| C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: while this engine is BUILDING a frame (its content half - hooks, publication, `compileFrame`) or ANSWERING one (its engine half), and while a `prepare()` compiles, `applyPlan` (in any form) and `removePassesOwnedBy` always answer `PlanResult::Refused` + `PlanRefusal::Busy`, and report **one** `PassProtocolViolation` per episode. The gate is `detail::FramePump::recording()`, and the decision plus the change are ONE critical section (`RenderEngine::beginShapeChange` holds `FramePump::phaseGate()`, the same lock a build is entered under) - so a change seen as allowed cannot be applied into a compile that started in between, and inline counts exactly like threaded. |
 | C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time. Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused rather than waiting for itself** (`vk.device.reentry`; a readback inside a frame answers `InsideFrame`), and the refusal comes from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's `Geometry::description()` cache is safe for concurrent readers (found and fixed by TSan); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way every run). |
 ### 5.2 Requirements (R#)
 
@@ -482,9 +493,15 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 
 ### 6.2 P2 Changing the session shape mid-frame
 
-- How it fails: the pass table and the backend's retained state are swapped during recording, and commands reference released objects.
-- How to detect it: `applyPlan` answers `PlanResult::refused()` + `PlanRefusal::Busy` (C20; it means "a frame is recording in the engine", and the SDK has no `Session` type).
-- How to prevent it: the shape changes only between frames (`graphics-frame-pipeline.md` F6).
+- How it fails: the pass table and the backend's retained state are swapped while a frame is being BUILT (the compile
+  iterates the slot list) or ANSWERED (the backend names a pass the frame value carries), so the rows reference a released
+  pass or a released transient target - a wrong picture at best, a use-after-free at worst.
+- How to detect it: `applyPlan` answers `PlanResult::refused()` + `PlanRefusal::Busy` (C20), and the refusal speaks once
+  per episode (`engine.pass.changed_during_frame`). "Busy" means "a frame is building or answering", NOT "the frame
+  thread is busy" - an inline engine is refused too, and so is a change from a second thread while the paint thread
+  compiles.
+- How to prevent it: change the shape between frames (`graphics-frame-pipeline.md` F6) - or retry on `Busy`, as a
+  bounded `waitForFrame` + re-apply loop (the demo's `addDemoPass` is the shape of it).
 
 ### 6.3 P3 Doing device verbs mid-frame
 
@@ -557,6 +574,8 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T34 | the published source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` | implemented |
 | T35 | a bound publication is the rendering truth | `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | implemented |
 | T13 | no data races | `scripts/tsan_check.sh` | run (2026-11-16: the then-present suites each 0 reports) |
+| T36 | a shape change inside a build is refused (inline, threaded, and from a second thread) | `PlanTest.AFrameRefusesAPlanFromInsideItsOwnCompile` / `PlanTest.APrepareRefusesAPlanFromInsideItsOwnCompile` / `PlanTest.APlanFromAnotherThreadIsRefusedWhileThisOneCompiles` + `FramePumpTest.ThePhaseCoversTheBuildAndTheAnswer` | implemented |
+| T37 | the frame report is a closed frame's value, readable while the next frame runs | `VkConcurrentFrameTest.TheFrameReportIsTheFrameThatEndedWhileTheNextOneRuns` (TSan: 15 reports with the live-books read, 0 with the published one) | implemented |
 
 ## 9. Status and Evolution
 

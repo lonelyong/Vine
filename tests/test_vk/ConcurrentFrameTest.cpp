@@ -20,7 +20,9 @@
 #include <vine/String.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/FrameReport.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
+#include <vine/graphics/RenderFrameExecutor.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/backend_vk/internal/Device.hpp>
@@ -35,8 +37,10 @@ using vn::graphics::ColorReadback;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::FrameDescription;
+using vn::graphics::FrameReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::RenderBackendRegistry;
+using vn::graphics::RenderFrameExecutor;
 using vn::graphics::RenderTarget;
 
 namespace
@@ -180,6 +184,67 @@ TEST(VkConcurrentFrameTest, AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHan
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::PassProtocolViolation), 1U)
         << "the re-entry was reported once, not per verb";
     EXPECT_TRUE(backend->initialized()) << "the device did not survive a verb called from inside its own frame";
+
+    backend->shutdown();
+}
+
+/*
+ * @brief The frame report is the frame that ENDED, whole, while the next one runs.
+ *
+ * The report used to read the driver's live books - the very value the frame body increments as it goes - so a host
+ * asking "how did it go" while a frame ran either raced it (the numbers were not published as thread-safe) or had to
+ * know a rule the interface never stated: "read it after the frame is answered". The books are the frame's ANSWER now:
+ * `closeFrameBooks` publishes them under a lock, and a reader sees a closed value (the same shape `PresentRecord` and
+ * the per-pass costs already had). Two threads make that visible, and the TSan run over this case is the witness that
+ * the two are no longer one object.
+ */
+TEST(VkConcurrentFrameTest, TheFrameReportIsTheFrameThatEndedWhileTheNextOneRuns)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget> target = makeTarget(u8"vk_report");
+    const FrameDescription            frame  = clearingFrame(target.get(), Colorf(0.0F, 0.0F, 1.0F, 1.0F));
+
+    // THE DEVICE'S OWN DRIVER: what a RenderEngine drives frames through, and the object that keeps the books.
+    RenderFrameExecutor& executor = backend->executor();
+
+    std::atomic<bool> stop{ false };
+    std::atomic<int>  frames_run{ 0 };
+    std::thread       driver([&] {
+        while (!stop.load()) {
+            (void)executor.executeFrame(frame, nullptr);
+            frames_run.fetch_add(1);
+        }
+    });
+
+    // THE READER, WHILE FRAMES ARE BEING RECORDED. The parts of the report that only a CLOSED frame can carry - what it
+    // uploaded, what it spent on the content lock - are published together, so a reader either sees none of them (no
+    // frame has ended) or both of them (one frame, whole). A value stitched from two frames, or read out of the books
+    // while they are being written, is what breaks that; the race itself is what the TSan run over this case checks.
+    std::uint64_t observations = 0;
+    std::uint64_t whole        = 0;
+    for (std::uint64_t attempt = 0; whole < 8U && attempt < 100000U; ++attempt) {
+        const FrameReport report = executor.frameReport();
+        ++observations;
+        const bool answers = report.uploads.has_value();
+        EXPECT_EQ(report.locking.has_value(), answers) << "report " << observations << " saw half a frame";
+        if (answers) {
+            ++whole;
+        }
+    }
+    stop.store(true);
+    driver.join();
+
+    EXPECT_GT(frames_run.load(), 0) << "the driver never ran a frame";
+    EXPECT_GT(whole, 0U) << "no report was read while frames were running (the case is built on that)";
+
+    const FrameReport after = executor.frameReport();
+    ASSERT_TRUE(after.uploads.has_value()) << "the last frame that ended is the report";
+    EXPECT_TRUE(after.locking.has_value());
 
     backend->shutdown();
 }

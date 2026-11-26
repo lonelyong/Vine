@@ -2574,3 +2574,39 @@
   `APassAnswersItsOwnCostNotTheOneThatLeftItsSlot`. Positional-join mutation kills only the third; an empty published cost
   span kills all four including the pre-existing `TheFrameTableCarriesWhatEachPassLastCost`.
 
+
+## 2026-11-26 - review 12: the gate was half a frame, and the report had no answer (ADR-2026-11-26 x2)
+
+- **The defect**: "a frame is being recorded" was `FramePump::busy()` = "the runner is running a job". That is blind to
+  the CONTENT half (it ends before the job is submitted) and to every INLINE engine (no runner exists). So
+  `applyPlan` / `removePassesOwnedBy` were applied while `SessionShape::compile` was walking `slots_` - which
+  `applyPlanRows`/`removePass` insert into and erase from, dropping a pass the frame value still names. `prepare()`
+  compiled with no check at all. The episode `ReportOnce` was a plain `bool`, so two host threads raced on it too.
+- **The shape now**: `FramePump` owns the phase as two facts with one answer - `compiling` (opened/closed by
+  `FramePump::Build`, an RAII guard from `beginFrame()`/`beginBuild()`) and `answering` (set by `submit`, cleared by
+  `publishAnswer`) - and `recording()` is their OR. `RenderEngine::beginShapeChange(verb)` answers a
+  `std::unique_lock` from `FramePump::phaseGate()` (not a bool), so the decision and the change are one critical section
+  against the phase flip. The lock is never held for a compile, and the episode report is emitted AFTER releasing it (a
+  sink may ask for a shape change itself). `ReportOnce` is atomic (`exchange`) + copyable (an episode is carried from one
+  compile to the next).
+- **Second defect, same family**: the vk driver's `FrameBooks` were read live by `frameReport()` - the struct the frame
+  body increments - so a HUD read while a frame ran was a data race, and the only statement of the rule was a comment in
+  `DemoScene`. Now `books` (recording thread) is published into `answered_books` under `books_mutex` by
+  `closeFrameBooks`, and `frameReport()` copies that. Mutation measured: live read = **15 TSan reports**, published read
+  = 0.
+- **Smaller ones in the same batch**: `waitForFrame(n)` now answers false at once for `n > lastNumber()` (never built is
+  not "pending"; `number_` became atomic for it); `publishAnswer` is ONE verb (present word + `FrameResult` + costs +
+  completion), so polling cannot see one frame's picture beside another's numbers; `setFrameThreading` from the frame
+  thread reports `engine.threading.refused_from_frame` instead of silently doing nothing; `FrameGate` asserts when a
+  thread nests past `kMaxEntries` (that is a caller defect, not `vk.device.reentry`).
+- **Witnesses**: `PlanTest.AFrameRefusesAPlanFromInsideItsOwnCompile` (a sink applies a plan from inside the compile -
+  red under the old predicate), `APrepareRefusesAPlanFromInsideItsOwnCompile`,
+  `APlanFromAnotherThreadIsRefusedWhileThisOneCompiles` (the pool-thread case),
+  `FramePumpTest.ThePhaseCoversTheBuildAndTheAnswer` / `...StaysOpenUntilAFrameHandedToItsThreadIsAnswered` /
+  `AFrameThePumpNeverHandedOutIsAnsweredWithoutWaitingForTheOneInFlight`,
+  `VkConcurrentFrameTest.TheFrameReportIsTheFrameThatEndedWhileTheNextOneRuns`.
+- **Trap**: `FrameBooks::counters` is NOT optional (only `uploads`/`timing`/`locking` are), so `report.counters` is
+  engaged even before a frame ends - use `uploads`/`locking` as the "a frame has ended" witness, not `counters`.
+- **Evidence**: build 0 errors; `test_core` / `test_graphics` / `test_vk` green; TSan 0 warnings on the new filters
+  (`PlanTest.*:FramePumpTest.*:ReportOnceTest.*:FrameRunnerTest.*` and `VkConcurrentFrameTest.*`), 15 with the mutated
+  live-books read.

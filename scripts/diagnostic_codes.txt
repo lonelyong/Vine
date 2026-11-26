@@ -89,6 +89,7 @@ engine.pass.input_target_not_produced — a pass reads a whole target no pass wr
 engine.pass.input_image_not_produced  — a pass reads an image (or a depth) no pass declares, so nothing fills it
 engine.pass.image_unbound             — a declared image is bound to no target, so it cannot be resolved either way
 engine.pass.changed_during_frame      — a pass verb arrived while a frame was recording: refused, change passes between frames
+engine.threading.refused_from_frame   — setFrameThreading() was asked from the engine's own frame thread: the mode a frame runs under cannot end from inside it
 engine.screen.no_program              — a FullscreenPass named no program, so it can never draw
 engine.screen.no_input                — a FullscreenPass declared no input at all, so it samples nothing
 engine.screen.no_camera               — a FullscreenPass with a fullscreen program has no camera to build its view from

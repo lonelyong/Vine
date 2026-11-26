@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include <vine/intrusive_ptr.hpp>
@@ -18,28 +22,30 @@
 #include <vine/graphics/Scene.hpp>
 
 #include "FrameExpand.hpp"
+#include "FramePump.hpp"
 #include "FrameRunner.hpp"
 #include "PublicationStore.hpp"
 #include "SnapshotSource.hpp"
 
+using vn::intrusive_ptr;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::View;
+using vn::graphics::DrawItem;
+using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
-using vn::graphics::DrawItem;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishStatus;
+using vn::graphics::View;
 using vn::graphics::detail::expandFrame;
+using vn::graphics::detail::FramePump;
 using vn::graphics::detail::FrameRunner;
 using vn::graphics::detail::PublicationStore;
 using vn::graphics::detail::RunnerMode;
 using vn::graphics::detail::SnapshotSource;
-using vn::graphics::DrawKind;
-using vn::intrusive_ptr;
 using vn::math::Vec3d;
 using vn::math::Vec3f;
 
@@ -237,4 +243,106 @@ TEST(FrameRunnerTest, AJobThatThrowsDoesNotTakeTheRunnerDownWithIt)
     FrameRunner inline_runner{ RunnerMode::Inline };
     EXPECT_THROW(inline_runner.run([] { throw std::runtime_error("synthetic inline failure"); }), std::runtime_error);
     EXPECT_EQ(inline_runner.failures(), 1U) << "the count is kept here too";
+}
+
+/*
+ * @brief The interval a session's shape is fixed in covers BOTH halves - the content one included.
+ *
+ * The gate used to ask the runner, which is false for every inline frame and false through the whole content half of a
+ * threaded one: it was open exactly while the compile walked the table a shape change edits. The phase is the pump's
+ * fact now, and it opens when a build starts and closes when the frame is ANSWERED - not when the job was submitted.
+ */
+TEST(FramePumpTest, ThePhaseCoversTheBuildAndTheAnswer)
+{
+    FramePump pump;
+    EXPECT_FALSE(pump.recording()) << "a fresh pump is idle";
+    {
+        const FramePump::Build build = pump.beginFrame();
+        EXPECT_EQ(build.frame().number, 1U) << "the first frame is numbered from one";
+        EXPECT_TRUE(pump.recording()) << "the content half is the first half of the interval";
+    }
+    EXPECT_FALSE(pump.recording()) << "a build nobody answered ends the interval with its guard";
+}
+
+TEST(FramePumpTest, ThePhaseStaysOpenUntilAFrameHandedToItsThreadIsAnswered)
+{
+    FramePump pump;
+    ASSERT_TRUE(pump.setThreaded(true));
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    entered  = false;
+    bool                    released = false;
+
+    {
+        const FramePump::Build build = pump.beginFrame();
+        pump.submit([&] {
+            std::unique_lock<std::mutex> lock(gate);
+            entered = true;
+            changed.notify_all();
+            changed.wait(lock, [&] { return released; });
+            // THE ANSWER CLOSES THE PHASE (see publishAnswer): one verb, so a frame cannot be half answered.
+            pump.publishAnswer(1U, vn::graphics::PresentOutcome::Skipped, vn::graphics::FrameResult{}, {});
+        });
+        EXPECT_TRUE(pump.recording()) << "the frame was handed over, and the shape must stay put";
+    }
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        changed.wait(lock, [&] { return entered; });
+    }
+    EXPECT_TRUE(pump.recording()) << "the engine half is the second half of the interval";
+    EXPECT_FALSE(pump.wait(1U, std::chrono::milliseconds(0))) << "the frame is in flight, not answered";
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        released = true;
+    }
+    changed.notify_all();
+    EXPECT_TRUE(pump.wait(1U, std::chrono::milliseconds(5000)));
+    EXPECT_FALSE(pump.recording()) << "an answered frame reopens the shape";
+    pump.stop();
+}
+
+/*
+ * @brief A frame the pump never handed out is answered "no" at once, not waited for.
+ *
+ * `waitForFrame` is what a UI thread blocks on (a screenshot, a settled resize), so a number nothing will ever complete
+ * must not cost it the timeout - and must not make it wait for an unrelated frame that happens to be in flight.
+ */
+TEST(FramePumpTest, AFrameThePumpNeverHandedOutIsAnsweredWithoutWaitingForTheOneInFlight)
+{
+    FramePump pump;
+    ASSERT_TRUE(pump.setThreaded(true));
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    entered  = false;
+    bool                    released = false;
+
+    {
+        const FramePump::Build build = pump.beginFrame();
+        pump.submit([&] {
+            std::unique_lock<std::mutex> lock(gate);
+            entered = true;
+            changed.notify_all();
+            changed.wait(lock, [&] { return released; });
+            pump.publishAnswer(1U, vn::graphics::PresentOutcome::Skipped, vn::graphics::FrameResult{}, {});
+        });
+    }
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        changed.wait(lock, [&] { return entered; });
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_FALSE(pump.wait(2U, std::chrono::milliseconds(5000))) << "frame 2 was never handed out, so it is not pending";
+    const auto spent = std::chrono::steady_clock::now() - started;
+    EXPECT_LT(spent, std::chrono::milliseconds(1000)) << "the answer waited for frame 1's engine half instead";
+
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        released = true;
+    }
+    changed.notify_all();
+    EXPECT_TRUE(pump.wait(1U, std::chrono::milliseconds(5000))) << "and the frame that does exist still answers";
+    pump.stop();
 }

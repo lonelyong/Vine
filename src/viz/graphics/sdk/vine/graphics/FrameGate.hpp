@@ -181,8 +181,11 @@ class FrameGate
      */
     [[nodiscard]] Shared enterShared()
     {
-        if (heldByThisThread() || s_depth >= kMaxEntries) {
+        if (heldByThisThread()) {
             return Shared{};
+        }
+        if (!roomOnThisThread()) {
+            return Shared{}; // a nesting deeper than kMaxEntries: a caller defect, refused rather than mis-tracked
         }
         if (!mutex_.try_lock_shared()) {
             waits_.fetch_add(1U, std::memory_order_relaxed);
@@ -207,8 +210,11 @@ class FrameGate
      */
     [[nodiscard]] Exclusive enterExclusive()
     {
-        if (heldByThisThread() || s_depth >= kMaxEntries) {
+        if (heldByThisThread()) {
             return Exclusive{};
+        }
+        if (!roomOnThisThread()) {
+            return Exclusive{}; // a nesting deeper than kMaxEntries: a caller defect, refused rather than mis-tracked
         }
         if (!mutex_.try_lock()) {
             waits_.fetch_add(1U, std::memory_order_relaxed);
@@ -275,6 +281,24 @@ class FrameGate
     /// How many gates one thread may hold at once: a frame holds two (its driver's and its device's) and a hook
     /// driving another device adds two more, so this leaves room to spare.
     static constexpr std::size_t kMaxEntries = 8;
+
+    /**
+     * @brief Answers whether this thread's entry stack can take one more, asserting when it cannot.
+     *
+     * @details
+     * - A DEPTH PAST kMaxEntries IS NOT A RE-ENTRY (`G11`: two different defects must not be one symptom). A caller
+     *   that nests nine gates has a bug the backend would otherwise report as `vk.device.reentry` - a sentence about a
+     *   caller waiting for itself - and the wrong sentence sends a reader looking in the wrong place. The assertion
+     *   names the real one where a developer will see it; Release still refuses, because an entry that cannot be
+     *   tracked must not be granted.
+     *
+     * @return true when there is room.
+     */
+    static bool roomOnThisThread() noexcept
+    {
+        assert(s_depth < kMaxEntries && "a thread nested more frame gates at once than kMaxEntries");
+        return s_depth < kMaxEntries;
+    }
 
     /** @brief Records that this thread holds this gate's @p shared side (the depth was checked before locking). */
     void pushEntry(const bool shared) noexcept
