@@ -12409,6 +12409,48 @@ TEST(RenderEngineTest, AThrowingEngineHalfIsAnsweredInsteadOfKillingTheThread)
     EXPECT_NE(failureReport(reported), nullptr) << "the threaded frame reported the same failure";
 }
 
+TEST(RenderEngineTest, AThrowingSinkStillLeavesTheFrameAnswered)
+{
+    // THE INVARIANT MUST NOT DEPEND ON HOST CODE. A diagnostic is counted, then handed to the host's sink - and the
+    // sink is host code. Before the route swallowed a throw, an exception out of it travelled back through whichever
+    // frame path reported: the answer was never published, so every `waitForFrame(N)` for that frame sat out its
+    // timeout - the one thing "a frame is always answered" exists to forbid. The count is taken first, so the report
+    // survives the throw even though the host's observation of it does not.
+    auto backend = intrusive_ptr<ThrowingFrameBackend>(new ThrowingFrameBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    engine->setDiagnosticSink([](const RenderDiagnostic&) { throw std::runtime_error("a sink that throws"); });
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish(); // so the only report the sink sees is the frame's own failure
+
+    // The frame still runs: the exception belongs to the sink, not to the frame.
+    ASSERT_TRUE(engine->frame().ran());
+    EXPECT_EQ(engine->presentRecord().frame, engine->frameNumber()) << "the answer was published anyway";
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Failed) << "the engine half threw, so nothing was drawn";
+    EXPECT_EQ(engine->frameResult().present, PresentOutcome::Failed);
+    EXPECT_TRUE(engine->waitForFrame(engine->frameNumber())) << "a host waiting for this frame is answered, not timed out";
+    EXPECT_EQ(engine->diagnosticCount(), 1u) << "the report is counted before the sink is called, so the throw cannot hide it";
+
+    // The threaded position answers the same way: the sink's throw never escapes the frame thread.
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    ASSERT_TRUE(engine->frame().submitted());
+    const std::uint64_t number = engine->frameNumber();
+    EXPECT_TRUE(engine->waitForFrame(number, std::chrono::milliseconds(5000))) << "the threaded frame is answered too";
+    EXPECT_EQ(engine->presentRecord().frame, number);
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Failed);
+}
+
 TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLanded)
 {
     // THE ENGINE THREAD IS A PLACE, NOT A DIFFERENT PICTURE (design 2.12). frame() builds the content half and hands

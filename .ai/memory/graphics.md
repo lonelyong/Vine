@@ -2616,3 +2616,27 @@
   (`static ContentRegistry* const` constructed once), which is what its header always claimed. Postmortem:
   `.ai/bugs/graphics-default-content-registry-outlived-by-statics.md`. A FILTERED TSan run cannot see this: the exit
   path belongs to no case.
+
+## 2026-11-26 - a diagnostic cannot cost a frame its answer; device verbs and lock order stated
+
+- **Code (F-2)**: `Diagnostics::report` now swallows a throw out of the host's sink. Every report site sits inside a
+  frame path, and an escaping exception used to skip the frame's answer - `waitForFrame(N)` then timed out on a frame
+  that had actually run. The counters move before the sink is called, so the report is still counted; only the host's
+  observation of its own bug is lost.
+- **Witness**: `RenderEngineTest.AThrowingSinkStillLeavesTheFrameAnswered` (inline + threaded; `diagnosticCount() == 1`
+  proves the count survives). **Mutation**: removing the swallow turns it red (the exception escapes the test body).
+- **Design correction (F-1)**: `createSurfaceTarget` / `initialize` / `setWindowHandle` were described as the host's
+  between-frame duty. Measured: only `initialize()` (the creator's, before any frame) and a window target's
+  `setWindowHandle` are; `createSurfaceTarget` (`Device.cpp:3764`), `setRenderTarget`, `createFrameDriver` /
+  `releaseFrameDriver`, the readbacks and `shutdown` take `body_gate.enterExclusive()` and WAIT, and
+  `releaseRenderTarget` / `releaseContent` park instead of waiting. `graphics-threading.md` 2.6 / 3.1.3 F9 / 6.3 P3
+  now say exactly that.
+- **Also stated where the verb lives**: `areaWidth`/`areaHeight` are content-thread (the engine half reads the frame's
+  own size); `setDefaultContentProgram` is the one host verb that is a value write under `program_mutex`.
+- **The device's lock order is written down** (2.16): the only nesting is `queue_submit` -> `clock_mutex`;
+  `TargetTable`'s `map_mutex_` / `claims_mutex_` are never held together; `report_mutex` is recursive, `reentry_mutex`
+  a leaf; the cache lock is taken only at the frame head. A new nesting states itself in that list first.
+- **`RenderDevice.hpp`**: the sink promise is scoped to the device's OWN reports; the shared route may be entered by
+  two threads, which is what `Diagnostics` already documented (the two sentences disagreed before).
+- Counts: `test_graphics` 660/660 (84 suites), `test_vk` 223/223 (46 suites); TSan 0 warnings on both; 11 doc/style
+  gates + `check_ai_docs.py --strict` green. No ASan run: no ownership or allocation path changed.

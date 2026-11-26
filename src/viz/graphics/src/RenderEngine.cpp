@@ -627,6 +627,9 @@ void RenderEngine::reportEngineHalfFailure(detail::EngineFrame& frame, const cha
                               String(u8"the frame's engine half threw, so the frame was not drawn: ") + String::fromUtf8(what),
                               String(u8"frame ") + String::fromUtf8(std::to_string(frame.number).c_str()));
     diagnostic.severity = DiagnosticSeverity::Error;
+    // THE REPORT CANNOT COST THE FRAME ITS ANSWER: `Diagnostics::report` counts first and never propagates a sink's
+    // exception (see its comment), so the publication below runs even when the host's callback throws. That is the
+    // "a frame is always answered" guarantee of `answerEngineHalf`, and it holds for every report site, not this one.
     diagnostics_.report(diagnostic);
 
     frame.outcome = PresentOutcome::Failed;

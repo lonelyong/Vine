@@ -263,6 +263,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The sink lives in the engine's ONE route (see Diagnostics.hpp), which the engine hands to the
      *   backend it drives - so installing it covers both, and a sink installed before setDevice() is in
      *   place the moment a device is set.
+     * - A SINK THAT THROWS DOES NOT COST A FRAME ITS ANSWER: the report is counted before the callback is invoked,
+     *   and the route never propagates the throw - so it is the host's to keep and never a reason for `waitForFrame`
+     *   to time out (design 2.12, "a frame is always answered").
      *
      * @param sink Callback invoked for every diagnostic, or empty.
      */
@@ -605,12 +608,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The surface's shape is the one number a builder or a host needs from the engine while it is assembling
      *   passes (PassChain::build lays its targets out on it). It is not a per-frame value: it changes when the
      *   surface is resized, and everything that reads it reads the same fact.
+     * - CONTENT THREAD, AND THAT IS THE CONTRACT: the number is the host's announcement (`RenderArea::resize`)
+     *   recorded with the surface, so it is asked between frames where content is edited. The engine half never reads
+     *   it live - a frame carries its own size to the swap chain (`SurfaceLedger::applyFrameSize`) - which is what
+     *   keeps "what this frame was laid out on" and "what the surface is now" from being confused.
      *
      * @return Width in the units the host announced (logical pixels for the Qt host; 0 until the first resize).
      */
     [[nodiscard]] int areaWidth() const noexcept;
 
     /** @brief Gets the height the frame is laid out on (see areaWidth).
+     *
+     * @details
+     * - The other axis of `areaWidth()`: same owner, same announcement, same content thread.
      *
      * @return Height in the units the host announced (0 until the first resize).
      */
@@ -857,6 +867,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   content with this".
      * - Forwarded to the backend (before initialize() it is the session's decision; on a running session
      *   the backend re-bakes the shading side).
+     * - CONTENT THREAD, AND SAFE WHILE A FRAME IS IN FLIGHT: the program is taken as a value here (its
+     *   description, not the live object) and the backend reads it under its own lock, so this is one of the two
+     *   device-facing verbs a host may call without waiting for the frame (the other is `releaseContent`, which
+     *   parks what it drops - design 2.12 / 2.16).
      * - The engine's default is forwardProgram(): a NAMED program, chosen once in the constructor - not a
      *   lookup that hides which shading a scene gets. Hand it flatForwardProgram() to shade flat, or null to
      *   decline: content without its own program is then reported and not drawn, never shaded with something

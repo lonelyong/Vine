@@ -124,9 +124,12 @@ There is exactly one answer to "when does this copy expire": the publication val
   happen only on the engine thread. The host hands the size to the area as a **value** (`RenderArea::resize`), and the engine hands "this frame's size" to the target at the **frame head**,
   and only when the number changed.
 - **Why**: the handle's lifetime belongs to the host, the swap chain's lifetime to the device; the one point where they cross (the rebuild) must have a single writer (`G2`).
-- **Boundary**: device verbs (`createSurfaceTarget` / `setWindowHandle` / `device->initialize`) are **the host's between-frames** operations,
-  and doing them while a frame is in flight is undefined behaviour — the host calls `waitForFrame()` first (P3). One of them the framework makes safe on its own:
-  `RenderEngine::setDevice` waits for the frame in flight before it hands the old driver back, because that driver is what the engine half is executing through - the rule
+- **Boundary**: a device verb is **the device's promise, not the host's duty** (`RenderDevice`'s class note): `createSurfaceTarget`,
+  `setRenderTarget`, `createFrameDriver` / `releaseFrameDriver`, `shutdown` and the readbacks take the device's gate and WAIT for the frames in flight,
+  and a call from inside a frame body is refused (`vk.device.reentry`); `releaseRenderTarget` / `releaseContent` park instead of waiting (`R6`).
+  Two duties stay with the host, each because the framework has no object to gate: `device->initialize()` is the creator's and happens before any frame,
+  and a window target's `setWindowHandle` belongs to the surface the host owns (call it between frames - `waitForFrame()` first, P3).
+  `RenderEngine::setDevice` waits on its own before it hands the old driver back, because that driver is what the engine half is executing through - the rule
   `applyPlan` (refuse while busy) and `setFrameThreading(false)` (wait) already followed.
 
 ### 2.7 Parallelism lives only in the derivation layer
@@ -229,7 +232,9 @@ There is exactly one answer to "when does this copy expire": the publication val
   `engine.frame.failed` (Error) and answers `PresentOutcome::Failed` - the same `presentRecord` / `frameResult` / completion a drawn frame uses. Neither escaping shape
   is an answer: inline the exception used to reach the host out of `frame()`, and on a frame thread it left the thread function, which is `std::terminate`.
   `FrameRunner` adds one narrower guarantee that does not depend on the caller: a job that throws still releases the one-in-flight handshake (and is counted by
-  `FrameRunner::failures()`), because a `has_request_` left set would block every later submit forever.
+  `FrameRunner::failures()`), because a `has_request_` left set would block every later submit forever. The report travels through the host's sink, so the answer
+  is published even when that sink throws: the route counts before it calls the sink, and the publication does not depend on the callback returning (a throwing
+  sink is the host's to keep - `RenderEngine::setDiagnosticSink`).
 - **The size travels with the frame, and the swap chain follows at the frame head**: `RenderArea::resize` does two things only — record this area's own size,
   and hand the geometry to the presenting view — and **does not touch** the target; `frame()` hands "this frame's size" to the target after assembly and before execution,
   and **only when the number changed**. So: a host resizing mid-frame does not wait for the device, and several resizes between two frames pay one swap-chain rebuild.
@@ -322,6 +327,17 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **Boundary**: appfw does not use sharing yet (`SurfaceWindow` builds one device per window, and `docs/guides/render-views.md` §7 records
   "later"); the case `OneDeviceServesSeveralAreasWithoutCrossingThem` proves **sharing** (two frames run one after the other), and
   `VkMultiSessionTest`'s two cases are what prove **concurrency** (two threads with N frames each; with one frame stopped the other completes whole).
+- **The one host verb that may run mid-frame is a value write** (`G4`): `RenderEngine::setDefaultContentProgram` is not gated - it takes the program's
+  DESCRIPTION on the caller's thread and the backend reads that value under its own lock (`program_mutex`), so a host may switch the default shading while
+  a frame is in flight. It is the same shape as `releaseContent` (which parks instead of waiting): a verb whose answer is "this is the value from now on"
+  mutates nothing a frame is walking. Every other device-facing verb is the gate's (see above).
+- **The device's locks, and the one order between them** (`G10` / `G11`): each shared piece has its own lock, and exactly one pair nests - `queue_submit`
+  before `clock_mutex` (`Device.cpp`'s two submit paths take them in that order, and nothing takes `clock_mutex` and then `queue_submit`; the fence wait,
+  where the time goes, happens outside both). `TargetTable`'s `map_mutex_` and `claims_mutex_` are never held together (each verb takes one; `drain()`
+  takes them in two scopes), `report_mutex` is recursive (a sink may report again) and `reentry_mutex` is a leaf taken for the ask-and-set and dropped
+  before the report, and `program_mutex` / `books_mutex` / `loss_mutex`, the content cache's lock (taken only at the frame head) and the allocator's and
+  the residency claims' locks are leaves. A change that needs a second lock inside one of them states the new order here, in this list, before it lands -
+  that sentence is the whole defence against an ABBA, and it is cheaper than a lock-order detector.
 - **The shipped backend**: `vk` keeps the frame machinery on the session/driver (collection staging, frame-head snapshot, the device gate's two sides, `FrameHead` value plans,
   a lock-free recording path), and wires `ResidencyClaims` into the frame (F4) — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds`
   publishes after the frame fence waits. The decision and its argument are in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, and the shape of the
@@ -374,8 +390,9 @@ There is exactly one answer to "when does this copy expire": the publication val
 
 ### 3.1.3 F9 Surface events and the swap chain
 
-- **Behaviour**: the size is **the frame's own value** (handed to the target at the frame head, only when it changes); **device verbs (`createSurfaceTarget` /
-  `setWindowHandle` / `device->initialize`) are between-frame operations**, and the host calls `waitForFrame()` first; each frame's present outcome is
+- **Behaviour**: the size is **the frame's own value** (handed to the target at the frame head, only when it changes); **a device verb waits for the frames in flight**
+  (the device's gate - `createSurfaceTarget` / `setRenderTarget` / `createFrameDriver` / the readbacks / `shutdown`), while `initialize()` is the creator's before any
+  frame and a window target's `setWindowHandle` stays a between-frames call the host makes after `waitForFrame()` (P3); each frame's present outcome is
   the `PresentOutcome{Presented, Skipped, Lost}` value (`RenderEngine::presentRecord()`); `Lost` is repaired by **the engine** —
   forget the announced size, re-announce it on the next frame, and the target rebuilds the swap chain accordingly (counting one device wait); **the host** only re-attaches when the handle really changed/became null,
   and does **not** change the area's state because of one lost picture (hiding would stop the repair frame).
@@ -506,9 +523,11 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 
 ### 6.3 P3 Doing device verbs mid-frame
 
-- How it fails: `createSurfaceTarget` / `setWindowHandle` / `initialize` change the session the engine thread is recording.
-- How to detect it: TSan, or a crash that reproduces.
-- How to prevent it: the host calls `waitForFrame()` first; the size reaches the frame only as a value through `RenderArea::resize` (§2.6).
+- How it fails: a verb that is NOT gated changes the session while the engine thread is recording it. Today that is `device->initialize()` (the creator's,
+  before any frame) and a window target's `setWindowHandle` (the host owns the surface object).
+- How to detect it: TSan, or a crash that reproduces. The gated verbs cannot fail this way - they wait, and a call from inside a frame body is refused with
+  `vk.device.reentry` instead of deadlocking.
+- How to prevent it: the host calls `waitForFrame()` first for those two; the size reaches the frame only as a value through `RenderArea::resize` (§2.6).
 
 ### 6.4 P4 Treating a batch as a transaction
 

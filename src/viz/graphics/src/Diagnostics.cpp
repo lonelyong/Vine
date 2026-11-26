@@ -41,7 +41,17 @@ void Diagnostics::report(const vn::graphics::RenderDiagnostic& diagnostic)
         sink = sink_;
     }
     if (sink) {
-        sink(diagnostic);
+        // A SINK THAT THROWS IS THE HOST'S ERROR, NOT THE FRAMEWORK'S FAILURE. Every path in this module reports
+        // through here - a frame's own failure answer, a pass that skipped its content, a backend's refusal - and an
+        // exception out of the callback would travel back through whichever of them was running: it would cost a
+        // frame its answer (design 2.12, "a frame is always answered") and, on a frame thread, reach the thread
+        // function. The report has already been counted above, so what is lost is only the host's own observation of
+        // its own bug - and it cannot be reported through the route that just threw.
+        try {
+            sink(diagnostic);
+        }
+        catch (...) {
+        }
     }
 }
 

@@ -45,14 +45,16 @@ VN_GRAPHICS_NS_BEGIN
  *          while the other side may be reporting too: the counters are atomics, and the sink is copied out under a
  *          lock and invoked with none held - so a sink may itself report, and it MAY be entered by two threads at
  *          once. A sink that touches shared state has to serialise it. `setSink` may run while a report is in
- *          flight; it never blocks a frame (the sink is not called under the lock).
+ *          flight; it never blocks a frame (the sink is not called under the lock). A SINK'S EXCEPTION IS SWALLOWED:
+ *          the report is counted first, and the throw is the host's to keep rather than the framework's to propagate
+ *          - otherwise a diagnostic would be able to cost a frame its answer (design 2.12).
  */
 class VN_GRAPHICS_API Diagnostics {
   public:
     /** @brief Installs the host's sink, or clears it with an empty one.
      *
      * @param sink Callback invoked for every report; must only record and return, and must tolerate being entered
-     *             by more than one thread (see the class note).
+     *             by more than one thread. A throw out of it is swallowed (see the class note).
      */
     void setSink(vn::graphics::DiagnosticSink sink);
 

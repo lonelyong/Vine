@@ -141,9 +141,14 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   that hands out drivers through `createFrameDriver()` may run their frame bodies concurrently, which is what
  *   makes two engines cost two frames' worth of host time rather than two assets' worth. What a backend must state is
  *   which of its verbs may overlap: frame bodies may overlap each other, a frame that presents is serialised with
- *   every other frame, and the HOST VERBS (`setRenderTarget`, `releaseContent`, the readbacks, ...) wait for the frames
- *   in flight - they are the DEVICE'S promise, not an impossible host duty. A device that runs frames concurrently
- *   must still keep the host's sink safe: it calls the sink from one thread at a time. A device must not assume its
+ *   every other frame, and the HOST VERBS (`setRenderTarget`, `createSurfaceTarget`, the readbacks, ...) wait for the
+ *   frames in flight - they are the DEVICE'S promise, not an impossible host duty. Two verbs are deliberately outside
+ *   that rule because they answer a different question: `releaseRenderTarget` and `releaseContent` remove what they
+ *   name and PARK it against the device's completion clock instead of waiting (`R6`), which is why their contract is
+ *   "no frame still NAMES it" rather than "no frame is running". A device that runs frames concurrently must still
+ *   serialise ITS OWN reports - it calls the sink from one thread at a time - but that is the device's half only: the
+ *   engine's route is shared with the host (`Diagnostics.hpp`), so a sink may still be entered by two threads at once
+ *   (a frame reporting while the host reports its own finding) and has to tolerate it. A device must not assume its
  *   state stays on the same thread across an initialize()/shutdown() pair. The
  *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
  *   back into the device (a re-entrant frame is refused, not queued, and a readback asked from inside a frame answers
