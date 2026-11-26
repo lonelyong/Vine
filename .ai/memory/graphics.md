@@ -2550,3 +2550,27 @@
     a code cause.
 - **Evidence**: build 0 errors / 0 warnings; `test_graphics` 647 cases / `test_vk` 220 cases green after each code
   batch; 11 gates exit 0 (ai-docs strict included); `clang-format-diff` 0 hunks; tree clean.
+
+## 2026-11-26 - review 11 A7: a pass cost belongs to the frame (ADR-2026-11-26)
+
+- **The defect** (review-6 P2-1 restated): `record_micros` was stored on `SessionShape::Slot` and written in two phases by
+  two threads - the compile added the describe share, `publishEngineMicros` added the engine share at the START OF THE
+  NEXT frame. So after `waitForFrame(N)` a host saw N's half number, the last frame ever run never got one, a `prepare()`
+  zeroed the slot it had just completed, and the two threading modes meant two different things.
+- **The shape now**: `detail::PassCost { const void* pass; std::uint64_t micros; }`, one per slot on
+  `detail::EngineFrame::pass_costs`; both halves add their share to the frame they own;
+  `FramePump::publishAnswer(FrameResult, span<const PassCost>)` publishes it under the answer's lock;
+  `SessionShape::frameTable(span<const PassCost>)` joins BY PASS IDENTITY (positional folding is a silently wrong number).
+  Deleted: `Slot::record_micros`, `addEngineMicros`, `publishEngineMicros`, `note/takePendingMicros`, `engine_micros`, the
+  `!threaded()` branch in `runEngineHalf`, and the compile's second walk over the slots.
+- **Never put a per-frame measurement in a session cell** - the two-writer cell is the defect. Peers agree: Filament's
+  `Renderer::getFrameInfoHistory()` returns `FrameInfo`s keyed by `frameId`, Godot publishes `get_frame_profile()` WITH
+  `get_frame_profile_frame()`, timestamp readback rings key results by frame index.
+- **Traps**: `MockBackend` answers `PrepareReport::Outcome::Unsupported` from `prepare()` (it keeps nothing compiled), so a
+  prepare test must assert "not NotReady", not `Prepared`; a table read is a diagnostic path, so a copy + linear scan per
+  read is the right cost.
+- **Witnesses** (mutation-checked): `AFrameThreadedEnginesPassCostIsWholeOnceTheFrameIsAnswered` (uses `GatedBackend` to
+  make "in flight" a fact), `PreparingAFrameDoesNotRewriteTheLastFramesNumbers`,
+  `APassAnswersItsOwnCostNotTheOneThatLeftItsSlot`. Positional-join mutation kills only the third; an empty published cost
+  span kills all four including the pre-existing `TheFrameTableCarriesWhatEachPassLastCost`.
+

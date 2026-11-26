@@ -202,6 +202,14 @@ There is exactly one answer to "when does this copy expire": the publication val
     the UI's paint cadence is dragged along; input events still land normally between two requests (the accurate reading of R8).
 - **"Wait until this frame" is an explicit action** (`G4`): `waitForFrame(frame_id)` — for screenshots, after a resize settles, for exit, for measurement; the default path
   `frame()` only guarantees "built and handed over".
+- **A pass' cost is a fact of the FRAME, and it travels with its answer** (`G1` / `G4` / `G10`): the content half times its
+  describe share, the engine half its expansion, and both land on the frame value (`detail::PassCost`) - `publishFrameAnswer`
+  hands them to the pump under the same lock as the rest of the answer. So `frameTable()` read right after
+  `waitForFrame(N)` reports N's whole number, a frame still in flight publishes nothing, a `prepare()` cannot rewrite what a
+  frame that ran cost, and the read joins costs to rows BY PASS IDENTITY (a plan change between the answer and the read
+  hands no pass a neighbour's number). The engine half never writes the session's pass table, and the two threading modes
+  publish at the same moment - the old "engine share lands at the next frame's start" shape broke all five
+  (ADR-2026-11-26-a-pass-cost-belongs-to-the-frame).
 - **The completion notification is a report, not a callback** (`G10`): a frame's **present outcome** is the `PresentOutcome` value, published with its frame number through
   `RenderEngine::presentRecord()` (packed into one atomic word, readable from any thread at any time). The engine thread **never** calls back into the UI, and never
   reads back from it. To "wait for frame N to be on screen" call `waitForFrame(N)`; to know "what happened to this frame" read `presentRecord()`.

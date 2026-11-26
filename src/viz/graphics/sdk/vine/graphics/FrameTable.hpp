@@ -74,11 +74,17 @@ struct VN_GRAPHICS_API PassRow {
     std::vector<String> inputs;
     /// The name it publishes its result under, or empty (see RenderPass::setOutputName).
     String output;
-    /// How long LAST frame's record of this pass took, in microseconds.
+    /// How long the last ANSWERED frame's record of this pass took, in microseconds.
     ///
     /// The one number here that describes the past rather than the future: a table cannot know what a pass will
     /// cost, and the useful answer to "which pass should I look at" is what the pass cost the last time it ran.
-    /// Zero before this pass has ever run, and for a pass that did not run last frame (a disabled one).
+    /// WHICH FRAME: the last one `waitForFrame` answered - the frame `presentRecord().frame` names - not "the last one
+    /// built". The number is measured by both halves on their own threads (see detail::PassCost) and published with
+    /// the frame's answer, so it is whole by the time that frame is answered and a frame still in flight leaves it
+    /// alone; with FrameThreading::EngineThread reading it before `waitForFrame` therefore answers the frame BEFORE the
+    /// one just requested.
+    /// Zero before this pass has ever run, and for a pass that did not run in that frame (a disabled one, or one
+    /// registered since).
     /// WHAT THAT COST IS: the frame is compiled before it runs (see RenderEngine::buildFrameValue), so a pass'
     /// share of a frame is its hook, its inputs, its own description AND the expansion that collects the view it
     /// stated (see DrawListSource) - and not the wire announcements that follow (those are the backend's, see
@@ -94,7 +100,7 @@ struct VN_GRAPHICS_API PassRow {
  *   `passCount()` and pointer comparisons (or read out of a log after the fact). Every pass appears exactly
  *   once, in the engine's announcement order, with the facts about it - a test asserts on the SHAPE of a frame
  *   instead of on a count, and a host can print one line per pass without reaching into the engine's slots.
- * - This is the HOST-FACING snapshot (names, last frame's record cost), not the backend-facing value it
+ * - This is the HOST-FACING snapshot (names, the last answered frame's record cost), not the backend-facing value it
  *   is compiled from: executeFrame takes a FrameDescription, whose pointers are borrowed and whose order is
  *   the announced priority. Both come from the same compile, so they cannot disagree about which pass ran;
  *   they differ in what each audience needs. A dependency-resolving executor may still reorder the entries

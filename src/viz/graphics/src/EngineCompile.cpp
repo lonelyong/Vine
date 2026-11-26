@@ -149,7 +149,14 @@ void SessionShape::compileFrame()
     collectPlanProblems();
 
     plan_rows_.reserve(slots_.size());
-    for (Slot& slot : slots_) {
+    // THE FRAME'S COST TABLE, reset to one zeroed entry per registered slot: the costs belong to THIS frame, and a pass
+    // that does not run in it (disabled, or dropped by a cycle) stays at 0 without a second walk over the slots. The
+    // token is the pass itself, so the number can still be attributed after a plan change retires or re-orders rows
+    // (see detail::PassCost).
+    frame_->pass_costs.assign(slots_.size(), PassCost{});
+    for (std::size_t index = 0; index < slots_.size(); ++index) {
+        Slot& slot                     = slots_[index];
+        frame_->pass_costs[index].pass = slot.pass.get();
         PlanRow row;
         row.pass    = slot.pass.get();
         row.content = slot.pass != nullptr ? slot.pass->content() : nullptr;
@@ -294,11 +301,6 @@ void SessionShape::scheduleRows()
                                        String(u8" declare a dependency cycle (each reads what another writes), which no execution order "
                                               u8"can satisfy: those passes are skipped this frame, and the rest of the frame still runs")));
     }
-
-    // A row that does not run this frame (disabled or cyclic) has no timing to report.
-    for (Slot& slot : slots_) {
-        slot.record_micros = 0;
-    }
 }
 
 void SessionShape::buildFrameValue()
@@ -313,7 +315,6 @@ void SessionShape::buildFrameValue()
     // Which entries the expansion has to answer, in run order (the passes whose description issued something). It
     // lives on the FRAME, so the two halves share no mutable state: this half fills it, the engine half walks it.
     frame_->engine_order.clear();
-    frame_->engine_micros.clear();
     // A window pass has no target to read a device-pixel size from. The frame states the surface size (converted
     // with the surface's pixel ratio, taken when the frame started - see EngineFrame) on every pass;
     // RenderPass::describe prefers a sub-viewport or the target's own size, so off-screen passes are unaffected.
@@ -392,8 +393,8 @@ void SessionShape::buildFrameValue()
             // why it is a function of its own rather than a line in this loop.
             frame_->engine_order.push_back(index);
         }
-        if (index < slots_.size()) {
-            slots_[index].record_micros +=
+        if (index < frame_->pass_costs.size()) {
+            frame_->pass_costs[index].micros +=
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pass_started).count());
         }
     }

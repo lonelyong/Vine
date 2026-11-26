@@ -297,11 +297,10 @@ PrepareReport RenderEngine::prepare()
     }
 
     // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
-    // the expansion below writes the per-view memos, and those are the half's state (design 2.12).
+    // the expansion below writes the per-view memos, and those are the half's state (design 2.12). Nothing is published
+    // into the plan afterwards: a prepare is not a frame, so it leaves the last ANSWERED frame's numbers alone (the
+    // costs a host reads come from that frame's own answer, see FramePump::publishAnswer).
     pump_->waitIdle();
-    if (detail::EngineFrame* const finished = pump_->takePendingMicros()) {
-        publishEngineMicros(*finished);
-    }
 
     // THE FRAME THE NEXT frame() WOULD BUILD, built and expanded the same way, and handed over as a QUERY. The slot
     // is NOT advanced and no frame number is taken: nothing here is a frame, so the next frame() builds this same
@@ -353,11 +352,6 @@ FrameCallOutcome RenderEngine::frame()
     // the mirrors or a slot. That is the whole pipeline (1 + 1), and it is why a caller never queues frames: the wait
     // is for the frame BEFORE the one it is about to build, which is normally already done (design 2.12, D12).
     detail::EngineFrame& next = pump_->beginFrame();
-    // The frame that just finished reported its per-pass cost on its own value; the plan is the content half's, so it
-    // is written here - the one moment nobody else is in it.
-    if (detail::EngineFrame* const finished = pump_->takePendingMicros()) {
-        publishEngineMicros(*finished);
-    }
     buildContentHalf(next);
 
     if (!pump_->threaded()) {
@@ -578,17 +572,9 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     }
 
     // The frame is answered: what a host's waitForFrame is actually waiting for (see design 2.12 - the completion is a
-    // fact of the frame, not a callback into anybody's thread).
-    //   The per-pass cost still has to reach the plan a host reads, and the PLAN belongs to the content half (it is
-    // written by addPass, removePass and the compile). Inline that is this thread, so it is published right here;
-    // with a frame thread it is published by the next frame(), which by then has waited for this half - so the engine
-    // half never touches the engine's own tables (design 2.12: the halves share no mutable state).
-    if (!pump_->threaded()) {
-        publishEngineMicros(frame);
-    }
-    else {
-        pump_->notePendingMicros(frame);
-    }
+    // fact of the frame, not a callback into anybody's thread). Its per-pass cost travels WITH that answer (see
+    // publishFrameAnswer): the number was measured on this frame's own value, so the engine half still never writes the
+    // engine's tables - inline and threaded publish at the same moment, and the two halves share no mutable state.
     publishFrameAnswer(frame);
 }
 
@@ -655,18 +641,10 @@ void RenderEngine::publishFrameAnswer(detail::EngineFrame& frame)
     }
     const std::size_t reported = diagnosticCount();
     result.diagnostics = reported >= frame.diagnostics_before ? static_cast<std::uint64_t>(reported - frame.diagnostics_before) : 0U;
-    pump_->publishResult(std::move(result));
+    // ...AND WHAT THE FRAME COST, IN THE SAME BREATH AND UNDER THE SAME LOCK: a host that reads the table right after
+    // `waitForFrame` must see this frame's numbers, whole, not the previous frame's beside half of this one's.
+    pump_->publishAnswer(std::move(result), frame.pass_costs);
     pump_->markCompleted(frame.number);
-}
-
-void RenderEngine::publishEngineMicros(const detail::EngineFrame& frame)
-{
-    // `record_micros` keeps meaning "describe + collect": each half measured its own share, and this adds the engine
-    // half's (see detail::SessionShape::addEngineMicros). Called only when the content half is not looking (see the
-    // two call sites), so it takes no lock.
-    for (std::size_t index = 0; index < frame.engine_order.size() && index < frame.engine_micros.size(); ++index) {
-        shape_->addEngineMicros(frame.engine_order[index], frame.engine_micros[index]);
-    }
 }
 
 std::uint64_t RenderEngine::contentCollectCount() const noexcept
@@ -696,7 +674,10 @@ std::optional<int> RenderEngine::passOrder(raw_ptr<RenderPass> pass) const
 
 FrameTable RenderEngine::frameTable() const
 {
-    return shape_->frameTable();
+    // THE ROWS ARE THE DECLARATIONS AS THEY STAND; THE NUMBERS ARE THE LAST ANSWERED FRAME'S (see
+    // FramePump::publishAnswer): a host that read this right after `waitForFrame(N)` sees N's whole cost, and a frame
+    // that has not been answered yet leaves them alone rather than publishing half of itself into the table.
+    return shape_->frameTable(pump_->answeredPassCosts());
 }
 
 const FrameDescription& RenderEngine::frameDescription() const noexcept
@@ -829,18 +810,21 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
     // content half (see detail::bindSceneDraws) and `expandPass` asks that publication, which is exactly what makes it
     // safe to run away from the content's thread.
     //
-    // record_micros keeps meaning "describe + collect": the content half measured its part per pass, and the
-    // expansion adds its own here - one clock read per pass, not per draw.
+    // record_micros keeps meaning "describe + collect": the content half measured its part per pass while it described
+    // the frame, and the expansion adds its own share to the SAME frame value here - one clock read per pass, not per
+    // draw. Nothing is written into the plan: the number travels with the frame's answer (see publishFrameAnswer).
     std::size_t entry = 0;
-    frame.engine_micros.clear();
     for (const std::uint32_t index : frame.engine_order) {
         FrameDescription::Pass& described = frame.description.passes[entry++];
         const auto              started   = std::chrono::steady_clock::now();
         if (described.draw.has_value()) {
             detail::expandPass(*described.draw);
         }
-        frame.engine_micros.push_back(
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count()));
+        const std::uint64_t micros =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
+        if (index < frame.pass_costs.size()) {
+            frame.pass_costs[index].micros += micros;
+        }
     }
 }
 

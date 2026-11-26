@@ -680,6 +680,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   ran" reads the executor's own table.
      * - What it is for: a test asserting the SHAPE of a frame instead of counting passes or comparing
      *   pointers, a dev switch printing one table, and a host checking what a pipeline actually registered.
+     * - THE NUMBERS IT CARRIES ARE THE LAST ANSWERED FRAME'S (see `PassRow::record_micros`): the rows are the
+     *   declarations as they stand, the costs are joined to them by pass identity, so a host that reads it right after
+     *   `waitForFrame` sees that frame whole, one that reads it while a frame is in flight still sees the frame before,
+     *   and a pass registered since then answers 0 instead of somebody else's number.
      *
      * @return The table, in announcement order; empty when nothing is registered.
      */
@@ -1068,6 +1072,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - ONE WRITER for both an answered frame and a failed one: a host reading the answer must not have to know which
      *   produced it, and the completion a `waitForFrame` blocks on happens exactly here.
+     * - The frame's PER-PASS COST is part of that answer (see `FrameTable::PassRow::record_micros`): it was measured on
+     *   the frame's own value by both halves and is handed over here, under one lock, so a table read after
+     *   `waitForFrame` reports the frame that just finished and a frame still in flight reports nothing new.
      *
      * @param frame The frame whose engine half is over (borrowed; `outcome` is already its answer).
      */
@@ -1080,22 +1087,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   after every pass has been described - so one frame answers ONE publication (N16), and nothing in this
      *   function reads content: the content half already bound every scene draw to its publication (see
      *   detail::bindSceneDraws), so this half reads values only.
-     * - What it costs per pass lands in @p frame (its own `engine_micros`), never in the plan: the plan belongs to the
-     *   content half, and the numbers are published into it by `publishEngineMicros`.
+     * - What it costs per pass lands in @p frame's own `pass_costs`, beside the content half's share: the number
+     *   belongs to the frame and is published with its answer, never into the plan.
      *
      * @param frame The frame whose draws to answer.
      */
     void expandFrameValue(detail::EngineFrame& frame);
-
-    /** @brief Adds the engine half's per-pass cost to the plan a host reads.
-     *
-     * @details
-     * - Called only when the content half is NOT running (inline: right after the engine half; threaded: at the start
-     *   of the next frame, after the runner went idle), because the plan's tables belong to the content half.
-     *
-     * @param frame The frame whose engine half just finished.
-     */
-    void publishEngineMicros(const detail::EngineFrame& frame);
 
     friend class PassRegistry;
 

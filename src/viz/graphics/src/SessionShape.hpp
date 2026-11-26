@@ -70,9 +70,12 @@ class SessionShape {
      * @details
      * - THE DECLARATION IS NOT HERE. It is the pass' own (RenderPass::declaration()), so a descriptor-declared pass and
      *   the node it became cannot drift apart, and the compile reads one copy of every fact instead of two.
-     * - What a slot adds is what only the ENGINE knows: the order the pass was registered at, the transient target the
-     *   compile resolved for it, and how long its last record took. A disabled pass is skipped at run time; its
-     *   declaration stays, because the wiring checks judge declarations.
+     * - What a slot adds is what only the ENGINE knows: the order the pass was registered at and the transient target
+     *   the compile resolved for it. A disabled pass is skipped at run time; its declaration stays, because the wiring
+     *   checks judge declarations.
+     * - WHAT IT DELIBERATELY DOES NOT HOLD IS THE COST (`G13`): a record cost is a fact of one FRAME, measured by both
+     *   halves on their own threads, so it lives on the frame value (`detail::PassCost`) and reaches this table only
+     *   through `frameTable`'s answer. A session-level cell here would be written by two threads at two moments.
      */
     struct Slot {
         intrusive_ptr<RenderPass> pass;
@@ -82,10 +85,6 @@ class SessionShape {
         const void* owner{ nullptr };
         /// The role that owner gave this pass (empty = anonymous).
         String role;
-        /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
-        /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
-        /// plan (see PassRow::record_micros).
-        std::uint64_t record_micros = 0;
         /// The transient the compile allocated for this pass (null when it declares none).
         intrusive_ptr<RenderTarget> transient;
     };
@@ -127,8 +126,17 @@ class SessionShape {
     /** @brief Answers the rows one contributor stated (the scoped inverse of applyPlan(plan, owner)). */
     [[nodiscard]] Plan planFor(const void* owner) const;
 
-    /** @brief Gets what a frame of this engine consists of: the passes it runs, in order. */
-    [[nodiscard]] FrameTable frameTable() const;
+    /** @brief Gets what a frame of this engine consists of: the passes it runs, in order, with what each cost.
+     *
+     * @details
+     * - THE ROWS ARE THE DECLARATIONS AS THEY STAND; THE NUMBERS ARE THE ANSWERED FRAME'S. The two are joined BY PASS
+     *   IDENTITY (see detail::PassCost), so a pass registered, removed or re-ordered after that frame answers 0 instead
+     *   of inheriting a neighbour's cost - a positional join would hand it one.
+     *
+     * @param answered The last answered frame's per-pass cost (borrowed for the call; empty before the first answer).
+     * @return The table, in announcement order; empty when nothing is registered.
+     */
+    [[nodiscard]] FrameTable frameTable(std::span<const PassCost> answered) const;
 
     /**
      * @brief Applies @p plan as this session's shape, diffing it by pass name.
@@ -177,9 +185,6 @@ class SessionShape {
      * @param device     Device to tell about transients it should release (may be null).
      */
     void compile(EngineFrame& frame, RenderBackend* device);
-
-    /** @brief Adds the engine half's per-pass cost to the plan a host reads. */
-    void addEngineMicros(std::uint32_t slot, std::uint64_t micros) noexcept;
 
   private:
     /** @brief One row of the compiled frame: what a pass will do, decided before the frame runs. */

@@ -7,6 +7,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameResult.hpp>
@@ -31,8 +33,8 @@ namespace detail
  *   composes passes, surfaces and diagnostics; here it is one unit whose contract is "where does the second half run,
  *   and how does a host learn it finished".
  * - WHAT IT OWNS: the two `EngineFrame` values (the content half fills one while the other is being answered), the
- *   monotonic frame number, the completion counter `waitForFrame` reads, the `FrameRunner`, the pending per-pass cost,
- *   and the last answered frame's outcome and `FrameResult`.
+ *   monotonic frame number, the completion counter `waitForFrame` reads, the `FrameRunner`, and the last answered
+ *   frame's whole answer - its outcome, its `FrameResult`, and what each of its passes cost.
  * - WHAT IT DOES NOT OWN: the content half, the engine half, the passes and the device. It hands out a frame value and
  *   accepts a job; building and answering stay in the engine (`G7`: the pump absorbs the threading, it does not take
  *   over the frame).
@@ -83,16 +85,6 @@ class FramePump {
      */
     [[nodiscard]] const EngineFrame& currentFrame() const noexcept;
 
-    /** @brief Takes the frame whose engine half just finished, so its per-pass cost can reach the plan.
-     *
-     * @details
-     * - The plan belongs to the content half, so the engine publishes the cost at the one moment nobody else is in it:
-     *   right after `beginFrame` waited. Null means nothing is pending (inline publishes immediately).
-     *
-     * @return The finished frame, or null.
-     */
-    [[nodiscard]] EngineFrame* takePendingMicros() noexcept;
-
     /** @brief Hands the engine half over (threaded), or runs it here (inline).
      *
      * @param job What to run; it must be safe on the pump's thread.
@@ -134,20 +126,36 @@ class FramePump {
     /** @brief Chooses where the engine half runs (waits for the frame in flight before switching). */
     void setThreaded(bool threaded);
 
-    /** @brief Remembers the frame whose cost still has to reach the plan (threaded mode). */
-    void notePendingMicros(EngineFrame& frame) noexcept;
-
     /** @brief Publishes what became of one frame's picture (the packed word a host reads). */
     void publishPresent(std::uint64_t number, PresentOutcome outcome) noexcept;
 
     /** @brief Marks frame @p number as answered (what waitForFrame observes). */
     void markCompleted(std::uint64_t number) noexcept;
 
-    /** @brief Publishes the last answered frame's whole answer. */
-    void publishResult(FrameResult result);
+    /** @brief Publishes the last answered frame's whole answer: its shape, and what each of its passes cost.
+     *
+     * @details
+     * - ONE LOCK, ONE MOMENT: the outcome word a host polls is its own atomic, but everything read as "the frame's
+     *   answer" - the `FrameResult` and the per-pass cost - lands together, so a table read right after
+     *   `waitForFrame` reports the frame that just finished instead of half of that one and half of the one before.
+     *
+     * @param result     What the frame consisted of and what became of its picture.
+     * @param pass_costs What each of its passes cost (copied; the caller's frame value is reused by later frames).
+     */
+    void publishAnswer(FrameResult result, std::span<const PassCost> pass_costs);
 
     /** @brief Gets the last answered frame's whole answer. */
     [[nodiscard]] FrameResult result() const;
+
+    /** @brief Gets the last answered frame's per-pass cost, in slot order (empty before the first answer).
+     *
+     * @details
+     * - A COPY, taken under the lock: the numbers belong to a frame whose value the pump reuses, so a reader never
+     *   holds a handle on storage the next frame overwrites.
+     *
+     * @return The answered frame's costs (see detail::PassCost).
+     */
+    [[nodiscard]] std::vector<PassCost> answeredPassCosts() const;
 
     /** @brief Gets the last answered frame's outcome word (`frame << 8 | outcome`). */
     [[nodiscard]] std::uint64_t packedPresent() const noexcept;
@@ -174,14 +182,13 @@ class FramePump {
     std::atomic<std::uint64_t> completed_{ 0 };
     /// Where the engine half runs; null means inline - the thread exists only when a host asked for one.
     std::unique_ptr<FrameRunner> runner_;
-    /// A frame whose engine half finished on the thread and whose per-pass cost still has to reach the plan.
-    std::atomic<EngineFrame*> pending_micros_{ nullptr };
     /// The last answered frame's id and picture outcome, packed into one word so both halves of the answer are read
     /// without a lock and without tearing.
     std::atomic<std::uint64_t> present_{ 0 };
-    /// The last answered frame's whole answer (see FrameResult) and the lock a host reads it under.
-    mutable std::mutex mutex_;
-    FrameResult        result_;
+    /// The last answered frame's whole answer (see FrameResult), its per-pass cost, and the lock a host reads them under.
+    mutable std::mutex    mutex_;
+    FrameResult           result_;
+    std::vector<PassCost> answered_pass_costs_;
 };
 
 } // namespace detail

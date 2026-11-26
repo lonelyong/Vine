@@ -18,6 +18,26 @@ namespace detail
 {
 
 /**
+ * @brief What ONE pass cost in ONE frame: the number `FrameTable::PassRow::record_micros` reports.
+ *
+ * @details
+ * - A COST IS A FACT OF THE FRAME, NOT OF THE PASS (`G1`): it is measured once, on the frame it belongs to, and read
+ *   from that frame's own answer - so the two halves never write one shared cell at two different times (design 2.12).
+ * - WHAT IT COSTS: the pass' "describe + collect" interval - the content half's share (its hook, inputs, description
+ *   and the binding of the view it stated) plus the engine half's expansion of the frame's draw lists.
+ * - THE TOKEN IS THE PASS ITSELF, stored as an opaque pointer and only ever COMPARED, never dereferenced - the same
+ *   shape `SessionShape::Slot::owner` uses. A plan change may retire or re-order passes between the frame that
+ *   measured the number and the read that reports it, and a token survives that where a slot index would not: a pass
+ *   that arrived after the measured frame never inherits a neighbour's cost.
+ */
+struct PassCost {
+    /// Which pass this cost belongs to (an identity token; compared, never dereferenced).
+    const void* pass{ nullptr };
+    /// Microseconds of describe + collect for that pass in that frame; 0 means "it did not run then".
+    std::uint64_t micros{ 0 };
+};
+
+/**
  * @brief ONE frame, as it travels from the half that builds it to the half that answers it.
  *
  * @details
@@ -60,9 +80,10 @@ struct EngineFrame {
     /// half has to answer, and nothing else. It lives HERE rather than in the engine so the two halves share no
     /// mutable state at all - the content half fills it, the engine half walks it.
     std::vector<std::uint32_t> engine_order;
-    /// What the expansion cost per entry of @ref engine_order, in microseconds: the engine half's share of a pass'
-    /// `record_micros` (the content half measured its own share while it described). Same length as engine_order.
-    std::vector<std::uint64_t> engine_micros;
+    /// What each pass cost in THIS frame, one entry per registered slot in slot order: the content half adds its
+    /// describe share while it fills the frame, the engine half adds its expansion share while it answers it, and the
+    /// two numbers travel with the frame's answer (see FramePump::publishAnswer) - never into the session's tables.
+    std::vector<PassCost> pass_costs;
     /// The VIEW THIS frame's picture was taken with (the presenting pass' camera, area and layer mask, as values), or
     /// an empty view when nothing presents this engine's area. It is what a pointer query should aim with once the
     /// frame is answered (design N17): `RenderEngine::presentedCamera` hands its camera half to the host.

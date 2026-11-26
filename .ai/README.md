@@ -91,12 +91,19 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (91)
+## decisions/ — decision records (ADRs) (92)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
+
+- `ADR-2026-11-26-a-pass-cost-belongs-to-the-frame.md` — **a pass' record cost is a fact of the frame and travels with
+  its answer**: the content half and the engine half measure the same frame on their own threads, the number rides the
+  frame value and `publishFrameAnswer` hands it to the pump under the answer's lock, and `frameTable()` joins it to the
+  rows BY PASS IDENTITY. Publishing it at the next frame's start (the old shape) gave a host half a number after
+  `waitForFrame`, dropped the last frame's, and let a `prepare()` erase one - and meant two different things in the two
+  threading modes.
 
 - `ADR-2026-11-26-a-window-frame-owns-the-device-gate.md` — **a window frame keeps the device's frame gate exclusive**:
   present cannot move under the queue's external-synchronisation lock without making a v-sync-blocked present stall every

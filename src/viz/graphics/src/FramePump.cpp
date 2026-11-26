@@ -40,11 +40,6 @@ const EngineFrame& FramePump::currentFrame() const noexcept
     return *current_;
 }
 
-EngineFrame* FramePump::takePendingMicros() noexcept
-{
-    return pending_micros_.exchange(nullptr, std::memory_order_acquire);
-}
-
 void FramePump::submit(Job job)
 {
     if (runner_ == nullptr) {
@@ -124,11 +119,6 @@ void FramePump::setThreaded(bool threaded)
     runner_.reset();
 }
 
-void FramePump::notePendingMicros(EngineFrame& frame) noexcept
-{
-    pending_micros_.store(&frame, std::memory_order_release);
-}
-
 void FramePump::publishPresent(std::uint64_t number, PresentOutcome outcome) noexcept
 {
     // The picture's fate and the frame's id travel as ONE word: a host reading the record while the next frame is
@@ -141,16 +131,26 @@ void FramePump::markCompleted(std::uint64_t number) noexcept
     completed_.store(number, std::memory_order_release);
 }
 
-void FramePump::publishResult(FrameResult result)
+void FramePump::publishAnswer(FrameResult result, std::span<const PassCost> pass_costs)
 {
+    // THE WHOLE ANSWER LANDS TOGETHER: what the frame consisted of and what each of its passes cost are two halves of
+    // one fact a host reads, so they share this lock. The cost vector is a copy because the frame value it came from is
+    // reused by a later frame the moment this one is answered.
     const std::lock_guard<std::mutex> lock(mutex_);
     result_ = std::move(result);
+    answered_pass_costs_.assign(pass_costs.begin(), pass_costs.end());
 }
 
 FrameResult FramePump::result() const
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     return result_;
+}
+
+std::vector<PassCost> FramePump::answeredPassCosts() const
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return answered_pass_costs_;
 }
 
 std::uint64_t FramePump::packedPresent() const noexcept

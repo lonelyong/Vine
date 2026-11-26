@@ -109,7 +109,7 @@ Plan SessionShape::plan() const
     return shape;
 }
 
-FrameTable SessionShape::frameTable() const
+FrameTable SessionShape::frameTable(std::span<const PassCost> answered) const
 {
     FrameTable table;
     table.passes.reserve(slots_.size());
@@ -136,8 +136,16 @@ FrameTable SessionShape::frameTable() const
         for (const ImageInput& input : pass->inputs()) {
             row.inputs.push_back(input.description());
         }
-        row.output        = pass->outputName();
-        row.record_micros = slot.record_micros;
+        row.output = pass->outputName();
+        // THE COST IS THE ANSWERED FRAME'S, JOINED BY PASS IDENTITY: a row only takes a number that names THIS pass, so
+        // a pass registered or re-ordered after that frame answers 0 rather than inheriting a neighbour's cost (see
+        // detail::PassCost). One linear scan over the answered frame's entries - a read path, not a per-frame one.
+        for (const PassCost& cost : answered) {
+            if (cost.pass == pass) {
+                row.record_micros = cost.micros;
+                break;
+            }
+        }
         if (pass->hasViewport()) {
             row.viewport = pass->viewport();
         }
@@ -304,15 +312,6 @@ raw_ptr<const RenderPass> SessionShape::firstEnabledPassWithATarget() const noex
         }
     }
     return nullptr;
-}
-
-void SessionShape::addEngineMicros(std::uint32_t slot, std::uint64_t micros) noexcept
-{
-    // `record_micros` keeps meaning "describe + collect": each half measured its own share, and this adds the engine
-    // half's. Called only when the content half is not looking (see RenderEngine), so it takes no lock.
-    if (slot < slots_.size()) {
-        slots_[slot].record_micros += micros;
-    }
 }
 
 intrusive_ptr<RenderPass> SessionShape::insertSlot(Slot slot)

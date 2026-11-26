@@ -12542,6 +12542,155 @@ class GatedBackend : public MockBackend {
     bool                    released{ false };
 };
 
+TEST(RenderEngineTest, AFrameThreadedEnginesPassCostIsWholeOnceTheFrameIsAnswered)
+{
+    // THE COST IS A FACT OF THE FRAME AND TRAVELS WITH ITS ANSWER (design 2.12,
+    // ADR-2026-11-26-a-pass-cost-belongs-to-the-frame): the content half measures its describe share, the engine half its
+    // expansion, and both land on the frame value - so the number a host reads is the ANSWERED frame's, whole, and a
+    // frame that has only been handed over publishes nothing. The gate makes "the frame is in flight" a fact instead of
+    // a race: the engine half stops inside executeFrame, which is after its expansion was measured.
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    // Enough content that describing AND expanding it is measurable at all: a 0 would let the assertions below pass for
+    // the wrong reason.
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    for (int index = 0; index < 2000; ++index) {
+        root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr));
+    }
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered();
+
+    // NOTHING HAS BEEN ANSWERED: the table has no number to report for this pass, and says so rather than reporting
+    // the half of the cost the content half already knows.
+    const FrameTable building = engine->frameTable();
+    ASSERT_EQ(building.passes.size(), 1u);
+    EXPECT_EQ(building.passes[0].record_micros, 0u) << "an unanswered frame has cost a host nothing it can read";
+
+    backend->release();
+    ASSERT_TRUE(engine->waitForFrame(std::chrono::milliseconds(5000)));
+    const FrameTable answered = engine->frameTable();
+    ASSERT_EQ(answered.passes.size(), 1u);
+    EXPECT_GT(answered.passes[0].record_micros, 0u) << "the answered frame's cost is whole: the expansion is part of it";
+
+    // THE NEXT FRAME IS IN FLIGHT AND NOT ANSWERED: it publishes nothing, so the table keeps saying what the answered
+    // frame cost (a frame folded in as it is built would show a mixture of two frames here).
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered();
+    const FrameTable in_flight = engine->frameTable();
+    ASSERT_EQ(in_flight.passes.size(), 1u);
+    EXPECT_EQ(in_flight.passes[0].record_micros, answered.passes[0].record_micros) << "a frame that has not been answered does not rewrite the numbers";
+
+    backend->release();
+    ASSERT_TRUE(engine->waitForFrame(std::chrono::milliseconds(5000)));
+    engine->setFrameThreading(FrameThreading::Inline);
+}
+
+TEST(RenderEngineTest, PreparingAFrameDoesNotRewriteTheLastFramesNumbers)
+{
+    // A PREPARE IS NOT A FRAME (see RenderEngine::prepare): it compiles the value the next frame() would build so a host
+    // can gate a load on it, and it measures that rehearsal - but the numbers a host reads describe a frame that RAN, so
+    // the last answered frame's cost must survive it untouched.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    for (int index = 0; index < 2000; ++index) {
+        root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr));
+    }
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    ASSERT_TRUE(engine->frame().submitted());
+    ASSERT_TRUE(engine->waitForFrame(std::chrono::milliseconds(5000)));
+    const FrameTable answered = engine->frameTable();
+    ASSERT_EQ(answered.passes.size(), 1u);
+    ASSERT_GT(answered.passes[0].record_micros, 0u);
+
+    const PrepareReport warmed = engine->prepare();
+    // The outcome is the BACKEND's answer (a test double keeps nothing compiled, so it says Unsupported); what this case
+    // is about is that the call ran and changed nothing a host reads as a frame's cost.
+    EXPECT_NE(warmed.outcome, PrepareReport::Outcome::NotReady) << "the engine is ready, so the rehearsal ran";
+
+    const FrameTable afterwards = engine->frameTable();
+    ASSERT_EQ(afterwards.passes.size(), 1u);
+    EXPECT_EQ(afterwards.passes[0].record_micros, answered.passes[0].record_micros) << "the table reports frames that ran, not the one a prepare rehearsed";
+    engine->setFrameThreading(FrameThreading::Inline);
+}
+
+TEST(RenderEngineTest, APassAnswersItsOwnCostNotTheOneThatLeftItsSlot)
+{
+    // THE COST IS JOINED BY PASS IDENTITY (ADR-2026-11-26-a-pass-cost-belongs-to-the-frame): the answered frame's numbers
+    // name the passes they were measured for. A pass that did not run in that frame therefore answers 0 even when it now
+    // occupies the slot the measured pass used to occupy - a positional join would hand it a neighbour's number.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    for (int index = 0; index < 2000; ++index) {
+        root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr));
+    }
+    (void)scene->publish();
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+
+    // One pass that runs and costs something measurable, one that is registered but disabled - so the frame measured a
+    // number for the first and provably none for the second.
+    PassDesc busy_desc;
+    busy_desc.name    = u8"busy";
+    busy_desc.camera  = camera;
+    busy_desc.content = scene;
+    PassDesc idle_desc;
+    idle_desc.name    = u8"idle";
+    idle_desc.camera  = camera;
+    idle_desc.enabled = false;
+    (void)vn::test::applyPassForTest(*engine, busy_desc, 0);
+    (void)vn::test::applyPassForTest(*engine, idle_desc, 10);
+
+    ASSERT_TRUE(engine->frame().ran());
+    const FrameTable measured = engine->frameTable();
+    ASSERT_EQ(measured.passes.size(), 2u);
+    ASSERT_EQ(measured.passes[0].name, u8"busy");
+    ASSERT_GT(measured.passes[0].record_micros, 0u) << "the pass that ran was measured";
+    ASSERT_EQ(measured.passes[1].record_micros, 0u) << "the disabled pass was not";
+
+    // THE MEASURED PASS LEAVES: "idle" is the only row left, in the position "busy" held when it was measured.
+    Plan only_idle;
+    only_idle.passes.push_back(idle_desc);
+    ASSERT_TRUE(engine->applyPlan(only_idle).applied());
+
+    const FrameTable after = engine->frameTable();
+    ASSERT_EQ(after.passes.size(), 1u);
+    EXPECT_EQ(after.passes[0].name, u8"idle");
+    EXPECT_EQ(after.passes[0].record_micros, 0u) << "the number belonged to the pass that ran; its successor inherits nothing";
+}
+
 TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
 {
     // A SESSION'S SHAPE BELONGS TO NO FRAME (design 2.12): the pass list, the resources table and the backend's retained
