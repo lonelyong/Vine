@@ -10,6 +10,7 @@
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/MaterialValues.hpp>
 #include <vine/graphics/Sampler.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -82,22 +83,17 @@ inline constexpr vn::graphics::Sampler kShadowSampler{
 };
 
 /**
- * @brief The 128-byte push range the engine's content programs read (`vine_params.glsl`).
+ * @brief The 128-byte push range the engine's content programs read: the SDK's `VinePushRange`.
  *
  * @details
- * - `pc.projection == VineViewBlock.proj` (the pass' projection, folded into the device's clip convention) and
- *   `pc.modelView == VineViewBlock.view * VineDrawBlock.model`: the same two values a block-reading program finds in
- *   the view/draw pair, spelled for the range the built-in stages declare.
- * - IT LIVES HERE, WITH THE ABI: the caches size the pipeline layout from it and the recorder fills it, so the two
- *   cannot disagree about how wide the range is.
- * - THE NAME IS THE SDK'S: the range was called `ContentPush` before B17 renamed it `PushRange`, and this block is
- *   that range's layout. `PushConstants` was not used because the stage's own type already carries that name in the
- *   same translation units (`G1`: one concept, one word).
+ * - THE LAYOUT IS NOT THIS BACKEND'S (review 17 W5): `vn::graphics::VinePushRange` declares the two matrices and the
+ *   conventions they carry, in the SDK, because a HOST-authored program reads the same bytes. A copy here would be a
+ *   second owner of the host-program contract - and the first thing to fall behind it.
+ * - This backend owns only WHERE the bytes go (a push-constant range on the content pipeline's layout, sized from
+ *   `sizeof(VinePushRange)`) and WHAT they contain (the pass' projection folded into the device's clip convention, and
+ *   `view * model` - see ContentDraw's `pushConstantsOf`).
  */
-struct PushRangeConstants {
-    std::array<float, 16> projection{}; // View -> clip, column-major, in the device's clip convention.
-    std::array<float, 16> model_view{}; // World -> view, column-major (the pass' view times the drawable's model).
-};
+using PushRangeConstants = vn::graphics::VinePushRange;
 static_assert(sizeof(PushRangeConstants) == 128U, "the push range is two mat4");
 
 /**

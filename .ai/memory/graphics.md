@@ -2730,3 +2730,45 @@ and one verb was neither: a thread-mode change wrote `runner_` beside a frame's 
   cases fail ("the mode did not change under the frame"), restored and green. ASan on `test_graphics` is NOT runnable in
   this tree (pre-existing ODR violation at load: the target compiles `SnapshotSource.cpp` itself while linking
   `libvnGraphics`), so TSan carried the concurrency evidence.
+
+## 2026-11-26 (later) - review 17: the pick sees the picture, and the display order is stated
+
+- **W1 - an orthographic pick starts at the NEAR plane.** `CameraSnapshot::screenRay` unprojected the pixel at clip
+  depths 1.0 and 0.0, believing the snapshot carried a reverse-Z projection; it carries the SDK's GL-range one, so a
+  perspective camera was right by accident and an orthographic ray began in the MIDDLE of the depth range - everything
+  nearer, a model fitted at its own distance included, sat behind its own origin. `screenRay` now unprojects at the
+  projection's own ends (-1 and +1); the perspective answer is unchanged. Case:
+  `CameraSnapshotTest.AnOrthographicPicturePicksWhatItShows` (a real triangle through the snapshot's ray).
+- **W2 - the transparency class opens the blend.** `resolveRenderState` / `applyStateDefaults` take a `transparent`
+  input (= `DrawItem::isTransparent`, the sort's own question); a command in the transparent queue that authored no
+  blend resolves to the default pair enabled, and an authored blend (even a disable) keeps its word. Cases:
+  `StateNodeTest.TheTransparencyClassOpensTheDefaultBlendAndAnAuthoredBlendWins` and the vk pixel case
+  `VkContentDrawTest.ABlendedDrawFollowsTheEngineOrder`, which no longer authors a blend itself.
+- **W3 - face orientation.** `vnFacingNormal` (vine_material.glsl) turns the interpolated normal on a back face and
+  both shading stages call it; glTF's `doubleSided` reaches `models::Material` (`hasDoubleSided` / `isDoubleSided`, read
+  from assimp's `AI_MATKEY_TWOSIDED`) and `sceneFromModel` wraps the leaf in a `StateNode` with `CullMode::None` /
+  `Back`. "Stated nothing" is not "false": the engine default stays `None`, now a sentence in `graphics-scene.md` 2.13,
+  and the mirrored-winding limit is recorded there and in 9.2. The vk shadow fixture had been lighting the BACKS of its
+  quads (its camera saw the +z side of a +z-facing surface); the rule folded that away, so the quads' winding and
+  normals and the light now face the camera together. `AStateChangeIsACommandNotAPipeline` drew its "blend off" frame
+  at opacity 0.5, which now blends by itself - it authors `enabled = false` at full opacity.
+- **W4 - the pick and the picture.** A pointer names a pixel, so `makeScreenRay` normalises `(index + 0.5)`; a hidden
+  scene and a subtree that folds to opacity 0 are not picked. What a pick deliberately does NOT read (clip planes, cull
+  mode, a topology override, a billboard's per-view rotation, lines/points with no tolerance) is stated in
+  `RayIntersection.hpp` and `graphics-scene.md` F28.
+- **W5 - the host-program contract.** `VineViewBlock` (288 B, uploaded by nobody) is deleted; `VinePushRange` (128 B:
+  folded projection + model-view) is the whole contract and lives in `ShaderAbi.hpp`, and the vk backend's
+  `PushRangeConstants` is a `using` of it. `ADR-2026-11-26-host-program-contract-is-the-push-range`; the dead
+  `buildViewBlock` references now name `ContentDraw::foldToDeviceClip`.
+- **W6 - the display pipeline.** Linear light becomes an encoded pixel at the swap-chain write and nowhere else; an
+  offscreen 8-bit target is a DATA format (a lit picture that must survive an offscreen hop is RGBA16F); no tonemap, no
+  exposure; a readback answers the stored bytes. `ADR-2026-11-26-linear-light-is-encoded-by-the-target-format`;
+  `graphics-rendering.md` 2.14 / F28 and the guide's 3.9 state it.
+- **W7 / W8 / W9 - the boundaries.** `graphics-geometry.md` 2.11 states the three closed geometry facts (uint32 indices
+  only, no primitive restart, no per-instance attribute beside the matrix) with a trigger each. `PassDesc::clear_depth`
+  says a clear is a load operation on the WHOLE attachment, not the pass' viewport. Opacity is clamped at both setters
+  (`Node` / `Scene`) and a subtree that folds to 0 emits no command and answers no ray.
+- **`test_graphics` did not link at HEAD**: `FramePump`'s private TU was missing from the target's source list. It is
+  compiled into the binary now, following the rule that file already states for the private half.
+- **Verified**: build 0 errors; `test_graphics` 677/677 (84 suites), `test_vk` 223/223 (46), `test_meshio`,
+  `test_gui` green; the 12 gates + `--strict` exit 0 (no clang-format binary on this Windows host).

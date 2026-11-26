@@ -788,10 +788,11 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     second.program_description  = program->description();
     second.material             = green;
     second.material_description = green->description();
-    second.opacity              = 0.5F;
-    RenderState authored;
-    authored.blend = vn::graphics::BlendState{ true, vn::graphics::BlendFactor::SrcAlpha, vn::graphics::BlendFactor::OneMinusSrcAlpha };
-    second.authored_state = authored;
+    // OPACITY ALONE BLENDS (review 17 W2): the command authors NO blend state and no StateNode stands over it, so
+    // the resolved blend can only come from the transparency class the sort uses - the documented rule this case
+    // exists to pin. The half-opacity draw used to carry an explicit BlendState here, which is how the rule's
+    // absence survived a pixel test.
+    second.opacity = 0.5F;
 
     auto commands = std::make_shared<std::vector<DrawItem>>();
     commands->push_back(std::move(first));
@@ -863,12 +864,15 @@ TEST(VkContentDrawTest, AStateChangeIsACommandNotAPipeline)
         second.program_description  = program->description();
         second.material             = green;
         second.material_description = green->description();
-        second.opacity              = 0.5F;
-        if (blend) {
-            RenderState authored;
-            authored.blend = vn::graphics::BlendState{ true, vn::graphics::BlendFactor::SrcAlpha, vn::graphics::BlendFactor::OneMinusSrcAlpha };
-            second.authored_state = authored;
-        }
+        // OPACITY BELOW 1 OPENS THE BLEND BY ITSELF (review 17 W2), so the "blend off" call draws a FULL-OPACITY
+        // command that authors `enabled = false` - the content's explicit word, which the transparency merge respects.
+        // What the case proves is unchanged: a blend transition is commands, not a pipeline variant.
+        second.opacity = blend ? 0.5F : 1.0F;
+        RenderState authored;
+        authored.blend = vn::graphics::BlendState{ blend,
+                                                  vn::graphics::BlendFactor::SrcAlpha,
+                                                  vn::graphics::BlendFactor::OneMinusSrcAlpha };
+        second.authored_state = authored;
 
         auto commands = std::make_shared<std::vector<DrawItem>>();
         commands->push_back(std::move(first));

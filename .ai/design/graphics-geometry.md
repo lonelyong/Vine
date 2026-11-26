@@ -62,6 +62,24 @@ This file defines the current design of graphics geometry: channels, primitives,
     - Without a tree, picking is a linear scan, so "having a tree" is pure gain: the same results one by one, at a different cost. When to prepare it belongs to the consumer (the threshold is set by the UI).
     - Satisfies `G1` (one concept, one definition), `G5` (a change stays in its own frame), `G13` (the tree only describes a stream and holds no identity).
 
+2.11 **Three geometry facts are a CLOSED boundary, not an oversight** (`G8` `G9`; review 17 `W7`): the vertex input is
+fixed at three points that are cheap to widen and expensive to guess at, and each is stated here with the trigger that
+would reopen it.
+
+- **Indices are `std::uint32_t` only** (`Primitive::IndexSpan` is `BufferSlice<std::uint32_t>`, and the backend binds
+  `VK_INDEX_TYPE_UINT32` unconditionally). Trigger: the first asset whose index buffer (not its vertices) is the memory
+  peak - a 16-bit spelling is a second overload of the index policy and a second backend binding, not a flag.
+- **No primitive restart.** A strip or fan that needs a break is several primitives, which is what the geometry model
+  already says (one `Primitive` is one draw). Trigger: the first multi-strip asset whose draw count (not its bytes) is
+  the cost.
+- **No per-instance attribute beyond the `mat4`** (`GeometryChannel` has a location and a per-vertex segment; the
+  instance rate exists for the four instance-matrix columns and nothing else). Trigger: the first per-instance highlight
+  (a selection colour or an ID per instance), which today costs one draw per distinct value.
+
+All three are data-shape decisions (`G9` says a new format or device must not edit the core model, not that every
+format feature must exist), and none of them changes the picture today: `F8` / `F10` / `F11` above state what a
+primitive carries, and these sentences say what it deliberately does not.
+
 ## 3. Features
 
 ### 3.1 Channels
@@ -419,7 +437,9 @@ Current design; features and interfaces are as the tables above.
 
 ### 9.2 Known gaps / backlog
 
-See `../backlog/graphics.md`; open items are kept by trigger condition.
+See `../backlog/graphics.md`; open items stay by trigger condition. The three closed boundary facts (32-bit indices
+only, no primitive restart, no per-instance attribute beside the instance matrix) are stated with their triggers in 2.11
+and are not backlog entries until a trigger fires.
 
 ### 9.3 Compatibility / migration
 

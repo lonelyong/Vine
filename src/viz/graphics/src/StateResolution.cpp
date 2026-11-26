@@ -54,7 +54,7 @@ void takeFloor(const std::optional<float>& authored, float& resolved, float floo
 
 } // namespace
 
-ResolvedRenderState applyStateDefaults(const RenderState& state)
+ResolvedRenderState applyStateDefaults(const RenderState& state, bool transparent)
 {
     ResolvedRenderState resolved;
     if (state.depth) {
@@ -65,6 +65,12 @@ ResolvedRenderState applyStateDefaults(const RenderState& state)
     }
     if (state.blend) {
         resolved.blend = *state.blend;
+    }
+    else if (transparent) {
+        // The second source of blending (see BlendState): a draw the sort puts in the transparent queue is drawn
+        // blended, with the pair this struct already defaults to. An AUTHORED blend - enabled or disabled - is the
+        // content's word and keeps it (the `if` above).
+        resolved.blend.enabled = true;
     }
     if (state.polygonMode) {
         resolved.polygonMode = *state.polygonMode;
@@ -81,14 +87,23 @@ ResolvedRenderState applyStateDefaults(const RenderState& state)
     return resolved;
 }
 
-ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology)
+ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology, bool transparent)
 {
     ResolvedCommandState resolved;
 
     // The content's word first, item by item: what a StateNode authored is kept; everything it did not author
     // is still the "nobody said" case the defaults below answer.
     take(authored.cullMode, resolved.state.cullMode);
-    take(authored.blend, resolved.state.blend);
+    // Blending has a SECOND source, merged here because this is the one place holding both halves (review 17 W2):
+    // the sort puts a command in the transparent queue by `transparent` (DrawItem::isTransparent - material alpha
+    // mode and effective opacity), and a command there that authored NO blend is drawn with the default pair ON.
+    // An authored blend keeps its word either way, so an explicit disable stays an opaque draw.
+    if (authored.blend) {
+        resolved.state.blend = *authored.blend;
+    }
+    else if (transparent) {
+        resolved.state.blend.enabled = true;
+    }
     take(authored.polygonMode, resolved.state.polygonMode);
     // A depth bias is something the CONTENT says about its own surfaces (this decal sits on that panel), so it
     // has no pass layer: nothing a view chooses can make two coplanar faces stop fighting without also changing

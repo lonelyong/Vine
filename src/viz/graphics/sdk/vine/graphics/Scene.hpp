@@ -153,7 +153,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Sets the scene-level opacity multiplier in [0, 1] (see opacity() for the fold).
      *
-     * @param opacity Multiplier in [0, 1].
+     * @param opacity Multiplier in [0, 1]; a value outside the range is clamped (see Node::setOpacity).
      */
     void setOpacity(float opacity);
 

@@ -43,7 +43,10 @@ void main()
     // The geometric normal, then the material's own surface on top of it: the shading normal a normal map
     // produces is what the G-buffer must carry, because the lighting pass cannot rebuild it - it has no UVs, no
     // derivatives of a model surface and no tangent basis, which is the whole reason this pass exists.
-    vec3 vn_n = normalize(vn_view_normal);
+    //
+    // A BACK FACE IS THE SAME SURFACE SEEN FROM BEHIND, so the normal is turned to face the viewer first (see
+    // vnFacingNormal) - the same call the forward stage makes, so the two paths store and shade one surface.
+    vec3 vn_n = vnFacingNormal(normalize(vn_view_normal));
 #ifdef VN_TEXTURED
     VineSurface vn_surface = vnSampleMaterial(vn_n, vn_view_pos, vn_texcoord);
 #else

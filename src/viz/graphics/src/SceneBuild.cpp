@@ -17,6 +17,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
+#include <vine/graphics/StateNode.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -105,7 +106,19 @@ struct Conversion {
                     }
                 }
             }
-            group->addChild(leaf);
+            // WHICH SIDES THE SURFACE HAS IS THE ONE RENDER STATE THIS CONVERSION STATES (graphics-scene.md C5): a
+            // source that AUTHORED the fact (glTF's `material.doubleSided`, carried by models::Material) becomes the
+            // leaf's cull mode, wrapped in a StateNode because state lives on nodes. A source that stated NOTHING
+            // keeps the engine default - no culling - which is what a tessellated sheet or a trimmed B-rep face
+            // needs, and not a decision this conversion may fill in for it.
+            NodePtr drawable = leaf;
+            if (entry.material != nullptr && entry.material->hasDoubleSided()) {
+                auto sides = make_intrusive<StateNode>();
+                sides->setCullMode(entry.material->isDoubleSided() ? CullMode::None : CullMode::Back);
+                sides->addChild(leaf);
+                drawable = std::move(sides);
+            }
+            group->addChild(drawable);
             ++scene.geometries;
         }
 

@@ -92,18 +92,15 @@ TEST(ShaderAbiTest, GeometryAttachesCanonicalChannelsWhereTheAbiSays)
     EXPECT_EQ(Geometry::kTexCoordLocation, attributeLocation(VertexAttribute::TexCoord0));
 }
 
-TEST(ShaderAbiTest, ViewBlockIsFourMatricesAndTwoVec4)
+TEST(ShaderAbiTest, ThePushRangeIsTwoMatricesAndTheHostProgramContract)
 {
-    // std140 and D3D cbuffer packing agree on this shape: 16-byte aligned, all
-    // members mat4/vec4, so one layout serves both APIs.
-    EXPECT_EQ(sizeof(VineViewBlock), 288u);
-    EXPECT_EQ(alignof(VineViewBlock), 16u);
-    EXPECT_EQ(offsetof(VineViewBlock, view), 0u);
-    EXPECT_EQ(offsetof(VineViewBlock, inv_view), 64u);
-    EXPECT_EQ(offsetof(VineViewBlock, proj), 128u);
-    EXPECT_EQ(offsetof(VineViewBlock, view_proj), 192u);
-    EXPECT_EQ(offsetof(VineViewBlock, cam_pos), 256u);
-    EXPECT_EQ(offsetof(VineViewBlock, frame), 272u);
+    // REVIEW 17 W5: what a HOST-authored stage may rely on is stated where the layout lives - in the SDK - so the size
+    // and the two offsets are the contract, not a backend detail. Two matrices is also the device's guaranteed minimum
+    // push-constant size, which is why the range is not larger.
+    EXPECT_EQ(sizeof(VinePushRange), 128u);
+    EXPECT_EQ(alignof(VinePushRange), 16u);
+    EXPECT_EQ(offsetof(VinePushRange, projection), 0u);
+    EXPECT_EQ(offsetof(VinePushRange, model_view), 64u);
 }
 
 TEST(ShaderAbiTest, DrawBlockIsOneMatrixPlusTheParameterSlot)

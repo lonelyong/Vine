@@ -144,6 +144,9 @@ float Scene::opacity() const
 
 void Scene::setOpacity(float opacity)
 {
+    // Clamped where it is authored, like Node::setOpacity (review 17 W9): the fold is a product of fractions, and a
+    // multiplier outside the range has no meaning the picture could express.
+    opacity = std::clamp(opacity, 0.0f, 1.0f);
     if (opacity_ == opacity) {
         return; // no content change: keep the frame's memo usable
     }

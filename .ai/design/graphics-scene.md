@@ -31,9 +31,11 @@ This file defines the current design of the graphics scene graph: nodes, state, 
 
 2.1 **Strict tree**: `Group::addChild` detaches from the old parent automatically and refuses cycles; in one traversal a node has exactly one world matrix.
 2.2 **Folding rules fixed**: visibility is a hard gate, opacity multiplies, layer and drawOrder follow nearest declaration wins, state overrides per item.
-2.3 **State has one resolution point**: `resolveRenderState(authored, pass, data_topology)` is the one
+2.3 **State has one resolution point**: `resolveRenderState(authored, pass, data_topology, transparent)` is the one
 implementation of the priority table (`pass override > content > defaults`), and it answers the effective
-assembly beside the state.
+assembly beside the state. `transparent` is `DrawItem::isTransparent()`'s answer - the same question the sort asks - and it
+is an INPUT rather than a post-step because transparency is blending's second source: a draw in the transparent queue that
+authored no blend gets the default pair enabled, while an authored `enabled = false` keeps its word (review 17 `W2`).
 2.3.1 **A depth band belongs to the pass, not to the node**: `PassDesc::depth_range` in a declaration maps one pass's draws into a segment of the depth buffer;
 a node cannot carry it, because two subtrees mapping the same framebuffer would take the unique meaning away from a pixel's depth value (without a per-pixel tag
 there is no inverse, and picking has no unique answer). The mapping is order-preserving, but a remapped depth **is no longer a distance**: if the writers of one target use different ranges,
@@ -71,7 +73,7 @@ a frame draws a publication (`SnapshotSource`), `Scene::collectDrawItems` answer
 through three named steps, and a helper is spelled by **which inputs it takes**, never by what it returns —
 `collect*` folds the tree into one authored value (`collectRenderState(node)` answers the still-optional block,
 whose unset items mean "nobody on that path said anything", not "the default"); `resolve*` applies **one context**
-to an authored value (`resolveRenderState(authored, pass, data_topology)` answers the final state *and* the
+to an authored value (`resolveRenderState(authored, pass, data_topology, transparent)` answers the final state *and* the
 effective assembly — one implementation of the priority table); `effective*` is the **one-step composition**
 a caller usually wants (`effectiveRenderState(node)` equals `applyStateDefaults(collectRenderState(node))`, and
 `effectiveProgram` / `effectiveMaterial` are the same shape for a single-valued property, whose search ends at
@@ -83,6 +85,19 @@ Why: while the three words look interchangeable, a reader cannot tell whether a 
 already walked the tree, so every call site is read twice (`G1`, `G4`). Boundary: a new derivation picks its verb
 by its **inputs** — node and context together is `effective*`, a node alone is `collect*`, a value plus a context
 is `resolve*` — and a function that composes two steps says so in its comment.
+
+2.13 **Face orientation is the content's rule, culling is the view's choice** (`G1` `G4` `G6`): a triangle is
+front-facing when its vertices are counter-clockwise to the camera in a right-handed world (`RenderState.hpp`'s
+`CullMode`), and that definition belongs to the SDK, not to a backend's framebuffer convention — each backend maps it onto
+its own front face after its clip fold (`StateMapping::kFrontFace` is `CLOCKWISE` because the vk projection flips Y).
+The engine's DEFAULT is `CullMode::None`, stated here rather than left implicit in `ResolvedRenderState`: a tessellated
+B-rep face or a bounded sheet is a surface on both sides, so no culling is the safe default for content the engine builds
+itself. A source that STATES the fact is honoured at import (`models::Material::hasDoubleSided` → `CullMode::None` /
+`Back` in `SceneBuild`), and "states nothing" is not "false" — an unstated OBJ keeps the engine default. Two consequences
+belong to the same rule: a BACK face is lit with its normal turned to face the viewer (`vnFacingNormal`, one call in both
+shading stages), because a back face is the same surface seen from behind; and a mirrored subtree (a negative scale) flips
+its winding against the fixed front-face constant, which is recorded as a known limit in §9.2 until a draw states a
+negative determinant.
 
 ## 3. Features
 
@@ -102,11 +117,11 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 | # | Fact | Rule |
 |---|---|---|
 | F6 | Visibility | `isVisible` is a hard gate: an invisible subtree leaves collection, picking and the scene box. |
-| F7 | Opacity | The MAGNITUDE: scene × every ancestor × itself, clamped to [0,1] at the leaf. Material alpha (its factor and its base map's) is a second magnitude and the material's `alphaMode` says how the product is used, so classification reads both - see `graphics-material.md` §2.7 and `DrawItem::isTransparent`. |
+| F7 | Opacity | The MAGNITUDE: scene × every ancestor × itself. Every setter clamps to [0,1] (`Node::setOpacity` / `Scene::setOpacity`, the `setAspect` precedent), so the product cannot leave the range or flip sign; a subtree that multiplies to **0** emits no command and answers no ray. Material alpha (its factor and its base map's) is a second magnitude and the material's `alphaMode` says how the product is used, so classification reads both - see `graphics-material.md` §2.7 and `DrawItem::isTransparent`. |
 | F8 | Layers | Nearest declaration wins; `clearLayers()` restores inheritance; default `kDefaultLayer`. |
 | F9 | drawOrder | Nearest declaration wins; the outer sort key within a pass (higher = drawn later). |
 | F10 | material / program | Primitive > geometry-level default > nearest `StateNode` > pass. |
-| F11 | State | Every item optional; the priority table (`pass override > content > defaults`) has ONE implementation (`resolveRenderState`), and the ASSEMBLY (topology) is a data fact that travels beside the state in `ResolvedCommandState`. |
+| F11 | State | Every item optional; the priority table (`pass override > content > defaults`) has ONE implementation (`resolveRenderState(authored, pass, data_topology, transparent)`), the ASSEMBLY (topology) is a data fact that travels beside the state in `ResolvedCommandState`, and the transparency class is an input so the blend it resolves is the one the sort's answer implies. |
 
 ### 3.3 Collection
 
@@ -134,10 +149,11 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 
 | # | Feature | Notes |
 |---|---|---|
-| F24 | Ray | `Camera::screenToWorldRay` takes normalised screen coordinates. |
-| F25 | Scene query | `RayIntersection::intersectScene` / `intersectSceneAll`. |
+| F24 | Ray | Two producers, one answer: `Camera::screenToWorldRay` (the live camera, its own basis - an orthographic origin on the eye plane) and `CameraSnapshot::screenRay` (the AUTHORED picture, unprojected at the projection's own two clip ends - so an orthographic ray starts on the NEAR plane and reaches what the picture shows). A pointer names a PIXEL, so a pick goes through its centre (`index + 0.5`). |
+| F25 | Scene query | `RayIntersection::intersectScene` / `intersectSceneAll`; a hidden scene (`Scene::isVisible`) and a hidden or fully faded subtree are not picked - the same gates collection applies. |
 | F26 | Hit identity | `geometry + primitiveIndex + instanceIndex`; triangle topologies only (list / strip / fan, `isTriangleTopology`). |
 | F27 | Mask | The same layer rule as collection; containers are not culled by the mask. |
+| F28 | What a pick does NOT read | The pass' viewing switches - clip planes, cull mode, a polygon or topology override - and a billboard's per-view rotation: a selection is a statement about the CONTENT, so it sees the data's topology and a billboard's own placement even when the frame draws it as points or turns it to the camera. Lines and points are not surfaces and have no pixel tolerance. |
 
 ## 4. Public Interface
 
@@ -268,6 +284,12 @@ Current design; the feature points and interfaces are the tables above.
 ### 9.2 Known gaps / backlog
 
 See `../backlog/graphics.md`; open items stay by trigger condition.
+
+Known limit, stated rather than tracked: a MIRRORED subtree (a negative scale in a transform) flips its winding against
+the fixed front-face constant, so with culling on, a mirrored solid's outer surface is culled as a back face (review 11
+`V3`). Mirroring stays legal as a placement; a per-draw determinant flip is the fix when a consumer needs it (trigger: the
+first mirrored part that must be culled). The orthographic pick origin (`W1`), opacity-only blending (`W2`) and the
+double-sided import (`W3`) are landed here rather than tracked.
 
 ### 9.3 Compatibility / migration
 

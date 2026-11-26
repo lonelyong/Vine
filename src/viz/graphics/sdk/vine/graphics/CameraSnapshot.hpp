@@ -20,7 +20,7 @@ class Camera;
  *   the target and the up vector. Keeping the `Camera` object instead would make the frame's validity depend on the
  *   authoring object's lifetime and on the thread that owns it - and a frame that crosses to a recording side has
  *   exactly those two problems (see `.ai/design/graphics-threading.md`).
- * - WHAT IT IS FOR. The collection context (`View`), the view block (`buildViewBlock`) and the CPU light
+ * - WHAT IT IS FOR. The collection context (`View`), the content push range (`VinePushRange`) and the CPU light
  *   transform all read these numbers; a pass takes the snapshot once, when it describes itself, so the culling, the
  *   projection and the shading of one frame cannot see a camera that moved in between.
  * - `present` is a FACT, not an optional: "this draw packet named no camera" is a real answer (the call issues
@@ -54,11 +54,13 @@ struct VN_GRAPHICS_API CameraSnapshot {
      *   frame is answered somewhere else: the camera may have moved since, and a pick that used the new pose would miss
      *   what the user pointed at (design graphics-threading.md N17 - the one place where "the camera is ahead of the
      *   picture" is a semantic error, not a lag).
-     * - Both ends of the pixel are unprojected through this snapshot's own matrices, so it answers the same way for a
-     *   perspective and an orthographic camera and for an off-centre window: the projection carries which clip depth is
-     *   NEAR (this tree renders Reverse-Z), and the ray is read as the segment between the two, oriented away from the
-     *   eye. A perspective's ray starts AT the eye; an orthographic one has no eye on it, so it starts where the pixel
-     *   crosses the near plane.
+     * - Both ends of the pixel are unprojected at THE PROJECTION'S OWN TWO ENDS - this snapshot carries the SDK's
+     *   clip-space projection (see Camera), whose near plane is clip z = -1 and whose far plane is clip z = +1 - so it
+     *   answers the same way for a perspective and an orthographic camera and for an off-centre window. The segment
+     *   between the two points is the ray, oriented away from the eye: a perspective's ray starts AT the eye; an
+     *   orthographic one has no eye on it, so it starts where the pixel crosses the NEAR plane, which is why a pick
+     *   through it reaches geometry at any depth the picture shows. No device clip convention (reverse-Z, near at 1)
+     *   is read here: a snapshot never carries one.
      *
      * @param screen01  The point in NORMALISED picture coordinates - 0..1 across it, x right and y DOWN, which is the
      *                  convention a window pointer arrives in (not OpenGL's y-up clip space).

@@ -199,7 +199,11 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *
      * @details
      * - Not the folded value: a drawable's effective opacity is scene.opacity() x every ancestor's
-     *   opacity() x its own, clamped to [0, 1] at the drawn leaf (see DrawItem::opacity).
+     *   opacity() x its own (see DrawItem::opacity). Every factor is already in [0, 1] because each setter clamps,
+     *   so the product is too.
+     * - ZERO MEANS NOT DRAWN AND NOT PICKED: a subtree that folds to 0 emits no command and answers no ray - the
+     *   collection and the pick apply the same rule, so a part faded all the way out is not a part that still
+     *   catches clicks.
      * - The per-drawable half of the transparency INPUT: the material's alpha mode says what the product with
      *   the material's own alpha means (Opaque ignores it, Mask thresholds it, Blend blends it), so a shared
      *   material's alpha cannot fade every drawable that uses it on its own - the mode has to say so
@@ -211,7 +215,7 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
 
     /** @brief Sets this node's own opacity multiplier; it multiplies down the subtree (see opacity()).
      *
-     * @param opacity Multiplier in [0, 1].
+     * @param opacity Multiplier in [0, 1]; a value outside the range is clamped (see opacity()).
      */
     void setOpacity(float opacity);
 

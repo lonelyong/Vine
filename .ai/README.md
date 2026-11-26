@@ -91,13 +91,22 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (94)
+## decisions/ — decision records (ADRs) (96)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-26-host-program-contract-is-the-push-range.md` — **the host-program contract is the push range, stated
+  in the SDK**: `VinePushRange` (128 B: the folded projection and `view * model`) declares what a host-authored stage
+  receives and which clip convention the projection carries, while the unbound `VineViewBlock` (288 B, uploaded by no
+  backend) is deleted. The block that would have carried camera position, inverse view and time has no consumer today;
+  the rejected shapes say what adding it would cost.
+- `ADR-2026-11-26-linear-light-is-encoded-by-the-target-format.md` — **linear light becomes an encoded pixel at the
+  swap-chain write, by the target's format**: the presenting target's sRGB format is the one encode, an offscreen 8-bit
+  format is a DATA format (a lit picture that must survive an offscreen hop is RGBA16F), there is no tonemap or
+  exposure, and a readback answers the stored bytes rather than what the window shows.
 - `ADR-2026-11-26-a-pass-cost-belongs-to-the-frame.md` — **a pass' record cost is a fact of the frame and travels with
   its answer**: the content half and the engine half measure the same frame on their own threads, the number rides the
   frame value and `publishFrameAnswer` hands it to the pump under the answer's lock, and `frameTable()` joins it to the
@@ -285,14 +294,14 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (8)
+## research/ — research and proposals (9)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
 which exist because the third-round audit's open items were left with no home when its page was
 deleted (git is still the archive for the page itself), because a review's findings and deferred
-proposals are a working record for the batch that follows them, and because the fifth and eighth to tenth
-reviews compare against the peer engines at a level a design page cannot carry.
+proposals are a working record for the batch that follows them, and because the fifth, the eighth to eleventh and
+the seventeenth reviews compare against the peer engines at a level a design page cannot carry.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
@@ -358,6 +367,23 @@ reviews compare against the peer engines at a level a design page cannot carry.
   cd/lux and a diffuse lobe without `1/π`; Mask opacity feeding the cutout threshold while sorting opaque;
   a sort-key comment with the depth direction inverted. Includes the peer comparison (three.js, OSG, glTF,
   Vulkan/D3D12, Unity/Unreal/Filament), what does NOT transfer, and a proposed order; adds no backlog entry.
+  (The twelfth to sixteenth passes - the frame interval, the frame answer, the vocabulary - are recorded in
+  `memory/graphics.md` and carry no research page.)
+- `graphics-2026-11-26-review-17.md` — the seventeenth pass, on the three-dimensional surfaces review 11 did not
+  reach: picking, transparency, face orientation, the host-program contract, the display pipeline and the geometry
+  boundary. Nine findings - the presented-picture pick ray starts an ORTHOGRAPHIC pick in the middle of the depth
+  range, so everything nearer (the fitted model included) is behind the ray's origin and unpickable, and its only
+  test pins the line, not the origin (this corrects review 11 `V6`, which held for perspective only); opacity below 1
+  moves a draw to the transparent queue but never turns blending on, although `BlendState`, the guide and the sort
+  all say it does (the demo works around it with a blend `StateNode`); everything is double-sided by default, a back
+  face is lit with its away-facing normal, and glTF `doubleSided` is not imported; the pick and the picture read six
+  different facts (billboard pose, topology override, lines and points, scene visibility, the pixel corner, clip
+  planes); the host-program contract has no owner (the push-range layout is backend-private, the projection is folded
+  undocumented, `VineViewBlock` is bound by nobody and `buildViewBlock` does not exist); linear light is quantised to
+  8-bit before it is encoded and nothing owns the transform; 32-bit indices, no primitive restart and no per-instance
+  attribute are a closed boundary nobody wrote down; a depth-only clear is not "inside the pass' viewport"; the
+  opacity setters clamp nothing and zero still draws and picks. Verified that review 11's `V2` / `V3` / `V4` / `V10`
+  are still in the tree. Adds no backlog entry.
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)

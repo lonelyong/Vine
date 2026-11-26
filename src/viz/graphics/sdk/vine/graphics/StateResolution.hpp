@@ -105,6 +105,11 @@ struct VN_GRAPHICS_API ResolvedCommandState {
  * - The assembly travels in the SAME answer but not in the same field: `state` is what a StateNode may
  *   author, `topology` is the data's own word (or the pass' view switch over it). A caller building a
  *   pipeline key reads both, and neither is guessed (`G1`).
+ * - TRANSPARENCY IS THE OTHER SOURCE OF BLENDING, and it is merged here because this is the one place that holds
+ *   both halves: `transparent` is `DrawItem::isTransparent()`'s answer - the SAME question the sort asks - so the
+ *   order and the rasteriser cannot read two different classifications (review 17 W2). A draw in the transparent
+ *   queue whose content authored NO blend gets the default pair enabled (see BlendState); one that authored a blend
+ *   - enabled or disabled - keeps that word, because an explicit `enabled = false` is a decision, not an omission.
  *
  * @param authored The state the CONTENT authored (DrawItem::authored_state): every item left unset is
  *                 "nobody on the path said anything about it", which is not the same as "set to the default".
@@ -112,9 +117,14 @@ struct VN_GRAPHICS_API ResolvedCommandState {
  * @param data_topology The PRIMITIVE's topology (see Primitive.hpp): the data's own word, which the pass may
  *                 override but a StateNode cannot (topology is not state - it says how this draw consumes its
  *                 vertex/index data).
+ * @param transparent Whether the command belongs in the transparent queue (DrawItem::isTransparent()). It opens the
+ *                 default blend pair for content that authored none; an authored blend still wins.
  * @return The final state and the effective assembly.
  */
-VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored, const PassRenderState& pass, Topology data_topology);
+VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& authored,
+                                                        const PassRenderState& pass,
+                                                        Topology             data_topology,
+                                                        bool                 transparent = false);
 
 /**
  * @brief Applies default values to a folded optional state block.
@@ -128,9 +138,11 @@ VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& autho
  * what nobody stated. The name is how a reader tells the two apart without opening the header.
  *
  * @param state Folded optional state (see collectRenderState).
+ * @param transparent Whether the draw belongs in the transparent queue (see resolveRenderState); it opens the
+ *                 default blend pair for content that authored none.
  * @return Concrete state with defaults applied - the STATE half of a pipeline-variant key.
  *         A caller building a key also names the data's topology (see resolveRenderState).
  */
-VN_GRAPHICS_API ResolvedRenderState applyStateDefaults(const RenderState& state);
+VN_GRAPHICS_API ResolvedRenderState applyStateDefaults(const RenderState& state, bool transparent = false);
 
 VN_GRAPHICS_NS_END

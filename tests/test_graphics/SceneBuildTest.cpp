@@ -26,6 +26,7 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/SceneBuild.hpp>
+#include <vine/graphics/StateNode.hpp>
 
 using vn::models::ColorMaterial;
 using vn::models::TriangleMesh;
@@ -261,6 +262,57 @@ TEST(SceneBuildTest, ACyclicNodeReferenceIsCutInsteadOfRecursingForever)
     const auto* group = dynamic_cast<const Group*>(scene.root.get());
     ASSERT_NE(group, nullptr);
     ASSERT_EQ(group->children().size(), 1U) << "only the child that was not on the path is attached";
+}
+
+TEST(SceneBuildTest, ASourceThatStatesItsSidesCullsTheOtherOne)
+{
+    // REVIEW 17 W3: glTF's `material.doubleSided` defaults to false, so a single-sided surface is the format's DEFAULT -
+    // and the importer carries the statement (models::Material) to the one place that turns it into render state.
+    // THREE ANSWERS, and "nothing" is not "false": true -> both sides, false -> back faces gone, unstated -> the engine
+    // default (no culling), which is what a tessellated sheet needs and what an unstated MTL keeps.
+    auto two_sided = vn::make_intrusive<ColorMaterial>(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    auto one_sided  = vn::make_intrusive<ColorMaterial>(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    auto unstated   = vn::make_intrusive<ColorMaterial>(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    ASSERT_FALSE(two_sided->hasDoubleSided()) << "a material states nothing until a source says so";
+    two_sided->setDoubleSided(true);
+    one_sided->setDoubleSided(false);
+
+    Model       model;
+    Model::Node root;
+    root.name   = u8"root";
+    root.meshes = { 0U, 1U, 2U };
+    model.setNodes({ root });
+    model.setRoot(0U);
+    Model::Entry entries[3];
+    entries[0].mesh     = makeTriangle(u8"both");
+    entries[0].material = two_sided;
+    entries[1].mesh      = makeTriangle(u8"one");
+    entries[1].material  = one_sided;
+    entries[2].mesh     = makeTriangle(u8"unstated");
+    entries[2].material = unstated;
+    model.setMeshes({ entries[0], entries[1], entries[2] });
+
+    const vn::graphics::SceneBuild scene = sceneFromModel(model);
+    ASSERT_NE(scene.root, nullptr);
+    ASSERT_EQ(scene.geometries, 3U);
+    const auto* group = dynamic_cast<const Group*>(scene.root.get());
+    ASSERT_NE(group, nullptr);
+    ASSERT_EQ(group->children().size(), 3U);
+
+    // A stated fact is a StateNode over the leaf; an unstated one leaves the leaf where it was, so the engine default
+    // answers (ResolvedRenderState's CullMode::None, stated in graphics-scene.md 2.13).
+    const auto* both = dynamic_cast<const vn::graphics::StateNode*>(group->children()[0].get());
+    ASSERT_NE(both, nullptr) << "a two-sided source states its cull mode";
+    ASSERT_TRUE(both->cullMode().has_value());
+    EXPECT_EQ(*both->cullMode(), vn::graphics::CullMode::None);
+
+    const auto* one = dynamic_cast<const vn::graphics::StateNode*>(group->children()[1].get());
+    ASSERT_NE(one, nullptr) << "a single-sided source states its cull mode";
+    ASSERT_TRUE(one->cullMode().has_value());
+    EXPECT_EQ(*one->cullMode(), vn::graphics::CullMode::Back);
+
+    EXPECT_NE(dynamic_cast<const Geometry*>(group->children()[2].get()), nullptr)
+        << "a source that stated nothing adds no state node - the engine default is the answer";
 }
 
 TEST(SceneBuildTest, OneSourceMaterialIsOneGraphicsMaterial)

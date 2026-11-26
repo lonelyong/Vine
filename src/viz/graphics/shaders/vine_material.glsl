@@ -66,6 +66,29 @@ layout(set = 0, binding = 5) uniform sampler2D vn_emissiveMap;
 #endif
 
 /**
+ * @brief Turns an interpolated view-space normal so that it faces the VIEWER on a back face.
+ *
+ * @details
+ * - A BACK face is the same surface seen from behind: its interpolated vertex normal still points away from the
+ *   camera (the geometry was authored for the front), so shading it unflipped makes the cosine term negative at
+ *   every lamp and the surface falls to its ambient term - an open shell (a tessellated sheet, a trimmed face)
+ *   is dark from one side. Turning the normal is what "two-sided" means to a shader; three.js's shared normal
+ *   chunk multiplies by `faceDirection` for the same reason.
+ * - `gl_FrontFacing` is the SDK's rule here, not a device accident: every backend states the front face so that it
+ *   agrees with the SDK's counter-clockwise convention AFTER its own clip fold (see CullMode), so "front-facing"
+ *   means the same polygon on every backend.
+ * - BOTH stages that shade a surface call this (the forward stage and the G-buffer writer), so the two paths
+ *   cannot disagree about which side a fragment is on.
+ *
+ * @param vn_n View-space normal as the rasteriser interpolated it (unit length; may point away from the viewer).
+ * @return The same direction on a front face, its negation on a back face.
+ */
+vec3 vnFacingNormal(vec3 vn_n)
+{
+    return gl_FrontFacing ? vn_n : -vn_n;
+}
+
+/**
  * @brief Builds the surface a material WITHOUT any texture slot describes: its factors alone.
  *
  * @param vn_n View-space geometric normal (the normal slot cannot perturb it - there is no slot).

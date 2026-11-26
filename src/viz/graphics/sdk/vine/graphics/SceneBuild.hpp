@@ -87,6 +87,10 @@ VN_GRAPHICS_API SceneBuild sceneFromModel(const vn::models::Model& model);
  *   graphics-material.md §3.6.
  * - `PbrMaterial::opacity` is NOT part of the material - the engine's transparency is the node's opacity - so
  *   `sceneFromModel` puts it on the leaf instead (see Node::setOpacity).
+ * - The source's TWO-SIDED statement (`Material::hasDoubleSided`, filled by an importer that read glTF's
+ *   `doubleSided`) is a render state, not a material value: `sceneFromModel` puts it on a `StateNode` over the leaf
+ *   as `CullMode::None` (both sides) or `CullMode::Back` (one side). A source that stated nothing states no cull
+ *   mode either, so the engine's own default answers (see ResolvedRenderState).
  * - The result is a NEW object every call; a caller converting a whole model does not call this per entry (that
  *   would give one material object per draw instead of one per source material) - `sceneFromModel` caches by the
  *   source object's identity.

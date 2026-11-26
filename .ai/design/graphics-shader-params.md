@@ -2,7 +2,7 @@
 
 > **Status**: current (P0 implemented: GLSL declaration dedup + build-time inline; P1 not done, see §9.2)
 > **Last verified**: 2026-11-16
-> **Scope**: the declaration home, name resolution and the backend's byte-writing contract for the five parameter blocks view / draw / material / shadow / lights.
+> **Scope**: the declaration home, name resolution and the backend's byte-writing contract for the four parameter blocks draw / material / shadow / lights and for the 128-byte `VinePushRange`, which is the whole host-program contract and states what the view data a content draw carries is (2.8).
 > **Sources**: `ShaderAbi.hpp` / `LightAbi.hpp` / `shaders/vine_params.glsl` (the current block layout).
 > **Backlog**: `../backlog/graphics.md`
 
@@ -10,9 +10,10 @@
 
 ### 1.1 Problem and background
 
-The five parameter blocks carry all the data between the engine and the shaders, and their sizes are settled (`VineViewBlock` 288 B, `VineDrawBlock` 80 B,
+The parameter blocks carry all the data between the engine and the shaders, and their sizes are settled (`VineDrawBlock` 80 B,
 `VineMaterialBlock` 64 B, `VineShadowBlock` 80 B, `VineLightsBlock` 528 B: one ambient light + 8 typed light
-slots, see [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)), and the C++ offsets are pinned by `static_assert`.
+slots, see [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md); the view is the 128-byte `VinePushRange`,
+see 2.8), and the C++ offsets are pinned by `static_assert`.
 The question is not "is the layout right" but "how many owners does each declaration have":
 
 - **The GLSL side can have only one declaration**: the parameter blocks are written in one place, `src/viz/graphics/shaders/vine_params.glsl`, and shaders pull them in with
@@ -65,7 +66,7 @@ Dedup is not a discipline problem: a duplicated declaration is not in front of t
 
 | Buffer | Contents | Upload timing |
 |---|---|---|
-| view | camera matrices, viewport size, time | per view |
+| view | NOT a block: the 128-byte `VinePushRange` (projection + model-view), filled per draw | per draw (2.8) |
 | draw | model matrix, opacity, point size, user slots | per draw (ring + dynamic offset) |
 | material | base colour / emissive / metallic·roughness·occlusion·alpha cutoff / flags | per material (after dedup) |
 | shadow | light-space matrix, shadow parameters | per pass |
@@ -98,8 +99,25 @@ The first stage's acceptance: sizes, alignment, member offsets, the public inter
 
 ### 2.7 Prose conventions become named members
 
-Conventions such as `params.x` / `cam_pos.w` / `frame.w` ("which component of the vec4 is what") become named members on the GLSL side
+Conventions such as `params.x` / `params.y` / `base_color.a` ("which component of the vec4 is what") become named members on the GLSL side
 (`vn_opacity` / `vn_pointSize`); the C++ byte layout is unchanged.
+
+2.8 **The host program's contract is the push range, stated in the SDK** (`G1` `G4` `G7` `G8`; review 17 `W5`): a host may
+supply GLSL (`ShaderProgram`), and what its stages receive is ONE value - `vn::graphics::VinePushRange`, 128 bytes:
+`projection` (the pass' projection **folded into the device's clip convention** at the boundary the backend owns) and
+`model_view` (`view * model` for that drawable), both column-major. The header states what a host may assume; nothing about
+the range lives in a backend's private header any more.
+
+- The range is the whole contract ON PURPOSE: a host stage gets no separate model matrix, no normal matrix, no camera
+  position, no inverse projection and no time, and a full-screen draw gets no range at all. A host that needs one of them
+  has no channel today - a boundary, not an oversight ([ADR](../decisions/ADR-2026-11-26-host-program-contract-is-the-push-range.md)).
+- `VineViewBlock` (view / inverse view / projection / view-proj / camera position / time, 288 B) is DELETED: no backend
+  uploaded it and no shader declared it, so the block was a promise with no producer - the one thing a shape header must
+  not be (`G8`, `G12`). The dead `buildViewBlock` references pointed at a function that was never written; the fold they
+  meant is `ContentDraw::foldToDeviceClip`.
+- Each backend keeps its own half: it aliases the SDK type (`using PushRangeConstants = VinePushRange` in the vk backend),
+  sizes its pipeline layout from `sizeof`, and fills the two values. A second backend inherits the contract instead of
+  rediscovering it.
 
 ## 3. Features
 
@@ -116,6 +134,7 @@ Conventions such as `params.x` / `cam_pos.w` / `frame.w` ("which component of th
 | F7 | User extension points | The draw block's named user slots + a reserved binding range | not done |
 | F8 | Gates | Fragment list, expansion agreement (unknown `vn_` names optional) | partly implemented |
 | F9 | P0 equivalence | Bytes, interfaces, tests all unchanged | implemented |
+| F10 | Host-program contract | `VinePushRange` in the SDK states the two matrices and their conventions; the backend aliases it and fills it; the unbound `VineViewBlock` is gone (2.8) | implemented |
 
 ### 3.2 F1 shared fragment
 
@@ -130,8 +149,9 @@ its (variant's) descriptor interface — the backend serves bindings by declarat
 ```
 
 The guards are `VN_PARAM_MATERIAL` / `VN_PARAM_DRAW` / `VN_PARAM_LIGHTS`; `#include` must stand alone at the start of a line (P5).
-The shadow block (§1.1) and the view block are not in the fragment: no built-in shader declares the view block — the content path implements the view as a 128 B push
-range (see `ShaderAbi.hpp`), a program that wants this block declares it with its own layout.
+The shadow block (§1.1) is not in the fragment either, because its set/binding belongs to the program that declares it. The VIEW
+is not a block at all: a content draw hands its program the 128-byte `VinePushRange` (2.8), so no shipped GLSL declares a
+view block, and a host program that wants more declares its own where its own arrangement puts it.
 
 The light block's set/binding is set 0 / binding 6 **shared** by both paths (content set: material 0, slots 1–5, lights 6, shadow 7/8, see `graphics-material.md` §3.3).
 2 is therefore free; the full-screen set: source colours 0..N-1, depth 4, lights 5, the shadow pair 6/7), so the fragment writes the same number, no
@@ -147,7 +167,7 @@ pulling them into the shape header is a back edge (G2), and every consumer that 
 facts live in the backend (D1 not open); each backend packs its own shadow values, but slot derivation must call
 `packedSlotOf`.
 The fragment and the structs are still two hand-written copies, guarded by adjacent review and `ShaderAbiTest`'s block-size assertions
-(`ViewBlockIsFourMatricesAndTwoVec4` / `DrawBlockIsOneMatrixPlusTheParameterSlot` / `ShadowBlockIsTheViewToLightMatrixPlusItsParameters` /
+(`ThePushRangeIsTwoMatricesAndTheHostProgramContract` / `DrawBlockIsOneMatrixPlusTheParameterSlot` / `ShadowBlockIsTheViewToLightMatrixPlusItsParameters` /
 `TheMaterialBlockIsThePbrRowsAndEqualityCoversThem`).
 
 Before embedding, `cmake/VineEmbedShaders.cmake` expands the fragment into each shader's string: no include parsing at runtime, nothing on disk,
@@ -200,8 +220,8 @@ the **only** shader-side declaration besides the C++ structs; any shader copying
 
 ### 4.2 C++ types
 
-The five block structs (keeping their names; four in `ShaderAbi.hpp`, `VineLightsBlock` in `LightAbi.hpp`, see §3.3),
-the `ParameterBuffer` enum, `ParameterRef{buffer, offset, type}`, `find()`.
+The block structs (four in `ShaderAbi.hpp`, `VineLightsBlock` in `LightAbi.hpp`, see §3.3) and the push range
+(`VinePushRange`, the host program's whole contract, §2.8), the `ParameterBuffer` enum, `ParameterRef{buffer, offset, type}`, `find()`.
 
 ### 4.3 Runtime API
 
@@ -220,6 +240,11 @@ the `ParameterBuffer` enum, `ParameterRef{buffer, offset, type}`, `find()`.
 Built-in and user shaders share the same fragment: a typo → undeclared identifier (compile failure), a duplicate declaration of a block → redefinition
 (compile failure). Both failures are visible.
 
+What a user (host) program is HANDED is `VinePushRange` and nothing else about the view (§2.8): `gl_Position = projection *
+model_view * vec4(position, 1)` is the whole contract, `projection` already carries the device's clip convention, and a
+full-screen draw gets no range. A host stage that needs the camera position, the inverse projection or the frame time cannot
+ask this ABI yet - [ADR-2026-11-26](../decisions/ADR-2026-11-26-host-program-contract-is-the-push-range.md).
+
 ## 5. Constraints, Requirements and Invariants
 
 ### 5.1 Constraints (C#)
@@ -234,6 +259,7 @@ Built-in and user shaders share the same fragment: a typo → undeclared identif
 | C6 | A fragment may only be pulled in by an `#include` alone at the start of a line, expanded at build time; no include appears in the embedded string. |
 | C7 | The SDK's ABI headers have two layers: **shape** (dependency-free, `ShaderAbi.hpp`, std only) and **the face that fills bytes** (`LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`, which may depend on the model and math). The dependency direction can only be shape ← fill face ← backend; a shape header must not include a model/math header (back edge), a new block's shape goes into `ShaderAbi.hpp` and a fill face that needs values gets its own header. |
 | C8 | Each L1 block has one packing function, in the SDK's fill face; the backend only decides where the bytes go (buffer / offset / descriptor) and must not rewrite the field mapping or re-derive slots. An exception must state its reason and be written in §3.3: today only the shadow block (its input `ShadowFacts` is in the backend half), and its slot derivation must still call `packedSlotOf`. |
+| C9 | The host-program contract is stated in the SDK: the push range's layout, its size and the conventions its two matrices carry live in `ShaderAbi.hpp`. A backend may alias and fill them; it may not declare a second layout, and the SDK declares no view block that no backend binds (§2.8). |
 
 ### 5.2 Requirements (R#)
 
@@ -285,6 +311,7 @@ Built-in and user shaders share the same fragment: a typo → undeclared identif
 | T4 | Unknown names are refused (P1) | `Material::set("Nope", 1.0F)` returns an error |
 | T5 | The fragment really made it into the program text | Delete the declaration → undeclared identifier, the build-time gate fails (the same command as T3) |
 | T6 | Each program declares only its own blocks | `ShaderAbiTest` (one entry per block) + `EmbeddedShadersTest`: forward declares 5 bindings, gbuffer 1 |
+| T7 | The host-program contract has one home | `grep -rn 'VineViewBlock\|buildViewBlock' src` is empty; `ShaderAbiTest.ThePushRangeIsTwoMatricesAndTheHostProgramContract` pins size and offsets; `grep -rn 'struct.*PushRange' src` finds the SDK declaration only |
 
 ## 9. Status and Evolution
 
@@ -310,7 +337,8 @@ P0 changes no byte and no interface and can land on its own; P1 only adds interf
 
 - `shaders/vine_params.glsl` — the only GLSL declaration of the parameter blocks (material / draw / lights, selected by guards).
 - `cmake/VineEmbedShaders.cmake` — build-time expansion and embedding; `cmake/VineShaders.cmake`'s `INCLUDES` declares the dependency.
-- `ShaderAbi.hpp` — the C++ layout and `static_assert`s of the four dependency-free L1 blocks (a leaf: std only).
+- `ShaderAbi.hpp` — the C++ layout and `static_assert`s of the four dependency-free L1 blocks and of `VinePushRange`
+  (the host-program contract, §2.8; the header is a leaf: std only).
 - `LightAbi.hpp` — the light block's capacity, shape and only packing rule (`packLightBlock` / `packedSlotOf`).
 - `MaterialAbi.hpp` — `packMaterialBlock`: material values → `VineMaterialBlock` (the slot mask is the caller's declaration).
 - `DrawAbi.hpp` — `packDrawBlock`: model matrix / opacity / point size → `VineDrawBlock` (column-major, reserved slots always 0).

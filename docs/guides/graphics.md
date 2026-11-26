@@ -70,7 +70,7 @@ engine.setDevice(backend);
 | 属性 | 规则 |
 | --- | --- |
 | 变换 | **相乘**；折好的结果烘焙进 `DrawItem::model_matrix` |
-| `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。它是透明度的**幅度**：材质的 alpha 模式决定它怎么用（Opaque 只用它、Mask 把它当阈值、Blend 乘上材质与贴图的 alpha 当输出 alpha），排序与混合开关读**同一个**分类（`DrawItem::isTransparent`） |
+| `opacity` | **相乘**：scene × 各层祖先 × 自身。每个 setter 都夹取到 `[0, 1]`（`Node::setOpacity` / `Scene::setOpacity`，与 `setAspect` 同一先例），所以乘积不会越界也不会因两个负值相乘翻回正值；**折出 0 的子树不产生命令、也不被拾取**。它是透明度的**幅度**：材质的 alpha 模式决定它怎么用（Opaque 只用它、Mask 把它当阈值、Blend 乘上材质与贴图的 alpha 当输出 alpha），排序与混合开关读**同一个**分类（`DrawItem::isTransparent`） |
 | 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `DrawItem::authored_state`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | 拓扑 | **不是状态**：每条 `Primitive` 自己说（数据事实，见 §3.21）；`RenderPass` 的 `topology` 可以把整片当点/线看，覆盖值由 `resolveRenderState` 报 `Pass` |
 | material / program | **图元**自己的优先 → `Geometry` 的几何级默认 → 最近的祖先 `StateNode` |
@@ -79,15 +79,16 @@ engine.setDevice(backend);
 | 画序（`Node::setDrawOrder`） | **最深者覆盖**：最近的声明赢，`clearDrawOrder()` 回到继承，默认 0。**高 = 后画**（压在上面）；它是 pass 内那张列表的**外键** —— 同序之内仍是"不透明 前→后、透明 后→前"，所以它能越过透明批次、也能被同序的深度规则保护 |
 | 实例（不是折叠，随 `Primitive` 走） | **属于一条 draw**：每个 `Primitive` 自己带一段实例矩阵和可见前缀；没有流就是普通单次 draw。多个 primitive 可以共享同一个缓冲的不同切片；实例矩阵在**该 draw 的几何局部空间**里乘 |
 
-`cmd.isTransparent` 由 opacity 与**材质解析后的 alpha 模式**一起推出（Blend 总是透明；Mask 永远不透明 —— 它裁剪而不是淡化），它决定这个 drawable 走管线的透明部分，也决定混合是否打开。
+`cmd.isTransparent` 由 opacity 与**材质解析后的 alpha 模式**一起推出（Blend 总是透明；Mask 永远不透明 —— 它裁剪而不是淡化），它决定这个 drawable 走管线的透明部分，也决定混合是否打开：透明队列里**没有自己声明 blend 的命令**由 `resolveRenderState(..., transparent)` 解析成默认组合（`SrcAlpha` / `OneMinusSrcAlpha`）**打开**，自己声明了 blend 的（哪怕是显式关掉）保持自己的话。
 整个折叠是**一次自顶向下**的遍历（世界矩阵 / 透明度 / 状态 / material / program 一起往下传），
 `StateNode.hpp` 的 `effectiveRenderState/effectiveMaterial/effectiveProgram`（从叶子往上走）是同一规则的
 公开拼写，两者由测试钉住一致。
 
 **折叠出来的只是"内容作者写的那份"**：一条命令画出来是什么状态，还要加上**画它的那条 pass** 说的
 （depth 策略 + 光栅化覆盖）—— 两者由**一个函数**合并，`resolveRenderState(cmd.authored_state,
-pass.stateOverrides(), cmd.topology)`（`StateResolution.hpp`），它一次答出"最终值 + 实际装配（拓扑）"；
-第三个参数是**数据的拓扑**（命令所属的 `Primitive`），pass 只能覆盖它，`StateNode` 不能。
+pass.stateOverrides(), cmd.topology, cmd.isTransparent())`（`StateResolution.hpp`），它一次答出"最终值 + 实际装配（拓扑）"；
+第三个参数是**数据的拓扑**（命令所属的 `Primitive`），pass 只能覆盖它，`StateNode` 不能；
+第四个参数是**透明分类**（`DrawItem::isTransparent`，排序用的同一个问题），没自己声明 blend 的透明命令在这里打开默认混合。
 优先级一句话：**pass 的光栅化覆盖赢过内容，内容的 depth 赢过 pass 的 depth 策略**（pass 给的是"没写过
 depth 的那些的默认"），其余没有别的层 —— 视图的模式在**建管线时**就已经变成 pass 级覆盖（那是配方的事）。
 
@@ -799,6 +800,13 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | 纹理读入（sRGB → 线性） | 采样器（硬件） | 把颜色贴图的 `vn::imaging::PixelFormat` 声明成 `*Srgb` 拼写 |
 | 窗口写出（线性 → sRGB） | 输出的 surface 格式（硬件） | 不用做事：窗口 target 的格式由后端按 surface 的实际格式决定（本机是 `B8G8R8A8_SRGB`） |
 | 离屏 target | ——（不编码） | `RenderTarget::ColorFormat` 取线性拼写：`RGBA8` 在后端投影成 `R8G8B8A8_UNORM`；浮点格式没有 sRGB 拼写 |
+
+**这张表就是显示管线的全部**（`graphics-rendering.md` §2.14、[ADR](../../.ai/decisions/ADR-2026-11-26-linear-light-is-encoded-by-the-target-format.md)）：
+离屏 8 位 target 存的是**线性值**，所以它是**数据格式**（遮罩、权重、像素测试要比的字节）；要给人看的图、又必须过一道离屏
+target 时用 `RGBA16F`，到窗口写出那一步才由硬件编码。三个后果：暗部在这 8 位里会 banding（线性 0.5 编码后是 188，暗部
+只占很少的码值）；**没有 tonemap / exposure** —— 超过 1 的线性值在写窗口时被裁掉，要"风格"就自己提供一个全屏 program
+（`fullscreenCopyProgram` 的注释就是这么说的）；**回读拿到的是存储的字节**，不是窗口上的样子 —— 两者差的就是这条传递函数，
+所以在 8 位离屏 target 上做的像素比较是在比数据，不是在比用户看到的画面。
 
 于是宿主只有一个问题要回答：**这条路里的字节是"颜色"还是"数据"**。
 * 是颜色（albedo、emissive、天空盒、环境贴图 —— PNG/JPG 的字节本来就是 sRGB 编码的）⇒ 声明成 `*Srgb`。
@@ -1660,7 +1668,7 @@ ctest --test-dir build                # CTest 视角（见下面那段的口径�
 
 **三个"推导"动词按输入分，不按返回分**（规范见 `graphics-scene.md` §2.12）：`collect*` 只吃**节点**，沿树折叠出
 一种**作者值**（`collectRenderState` 答的还是"没人说过"的空档，不是默认值）；`resolve*` 吃**一个已有值 + 一个上下文**，
-套用优先级表（`resolveRenderState(authored, pass, topology)`，并告诉你每一项是谁定的）；`effective*` 吃**节点**，
+套用优先级表（`resolveRenderState(authored, pass, topology, transparent)`，并告诉你每一项是谁定的）；`effective*` 吃**节点**，
 一步给出"这个节点最终用什么"（`effectiveRenderState` = 前两步的合成，`effectiveProgram` / `effectiveMaterial` 同理）。
 所以看到 `resolve` 就别再去找它有没有先爬树，看到节点加上下文一起传的就是 `effective`。
 

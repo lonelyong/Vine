@@ -201,9 +201,16 @@ bool CameraSnapshot::screenRay(const vn::math::Vec2d& screen01, Vec3d& origin, V
     const double ndc_x = (2.0 * screen01.x) - 1.0;
     const double ndc_y = 1.0 - (2.0 * screen01.y);
 
-    // BOTH ENDS OF THE PIXEL, unprojected through this snapshot's own matrices. Which clip depth is NEAR is the
-    // projection's business (this tree renders Reverse-Z: the near plane is clip 1), so nothing here assumes it - the
-    // two world points say which is which by their distance to the eye.
+    // BOTH ENDS OF THE PIXEL, unprojected at THE PROJECTION'S OWN TWO ENDS. A snapshot carries the SDK's clip-space
+    // projection (see Camera): its near plane is clip z = -1 and its far plane is clip z = +1. Unprojecting there - and
+    // nowhere else - is what makes the segment between the two points the pixel's whole ray for a PERSPECTIVE and an
+    // ORTHOGRAPHIC camera alike. A clip depth of 0 is not an end: for an orthographic projection it is the MIDDLE of
+    // the range, so a ray starting there puts everything nearer than half the frustum behind its own origin, and
+    // `Ray::intersectTriangle` rejects `t < 0` (review 17 W1).
+    //
+    // Nothing here reads the DEVICE convention (reverse-Z, near at 1): a snapshot never carries one - the backend
+    // folds into it at the one boundary (see Camera::projectionMatrix's note). Which of the two points is NEAR is
+    // still read from the eye below, so the answer stays the same if a snapshot ever carries another range.
     const Mat4d inverse = (projection * view).inverted();
     const auto  worldAt = [&inverse](double x, double y, double clip_z) {
         const double point[4]{ x, y, clip_z, 1.0 };
@@ -218,7 +225,7 @@ bool CameraSnapshot::screenRay(const vn::math::Vec2d& screen01, Vec3d& origin, V
     };
 
     const Vec3d end_a = worldAt(ndc_x, ndc_y, 1.0);
-    const Vec3d end_b = worldAt(ndc_x, ndc_y, 0.0);
+    const Vec3d end_b = worldAt(ndc_x, ndc_y, -1.0);
     const auto  offset = [](const Vec3d& from, const Vec3d& to) { return Vec3d(to.x - from.x, to.y - from.y, to.z - from.z); };
     const auto  squared_length = [](const Vec3d& v) { return (v.x * v.x) + (v.y * v.y) + (v.z * v.z); };
     const auto  dot = [](const Vec3d& lhs, const Vec3d& rhs) { return (lhs.x * rhs.x) + (lhs.y * rhs.y) + (lhs.z * rhs.z); };

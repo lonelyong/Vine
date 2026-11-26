@@ -292,6 +292,26 @@ that same order, so a wire is resolved once and reported once.
 - The rejected shapes are `D11`-`D16`; the decision record is
   [`ADR-2026-11-25`](../decisions/ADR-2026-11-25-one-input-list-per-pass.md).
 
+2.14 **Linear light becomes an encoded pixel at the swap-chain write, by the target's format** (`G1` / `G4` / `G9`;
+review 17 `W6`): every shading stage produces LINEAR values (the material block, the BRDF and the emissive term are all
+linear and may exceed 1), and exactly one step in the module encodes them - the store into a presenting target, whose
+`ColorFormat` is an sRGB one and whose hardware applies the transfer. No shader and no pass encodes, and there is no
+tone curve: a lit value above 1 clips there.
+
+- The transfer belongs to the FORMAT because a format is what a texel MEANS: two targets with different formats hold
+  different kinds of value, and a pass that wrote an sRGB target would be writing encoded numbers into a type whose
+  arithmetic (a blend, a filter, a downsample) assumes linear light.
+- An offscreen 8-bit format is therefore a DATA format (a mask, a weight, an occlusion factor, the exact bytes a test
+  compares); a lit picture that a human will look at, and that must survive an offscreen hop, is `RGBA16F` until the
+  window write - which is what the Deferred preset's G-buffer already does. The dark half of the 8-bit range is where a
+  linear value loses precision (linear 0.5 is about 188 encoded), so an 8-bit lit intermediate bands in shadow.
+- A colour readback answers the STORED bytes; the difference between it and the window is exactly this transfer, which is
+  why a pixel test on an offscreen 8-bit target is a test of the data and not of the picture a user sees.
+- Tone mapping and exposure are NOT part of the engine: a host that wants a look names a full-screen program
+  (`fullscreenCopyProgram`'s note says so) and the pass draws it. `D4` already rejected sRGB variants of target
+  formats; encoding inside a copy program and a tonemap stage are rejected with their reasons in the decision record,
+  [`ADR-2026-11-26`](../decisions/ADR-2026-11-26-linear-light-is-encoded-by-the-target-format.md).
+
 ## 3. Features
 
 ### 3.1 Targets
@@ -333,6 +353,7 @@ that same order, so a wire is resolved once and reported once.
 | F17 | `Color` | sRGB-encoded bytes; `toLinear()` / `toColor()` are one pair of conversions. |
 | F18 | Text and byte order | CSS hex read/write; `fromArgb` / `fromBgr` ordered construction. |
 | F19 | Interpolation | `Colorf::lerp` interpolates in linear light. |
+| F28 | Display pipeline | Linear shading → an optional `RGBA16F` intermediate → the presenting target's sRGB format encodes at the store (2.14). No tonemap, no exposure: a value above 1 clips at the window. A readback is the stored bytes, not the encoded picture. |
 
 ### 3.5 Shading and shadows
 
@@ -340,8 +361,8 @@ that same order, so a wire is resolved once and reported once.
 |---|---|---|
 | F20 | `ShaderProgram` | Vertex / Fragment stages + entry points; `addStage` / `setStage` / `clearStages` / `replaceStages` bump the revision. |
 | F21 | Built-in programs | forward / flat / gbuffer / deferred lighting / shadowed; `builtin_<role>.<stage>`. |
-| F22 | ABI | Vertex locations, `VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`, 128 B push. |
-| F23 | Transparency | TWO INPUTS, ONE RULE: the magnitude is the drawable's `opacity` × the material's own alpha × the base map's alpha, and the material's `AlphaMode` says what that product means (Opaque ignores it, Mask thresholds it, Blend uses it as the output alpha) - sorting and shading read the same pair (`graphics-material.md` §2.7). Blending is not a pipeline constant: `blendEnable` is baked false and switched per draw through `VK_EXT_extended_dynamic_state3` (`StateCommands`), and a draw whose resolved `BlendState` is enabled - which is what an effective opacity below 1 resolves to - is the one that turns it on. |
+| F22 | ABI | Vertex locations, `VinePushRange` (the 128 B projection + model-view a content draw hands its program, and the whole host-program contract - see `graphics-shader-params.md` §2.8) / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`. |
+| F23 | Transparency | TWO INPUTS, ONE RULE: the magnitude is the drawable's `opacity` × the material's own alpha × the base map's alpha, and the material's `AlphaMode` says what that product means (Opaque ignores it, Mask thresholds it, Blend uses it as the output alpha) - sorting and shading read the same pair (`graphics-material.md` §2.7). Blending is not a pipeline constant: `blendEnable` is baked false and switched per draw through `VK_EXT_extended_dynamic_state3` (`StateCommands`), and a draw in the transparent queue that authored no blend resolves to the default pair ENABLED (`resolveRenderState(..., transparent)`) - so the classification the sort used is the one that opens the blend. |
 | F24 | Shadows | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`; the light camera is derived by `directionalShadowMatrix` (orthographic) / `spotShadowMatrix` (perspective). **One map per chain, one light (the first buildable directional or spot light)**, point lights unsupported (see 2.7). |
 | F26 | Line width | `StateNode::setLineWidth` / `RenderPass::setLineWidthOverride`: the width of **line primitives** (`Topology::Lines`), framebuffer pixels, dynamic state (`vkCmdSetLineWidth`) so no rebuild; `wideLines` is a required device feature, the limit is the device's `lineWidthRange` (`Capabilities::limits.max_line_width`), the floor 1.0. It does **not** widen `PolygonMode::Line` wireframe edges. |
 

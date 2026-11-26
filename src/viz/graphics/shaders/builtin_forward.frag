@@ -57,7 +57,10 @@ void main()
     // surface facing the camera stayed at its ambient term until the operands were swapped).
     vec3 vn_n = normalize(cross(dFdy(vn_view_pos), dFdx(vn_view_pos)));
 #else
-    vec3 vn_n = normalize(vn_view_normal);
+    // A BACK FACE IS THE SAME SURFACE SEEN FROM BEHIND, so the interpolated normal is turned to face the viewer
+    // (see vnFacingNormal in vine_material.glsl). The FLAT branch above needs no turn: its cross product is taken
+    // from the screen-space derivatives, so it already faces the camera.
+    vec3 vn_n = vnFacingNormal(normalize(vn_view_normal));
 #endif
     vec3 vn_view_dir = normalize(-vn_view_pos);
     // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it

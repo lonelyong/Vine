@@ -62,7 +62,19 @@ struct VN_GRAPHICS_API RayIntersectionResult {
  * @brief Ray-geometry intersection computation.
  *
  * @details
- * - Static queries against one geometry or a whole scene.
+ * - Static queries against one geometry or a whole scene, in world space.
+ * - WHAT A SCENE QUERY READS is the CONTENT, and it says so once here instead of leaving a caller to infer it:
+ *   - visibility: a node whose `isVisible()` is false is skipped, and so is a scene whose own `isVisible()` is
+ *     false - the same gate the collection applies, so the pick and the picture agree about what exists;
+ *   - layers: the query's mask selects exactly like the collection (see Scene::collectDrawItems);
+ *   - the DATA's topology: only TRIANGLE primitives are surfaces, so a line or point primitive is not a hit and
+ *     there is no pixel tolerance (a pick selects surfaces, not edges - see Primitive.hpp);
+ *   - the node's own placement (`worldMatrix`): a billboard's per-view rotation is a fact of the VIEW, not of the
+ *     content, so a pick selects a billboard where its node stands, not where one camera happened to turn it (see
+ *     AutoTransform).
+ * - WHAT IT DOES NOT READ are the pass' viewing switches: clip planes, cull mode, a polygon or topology override.
+ *   Those decide HOW a frame shows the content, and a selection is a statement about the content; a host that wants
+ *   the picture's own filter asks the query with the ray it already filtered.
  */
 class VN_GRAPHICS_API RayIntersection {
   public:

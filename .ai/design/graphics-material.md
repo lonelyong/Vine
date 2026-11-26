@@ -71,6 +71,10 @@ and both surface-writing stages (forward / G-buffer) include it.
 `vn_draw.params.x` (drawable opacity) × `vn_material.base_color.a` × the optional base texture alpha.
 `DrawItem::isTransparent()` becomes "opacity < 1 **or** the material is Blend"; Mask discards by cutoff in the shading stage,
 takes no part in sorting and stays in the opaque pass. This replaces the old "materials contribute no alpha" rule, so sorting and shading read the same pair of inputs (see N5).
+The classification also OPENS THE BLEND: a draw in the transparent queue that authored no blend of its own resolves to the
+default pair enabled (`resolveRenderState(..., transparent)`, `BlendState`'s note), because one pre-review build sorted such a
+draw into the transparent queue and then wrote its fragment unchanged (review 17 `W2`). An authored blend - enabled or
+disabled - keeps its word either way.
 Blend content goes through the forward overlay; the deferred G-buffer takes opaque and Mask only.
 
 2.8 **The G-buffer is a projection of the material** (`G10`): the four attachments hold exactly the per-pixel quantities — A0 base colour.rgb (a writes 1),

@@ -49,6 +49,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/DrawListDiff.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/DrawListMemo.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/FrameExpand.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/FramePump.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/FrameRunner.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/PublicationStore.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/ResidencyTable.cpp

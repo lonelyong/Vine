@@ -118,17 +118,26 @@ constexpr int kTargetSize = 64;
     return map;
 }
 
-/// @brief A light that travels along -z, so a surface facing +z is fully lit (`vnEvaluateLight` negates the direction).
+/// @brief A light that travels along +z, so a surface facing -z (the side the camera sees) is fully lit
+///        (`vnEvaluateLight` negates the direction).
+///
+/// @note The sign used to be -z with the quads facing +z: the fixture then lit the BACK of its surfaces, which the
+///       two-sided normal rule (review 17 `W3`) folds away - a back face whose normal points away from the viewer is
+///       turned, so that picture came out ambient-only. The light and the quads now face the camera together.
 [[nodiscard]] intrusive_ptr<Light> makeCastingLight()
 {
-    auto light = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    auto light = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, 1.0));
     light->setColor(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
     light->setIntensity(1.0F);
     light->setCastShadow(true);
     return light;
 }
 
-/// @brief An axis-aligned quad at depth @p z, spanning [x0, x1] on x and the whole height, facing +z.
+/// @brief An axis-aligned quad at depth @p z, spanning [x0, x1] on x and the whole height, facing -z.
+///
+/// @note FACING -z IS THE CAMERA'S SIDE: the frame's camera sits at the origin looking down -z, so a quad at positive
+///       z is seen from -z. The winding and the authored normal point the same way (`gl_FrontFacing` true, no turn),
+///       which is what keeps this fixture a test of SHADOWS rather than of face orientation.
 [[nodiscard]] intrusive_ptr<Geometry>
 makeQuad(float x0, float x1, float z)
 {
@@ -136,19 +145,19 @@ makeQuad(float x0, float x1, float z)
     auto geometry = intrusive_ptr<Geometry>(new Geometry());
     geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
         x0, -1.0F, z,
+        x1,  1.0F, z,
         x1, -1.0F, z,
-        x1,  1.0F, z,
         x0, -1.0F, z,
-        x1,  1.0F, z,
         x0,  1.0F, z,
+        x1,  1.0F, z,
     })));
     geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
-        0.0F, 0.0F, 1.0F,
-        0.0F, 0.0F, 1.0F,
-        0.0F, 0.0F, 1.0F,
-        0.0F, 0.0F, 1.0F,
-        0.0F, 0.0F, 1.0F,
-        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, -1.0F,
+        0.0F, 0.0F, -1.0F,
+        0.0F, 0.0F, -1.0F,
+        0.0F, 0.0F, -1.0F,
+        0.0F, 0.0F, -1.0F,
+        0.0F, 0.0F, -1.0F,
     })));
     geometry->bumpRevision();
     return geometry;

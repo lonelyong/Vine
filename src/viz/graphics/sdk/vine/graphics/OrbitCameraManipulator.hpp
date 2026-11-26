@@ -174,6 +174,15 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Ray-picks the scene under a screen point.
      *
+     * @details
+     * - The point is a PIXEL INDEX in the viewport's device pixels, and the ray is taken through that pixel's CENTRE
+     *   (index + 0.5), because that is the sample the picture shows there. The picture's own centre is therefore
+     *   `(width / 2 - 0.5, height / 2 - 0.5)` in this spelling.
+     * - The query follows the PICTURE the host announced (see setPresentedCamera), not the live camera, when the two
+     *   differ. It answers over the data's own topology and ignores the pass' view switches (clip planes, culling,
+     *   a point/topology override) and a billboard's per-view rotation: a pick selects the CONTENT, not the current
+     *   viewing of it (see RayIntersection and AutoTransform).
+     *
      * @param screenX  Screen x in device pixels.
      * @param screenY  Screen y in device pixels.
      * @param outPoint Receives the world-space hit point on success.

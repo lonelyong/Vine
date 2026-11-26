@@ -556,17 +556,23 @@ void OrbitCameraManipulator::makeScreenRay(double screenX, double screenY, Vec3d
     }
     const double w = viewport_w_ > 0 ? static_cast<double>(viewport_w_) : 1.0;
     const double h = viewport_h_ > 0 ? static_cast<double>(viewport_h_) : 1.0;
+    // A POINTER NAMES A PIXEL, NOT A CORNER (review 17 W4): the position a window reports is the pixel's INDEX and
+    // the picture is normalised 0..1 across its extent, so the index's centre sits half a pixel further along. Without
+    // the half the ray is biased up-left by half a texel everywhere, which a pick at a silhouette answers from the
+    // wrong side. The picture's own centre is therefore (w/2 - 0.5, h/2 - 0.5) in this spelling.
+    const double picture_x = (screenX + 0.5) / w;
+    const double picture_y = (screenY + 0.5) / h;
     // THE PICTURE THE USER IS AIMING AT, when the host says it is not the live camera (design N17): the camera may have
     // moved since the frame that is on screen was answered, and a pick that used the new pose would resolve a pivot or
     // a selection off by exactly that much. With nothing set (inline mode, a still picture) this is the live camera, as
     // it has always been.
-    if (presented_camera_.has_value() && presented_camera_->screenRay(Vec2d(screenX / w, screenY / h), origin, direction)) {
+    if (presented_camera_.has_value() && presented_camera_->screenRay(Vec2d(picture_x, picture_y), origin, direction)) {
         return;
     }
     if (cam == nullptr) {
         return;
     }
-    const vn::geom::spatial::Rayd ray = cam->screenToWorldRay(Vec2d(screenX / w, screenY / h));
+    const vn::geom::spatial::Rayd ray = cam->screenToWorldRay(Vec2d(picture_x, picture_y));
     origin                       = Vec3d(ray.origin.x, ray.origin.y, ray.origin.z);
     direction                    = ray.direction;
 }

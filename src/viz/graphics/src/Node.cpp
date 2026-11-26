@@ -1,5 +1,6 @@
 ﻿#include <vine/graphics/Node.hpp>
 
+#include <algorithm>
 #include <typeinfo>
 
 #include <vine/graphics/Geometry.hpp>
@@ -195,8 +196,12 @@ float Node::opacity() const
 
 void Node::setOpacity(float opacity)
 {
+    // CLAMPED WHERE IT IS AUTHORED, following setAspect's precedent (Camera.cpp): opacity is a fraction of a surface,
+    // so a value outside [0, 1] is not a stronger statement - and two NEGATIVE multipliers down one fold used to come
+    // back out positive, which made the picture depend on how many nodes somebody happened to fade (review 17 W9).
+    // Clamping here also makes the fold's clamp a no-op instead of the only guard.
+    opacity_ = std::clamp(opacity, 0.0f, 1.0f);
     announceContentChange();
-    opacity_ = opacity;
 }
 
 raw_ptr<Node> Node::parent() const

@@ -108,7 +108,10 @@ struct VN_GRAPHICS_API PassDesc {
     /// Whether the depth attachment is cleared, or unset for the kind's own policy: it follows `clear_enabled` for a
     /// pass that clears (a Scene pass clears both, a full-screen pass neither), and a pass that clears NO colour clears no
     /// depth either unless it says so here. `clear_enabled = false` + `clear_depth = true` is therefore a DEPTH-ONLY
-    /// clear, applied inside the pass' viewport (see AttachmentPolicy for what each target can express).
+    /// clear, and a clear is a LOAD OPERATION ON THE WHOLE ATTACHMENT: it is not confined to this pass' viewport or
+    /// scissor (the backend's render area is the target's), so a pass that clears depth erases the depth its
+    /// co-pass' content left everywhere, not only inside its own rectangle. A pass that must reset depth inside its
+    /// rectangle writes depth there instead of clearing (see AttachmentPolicy for what each target can express).
     std::optional<bool> clear_depth;
     /// Per-attachment load/store for the colour attachments, in attachment order (see AttachmentPolicy::color_ops).
     ///

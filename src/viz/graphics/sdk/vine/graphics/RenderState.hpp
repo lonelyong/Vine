@@ -87,11 +87,13 @@ inline bool operator!=(const DepthState& lhs, const DepthState& rhs)
  * @details
  * - `enabled` is the ENABLE, not a hint: false means the surface writes its fragment unchanged, even when a
  *   program writes an alpha below 1 (the rule three.js / Filament / Unity follow for an opaque material).
- * - TRANSPARENCY HAS ONE OTHER SOURCE, and it is merged where the two meet: a command whose effective
- *   opacity is below 1 (Node::setOpacity / Scene::setOpacity) is drawn with blending on and the pair
- *   below, because opacity is the engine's transparency channel (see DrawItem::opacity). Content that
- *   wants per-pixel alpha from its own shader states the blend here instead of relying on the object's
- *   opacity.
+ * - TRANSPARENCY HAS TWO OTHER SOURCES AND ONE MERGER: a command is in the transparent queue when the material's
+ *   alpha mode is `Blend` or its effective opacity is below 1 (Node::setOpacity / Scene::setOpacity - the one
+ *   answer is `DrawItem::isTransparent`), and `resolveRenderState` opens the pair below for such a command that
+ *   authored NO blend of its own. Opacity is the engine's magnitude channel, the mode says what alpha means, and
+ *   this struct is the explicit word that overrides both - including an explicit `enabled = false`, which is a
+ *   decision and not an omission. Content that wants per-pixel alpha from its own shader states the blend here
+ *   instead of relying on the object's opacity.
  * - A backend whose target carries several colour attachments never blends them (they hold data, not a
  *   surface), and a full-screen draw writes its rectangle; both are target-shape rules, not this flag.
  */

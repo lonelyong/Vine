@@ -1878,6 +1878,42 @@ TEST(RayIntersectionTest, TheLayerMaskSelectsWhatIsPicked)
     EXPECT_FALSE(RayIntersection::intersectScene(ray, scene.get(), kDefaultLayer).hit);
 }
 
+TEST(RayIntersectionTest, AFadedOutSubtreeIsNeitherDrawnNorPicked)
+{
+    // REVIEW 17 W9: opacity is a fraction, clamped where it is authored, and ZERO means gone - no command and no hit.
+    // Before this, a node at opacity 0 still produced a draw (blending nothing) and still answered a pick, so a part
+    // faded all the way out still caught clicks; and two NEGATIVE multipliers down one fold came back out positive,
+    // so the picture depended on how many nodes somebody had faded.
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    auto node  = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, u8"tri");
+    root->addChild(node);
+
+    Camera cam;
+    setupLookAtCamera(cam);
+    vn::geom::spatial::Rayd ray(vn::math::Point3d(0.25, 0.25, 1.0), Vec3d(0, 0, -1));
+    ASSERT_TRUE(RayIntersection::intersectScene(ray, scene.get()).hit);
+    ASSERT_EQ(scene->collectDrawItems(&cam)->size(), 1u);
+
+    node->setOpacity(0.0F);
+    EXPECT_FALSE(RayIntersection::intersectScene(ray, scene.get()).hit) << "a faded-out part is not a pick target";
+    EXPECT_TRUE(scene->collectDrawItems(&cam)->empty()) << "and it is not a draw either";
+
+    node->setOpacity(-1.0F);
+    EXPECT_FLOAT_EQ(node->opacity(), 0.0F) << "the setter clamps, so the fold cannot come back through two negatives";
+    scene->setOpacity(-2.0F);
+    EXPECT_FLOAT_EQ(scene->opacity(), 0.0F) << "a negative multiplier is not a stronger statement";
+    scene->setOpacity(2.0F);
+    EXPECT_FLOAT_EQ(scene->opacity(), 1.0F);
+
+    // The same query's other gate (review 17 W4): a HIDDEN SCENE has no picture and therefore nothing to pick.
+    node->setOpacity(1.0F);
+    ASSERT_TRUE(RayIntersection::intersectScene(ray, scene.get()).hit);
+    scene->setVisible(false);
+    EXPECT_FALSE(RayIntersection::intersectScene(ray, scene.get()).hit) << "a hidden scene has nothing to pick";
+    EXPECT_TRUE(scene->collectDrawItems(&cam)->empty());
+}
+
 // ============ Material ============
 
 TEST(MaterialTest, Defaults)
@@ -9198,6 +9234,36 @@ TEST(StateNodeTest, TopologyIsNotStateAtAll)
         << "the state half is the same value either way; only the assembly has no content layer";
 }
 
+TEST(StateNodeTest, TheTransparencyClassOpensTheDefaultBlendAndAnAuthoredBlendWins)
+{
+    // REVIEW 17 W2: the sort's answer (DrawItem::isTransparent) opens the documented default pair for content that
+    // authored no blend, so the queue that ORDERS a draw and the state that RASTERISES it ask one question. An
+    // AUTHORED blend - enabled or disabled - keeps its word, because it is a decision, not an omission.
+    const ResolvedCommandState faded = resolveRenderState(RenderState{}, PassRenderState{}, Topology::Triangles, true);
+    EXPECT_TRUE(faded.state.blend.enabled) << "the transparent queue is drawn blended";
+    EXPECT_EQ(faded.state.blend.src, BlendFactor::SrcAlpha);
+    EXPECT_EQ(faded.state.blend.dst, BlendFactor::OneMinusSrcAlpha);
+
+    const ResolvedCommandState opaque_draw = resolveRenderState(RenderState{}, PassRenderState{}, Topology::Triangles);
+    EXPECT_FALSE(opaque_draw.state.blend.enabled) << "the opaque queue writes its fragment unchanged";
+
+    RenderState refused;
+    refused.blend = BlendState{ false, BlendFactor::One, BlendFactor::Zero };
+    EXPECT_FALSE(resolveRenderState(refused, PassRenderState{}, Topology::Triangles, true).state.blend.enabled)
+        << "an explicit disable is the content's word";
+
+    RenderState additive;
+    additive.blend = BlendState{ true, BlendFactor::One, BlendFactor::One };
+    const ResolvedCommandState added = resolveRenderState(additive, PassRenderState{}, Topology::Triangles, true);
+    EXPECT_TRUE(added.state.blend.enabled);
+    EXPECT_EQ(added.state.blend.src, BlendFactor::One) << "the content's own pair survives";
+    EXPECT_EQ(added.state.blend.dst, BlendFactor::One);
+
+    // The content-only spelling answers the same STATE half (see applyStateDefaults), which is what a tool that has
+    // no pass to draw with reads.
+    EXPECT_EQ(applyStateDefaults(RenderState{}, true), faded.state);
+}
+
 TEST(StateNodeTest, SettersAndClears)
 {
     StateNode state;
@@ -12205,8 +12271,8 @@ TEST(CameraSnapshotTest, TheSnapshotsRayIsTheCamerasOwnRay)
         EXPECT_NEAR(origin.z, own.origin.z, 1e-9);
     }
 
-    // ORTHOGRAPHIC: the ray's DIRECTION is the view's, and its origin travels across the window - so what must match
-    // is the LINE (the camera's own origin lies on it), which is what a query cares about.
+    // ORTHOGRAPHIC: the ray's DIRECTION is the view's and its origin travels across the window, on the NEAR plane -
+    // the projection's own end, not a depth borrowed from another convention (review 17 W1).
     camera->setOrthographic(-4.0, 4.0, -3.0, 3.0, 0.1, 100.0);
     const CameraSnapshot ortho = CameraSnapshot::of(*camera);
     for (const Vec2d screen01 : { Vec2d(0.5, 0.5), Vec2d(0.2, 0.8) }) {
@@ -12222,12 +12288,47 @@ TEST(CameraSnapshotTest, TheSnapshotsRayIsTheCamerasOwnRay)
         // Same LINE, not the same starting point: an orthographic camera's `eye` is where its window is centred, not
         // where the picture begins, so both points are on the ray and only the direction has to agree.
         EXPECT_NEAR(cross.length(), 0.0, 1e-6) << "the camera's origin is on the snapshot's line";
+        // And the starting point is NO FARTHER THAN THE NEAR PLANE: everything the picture shows is in FRONT of the
+        // ray, which is what a pick needs (a clip-depth guess put the origin at the MIDDLE of the range instead, and
+        // a fitted model sat behind it). An off-centre pixel starts on the near plane; a centre pixel's line passes
+        // through the eye, and the ray then starts there - also in front of everything drawn.
+        const Vec3d eye = camera->eye();
+        const double along = ((origin.x - eye.x) * direction.x) + ((origin.y - eye.y) * direction.y) + ((origin.z - eye.z) * direction.z);
+        EXPECT_LE(along, camera->nearPlane() + 1e-9) << "an orthographic ray starts where the pixel crosses the near plane";
+        EXPECT_GE(along, -1e-9) << "and never behind the eye";
     }
 
     // An empty snapshot answers nothing, which is how a query knows to keep the live camera.
     Vec3d origin;
     Vec3d direction;
     EXPECT_FALSE(CameraSnapshot{}.screenRay(Vec2d(0.5, 0.5), origin, direction));
+}
+
+TEST(CameraSnapshotTest, AnOrthographicPicturePicksWhatItShows)
+{
+    // REVIEW 17 W1: a pick ray from the PRESENTED picture must reach the geometry the picture shows. The defect this
+    // pins: the ray started at clip 0 - the MIDDLE of an orthographic depth range - so a model fitted at its own
+    // distance sat BEHIND the ray's origin and every pick answered "nothing" on the default GUI path
+    // (SurfaceWindow hands the answered frame's snapshot to the manipulator).
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    // The unit triangle spans +x/+y from its node's origin and the centre pixel's ray passes through (0, 0), so the
+    // offset puts its interior on the ray. Depth 10 from the eye is inside the near HALF of the 0.1..100 range -
+    // exactly where the old middle-of-the-range origin cut the picture away.
+    root->addChild(makeTriangleNode(Vec3d(-0.1, -0.1, -5.0), nullptr, u8"fitted"));
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    camera->setOrthographic(-4.0, 4.0, -3.0, 3.0, 0.1, 100.0);
+    camera->lookAt(Vec3d(0.0, 0.0, 5.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+
+    const CameraSnapshot       picture = CameraSnapshot::of(*camera);
+    Vec3d                      origin;
+    Vec3d                      direction;
+    ASSERT_TRUE(picture.screenRay(Vec2d(0.5, 0.5), origin, direction));
+    const vn::geom::spatial::Rayd ray(vn::math::Point3d(origin.x, origin.y, origin.z), direction);
+    const RayIntersectionResult  hit = RayIntersection::intersectScene(ray, scene.get());
+    ASSERT_TRUE(hit.hit) << "the picture's centre pixel shows the triangle, so a pick through it must reach it";
+    EXPECT_NEAR(hit.point.z, -5.0, 1e-9);
 }
 
 TEST(CameraSnapshotTest, APointerQueryAimsWithThePictureNotTheLiveCamera)
@@ -12262,7 +12363,9 @@ TEST(CameraSnapshotTest, APointerQueryAimsWithThePictureNotTheLiveCamera)
     ASSERT_TRUE(picture.screenRay(Vec2d(0.5, 0.5), picture_origin, picture_direction));
 
     manipulator->setPresentedCamera(picture);
-    ASSERT_TRUE(manipulator->setCenterFromScreen(400, 400)) << "the centre of that picture hits the triangle";
+    // THE PICTURE'S CENTRE, in pixel indices: a pointer names a pixel and the ray goes through its centre, so the
+    // centre of an 800-wide picture is at 399.5 (review 17 W4).
+    ASSERT_TRUE(manipulator->setCenterFromScreen(399.5, 399.5)) << "the centre of that picture hits the triangle";
     const Vec3d anchored = camera->target();
     const Vec3d to_anchor(anchored.x - picture_origin.x, anchored.y - picture_origin.y, anchored.z - picture_origin.z);
     EXPECT_NEAR(to_anchor.cross(picture_direction).length(), 0.0, 1e-6)
@@ -12284,7 +12387,7 @@ TEST(CameraSnapshotTest, APointerQueryAimsWithThePictureNotTheLiveCamera)
     ASSERT_TRUE(side.screenRay(Vec2d(0.5, 0.5), side_origin, side_direction));
 
     manipulator->setPresentedCamera(side);
-    (void)manipulator->setCenterFromScreen(400, 400);
+    (void)manipulator->setCenterFromScreen(399.5, 399.5);
     const Vec3d from_side = camera->target();
     const Vec3d to_side(from_side.x - side_origin.x, from_side.y - side_origin.y, from_side.z - side_origin.z);
     EXPECT_NEAR(to_side.cross(side_direction).length(), 0.0, 1e-6)

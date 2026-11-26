@@ -515,6 +515,13 @@ vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
     const bool has_opacity   = source.Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS;
     const bool has_metallic  = source.Get(AI_MATKEY_METALLIC_FACTOR, metallic) == AI_SUCCESS;
     const bool has_roughness = source.Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS;
+    // WHICH SIDES THE SURFACE HAS, when the format states it: glTF's `material.doubleSided` reaches assimp as
+    // AI_MATKEY_TWOSIDED, and an importer that found the key states either value. "Not found" is NOT "false": a
+    // format that says nothing (an MTL, a plain colour) leaves the material's answer unset, and the graphics
+    // conversion keeps its own default instead of culling a sheet nobody asked it to cull (see
+    // models::Material::hasDoubleSided and SceneBuild).
+    bool       two_sided     = false;
+    const bool has_two_sided = source.Get(AI_MATKEY_TWOSIDED, two_sided) == AI_SUCCESS;
 
     vn::intrusive_ptr<Material> material;
     if (has_metallic || has_roughness || (has_opacity && opacity < 1.0f)) {
@@ -529,6 +536,9 @@ vn::intrusive_ptr<Material> ModelBuilder::makeMaterial(const aiMaterial& source)
 
     if (named) {
         material->setName(String::fromUtf8(std::string_view(name.C_Str(), name.length)));
+    }
+    if (has_two_sided) {
+        material->setDoubleSided(two_sided);
     }
     return material;
 }

@@ -99,24 +99,28 @@ constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
 }
 
 /**
- * @brief Per-view data block the built-in shading reads (L1 shape).
+ * @brief The 128-byte push range a content draw hands its program: the view data a host-authored stage may rely on.
  *
  * @details
- * - The engine owns this SHAPE; a backend owns where it lives — a uniform / constant buffer, or the
- *   proj/model subset inside the 128-byte push range.
- * - Every member is a mat4/vec4 and the struct is 16-byte aligned, so std140, D3D cbuffer packing and root constants
- *   all agree (see .ai/design/graphics-rendering.md 4.3): a `vec3` followed by a `float` is the one packing trap
- *   this rule avoids.
- * - Matrices are column-major, matching the math module's convention; a backend whose shader language needs row-major
- *   translates when it fills the block.
+ * - THIS IS THE HOST-PROGRAM CONTRACT (ADR-2026-11-26-host-program-contract-is-the-push-range.md): a program a HOST
+ *   supplies receives, per content draw, exactly these two matrices - and what it may assume is stated here, in the
+ *   SDK beside the layout, not in one backend's private header.
+ * - `projection` is the PASS' projection FOLDED INTO THE DEVICE'S CLIP CONVENTION at the one boundary the backend owns
+ *   (Vulkan: y down and reverse-Z, the near plane at 1). It is NOT `Camera::projectionMatrix()`, which stays in the
+ *   SDK's own convention (see Camera) and is what the culling and the CPU-side queries read. A stage that writes
+ *   `gl_Position = projection * model_view * vec4(position, 1)` therefore produces the device's picture; a stage that
+ *   wants the SDK's clip space (an unflipped depth reconstruction, a hand-rolled projection) has no channel for it
+ *   today.
+ * - `model_view` is `view * model` for THIS drawable. The model matrix is already folded in, so the range carries no
+ *   separate model matrix, no normal matrix, no camera position and no time: a host stage that needs them cannot ask
+ *   this ABI (see the ADR for what a block-reading program would cost).
+ * - A FULL-SCREEN draw receives NO push range: its stages read the pass' inputs as bindings and draw a rectangle.
+ * - Column-major, like every matrix in this ABI and in the math module. The size is a DEVICE limit: 128 bytes is
+ *   inside Vulkan's guaranteed minimum push-constant size, which is why the contract is two matrices.
  */
-struct alignas(16) VineViewBlock {
-    std::array<float, 16> view{};      // World -> view (column-major mat4).
-    std::array<float, 16> inv_view{};  // View -> world (column-major mat4).
-    std::array<float, 16> proj{};      // View -> clip (column-major mat4).
-    std::array<float, 16> view_proj{}; // World -> clip (column-major mat4).
-    std::array<float, 4>  cam_pos{};   // World-space camera position; w reserved.
-    std::array<float, 4>  frame{};     // x = time (s), y/z = viewport size, w = flags.
+struct alignas(16) VinePushRange {
+    std::array<float, 16> projection{}; // View -> device clip, column-major (see the fold note above).
+    std::array<float, 16> model_view{}; // World -> view for this drawable, column-major.
 };
 
 /**
@@ -257,10 +261,9 @@ struct alignas(16) VineShadowBlock {
 // The structs ARE the shader ABI: a member added here without updating the GLSL
 // (the parameter blocks are declared once, in shaders/vine_params.glsl) must fail the build, not silently mis-read at
 // run time.
-static_assert(sizeof(VineViewBlock) == 288u, "VineViewBlock must be 4 mat4 + 2 vec4");
-static_assert(alignof(VineViewBlock) == 16u, "VineViewBlock must stay std140 / D3D-cbuffer aligned");
-static_assert(offsetof(VineViewBlock, cam_pos) == 256u, "VineViewBlock std140 offset");
-static_assert(offsetof(VineViewBlock, frame) == 272u, "VineViewBlock std140 offset");
+static_assert(sizeof(VinePushRange) == 128u, "the push range is two mat4 - the device's guaranteed minimum");
+static_assert(alignof(VinePushRange) == 16u, "the push range must stay std140 / root-constant aligned");
+static_assert(offsetof(VinePushRange, model_view) == 64u, "std140: the second matrix follows the first");
 static_assert(sizeof(VineDrawBlock) == 80u, "VineDrawBlock must be 1 mat4 + 1 vec4");
 static_assert(alignof(VineDrawBlock) == 16u, "VineDrawBlock must stay std140 / D3D-cbuffer aligned");
 static_assert(offsetof(VineDrawBlock, params) == 64u, "VineDrawBlock std140 offset");

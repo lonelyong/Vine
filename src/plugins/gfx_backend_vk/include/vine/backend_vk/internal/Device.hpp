@@ -22,7 +22,8 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT IS. A `RenderBackend` implemented directly on Vulkan through volk: it owns one `VkInstance`, one
  *   `VkPhysicalDevice`, one `VkDevice` and one graphics queue, off-screen targets with their attachment sets, and (M2)
  *   one content draw per `DrawItem` - a GLSL program compiled through glslang into a pipeline, the geometry's
- *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
+ *   channels uploaded as vertex/index streams, the SDK's 128-byte `VinePushRange` (projection + model-view) and the
+ *   `VineDrawBlock` uniform block a content stage reads, and
  *   `vkCmdDrawIndexed`.
  * - WHAT IT DOES, MILESTONE BY MILESTONE. M4 landed the engine's content ABI (material, texture slots, lights, the
  *   draw block and the 128-byte camera push) and the full-screen draw path; M5 serves a HOST window

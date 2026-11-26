@@ -28,8 +28,9 @@ VN_BACKEND_VK_NS_BEGIN
  *     `CompareOp::Less` ("closer passes") is Vulkan's `GREATER`: a nearer fragment has the LARGER stored value.
  *     Mapping it literally would make every depth test pass backwards.
  *   - THE SDK'S FRONT FACE IS COUNTER-CLOCKWISE IN A RIGHT-HANDED WORLD, and this backend flips Y in the projection
- *     (`buildViewBlock`) so the picture is upright in Vulkan's top-left framebuffer space. That flip turns the SDK's
- *     CCW into a CLOCKWISE polygon in framebuffer coordinates, which is why @ref kVkFrontFace is CLOCKWISE.
+ *     (`foldToDeviceClip`, see ContentDraw) so the picture is upright in Vulkan's top-left framebuffer space. That flip
+ *     turns the SDK's CCW into a CLOCKWISE polygon in framebuffer coordinates, which is why @ref kVkFrontFace is
+ *     CLOCKWISE.
  * - A value this header does not know (a new enumerator) falls back to the least surprising choice and is meant to be
  *   added here: the switches name every SDK value, so adding one makes the compiler point at this file.
  */

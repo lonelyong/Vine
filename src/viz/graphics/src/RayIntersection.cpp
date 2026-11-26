@@ -344,15 +344,28 @@ MeshWalk traverseMesh(const TriangleStream&                    stream,
 /**
  * @brief Recursively keeps the closest hit of a ray over a node subtree.
  *
- * @param ray              The ray.
- * @param node             Node to traverse.
- * @param inherited_layers Layers @p node inherits from its ancestors (kDefaultLayer at the top).
- * @param layer_mask       Layers this query picks (see Node::setLayers).
- * @param best             Closest intersection found so far (in/out).
+ * @param ray                The ray.
+ * @param node               Node to traverse.
+ * @param inherited_layers   Layers @p node inherits from its ancestors (kDefaultLayer at the top).
+ * @param layer_mask         Layers this query picks (see Node::setLayers).
+ * @param inherited_opacity  Opacity folded above @p node (Scene::opacity() at the top); a subtree that multiplies to
+ *                           zero is not picked, exactly as it is not drawn (review 17 W9).
+ * @param best               Closest intersection found so far (in/out).
  */
-void intersectNode(const vn::geom::spatial::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, RayIntersectionResult& best)
+void intersectNode(const vn::geom::spatial::Rayd& ray,
+                   const Node*                   node,
+                   std::uint32_t                 inherited_layers,
+                   std::uint32_t                 layer_mask,
+                   float                         inherited_opacity,
+                   RayIntersectionResult&        best)
 {
     if (node == nullptr || !node->isVisible()) {
+        return;
+    }
+    // A FULLY FADED SUBTREE IS NOT PICKED: the fold multiplies every ancestor's multiplier into this value, so a zero
+    // is zero for everything below (see the bake's own prune) - a faded-out part must not catch clicks.
+    const float opacity = inherited_opacity * node->opacity();
+    if (opacity <= 0.0F) {
         return;
     }
     if ((node->subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
@@ -377,7 +390,7 @@ void intersectNode(const vn::geom::spatial::Rayd& ray, const Node* node, std::ui
     }
     if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
-            intersectNode(ray, child.get(), layers, layer_mask, best);
+            intersectNode(ray, child.get(), layers, layer_mask, opacity, best);
         }
     }
 }
@@ -391,10 +404,19 @@ void intersectNode(const vn::geom::spatial::Rayd& ray, const Node* node, std::ui
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param out              Output result list (one entry per geometry that was hit).
  */
-void collectNodeNearest(const vn::geom::spatial::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
+void collectNodeNearest(const vn::geom::spatial::Rayd& ray,
+                        const Node*                   node,
+                        std::uint32_t                 inherited_layers,
+                        std::uint32_t                 layer_mask,
+                        float                         inherited_opacity,
+                        std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
+    }
+    const float opacity = inherited_opacity * node->opacity();
+    if (opacity <= 0.0F) {
+        return; // fully faded: neither drawn nor picked (see intersectNode)
     }
     if ((node->subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
         return;
@@ -420,7 +442,7 @@ void collectNodeNearest(const vn::geom::spatial::Rayd& ray, const Node* node, st
     }
     if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
-            collectNodeNearest(ray, child.get(), layers, layer_mask, out);
+            collectNodeNearest(ray, child.get(), layers, layer_mask, opacity, out);
         }
     }
 }
@@ -434,10 +456,19 @@ void collectNodeNearest(const vn::geom::spatial::Rayd& ray, const Node* node, st
  * @param layer_mask       Layers this query picks (see Node::setLayers).
  * @param out              Output result list (multiple entries per geometry possible).
  */
-void collectNodeHits(const vn::geom::spatial::Rayd& ray, const Node* node, std::uint32_t inherited_layers, std::uint32_t layer_mask, std::vector<RayIntersectionResult>& out)
+void collectNodeHits(const vn::geom::spatial::Rayd& ray,
+                     const Node*                   node,
+                     std::uint32_t                 inherited_layers,
+                     std::uint32_t                 layer_mask,
+                     float                         inherited_opacity,
+                     std::vector<RayIntersectionResult>& out)
 {
     if (node == nullptr || !node->isVisible()) {
         return;
+    }
+    const float opacity = inherited_opacity * node->opacity();
+    if (opacity <= 0.0F) {
+        return; // fully faded: neither drawn nor picked (see intersectNode)
     }
     if ((node->subtreeLayerUnion(inherited_layers) & layer_mask) == 0) {
         return;
@@ -458,7 +489,7 @@ void collectNodeHits(const vn::geom::spatial::Rayd& ray, const Node* node, std::
     }
     if (const auto* group = obj_cast<Group>(node)) {
         for (const auto& child : group->children()) {
-            collectNodeHits(ray, child.get(), layers, layer_mask, out);
+            collectNodeHits(ray, child.get(), layers, layer_mask, opacity, out);
         }
     }
 }
@@ -509,8 +540,14 @@ RayIntersectionResult RayIntersection::intersectScene(const vn::geom::spatial::R
     if (scene == nullptr) {
         return best;
     }
+    // A HIDDEN SCENE IS NOT PICKED (review 17 W4): the collection prunes the whole picture of a scene whose
+    // `isVisible()` is false (Scene::collectDrawItems), so a query that ignored it would answer for content nobody
+    // can see - a selection and a picture disagreeing about whether there is anything there at all.
+    if (!scene->isVisible()) {
+        return best;
+    }
     if (const auto root = scene->root(); root != nullptr) {
-        intersectNode(ray, root.get(), kDefaultLayer, layer_mask, best);
+        intersectNode(ray, root.get(), kDefaultLayer, layer_mask, scene->opacity(), best);
     }
     return best;
 }
@@ -521,12 +558,16 @@ std::vector<RayIntersectionResult> RayIntersection::intersectSceneAll(const vn::
     if (scene == nullptr) {
         return results;
     }
+    // The same rule as the nearest-hit entry: a hidden scene has no picture to answer about (see above).
+    if (!scene->isVisible()) {
+        return results;
+    }
     if (const auto root = scene->root(); root != nullptr) {
         if (mode == Mode::Nearest) {
-            collectNodeNearest(ray, root.get(), kDefaultLayer, layer_mask, results);
+            collectNodeNearest(ray, root.get(), kDefaultLayer, layer_mask, scene->opacity(), results);
         }
         else {
-            collectNodeHits(ray, root.get(), kDefaultLayer, layer_mask, results);
+            collectNodeHits(ray, root.get(), kDefaultLayer, layer_mask, scene->opacity(), results);
         }
     }
     std::sort(results.begin(), results.end(), [](const RayIntersectionResult& lhs, const RayIntersectionResult& rhs) { return lhs.distance < rhs.distance; });

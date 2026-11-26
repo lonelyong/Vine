@@ -573,6 +573,13 @@ template <class RowAt>
             index = row.links.end;
             continue;
         }
+        // AN OPACITY OF ZERO DRAWS NOTHING (review 17 W9). The fold multiplies the scene and every ancestor into this
+        // value, so a zero here is zero for every drawable below it: the whole subtree leaves the list. The pick
+        // applies the same rule (see RayIntersection), which is what keeps "faded out" one answer and not two.
+        if (row.resolved.opacity <= 0.0F) {
+            index = row.links.end;
+            continue;
+        }
         // A row with no view-independent bound must not be culled: no box can promise it is out of the frustum.
         if (!row.resolved.unbounded &&
             frustum.isOutside(resolved ? row.resolved.local_box.transformed(world) : row.resolved.world_box)) {

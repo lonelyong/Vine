@@ -1244,10 +1244,13 @@ struct ContentCaches::Impl {
         }
 
         // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). No item
-        // of it selects a pipeline any more: the recorder issues every one as a command (see ContentDraw).
+        // of it selects a pipeline any more: the recorder issues every one as a command (see ContentDraw). The
+        // transparency class travels WITH the state, so the blend this resolves is the one the sort's answer implies
+        // (review 17 W2: the order and the rasteriser ask one question, not two).
         plan.resolved = vn::graphics::resolveRenderState(command.authored_state,
                                                          pass.state,
-                                                         primitives[command.primitive_index].topology);
+                                                         primitives[command.primitive_index].topology,
+                                                         command.isTransparent());
         // THE COUNT IS THE COMPATIBILITY'S (see buildPipeline): the blend commands the recorder issues and the colour
         // count the rendering instance states are the same number, because both are derived from this one value.
         plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
