@@ -2610,3 +2610,9 @@
 - **Evidence**: build 0 errors; `test_core` / `test_graphics` / `test_vk` green; TSan 0 warnings on the new filters
   (`PlanTest.*:FramePumpTest.*:ReportOnceTest.*:FrameRunnerTest.*` and `VkConcurrentFrameTest.*`), 15 with the mutated
   live-books read.
+- **Found by the same full-suite run, and fixed in its own commit**: the process default `ContentRegistry` was a
+  function-local static, so it was destroyed at finalisation BEFORE the file-scope caches whose destructors release
+  content handles (`AxesMarker`'s `s_prototypes`) - a SEGV in `release()` during `__cxa_finalize`. It is immortal now
+  (`static ContentRegistry* const` constructed once), which is what its header always claimed. Postmortem:
+  `.ai/bugs/graphics-default-content-registry-outlived-by-statics.md`. A FILTERED TSan run cannot see this: the exit
+  path belongs to no case.

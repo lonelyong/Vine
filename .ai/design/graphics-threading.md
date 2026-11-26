@@ -201,7 +201,8 @@ There is exactly one answer to "when does this copy expire": the publication val
   - **the UI only "stops paying for expand and present", it is not "no longer throttled by rendering"**: every frame request waits for **the previous frame's engine half**, so at a low frame rate
     the UI's paint cadence is dragged along; input events still land normally between two requests (the accurate reading of R8).
 - **"Wait until this frame" is an explicit action** (`G4`): `waitForFrame(frame_id)` — for screenshots, after a resize settles, for exit, for measurement; the default path
-  `frame()` only guarantees "built and handed over".- **A frame is being RECORDED from its first compile until its answer, and the pump owns that phase** (`G1` / `G4`): the
+  `frame()` only guarantees "built and handed over".
+- **A frame is being RECORDED from its first compile until its answer, and the pump owns that phase** (`G1` / `G4`): the
   content half (hooks, publication, `compileFrame`) and the engine half are one interval, so the session's shape is fixed
   for all of it - inline as well as threaded. `detail::FramePump` keeps the two facts (`compiling`, owned by the guard a
   build returns; `answering`, owned by the frame's answer) and answers `recording()`; a shape change
