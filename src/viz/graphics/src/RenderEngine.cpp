@@ -296,12 +296,11 @@ PrepareReport RenderEngine::prepare()
         return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::Reentrant };
     }
 
-    // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
-    // the expansion below writes the per-view memos, and those are the half's state (design 2.12). Nothing is published
-    // into the plan afterwards: a prepare is not a frame, so it leaves the last ANSWERED frame's numbers alone (the
-    // costs a host reads come from that frame's own answer, see FramePump::publishAnswer).
-    pump_->waitIdle();
-
+    // ONE INTERVAL, ONE OWNER, AND THE CLAIM COMES FIRST (see FramePump::beginBuild): a prepare from ANOTHER host
+    // thread is refused here as a value instead of blocking behind this one. The wait that follows is for the engine
+    // half that already owns the other slot - the expansion writes the per-view memos and those are that half's state
+    // (design 2.12) - and it cannot be deferred past the claim, because a refused caller must not wait at all.
+    //
     // THE FRAME THE NEXT frame() WOULD BUILD, built and expanded the same way, and handed over as a QUERY. The slot
     // is NOT advanced and no frame number is taken: nothing here is a frame, so the next frame() builds this same
     // slot again from the declarations AS THEY STAND THEN - a camera that moved in between is in it, which is what
@@ -309,9 +308,17 @@ PrepareReport RenderEngine::prepare()
     //
     // A PREPARE IS A BUILD TOO (see FramePump::Build): the compile below walks the pass table exactly as a frame's
     // does, so a shape change landing inside it corrupts the same rows - and it is the half of the interval that the
-    // runner cannot see, because a prepare is answered by nobody.
+    // runner cannot see, because a prepare is answered by nobody. Nothing is published into the plan afterwards: a
+    // prepare leaves the last ANSWERED frame's numbers alone (the costs a host reads come from that frame's own
+    // answer, see FramePump::publishAnswer).
     const detail::FramePump::Build build = pump_->beginBuild();
-    detail::EngineFrame&           frame = build.frame();
+    if (!build) {
+        return PrepareReport{ PrepareReport::Outcome::NotReady,
+                              build.refusal() == detail::FramePump::Build::Refusal::Reentrant ? EngineNotReadyReason::Reentrant
+                                                                                              : EngineNotReadyReason::Concurrent };
+    }
+    pump_->waitIdle();
+    detail::EngineFrame& frame = build.frame();
     buildContentHalf(frame);
     // THE EXPANSION IS PART OF THE ANSWER. A compiled half is keyed per DRAW PACKET (its vertex layout, variant and
     // counts are the command's), so a frame value whose draws carry no collected commands would describe nothing to
@@ -351,17 +358,29 @@ FrameCallOutcome RenderEngine::frame()
 
     // The frame will really run, so this is where the frame clock takes its one reading (see frameContext): a
     // NotReady frame is not a frame's interval, and counting it would report a stalled engine as one slow frame.
-    advanceFrameClock();
-
-    // ONE FRAME IN FLIGHT: with a frame thread, the previous frame's engine half is finished before this frame touches
-    // the mirrors or a slot. That is the whole pipeline (1 + 1), and it is why a caller never queues frames: the wait
-    // is for the frame BEFORE the one it is about to build, which is normally already done (design 2.12, D12).
-    //
     // THE BUILD IS THE INTERVAL A SHAPE CHANGE MUST NOT LAND IN (see FramePump::Build): from here until this call
     // returns, the session is recording - inline and on the frame thread alike - and a plan applied from anywhere in
     // that window is refused with Busy rather than walked into the compile's own rows.
+    //
+    // ONE FRAME IN FLIGHT, AND ONE OWNER OF THE INTERVAL (design 2.12, D12 / `graphics-threading.md` 2.17): the
+    // previous engine half is finished before this frame touches the mirrors or a slot - and a caller that finds the
+    // interval already held is REFUSED here, before anything is read or moved. A second frame is never QUEUED behind
+    // the one in flight and never RACES it: a queue of frames is a pipeline this design does not have, and rotating a
+    // slot from two threads is the corruption the rule exists to prevent.
     const detail::FramePump::Build build = pump_->beginFrame();
-    detail::EngineFrame&           next  = build.frame();
+    if (!build) {
+        // TWO SPELLINGS, TWO ANSWERS (`G4`): "this thread already holds it" (a hook or a sink driving this engine) and
+        // "another host thread does" are different mistakes, and a host can only act on them as values.
+        return FrameCallOutcome{ FrameCallOutcome::Status::NotReady,
+                                 build.refusal() == detail::FramePump::Build::Refusal::Reentrant ? EngineNotReadyReason::Reentrant
+                                                                                                 : EngineNotReadyReason::Concurrent };
+    }
+
+    // The frame will really run, so this is where the frame clock takes its one reading (see frameContext): a NotReady
+    // frame is not a frame's interval, and counting it would report a stalled engine as one slow frame.
+    advanceFrameClock();
+
+    detail::EngineFrame& next = build.frame();
     buildContentHalf(next);
 
     if (!pump_->threaded()) {

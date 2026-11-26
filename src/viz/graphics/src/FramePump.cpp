@@ -21,22 +21,35 @@ FramePump::~FramePump()
 FramePump::Build::Build(FramePump& pump, EngineFrame& frame) noexcept
   : pump_(&pump)
   , frame_(&frame)
+  , previous_(s_building_)
 {
-    // THE PHASE IS ENTERED BY THE OBJECT THAT WILL END IT (see the class note): the store is here so that the phase and
-    // the value a caller is about to compile are entered together, under the gate a shape change holds.
-    const std::lock_guard<std::mutex> gate(pump_->phase_mutex_);
-    pump_->compiling_.store(true, std::memory_order_release);
+    // THE OWNERSHIP IS TAKEN BY claimInterval (it has to be, before the frame value may be handed out), so this
+    // constructor only records WHO holds it: every later question - "is the holder me?" - is answered from this
+    // thread-local, and the destructor puts back the entry it found.
+    s_building_ = &pump;
 }
 
 FramePump::Build::~Build()
 {
     // THE ONE PLACE THE BUILD'S PHASE ENDS, on every path (an early return, a throwing describe, the ordinary one). A
     // built frame stays open through `answering` (set by submit, cleared by publishAnswer); a prepare never answers, so
-    // this store is the whole of its interval.
+    // this store is the whole of its interval. A REFUSED build ends nothing: it never held the phase.
     if (pump_ != nullptr) {
+        s_building_ = previous_;
         const std::lock_guard<std::mutex> gate(pump_->phase_mutex_);
         pump_->compiling_.store(false, std::memory_order_release);
     }
+}
+
+bool FramePump::claimInterval() noexcept
+{
+    // ONE OWNER, AND NO WAITING TO BECOME ONE (see Build): a second entry is refused rather than queued, because a
+    // queue of frames is not a pipeline this design has (2.12 / D12) and because a blocked caller here would be the
+    // host waiting for the host's own hook. The gate is the same one a shape change holds, so "nothing is
+    // recording" and "the phase flips" cannot be decided on either side of each other.
+    const std::lock_guard<std::mutex> gate(phase_mutex_);
+    bool                              free = false;
+    return compiling_.compare_exchange_strong(free, true, std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
 EngineFrame& FramePump::Build::frame() const noexcept
@@ -46,9 +59,16 @@ EngineFrame& FramePump::Build::frame() const noexcept
 
 FramePump::Build FramePump::beginFrame()
 {
+    // A SECOND FRAME IS REFUSED, NOT QUEUED (see claimInterval): the interval is claimed BEFORE anything is read or
+    // moved, so a caller on another thread is answered here - and the slot below is only rotated by the winner.
+    if (!claimInterval()) {
+        return Build{ s_building_ == this ? Build::Refusal::Reentrant : Build::Refusal::Concurrent };
+    }
     // ONE FRAME IN FLIGHT: the previous engine half is finished before this value moves, so a caller cannot queue
     // frames and no two jobs ever touch the publications or the device at once (design 2.12, D12). The wait happens
-    // BEFORE the phase is entered, so a shape change that lands during it is answered Busy at once, not queued.
+    // BEFORE the value is handed out, so a shape change that lands during it is answered Busy at once (the frame is
+    // still ANSWERING); the interval itself is already this caller's, which is what makes a second thread's entry a
+    // refusal rather than a queue behind this wait.
     waitIdle();
     EngineFrame& next = *slots_[slot_];
     slot_             = (slot_ + 1) % slots_.size();
@@ -59,6 +79,11 @@ FramePump::Build FramePump::beginFrame()
 
 FramePump::Build FramePump::beginBuild()
 {
+    // A PREPARE CLAIMS THE SAME INTERVAL (see claimInterval): it walks the same tables, so the two rules - one owner,
+    // refused not queued - are one rule, not two.
+    if (!claimInterval()) {
+        return Build{ s_building_ == this ? Build::Refusal::Reentrant : Build::Refusal::Concurrent };
+    }
     return Build{ *this, *current_ };
 }
 

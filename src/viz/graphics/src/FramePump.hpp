@@ -63,26 +63,63 @@ class FramePump {
      * - WHAT IT DOES NOT COVER: the ENGINE half. Once the value is handed over, the frame is still open - the shape
      *   must stay put until it is answered - and that half belongs to the pump's own `answering` fact, not to this
      *   object (see `recording`).
+     * - IT IS THE ENGINE'S LEASE ON THE SAME INTERVAL THE DEVICE GATES (`G6`). A `FrameGate` lease answers false when
+     *   the entry was refused (a call from the thread that already holds it); this guard answers false the same way,
+     *   for the two reasons that cannot be resolved by waiting: THIS thread already holds the interval, or ANOTHER
+     *   thread does. A second frame is never QUEUED behind the first (design 2.12 / D12) and never RACES it
+     *   (`graphics-threading.md` 2.17).
      */
     class Build {
       public:
+        /// Why a build was not entered (`refusal()` answers it; an owning build answers #None).
+        enum class Refusal : std::uint8_t
+        {
+            None,       ///< The build owns the interval.
+            Reentrant,  ///< THIS thread holds it already (a hook or a diagnostic sink driving the same engine).
+            Concurrent, ///< ANOTHER thread holds it: the interval has one owner, so the entry is refused.
+        };
+
         Build(const Build&)            = delete;
         Build& operator=(const Build&) = delete;
 
-        /** @brief Ends the build: the shape may change again unless a frame is still being answered (see recording). */
+        /** @brief Ends the build: the phase is cleared only when this build actually held it. */
         ~Build();
 
-        /** @brief Gets the frame value this build fills. */
+        /** @brief Answers whether this build OWNS the interval; false means the entry was refused. */
+        [[nodiscard]] explicit operator bool() const noexcept
+        {
+            return pump_ != nullptr;
+        }
+
+        /** @brief Gets why the entry was refused (#None when this build owns the interval). */
+        [[nodiscard]] Refusal refusal() const noexcept
+        {
+            return pump_ != nullptr ? Refusal::None : refusal_;
+        }
+
+        /** @brief Gets the frame value this build fills.
+         *
+         * @pre `*this` - a refused build names no value (call it only where the guard is true).
+         */
         [[nodiscard]] EngineFrame& frame() const noexcept;
 
       private:
         friend class FramePump;
 
-        /** @brief Marks @p pump as recording, over @p frame (called by beginFrame / beginBuild). */
+        /** @brief Takes ownership of @p pump's interval, over @p frame (called by beginFrame / beginBuild). */
         Build(FramePump& pump, EngineFrame& frame) noexcept;
+
+        /** @brief Answers a refused entry (called by beginFrame / beginBuild). */
+        explicit Build(const Refusal refused) noexcept
+          : refusal_(refused)
+        {}
 
         FramePump*   pump_{ nullptr };
         EngineFrame* frame_{ nullptr };
+        /// The pump this thread already owned when this build started: restored when it ends, so a hook that drives
+        /// ANOTHER engine leaves the outer build's ownership intact.
+        const FramePump* previous_{ nullptr };
+        Refusal          refusal_{ Refusal::None };
     };
 
     /** @brief Creates an inline pump with two empty frame values (no thread, no frame built). */
@@ -106,8 +143,9 @@ class FramePump {
      *   `PresentRecord` carries. It is atomic because a host may read `frameNumber()` from a thread that does not
      *   drive frames (a HUD, a benchmark), which is also what lets `wait` tell "not answered yet" from "never built".
      *
-     * @return The build this frame fills - its value, and the interval the session's shape must not change in. The
-     *         interval ends when the guard goes out of scope; the frame itself stays open until it is answered.
+     * @return The build this frame fills - its value, and the interval the session's shape must not change in - or an
+     *         EMPTY build when another thread, or this one, already holds that interval (see `refusal`). The interval
+     *         ends when the guard goes out of scope; the frame itself stays open until it is answered.
      */
     [[nodiscard]] Build beginFrame();
 
@@ -118,7 +156,8 @@ class FramePump {
      *   describes every pass, so a shape change landing inside it corrupts exactly what a change during `frame()`
      *   would. The one difference is that nothing will be answered, so the interval ends with the guard.
      *
-     * @return The build, over the value the last compile filled (see currentFrame).
+     * @return The build, over the value the last compile filled (see currentFrame), or an EMPTY build when the
+     *         interval is already held (see `refusal`).
      */
     [[nodiscard]] Build beginBuild();
 
@@ -270,8 +309,16 @@ class FramePump {
     /// How many frames this pump has handed out (monotonic; 0 before the first one). Atomic because a host reads
     /// `frameNumber()` from threads that do not drive frames, and because `wait` compares against it.
     std::atomic<std::uint64_t> number_{ 0 };
-    /// The content half of a frame or prepare is running on the thread that called it (see Build).
+    /// The content half of a frame or prepare is running on the thread that called it (see Build). Written only under
+    /// `phase_mutex_` and only after `claimInterval` won it, so "who holds the interval" is this flag plus the
+    /// thread-local below.
     std::atomic<bool> compiling_{ false };
+    /// The pump THIS thread is building on (null when none): thread-local because the question "is the holder ME?"
+    /// is about the caller, and the flag above says nothing about it. Same idiom as `FrameGate`'s entry stack, built
+    /// without a lock and without an `atomic<std::thread::id>` (whose generic implementation may spin).
+    inline static thread_local const FramePump* s_building_{ nullptr };
+    /// Takes the interval for the calling thread without waiting; false when this thread or another already holds it.
+    [[nodiscard]] bool claimInterval() noexcept;
     /// A frame was handed to the engine thread and has not been answered (set by submit, cleared by publishAnswer).
     std::atomic<bool> answering_{ false };
     /// The gate a shape change holds across its decision and its change, against the phase flip that starts a build.

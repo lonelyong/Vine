@@ -343,6 +343,39 @@ There is exactly one answer to "when does this copy expire": the publication val
   publishes after the frame fence waits. The decision and its argument are in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, and the shape of the
   implementation is in `graphics-sessions.md` (types, lock table, state machines).
 
+### 2.17 Entering the frame interval: an entry that cannot wait is refused (`G4` / `G6`)
+
+- **What it is**: one interval per engine (the content half, then the answer) and per device executor (a frame body), and
+  four ways a caller meets it. The rule is one question - *can the second caller be expressed as "after the current
+  one"?* - and two answers:
+
+  | Caller | Can it wait? | Answer | Mechanism |
+  |---|---|---|---|
+  | host device verb (`setRenderTarget`, `createSurfaceTarget`, the readbacks, `shutdown`) | yes - the body is bounded and will end | **waits** | `FrameGate::Exclusive` |
+  | another `FrameDriver`'s frame body | not needed - the device serves several | **runs beside it** | `FrameGate::Shared` (`C21`) |
+  | the thread that already holds the interval | no - it would wait for itself | **refused**: `EngineNotReadyReason::Reentrant`, `vk.device.reentry`, `vk.session.frame_reentry` | `FrameGate`'s empty lease / `FramePump::Build` |
+  | a second HOST thread calling `frame()` / `prepare()` | no - two frames are a queue (`D12`), and the content half writes a single-writer world | **refused**: `EngineNotReadyReason::Concurrent` | `FramePump::claimInterval` |
+
+- **Why the last row is a refusal, not a wait**: a device body can be deferred behind another and still produce the
+  same picture whenever it runs. A frame cannot: its content half is the host's own hooks and description, so waiting
+  inside it is one host thread waiting for another host thread's hook, and the queue that would make that fair is the
+  pipeline `D12` rejected. The peers answer the same way at their entry point - WebGPU's objects are thread-affine (an
+  entry from a non-owning thread is a validation error), Unity refuses `Camera.Render` off the main thread, Godot raises
+  a thread guard, D3D12's debug layer reports concurrent recording - and the peers that DO accept several producers
+  (UE's `ENQUEUE_RENDER_COMMAND`, Godot's `CommandQueueMT`) accept them through a command QUEUE, which is the second
+  path this design deliberately does not have (§2.3).
+- **What one spelling buys**: `detail::FramePump::Build` is the engine's lease on the same interval the device gates,
+  and it answers the same way - false, with a reason - so "refused, never queued" is one rule with two implementations
+  instead of two policies that can drift. The two reasons stay apart (`G4`): `Reentrant` is a call from the thread that
+  holds the interval (a hook or a diagnostic sink driving this engine), `Concurrent` is a call from another host thread.
+  The claim is a compare-exchange, not a lock: a refused caller does not block, and two threads may still drive the
+  engine in TURN - only not at once.
+- **Boundary**: the rule covers ENTRY only. Waiting stays a plain wait for a caller with nothing to enter -
+  `waitForFrame` from any thread, `releaseContent` / `releaseRenderTarget`, a host device verb - and that is what a
+  second thread is for. `applyPlan` keeps its own answer (`PlanRefusal::Busy`) because it edits the shape the interval
+  protects, and it is refused under the same `phaseGate` the claim takes. Reading values (`frameNumber`,
+  `presentRecord`) is never gated.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -596,6 +629,7 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T13 | no data races | `scripts/tsan_check.sh` | run (2026-11-16: the then-present suites each 0 reports) |
 | T36 | a shape change inside a build is refused (inline, threaded, and from a second thread) | `PlanTest.AFrameRefusesAPlanFromInsideItsOwnCompile` / `PlanTest.APrepareRefusesAPlanFromInsideItsOwnCompile` / `PlanTest.APlanFromAnotherThreadIsRefusedWhileThisOneCompiles` + `FramePumpTest.ThePhaseCoversTheBuildAndTheAnswer` | implemented |
 | T37 | the frame report is a closed frame's value, readable while the next frame runs | `VkConcurrentFrameTest.TheFrameReportIsTheFrameThatEndedWhileTheNextOneRuns` (TSan: 15 reports with the live-books read, 0 with the published one) | implemented |
+| T38 | a second entry into the interval is a value, not a race: the other host thread gets `Concurrent`, the same thread gets `Reentrant`, and both take no frame number | `RenderEngineTest.AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCompile` | implemented |
 
 ## 9. Status and Evolution
 

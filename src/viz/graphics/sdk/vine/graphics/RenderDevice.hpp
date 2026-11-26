@@ -149,7 +149,10 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   serialise ITS OWN reports - it calls the sink from one thread at a time - but that is the device's half only: the
  *   engine's route is shared with the host (`Diagnostics.hpp`), so a sink may still be entered by two threads at once
  *   (a frame reporting while the host reports its own finding) and has to tolerate it. A device must not assume its
- *   state stays on the same thread across an initialize()/shutdown() pair. The
+ *   state stays on the same thread across an initialize()/shutdown() pair. THE ENTRY POINT ABOVE THIS ONE HAS THE SAME
+ *   RULE FROM THE OTHER SIDE: a second host thread driving one engine's `frame()` is REFUSED
+ *   (`EngineNotReadyReason::Concurrent`) instead of queued behind the frame in flight, because two frames are a queue
+ *   and not a pipeline (`graphics-threading.md` 2.17). The
  *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
  *   back into the device (a re-entrant frame is refused, not queued, and a readback asked from inside a frame answers
  *   `ReadbackStatus::Failed` instead of waiting for the frame it is itself inside).

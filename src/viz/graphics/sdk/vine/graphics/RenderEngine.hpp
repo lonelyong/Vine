@@ -452,13 +452,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @warning
      * - Never while a frame is being answered: like every entry of this class it compiles the declarations, and
-     *   it waits for a frame in flight on the engine thread first (between frames). A call from the engine's own frame
-     *   thread is refused with EngineNotReadyReason::Reentrant.
+     *   it waits for a frame in flight on the engine thread first (between frames). A call from the thread that holds
+     *   the interval is refused with EngineNotReadyReason::Reentrant, and one from another host thread with
+     *   EngineNotReadyReason::Concurrent - the same two answers `frame()` gives, from the same claim.
      * - A prepared identity only helps while it stays the same one: an edit between the call and the frame is a new
      *   identity, and that frame compiles it (correct, and the price of the edit).
      *
      * @return What the request did, with what it built (see PrepareReport); `outcome` is `NotReady` with `reason`
-     *         (`NoDevice` / `NotInitialized`) when this engine cannot prepare anything at all.
+     *         (`NoDevice` / `NotInitialized` / `Reentrant` / `Concurrent`) when this engine cannot prepare anything
+     *         right now.
      */
     PrepareReport prepare();
 
@@ -476,14 +478,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   animates measures its own time (an overlay's own wall clock, or a host that calls FrameUpdate::onFrame()
      *   before frame()), which is what the one `dt` a host had to hand over used to be - a number nothing in the
      *   frame read.
-     * - ONE THREAD DRIVES THE FRAMES (`G4`): this verb and prepare() build the content half where they are called, so
-     *   one host thread calls them in sequence - never two at once. A call from the engine's own frame thread (a hook
-     *   or a diagnostic sink driving the same engine, see setFrameThreading) is REFUSED with
-     *   EngineNotReadyReason::Reentrant instead of waiting for the frame it is inside.
+     * - ONE THREAD DRIVES THE FRAMES, AND A SECOND ONE IS REFUSED (`G4`): this verb and prepare() build the content
+     *   half where they are called, so one host thread calls them in sequence - never two at once. Both entries that
+     *   cannot be resolved by waiting arrive as VALUES instead of a race: a call from the thread that already holds
+     *   the interval (a hook or a diagnostic sink driving the same engine, see setFrameThreading) is
+     *   EngineNotReadyReason::Reentrant, and one from ANOTHER host thread is EngineNotReadyReason::Concurrent.
+     *   Nothing is queued - a second frame is not this design's pipeline (`graphics-threading.md` 2.17).
      *
      * @return What the call did (see FrameCallOutcome): `status.ran()` when this engine has no frame thread and the frame
      *         was answered before returning, `status.submitted()` when it was handed to one; `NotReady` with
-     *         `reason` (`NoDevice` / `NotInitialized`) when nothing was compiled or handed over.
+     *         `reason` (`NoDevice` / `NotInitialized` / `Reentrant` / `Concurrent`) when nothing was compiled or handed
+     *         over.
      */
     FrameCallOutcome frame();
 

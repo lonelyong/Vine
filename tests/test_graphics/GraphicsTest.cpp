@@ -61,9 +61,11 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <thread>
@@ -16076,4 +16078,77 @@ TEST(RenderEngineTest, AFrameAskedFromInsideAFrameIsRefusedInsteadOfWaitingForIt
     EXPECT_EQ(backend->nested_prepare.reason, EngineNotReadyReason::Reentrant);
     EXPECT_FALSE(backend->nested_wait) << "waitForFrame from the frame thread cannot wait for that frame";
     EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented) << "the interrupted frame still presented";
+}
+
+TEST(RenderEngineTest, AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCompile)
+{
+    // THE INTERVAL HAS ONE OWNER, AND BOTH WAYS OF FINDING IT TAKEN ARE VALUES (design 2.17 / `FramePump::Build`).
+    // A second host thread used to race the first one's compile: `slot_` / `current_` are plain members, so the two
+    // could rotate the same slot. It is refused now, and so is a call from the thread that already holds the interval -
+    // which is what the peers do at their entry point (WebGPU: thread-affine; Unity: throws; Godot: thread guard) and
+    // what the queue-less design allows (UE/Godot accept several producers only through a command queue).
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    // A PASS NAMED A SCENE NOBODY PUBLISHED: the compile says so, which is the one report this test can stop inside
+    // (the same trick `PlanTest.APlanFromAnotherThreadIsRefusedWhileThisOneCompiles` uses).
+    auto     camera      = vn::make_intrusive<Camera>();
+    auto     unpublished = vn::make_intrusive<Scene>();
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = unpublished;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside   = false;
+    bool                    released = false;
+    bool                    nested_asked{ false }; // written by the one thread that reports (the driver)
+    FrameCallOutcome        nested{};
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (!nested_asked) {
+            // THE SAME THREAD, INSIDE THE CONTENT HALF: "I already hold it" is the other refusal (`Reentrant`).
+            nested_asked = true;
+            nested       = engine->frame();
+        }
+        std::unique_lock<std::mutex> lock(gate);
+        if (inside) {
+            return;
+        }
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    });
+
+    FrameCallOutcome outer{};
+    std::thread      driver([&] { outer = engine->frame(); });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        const bool                   entered = changed.wait_for(lock, std::chrono::seconds(5), [&] { return inside; });
+        EXPECT_TRUE(entered) << "the driver's compile reported, so the interval is held";
+    }
+
+    // THE OTHER HOST THREAD, WHILE THE FIRST ONE IS STOPPED INSIDE ITS COMPILE.
+    const FrameCallOutcome second = engine->frame();
+    EXPECT_EQ(second.status, FrameCallOutcome::Status::NotReady) << "nothing was driven";
+    EXPECT_EQ(second.reason, EngineNotReadyReason::Concurrent);
+    const PrepareReport second_prepare = engine->prepare();
+    EXPECT_EQ(second_prepare.outcome, PrepareReport::Outcome::NotReady);
+    EXPECT_EQ(second_prepare.reason, EngineNotReadyReason::Concurrent);
+    EXPECT_EQ(engine->frameNumber(), 1U) << "a refused call takes no frame number";
+    EXPECT_FALSE(engine->waitForFrame(std::chrono::milliseconds(0))) << "waiting is allowed; entering is not";
+
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        released = true;
+    }
+    changed.notify_all();
+    driver.join();
+
+    EXPECT_EQ(nested.status, FrameCallOutcome::Status::NotReady) << "a frame asked from inside the compile drove nothing";
+    EXPECT_EQ(nested.reason, EngineNotReadyReason::Reentrant);
+    EXPECT_TRUE(outer.ran()) << "the driver's own frame still ran";
+    EXPECT_EQ(engine->presentRecord().frame, 1U);
 }

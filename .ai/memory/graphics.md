@@ -2666,3 +2666,34 @@ thing; changes are only where the second word was a metaphor or named another co
 - Verified: build 0 errors (`test_graphics`, `test_vk`, `gfx_backend_vk`); `test_graphics` 660/660 (84 suites),
   `test_vk` 223/223 (46); 12 doc/style gates + `--strict` exit 0; `clang-format-diff-23` clean. No TSan/ASan run: no
   ownership, allocation, locking or ABI change (identifiers and comments only).
+
+## 2026-11-26 - review 15: entering the frame interval is a value, not a race
+
+The audit question was "does `frame()` need a mutex". It does not - it needed the same refusal the device already makes,
+stated once for both layers.
+
+- **What was wrong**: `RenderEngine::frame()` / `prepare()` documented "one host thread drives the frames" and never
+  checked it. `FramePump::beginFrame` rotated `slot_` / `current_` (plain members) after `waitIdle()`, so two host
+  threads raced two frames into one slot - UB, not a refusal - while the device side already refused the re-entrant case
+  (`vk.session.frame_reentry`, `vk.device.reentry`) and made the second thread wait.
+- **Why NOT a mutex**: the race is not in `beginFrame` but in the content half, which writes the single-writer world
+  (`Scene::publish`, the reused `PassDraw` storage). A lock there would have to span the whole frame (serialising the
+  callers - i.e. a frame queue) and would still advertise an ability that is not there. `D12` already rejected the
+  queue, and no peer locks its frame entry: WebGPU objects are thread-affine (a validation error off the owning
+  thread), Unity throws, Godot guards the thread, D3D12's debug layer reports concurrent recording, Filament documents
+  "not thread-safe"; the engines that DO take several producers (UE, Godot) take them through a command queue.
+- **What landed**: `FramePump::claimInterval()` (a compare-exchange of `compiling_`, under `phase_mutex_`), and
+  `FramePump::Build` became the engine's LEASE on the interval - empty with a reason, exactly like a `FrameGate` lease.
+  `Build::Refusal::Reentrant` (this thread holds it) and `Concurrent` (another host thread does) map to
+  `EngineNotReadyReason::{Reentrant,Concurrent}` in `frame()` / `prepare()`; `slot_` is rotated only by the winner. A
+  thread-local `s_building_` (previous value saved and restored) answers "is the holder ME?", so a hook driving another
+  engine does not mislabel the outer build - the `FrameGate` idiom without a hidden lock or an
+  `atomic<std::thread::id>` (whose generic form may spin).
+- **Contract change (public)**: `EngineNotReadyReason` gained `Concurrent` (fixed `uint8_t`, no ABI break, nothing
+  switches on it). The frame clock is read AFTER the claim now, so a refused call takes no reading.
+- Design point: `graphics-threading.md` **2.17** (the entering-vs-waiting table) + `T38`; `RenderDevice.hpp` and the two
+  engine headers point at it instead of restating policies.
+- **Verified**: build 0 errors; `test_graphics` 661/661 (84 suites), `test_vk` 223/223 (46); TSan **0 warnings** on both
+  suites; 12 gates + `--strict` exit 0; clang-format clean. Mutation: `claimInterval` forced to answer `true` -
+  `RenderEngineTest.AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCompile` fails ("a refused call takes no frame
+  number"), restored and green.
