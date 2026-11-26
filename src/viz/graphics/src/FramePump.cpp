@@ -90,6 +90,11 @@ bool FramePump::threaded() const noexcept
     return runner_ != nullptr;
 }
 
+bool FramePump::onEngineThread() const noexcept
+{
+    return runner_ != nullptr && runner_->onRunnerThread();
+}
+
 bool FramePump::busy() const
 {
     return runner_ != nullptr && runner_->busy();
@@ -99,6 +104,12 @@ void FramePump::setThreaded(bool threaded)
 {
     if (threaded == (runner_ != nullptr)) {
         return; // already there
+    }
+    if (onEngineThread()) {
+        // A MODE CHANGE FROM INSIDE THE FRAME IS REFUSED, not half applied: stopping the runner from its own thread
+        // cannot join it (see FrameRunner::stop), and dropping it here would leave a joinable thread for its destructor.
+        // The caller may switch between frames, never from a frame body.
+        return;
     }
     if (threaded) {
         // The thread exists only when a host asked for one: an engine that never does allocates nothing and starts
@@ -151,7 +162,12 @@ void FramePump::stop()
 {
     if (runner_ != nullptr) {
         runner_->waitIdle();
-        runner_->stop();
+        runner_->stop(); // a call from the frame thread only asks it to leave (see FrameRunner::stop)
+        if (onEngineThread()) {
+            // THE JOIN BELONGS TO ANOTHER THREAD: the loop exits after the job it is inside, and the next stop() - from
+            // the destructor or from shutdown() on the host's thread - performs it.
+            return;
+        }
         runner_.reset();
     }
 }

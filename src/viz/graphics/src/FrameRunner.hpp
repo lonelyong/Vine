@@ -112,6 +112,17 @@ class FrameRunner {
      */
     [[nodiscard]] RunnerMode mode() const noexcept;
 
+    /**
+     * @brief Answers whether the CALLING thread is this runner's frame thread.
+     *
+     * @details
+     * - THE QUESTION EVERY SELF-WAIT ASKS FIRST (see waitIdle / wait / stop): a job running on the frame thread that
+     *   waited for "the frame in flight" would wait for itself, and no amount of timeout makes that answer.
+     *
+     * @return true when the frame thread is the caller.
+     */
+    [[nodiscard]] bool onRunnerThread() const noexcept;
+
     /** @brief Gets how many jobs have finished (run on the engine thread or inline). */
     [[nodiscard]] std::uint64_t frames() const;
 
@@ -136,6 +147,8 @@ class FrameRunner {
   private:
     RunnerMode              mode_;
     std::thread             thread_;
+    /// The frame thread's id, taken once at start: what onRunnerThread compares against.
+    std::thread::id         thread_id_{};
     mutable std::mutex      mutex_;
     std::condition_variable wake_; ///< Engine thread: a job arrived, or the runner is stopping.
     std::condition_variable done_; ///< Caller: the job in flight finished.

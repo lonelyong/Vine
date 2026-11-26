@@ -10,7 +10,13 @@ FrameRunner::FrameRunner(RunnerMode mode)
 {
     if (mode_ == RunnerMode::Threaded) {
         thread_ = std::thread([this]() { loop(); });
+        thread_id_ = thread_.get_id();
     }
+}
+
+bool FrameRunner::onRunnerThread() const noexcept
+{
+    return thread_.joinable() && std::this_thread::get_id() == thread_id_;
 }
 
 FrameRunner::~FrameRunner()
@@ -57,14 +63,19 @@ bool FrameRunner::wait(std::chrono::milliseconds timeout)
     if (!thread_.joinable()) {
         return true; // an inline (or stopped) runner has nothing that could still be running
     }
+    if (onRunnerThread()) {
+        // THE FRAME THIS THREAD IS INSIDE cannot be finished by this thread: the honest answer is "not answered yet",
+        // never a wait for itself (see onRunnerThread).
+        return false;
+    }
     std::unique_lock<std::mutex> lock(mutex_);
     return done_.wait_for(lock, timeout, [this]() { return !has_request_; });
 }
 
 void FrameRunner::waitIdle()
 {
-    if (!thread_.joinable()) {
-        return; // an inline (or stopped) runner has nothing in flight, ever
+    if (!thread_.joinable() || onRunnerThread()) {
+        return; // inline, stopped, or the frame thread asking about its own frame: no self-wait
     }
     std::unique_lock<std::mutex> lock(mutex_);
     done_.wait(lock, [this]() { return !has_request_; });
@@ -88,6 +99,13 @@ void FrameRunner::stop()
         stopping_ = true;
     }
     wake_.notify_all();
+    if (onRunnerThread()) {
+        // A THREAD CANNOT JOIN ITSELF. The loop leaves after the job it is inside (stopping_ is set), and the next
+        // stop() from another thread - the pump's destructor, shutdown - performs the join. Destroying the runner here
+        // would leave a joinable thread for its own destructor, which is a terminate; that is a defect of the caller,
+        // not a state to paper over (the same answer FrameGate's destructor gives).
+        return;
+    }
     thread_.join();
 }
 

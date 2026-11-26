@@ -289,6 +289,13 @@ PrepareReport RenderEngine::prepare()
         return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
+    // A REQUEST FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED, NOT WAITED OUT (see FramePump::onEngineThread): the
+    // frame in flight IS the caller (a hook or a diagnostic sink driving the same engine), so `waitIdle` below would be
+    // the thread waiting for itself. The answer is a value, like every other refusal this module makes.
+    if (pump_->onEngineThread()) {
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::Reentrant };
+    }
+
     // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
     // the expansion below writes the per-view memos, and those are the half's state (design 2.12).
     pump_->waitIdle();
@@ -328,6 +335,14 @@ FrameCallOutcome RenderEngine::frame()
     if (session_ == nullptr) {
         // A device that handed out no driver has nothing to run this frame on (see setDevice).
         return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
+    }
+
+    // A FRAME ASKED FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED, NOT QUEUED (see FramePump::onEngineThread): the
+    // content half is built on the caller's thread and `beginFrame` waits for the frame in flight, which - on the frame
+    // thread - is the caller itself. A hook or a diagnostic sink driving the same engine gets this answer and the
+    // frame it interrupted continues.
+    if (pump_->onEngineThread()) {
+        return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::Reentrant };
     }
 
     // The frame will really run, so this is where the frame clock takes its one reading (see frameContext): a

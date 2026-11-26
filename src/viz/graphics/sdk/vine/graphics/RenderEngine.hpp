@@ -448,7 +448,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @warning
      * - Never while a frame is being answered: like every entry of this class it compiles the declarations, and
-     *   it waits for a frame in flight on the engine thread first (between frames).
+     *   it waits for a frame in flight on the engine thread first (between frames). A call from the engine's own frame
+     *   thread is refused with EngineNotReadyReason::Reentrant.
      * - A prepared identity only helps while it stays the same one: an edit between the call and the frame is a new
      *   identity, and that frame compiles it (correct, and the price of the edit).
      *
@@ -471,6 +472,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   animates measures its own time (an overlay's own wall clock, or a host that calls FrameUpdate::onFrame()
      *   before frame()), which is what the one `dt` a host had to hand over used to be - a number nothing in the
      *   frame read.
+     * - ONE THREAD DRIVES THE FRAMES (`G4`): this verb and prepare() build the content half where they are called, so
+     *   one host thread calls them in sequence - never two at once. A call from the engine's own frame thread (a hook
+     *   or a diagnostic sink driving the same engine, see setFrameThreading) is REFUSED with
+     *   EngineNotReadyReason::Reentrant instead of waiting for the frame it is inside.
      *
      * @return What the call did (see FrameCallOutcome): `status.ran()` when this engine has no frame thread and the frame
      *         was answered before returning, `status.submitted()` when it was handed to one; `NotReady` with
@@ -483,7 +488,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - A LIFETIME DECISION, made once: switching to EngineThread starts this engine's frame thread, switching back to
      *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
-     *   from inside a FrameUpdate::onFrame() call).
+     *   from inside a FrameUpdate::onFrame() call). A call made from the engine's own frame thread is IGNORED: the mode
+     *   that thread is running under cannot be ended from inside it (`FrameRunner::stop` answers the same).
      * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
      *   and only the publications, the surface's window half and the device are touched on the other side.
      *
@@ -510,6 +516,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - Inline it is a no-op that answers true for every frame already built, because those were answered inside
      *   `frame()`.
      * - It does not start a frame, and it does not spin: it waits on the frame thread's own completion signal.
+     * - A CALL FROM THE ENGINE'S OWN FRAME THREAD ANSWERS FALSE AT ONCE: the frame it would wait for is the one the
+     *   caller is inside, so waiting would be the thread waiting for itself.
      *
      * @param number  The frame id to wait for (see frameNumber).
      * @param timeout How long to wait.
@@ -862,7 +870,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - Recognized content: Geometry, Material (an asset or a MaterialInstance), ShaderProgram and Texture - and,
      *   through the overloads below, the stream buffers a geometry reads. The release is scheduled through the
      *   backend's retirement queue (see RenderDevice::releaseContent), not done synchronously.
-     * - Call between frames, on the frame thread.
+     * - ANY THREAD, INCLUDING DURING A FRAME: the objects leave the tables at once and are destroyed only when the
+     *   device proves no submission names them, so a release that lands while a frame is being recorded is exactly the
+     *   case this shape exists for (see RenderDevice::releaseContent). It is not a between-frames verb.
      *
      * @param content Content object to evict; null is refused.
      * @return true when the object was recognized and the release was accepted; false when it is not content,

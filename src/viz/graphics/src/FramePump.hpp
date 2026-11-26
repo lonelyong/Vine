@@ -116,6 +116,18 @@ class FramePump {
     /** @brief Gets whether the engine half runs on a thread of its own. */
     [[nodiscard]] bool threaded() const noexcept;
 
+    /**
+     * @brief Answers whether the CALLING thread is the engine thread (false inline, and false on every other thread).
+     *
+     * @details
+     * - WHAT THE ENGINE ASKS BEFORE IT BUILDS A FRAME (`RenderEngine::frame` / `prepare`): a frame asked from inside a
+     *   frame would wait for the frame it is inside (see `beginFrame`), so the question has one owner - this pump,
+     *   which is the class that knows where the engine half runs.
+     *
+     * @return true when the frame thread is the caller.
+     */
+    [[nodiscard]] bool onEngineThread() const noexcept;
+
     /** @brief Gets whether a job is in flight (always false inline). */
     [[nodiscard]] bool busy() const;
 
@@ -140,7 +152,13 @@ class FramePump {
     /** @brief Gets the last answered frame's outcome word (`frame << 8 | outcome`). */
     [[nodiscard]] std::uint64_t packedPresent() const noexcept;
 
-    /** @brief Stops the thread and joins it (idempotent; the pump becomes inline). */
+    /** @brief Stops the thread and joins it (idempotent; the pump becomes inline).
+     *
+     * @details
+     * - CALLED FROM THE ENGINE THREAD it only asks the loop to leave: a thread cannot join itself, so the join happens
+     *   in the next stop() from another thread (the destructor, `shutdown()`), which is also the only safe place for
+     *   it.
+     */
     void stop();
 
   private:

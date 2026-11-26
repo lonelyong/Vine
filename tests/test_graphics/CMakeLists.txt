@@ -27,6 +27,7 @@ set(SRC_FILE_LIST
 	PublicationStoreTest.cpp
 	FrameExpandTest.cpp
 	FrameRunnerTest.cpp
+        FrameRunnerReentryTest.cpp
         ValueChannelTest.cpp        # The module guide's first example, compiled: the snippet a host copies must not be able to
         # rot between builds (see the file's header).
         GuideExample.cpp

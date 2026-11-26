@@ -15828,3 +15828,61 @@ TEST(SceneMutationTest, RemovingASubtreeDropsItsCommandsAndShrinksTheBox)
     EXPECT_TRUE(removed_back);
     EXPECT_NEAR(scene.boundingBox().min().x, -2.0, 1e-9);
 }
+
+TEST(RenderEngineTest, AFrameAskedFromInsideAFrameIsRefusedInsteadOfWaitingForItself)
+{
+    // A FRAME CANNOT BE BUILT FROM INSIDE ONE (design graphics-threading.md 2.12, C16). The engine half runs on this
+    // engine's own thread, and `beginFrame` waits for the frame in flight - which, on that thread, is the caller. A
+    // diagnostic sink or a hook that drove the same engine there used to hang the GUI thread with no timeout and no
+    // answer; the pump knows its own thread, so the answer is a VALUE, and the interrupted frame still finishes.
+    class ReentrantBackend : public MockBackend
+    {
+      public:
+        RenderEngine*    reenter_engine = nullptr;
+        bool             asked{ false };
+        FrameCallOutcome nested_frame{};
+        PrepareReport    nested_prepare{};
+        bool             nested_wait{ true };
+
+        PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+        {
+            if (!asked && reenter_engine != nullptr) {
+                asked          = true;
+                nested_frame   = reenter_engine->frame();
+                nested_prepare = reenter_engine->prepare();
+                nested_wait    = reenter_engine->waitForFrame(std::chrono::milliseconds(0));
+            }
+            return MockBackend::executeFrame(frame, present_to);
+        }
+    };
+
+    auto backend = intrusive_ptr<ReentrantBackend>(new ReentrantBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish(); // the host's verb (see Scene::publish)
+
+    backend->reenter_engine = engine.get();
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    ASSERT_TRUE(engine->frame().submitted());
+    ASSERT_TRUE(engine->waitForFrame(std::chrono::milliseconds(5000)))
+        << "the outer frame is answered: the ask from inside it did not take the engine down";
+
+    EXPECT_TRUE(backend->asked) << "the backend asked from inside the frame";
+    EXPECT_EQ(backend->nested_frame.status, FrameCallOutcome::Status::NotReady) << "nothing was driven";
+    EXPECT_EQ(backend->nested_frame.reason, EngineNotReadyReason::Reentrant);
+    EXPECT_EQ(backend->nested_prepare.outcome, PrepareReport::Outcome::NotReady);
+    EXPECT_EQ(backend->nested_prepare.reason, EngineNotReadyReason::Reentrant);
+    EXPECT_FALSE(backend->nested_wait) << "waitForFrame from the frame thread cannot wait for that frame";
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented) << "the interrupted frame still presented";
+}
