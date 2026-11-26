@@ -1,186 +1,186 @@
-# graphics review 11: 三维概念、规范与语义
+# graphics review 11: three-dimensional concepts, conventions and semantics
 
-> **Status**: draft, non-authoritative — 工作记录。§2 是源码实际陈述的三维约定，§3 是发现，§4 是不建议照搬的对标项，§5 是建议顺序，§6 是复核命令。本轮除本页与本页的索引登记外不改任何文件；每条发现都留给 owner 决策。
-> **Last verified**: 2026-11-26, tree `9829e682` on `dev`（V5 已复核：`return {}` 是单位矩阵，不是零矩阵）。
-> **Scope**: 前十轮审查分别走了实现质量(7)、增量编辑/线程(6)、seam 概念(8)、vk 后端系统(9)、规范语料/概念清单/扩展面(10)，**没有任何一轮把三维语义本身当审查维度**。本轮只看：空间与矩阵约定、相机/投影/拾取、变换层级、几何与光照材质的三维语义。不重走 6–10 的线程、帧机制、后端系统、概念盘点。
-> **Sources**: `src/viz/graphics/sdk/vine/graphics/*.hpp`、`src/viz/graphics/src/**`、`src/viz/graphics/shaders/**`、`src/plugins/gfx_backend_vk/src/internal/**`、`src/base/math/**`、`tests/test_graphics/**`、`tests/test_vk/**`、`.ai/design/graphics-*.md`、`.ai/decisions/**`。
-> **Backlog**: 本轮不擅自加条目；§5 列出候选，`T#` 编号留给 owner。
-> **Numbering**: `V#` 是本轮自己的编号（8/9/10 轮用过 `C#`/`K#`/`L#`）；模块的 `F#`/`C#`/`R#`/`N#`/`P#`/`D#`/`T#`/`G#` 仍是设计页的编号。
-> **Rule of evidence**: 每条发现给出 `file:line`、测试名或可复跑命令。对标陈述说的是 peer 的公开设计，不是性能基准。
+> **Status**: draft, non-authoritative - a working record. §2 is what the source actually says about the three-dimensional conventions, §3 is the findings, §4 is the peer material not to copy, §5 is the proposed order, §6 is the verification commands. This round changed no file outside this page and its index entry; every finding is left to the owner.
+> **Last verified**: 2026-11-26, tree `9829e682` on `dev` (V5 rechecked: `return {}` is the identity matrix, not a zero matrix).
+> **Scope**: the previous ten rounds covered implementation quality (7), incremental editing/threading (6), seam concepts (8), the vk backend as a system (9), and the design corpus / concept inventory / extension surface (10); **none took three-dimensional semantics itself as the dimension**. This round looks only at: space and matrix conventions, camera/projection/picking, the transform hierarchy, and the three-dimensional semantics of geometry, lighting and materials. It does not re-walk the threading, frame machinery, backend system or concept inventory of rounds 6-10.
+> **Sources**: `src/viz/graphics/sdk/vine/graphics/*.hpp`, `src/viz/graphics/src/**`, `src/viz/graphics/shaders/**`, `src/plugins/gfx_backend_vk/src/internal/**`, `src/base/math/**`, `tests/test_graphics/**`, `tests/test_vk/**`, `.ai/design/graphics-*.md`, `.ai/decisions/**`.
+> **Backlog**: no entry is added without the owner; §5 lists candidates, and the `T#` numbering is the owner's.
+> **Numbering**: `V#` is this round's own numbering (rounds 8/9/10 used `C#`/`K#`/`L#`); the module's `F#`/`C#`/`R#`/`N#`/`P#`/`D#`/`T#`/`G#` remain the design pages' numbering.
+> **Rule of evidence**: every finding gives a `file:line`, a test name or a re-runnable command. A peer statement describes the peer's public design, not a performance benchmark.
 
-## 1. 为什么需要这一轮
+## 1. Why this round is needed
 
-一个图形模块可以在工程意义上完全自洽——seam 干净、帧值不可变、诊断齐全、ABI 有单一声明——同时在**三维语义**上错误：法线用错矩阵、镜像翻转剔除面、无设法线的高亮读到未定义输入、相机退化时静默退回单位视图、光照单位与导入格式不一致。这类错误不会被 review 9/10 的"一个概念一个 owner / 规范是否描述树"发现，因为它们的 owner 存在、拼写也一致，错的是**数学含义**。
+A graphics module can be completely self-consistent as engineering - a clean seam, immutable frame values, complete diagnostics, one ABI declaration - while being wrong in **three-dimensional semantics**: normals transformed with the wrong matrix, mirrored winding culled as back faces, lit shaders reading an undefined attribute when a normal channel is missing, a degenerate camera silently falling back to the identity view, and light units that do not match the import format. Rounds 9/10 cannot find these, because the owner exists and the spelling is consistent; what is wrong is the **mathematical meaning**.
 
-本轮问三个问题：
+This round asks three questions:
 
-1. **概念**：模块有没有一个统一的三维规范（手性、up 轴、世界单位、空间流转），还是只散落在各文件注释里？(§3 `V1`)
-2. **语义**：变换 → 视图 → 裁剪 → 着色这条链上，每个量的数学含义是否与文档、测试、peer 的通行约定一致？(§3 `V2`–`V8`)
-3. **框架**：约定变更（法线矩阵、front-face、单位）落在哪一层才不会变成第二个真相源？(§3 各发现的 fix 栏)
+1. **Concept**: does the module have one three-dimensional convention (handedness, up axis, world units, space flow), or are the facts scattered across file comments? (§3 `V1`)
+2. **Semantics**: along transform -> view -> clip -> shading, does each quantity's mathematical meaning agree with the documentation, the tests and the peer convention? (§3 `V2`-`V8`)
+3. **Framework**: where should a convention change (normal matrix, front-face, units) land so it does not become a second source of truth? (the fix column of each finding in §3)
 
-### 1.1 本轮对标谁、为什么
+### 1.1 Which peers, and why
 
-| Peer | 读的机制 | 为什么是合适的参照 |
+| Peer | Mechanism read | Why it is a suitable reference |
 |---|---|---|
-| three.js | `object.normalMatrix.getNormalMatrix(modelView)`；`frontFaceCW = matrixWorld.determinantAffine() < 0` | 最直接的法线矩阵 / 负行列式反面判定参照，且是公开源码 |
-| OSG | `PositionAttitudeTransform`、`AutoTransform` 的命名与"父变换被自动旋转抵消"语义 | 本模块的节点名与行为直接继承 OSG，应核对是否继承完整 |
-| glTF 2.0 + `KHR_lights_punctual` | 右手 Y-up、米；法线图 OpenGL 朝向；光强 cd/lux、`1/d²` 衰减 | 材质的通道打包与导入表已经声明 glTF 兼容，光照侧应对齐同一参照 |
-| Vulkan / D3D12 | NDC 深度 [0,1]、framebuffer y 向下；reverse-Z 是可选约定而非 API 规定 | 本模块把 GL 约定留在 SDK、在 vk 边界折叠，需要核对两约定边界的陈述 |
-| Unity / Unreal / Filament | 世界单位显式、逆置换位法线、阴影 PCF、IBL 作为独立环境项 | 判断"刻意不做"与"尚未做"的区别 |
+| three.js | `object.normalMatrix.getNormalMatrix(modelView)`; `frontFaceCW = matrixWorld.determinantAffine() < 0` | The most direct reference for the normal matrix / negative-determinant front-face decision, and its source is public |
+| OSG | The naming of `PositionAttitudeTransform` / `AutoTransform`, and the "parent transform cancelled by the automatic rotation" semantics | This module's node names and behaviour are inherited directly from OSG; check whether the inheritance is complete |
+| glTF 2.0 + `KHR_lights_punctual` | Right-handed Y-up, metres; OpenGL orientation for normal maps; cd/lux light intensity, `1/d^2` attenuation | The material channel packing and import table already claim glTF compatibility; the lighting side should use the same reference |
+| Vulkan / D3D12 | NDC depth [0,1], framebuffer Y down; reverse-Z is an optional convention, not an API rule | This module keeps the GL convention in the SDK and folds it at the vk boundary; the statements about that boundary need checking |
+| Unity / Unreal / Filament | Explicit world units, inverse-transpose normals, PCF shadows, IBL as a separate environment term | Distinguish "deliberately not done" from "not done yet" |
 
-对标不是依赖，也没有代码复制；只回答"peer 如何定义这个量、定义写在哪里"。
+The comparison is not a dependency and copies no code; it only answers "how does the peer define this quantity, and where is the definition written".
 
-## 2. 模块当前陈述的三维约定
+## 2. The three-dimensional conventions the module currently states
 
-下面是把源码注释、实现与测试放在一起后，模块**实际**持有的约定。它本身是本轮的产出之一：这些句子目前没有一个统一的规范页承载。
+Putting the source comments, the implementation and the tests together gives the conventions the module **actually** holds. The table is itself one output of this round: no single normative page carries these sentences today.
 
-| 空间 / 量 | 当前含义 | 承载处 |
+| Space / quantity | Current meaning | Home |
 |---|---|---|
-| 世界 | 右手、默认 up `(0,1,0)`、相机默认 eye `(0,0,5)` 看向 `(0,0,0)`；**无世界单位声明** | `Camera.hpp:250-252`、`Camera.cpp:11-15` |
-| 世界 CCW | 正面为世界空间逆时针；vk framebuffer 下翻后 → `frontFace = CLOCKWISE` | `StateMapping.hpp:32,44`、`ContentCaches.cpp:780` |
-| 视图 | `lookAt` 行基（right/up/backward），相机看向视图 −Z；eye==target 时返回**单位矩阵**（相机静默回到原点看向 −Z） | `Transform3.cpp:61-115`（`68-70` 退化路径） |
-| 裁剪（SDK） | 经典 GL：x/y ∈ [−1,1]、z ∈ [−1,1]，near = −1、far = +1 | `Camera.hpp:38-43`、`Transform3.hpp:280-296` |
-| 裁剪（vk 设备） | `fold = diag(1,−1,−0.5)` + `z'=0.5−0.5z`：y 下翻、reverse-Z、near = 1、far = 0 | `ContentDraw.cpp:87-93` |
-| 视锥剔除 | 从 SDK 的 `P*V` 用 Gribb–Hartmann 行提取六面；p-vertex 测 AABB | `Frustum.hpp:39-82` |
-| 几何通道 | location 0 位置 / 1 法线 / 2 颜色 / 8 UV / 12–15 实例矩阵，列主序 | `ShaderAbi.hpp`、`Geometry.hpp`、`Primitive.hpp` |
-| 着色 | 全部在**视图空间**：灯随相机旋转平移后打包；GGX/Smith/Schlick 单一 BRDF；漫反射无 `1/π` | `LightAbi.cpp:117-191`、`vine_params.glsl:100-151`、`vine_brdf.glsl:58-80` |
-| 透明度 | 排序键 = draw order → layer → 不透明/透明 → 量化相机空间深度 → tie；代表点是世界盒中心 | `DrawListBake.hpp:425-460`、`DrawListBake.cpp:525-545` |
+| World | Right-handed, default up `(0,1,0)`, default camera eye `(0,0,5)` looking at `(0,0,0)`; **no world-unit declaration** | `Camera.hpp:250-252`, `Camera.cpp:11-15` |
+| World CCW | Front faces are counter-clockwise in world space; after the vk framebuffer Y flip -> `frontFace = CLOCKWISE` | `StateMapping.hpp:32,44`, `ContentCaches.cpp:780` |
+| View | `lookAt` row basis (right/up/backward); the camera looks down view -Z; `eye == target` returns the **identity matrix** (the camera silently moves to the origin looking down -Z) | `Transform3.cpp:61-115` (the degenerate path at `68-70`) |
+| Clip (SDK) | Classic GL: x/y in [-1,1], z in [-1,1], near = -1, far = +1 | `Camera.hpp:38-43`, `Transform3.hpp:280-296` |
+| Clip (vk device) | `fold = diag(1,-1,-0.5)` + `z' = 0.5 - 0.5z`: Y flipped, reverse-Z, near = 1, far = 0 | `ContentDraw.cpp:87-93` |
+| Frustum culling | Six planes extracted from the SDK `P*V` with Gribb-Hartmann rows; p-vertex AABB test | `Frustum.hpp:39-82` |
+| Geometry channels | location 0 position / 1 normal / 2 colour / 8 UV / 12-15 instance matrix, column-major | `ShaderAbi.hpp`, `Geometry.hpp`, `Primitive.hpp` |
+| Shading | All in **view space**: lights are packed after the camera's rotation and translation; one GGX/Smith/Schlick BRDF; the diffuse lobe has no `1/pi` | `LightAbi.cpp:117-191`, `vine_params.glsl:100-151`, `vine_brdf.glsl:58-80` |
+| Transparency | Sort key = draw order -> layer -> opaque/transparent -> quantized camera-space depth -> tie; the representative point is the world-box centre | `DrawListBake.hpp:425-460`, `DrawListBake.cpp:525-545` |
 
-这里**做对的地方**也应明确：reverse-Z 在唯一边界折叠且有像素级诊断记录（不是两处各自实现）；forward 与 deferred 共用一份 BRDF、一份材质采样、一份灯光求值；实例矩阵列主序在 C++、GLSL、测试三处同源；透明排序用相机空间深度且用盒中心而非节点原点。本轮的问题不在这些机制，而在上面这张表的**语义落地**。
+What the module **gets right** should also be stated: reverse-Z is folded at one boundary and has a pixel-level diagnostic record (not implemented twice); forward and deferred share one BRDF, one material sampling and one light evaluation; the instance matrix is column-major and has the same shape in C++, GLSL and the tests; transparent sorting uses camera-space depth and the box centre rather than the node origin. The problems in this round are not in those mechanisms but in the **landing of the semantics** in the table above.
 
-## 3. 发现
+## 3. Findings
 
-### V1（概念 / 中高）：三维规范没有单一 owner，手性、up 轴、世界单位都是"默认而非声明"
+### V1 (concept / medium-high): the three-dimensional convention has no single owner; handedness, up axis and world units are defaults, not declarations
 
-**证据**：`Camera.hpp:250-252` 的 `(0,0,5)/(0,0,0)/(0,1,0)` 隐含右手 Y-up；`Transform3.hpp:220-225` 的说明只在 `lookAt` 一处提到右手 −Z；`Light.hpp:243` 的 range 只说"world units"；`Geometry.hpp:489` 说无顶点法线时渲染器会推导；`ADR-2026-11-04-surface-placement-value-type.md` 只规定 `geometry::Placement<T>` 恒右手，明确是局部值类型。`src/loaders` 全文搜不到 `up_axis`（`tests/test_meshio/ModelLoadTest.cpp` 有 `Y_UP` 样本但没有消费端转换）。
+**Evidence**: `Camera.hpp:250-252`'s `(0,0,5)/(0,0,0)/(0,1,0)` implies right-handed Y-up; the note at `Transform3.hpp:220-225` mentions right-handed -Z only at `lookAt`; `Light.hpp:243` says the range is in "world units"; `Geometry.hpp:489` says the renderer derives normals when none are authored; `ADR-2026-11-04-surface-placement-value-type.md` only states that `geometry::Placement<T>` is always right-handed and is explicitly a local value type. `src/loaders` contains no `up_axis` at all (`tests/test_meshio/ModelLoadTest.cpp` has a `Y_UP` sample, but no consumer conversion).
 
-**为什么是问题**：`Placement<T>` 恒右手是 CAD/几何侧的决策，不能自动上升为 graphics 世界的规范；导入器保留文件的 up 轴而渲染器默认 Y-up，Z-up 资产在不显式旋转时会"躺着"。host 无法向 API 询问手性/up/单位，只能在多处重复假设——而本项目的纪律恰好是"一个概念一个 owner、禁止第二个拼写"。
+**Why it matters**: `Placement<T>` always being right-handed is a CAD/geometry decision and cannot automatically become the graphics world's convention; the importer keeps the file's up axis while the renderer defaults to Y-up, so a Z-up asset "lies down" unless it is explicitly rotated. A host cannot ask the API for handedness/up/units and has to repeat the assumption in several places - while this project's discipline is exactly "one concept, one owner, no second spelling".
 
-**对照**：glTF 把右手 Y-up、米写进规范；Unity/Unreal 把坐标系与单位写进工程设置；OSG 把 up 作为相机变量的显式默认值。
+**Peer comparison**: glTF writes right-handed Y-up and metres into its specification; Unity/Unreal put the coordinate system and units into project settings; OSG makes up an explicit default of the camera variable.
 
-**fix**：新建 ADR 作为唯一规范页，声明世界手性、up 轴、世界单位（以及是否按米解释 glTF 光照强度），规定导入边界的 up 轴转换归属；在 `docs/guides/graphics.md` 给出可查询常量或类型，而不是让每个调用点推断。**ADR + doc + test**（导入一个 Z-up 样本并断言姿态）。
-
----
-
-### V2（渲染语义 / 高）：非均匀缩放下法线用 `mat3(modelView)` 而非逆转置
-
-**证据**：`builtin_forward.vert:68` 与 `builtin_gbuffer.vert:60` 都是 `vn_view_normal = mat3(vn_model) * vn_Normal;`；`PositionAttitudeTransform.hpp:28-29` 明确"非均匀缩放合法"，`PositionAttitudeTransform.cpp:81-82` 实际构造 `T*R*S*T(-pivot)`；`ShaderAbi.hpp:131-134` 的 `VineDrawBlock` 只有 `mat4 model` + `vec4 params`，全模块没有 `normalMatrix` 或等价通道。
-
-**数学后果**：把法线当作方向直接乘 `M` 只在正交（纯旋转+均匀缩放）下等于正确的 `det(M)·(M⁻¹)ᵀ n`。取 `n=(1,1,0)/√2`、`S=(10,1,1)`：现实现得到 `(0.995,0.0995,0)`，正确值 `(0.0995,0.995,0)`，两个方向近似垂直。一个沿轴拉伸的 CAD 零件或机械臂连杆会整片打错光；法线图也一样错，因为切线基建立在错法线上。
-
-**对照**：three.js 每次渲染 `object.normalMatrix.getNormalMatrix(object.modelViewMatrix)`（即逆转置）并作为 uniform 上传；Unity/Unreal/Filament 同理。
-
-**fix**：在 SDK 的 ABI 层给每个 draw 增加法线矩阵（3×4 或 mat4，std140 对齐），由唯一 packing 函数从 world/view 矩阵导出，forward 与 gbuffer 顶点阶段共读；或者把缩放限制为正均匀缩放并**修改 `PositionAttitudeTransform` 的公开契约**（当前文档明确允许非均匀，因此不能当作已限制）。**code + ABI + test**（非均匀缩放下平面法线的像素/数值断言）。
+**fix**: add an ADR as the one normative page, stating world handedness, up axis and world units (and whether glTF light intensity is interpreted in metres); assign ownership of the up-axis conversion at the import boundary; expose a queryable constant or type in `docs/guides/graphics.md` instead of letting every call site infer it. **ADR + doc + test** (import a Z-up sample and assert the pose).
 
 ---
 
-### V3（几何语义 / 高）：负缩放翻绕序，但 front-face 固定为 CLOCKWISE
+### V2 (rendering semantics / high): under non-uniform scale the normal is transformed by `mat3(modelView)`, not the inverse transpose
 
-**证据**：`PositionAttitudeTransform.hpp:29` 明确负缩放镜像并翻转绕序；`AutoTransform.hpp:108` 同样允许；`StateMapping.hpp:44` 固定 `VK_FRONT_FACE_CLOCKWISE`，`ContentCaches.cpp:780` 无条件写入管线；全后端无按行列式翻转的代码（`grep frontFace/kFrontFace` 只有这几处）。
+**Evidence**: `builtin_forward.vert:68` and `builtin_gbuffer.vert:60` both use `vn_view_normal = mat3(vn_model) * vn_Normal;`; `PositionAttitudeTransform.hpp:28-29` states that non-uniform scale is legal, and `PositionAttitudeTransform.cpp:81-82` actually builds `T*R*S*T(-pivot)`; `ShaderAbi.hpp:131-134`'s `VineDrawBlock` has only `mat4 model` + `vec4 params`, and the module has no `normalMatrix` or equivalent channel.
 
-**后果**：启用背面剔除时，镜像子树的外表面被当成背面剔除，内表面反而可见；`CullMode` 无论取 Back/Front 都得到内外颠倒。three.js 的 `frontFaceCW = matrixWorld.determinantAffine() < 0` 正是这个常见情况的修正。
+**Mathematical consequence**: multiplying a normal directly by `M` as if it were a direction equals the correct `det(M) * (M^-1)^T n` only for an orthogonal transform (pure rotation + uniform scale). For `n=(1,1,0)/sqrt(2)` and `S=(10,1,1)`, the current implementation gives `(0.995,0.0995,0)`, while the correct value is `(0.0995,0.995,0)` - the two directions are nearly perpendicular. A CAD part stretched along one axis or a robot-arm link will be lit incorrectly over a whole surface; a normal map is wrong in the same way, because the tangent basis is built on the wrong normal.
 
-**fix**：在 draw 的解析状态里增加"负行列式"事实，由 pipeline key 或动态 front-face 状态消费；必须对实例矩阵逐 draw 判定（`Primitive::instance_transforms` 可以每个实例不同行列式，若用静态管线翻转则还需按实例分批，或改用双面/自定义剔除策略）。先决定"镜像是否正式支持"：若不支持，把 setter 改为拒绝负缩放并写入诊断，与现有"非幂次样本数拒绝"的风格一致。**code + ABI + test**（镜像盒的像素剔除断言）。
+**Peer comparison**: three.js calls `object.normalMatrix.getNormalMatrix(object.modelViewMatrix)` (the inverse transpose) every render and uploads it as a uniform; Unity/Unreal/Filament do the same.
 
----
-
-### V4（几何语义 / 高）：无顶点法线的几何在默认平滑程序下读到未定义输入；文档声称会被推导
-
-**证据**：`Geometry.hpp:489` 写"when unset the renderer derives normals from the positions"；实际 `ContentCaches.cpp:964-987` 只把几何**存在**的通道写进顶点输入，缺失的 location 1 不绑定；`builtin_forward.vert:16-17,68` 无条件读 `vn_Normal` 并乘入 `vn_view_normal`；`builtin_forward.frag:60` 直接 `normalize(vn_view_normal)`；`builtin_gbuffer.frag:46` 同样。全仓库搜不到任何由位置合成法线的实现（`grep hasNormals` 只命中容器查询）。`VN_FLAT` 变体使用 `dFdx/dFdy` 求面法线（`builtin_forward.frag:48-58`），因此只有选 flat 程序时才碰巧正确。
-
-**后果**：没有法线的 Mesh（导入器在源网格无法线时会产生；`tests/test_graphics/GraphicsTest.cpp:2421` 就在断言这种几何）用默认 lit 程序绘制时，读到 Vulkan 未定义的顶点输入，`normalize` 可产生 NaN → 整片异常颜色或斑块。这与"DSL/值语义"的工程正确性无关，是三维数据契约不成立。
-
-**对照**：glTF/three.js 允许无法线的几何，渲染端使用 flat/面法线回退；OSG 也把法线生成当作明确的局部策略。
-
-**fix**：二选一并写进规范：(a) 在内容桥 `geometryFromShape()` 与 `setPositions()` 路径里生成面法线（数据侧），或 (b) 让默认程序在缺失通道时使用 `VN_FLAT` 顶点/片元路径（渲染侧）。同时更正 `Geometry.hpp:489` 的句子，并加一条端到端像素测试。**code + doc + test**。
+**fix**: add a normal matrix (3x4 or mat4, std140-aligned) to each draw at the SDK ABI layer, derived by the one packing function from the world/view matrix, read by both the forward and G-buffer vertex stages; or restrict scale to positive uniform scale and **change `PositionAttitudeTransform`'s public contract** (the current documentation explicitly allows non-uniform scale, so it cannot be treated as already restricted). **code + ABI + test** (pixel/numeric assertion for a plane normal under non-uniform scale).
 
 ---
 
-### V5（相机语义 / 中高）：退化相机静默退回单位视图，视锥参数无校验，存储的 up 不是实际基
+### V3 (geometry semantics / high): negative scale flips winding, but front-face is fixed to CLOCKWISE
 
-**证据**：`Transform3.cpp:68-70` 中 `eye == target` 直接 `return {}`；`Matrix4x4` 的默认构造是单位矩阵（`Matrix4x4.hpp:60-66`），所以这里得到的是恒等视图，不是零矩阵；`Camera.cpp:34-40` 原样接受；`setPerspective()`（`Camera.cpp:42-48`）不检查 `fovy`、`zNear>0`、`zFar>zNear`，`setOrthographic()`（`:50-62`）不检查左右/上下/近远顺序。对照 `setAspect()`（`:129-134`）明确忽略非正值并有测试（`GraphicsTest.cpp:1033-1036`）——同一类的校验风格在视锥参数上缺席。`Camera.cpp:38` 只把传入 up 归一化后存起来，但 `lookAt` 在 up 与视线平行时**另选参考轴**（`Transform3.cpp:76-96`），`up()` 于是报告的不是视图矩阵实际使用的 up；`CameraSnapshot::up` 把该值带给 `AutoTransform.cpp:250` 的 billboard 朝向。
+**Evidence**: `PositionAttitudeTransform.hpp:29` states that negative scale mirrors and flips the winding of its triangles; `AutoTransform.hpp:108` allows the same; `StateMapping.hpp:44` fixes `VK_FRONT_FACE_CLOCKWISE`, and `ContentCaches.cpp:780` writes it into the pipeline unconditionally; no backend code flips by determinant (`grep frontFace/kFrontFace` finds only those sites).
 
-**后果**：eye==target 时视图静默变成单位矩阵（不是全零），相机回到世界原点看向 −Z；视锥仍可提取，所以不会出现"六面退化、不剔除任何东西"，但画面会静默换成一个无人要求的机位且没有诊断。near/far/fov 非法时投影矩阵产生 NaN 或负深度区间，只有画面异常而无诊断。平行 up 时 billboard 朝向与画面不一致。
+**Consequence**: with back-face culling enabled, the outer surface of a mirrored subtree is culled as a back face and the inner surface becomes visible; `CullMode` gives inside/outside reversed whether it is Back or Front. three.js's `frontFaceCW = matrixWorld.determinantAffine() < 0` is the fix for this common case.
 
-**对照**：three.js/OSG/Unity 都把退化 lookAt 与非法视锥当作调用错误或显式回退；本项目自身对非幂次样本数采用"拒绝并报告"。
-
-**fix**：给 `Camera` 增加命名拒绝/回退答案（沿用 `PlanRefusal`/`EngineNotReadyReason` 风格），退化 lookAt 保持上一有效视图并报告；把 up 设置为 `lookAt` 解析后的真实基向量，或让 `up()` 从 `view_` 反解；补四条参数校验测试。**code + test**。
+**fix**: add a "negative determinant" fact to the draw's resolved state and consume it in the pipeline key or in dynamic front-face state; it must be decided per draw for instance matrices (`Primitive::instance_transforms` can give each instance a different determinant, so a static pipeline flip would also need to batch by instance, or switch to two-sided/custom culling). First decide whether mirroring is officially supported: if not, make the setter reject negative scale and report a diagnostic, matching the existing "reject non-power-of-two sample counts" style. **code + ABI + test** (pixel culling assertion for a mirrored box).
 
 ---
 
-### V6（约定边界 / 中）：SDK 与设备的裁剪约定分裂，个别文档句子把两者说反了
+### V4 (geometry semantics / high): geometry without vertex normals reads an undefined input under the default smooth program; the documentation promises a derivation
 
-**证据**：`Camera.hpp:38-43` 正确声明 SDK 投影是 GL z∈[−1,1]，`ContentDraw.cpp:87-93` 在唯一边界折叠为 reverse-Z [0,1]+y 下翻。但 `CameraSnapshot.hpp:58-60` 说"the projection carries which clip depth is NEAR (this tree renders Reverse-Z)"，而 `CameraSnapshot::of()`（`Camera.cpp:188`）写入的正是 GL 投影；`CameraSnapshot::screenRay()`（`Camera.cpp:204-206`）实际靠"到 eye 的距离"判定哪端近，所以代码是对的、**句子是错的**。`BuiltinShaders.cpp:125-126` 说光裁剪 z 是"0 at near, 1 at far"，同段代码 `:137` 用 `1 - (z*0.5+0.5)` 把 GL 的 −1 映到 1（近），+1 映到 0（远），注释同样说反。
+**Evidence**: `Geometry.hpp:489` says "when unset the renderer derives normals from the positions"; in practice `ContentCaches.cpp:964-987` writes only the channels the geometry **has** into the vertex input, so a missing location 1 is not bound; `builtin_forward.vert:16-17,68` reads `vn_Normal` unconditionally and multiplies it into `vn_view_normal`; `builtin_forward.frag:60` calls `normalize(vn_view_normal)` directly; `builtin_gbuffer.frag:46` does the same. No implementation anywhere derives normals from positions (`grep hasNormals` only hits container queries). The `VN_FLAT` variant uses `dFdx/dFdy` for the face normal (`builtin_forward.frag:48-58`), so it is correct only when the flat program happens to be selected.
 
-**后果**：宿主如果把 SDK 的 `projectionMatrix()` 当作设备投影使用（写自己的 depth effect、GPU 端 unproject、重建深度），画面会静默错误；错误的注释会让维护者在改阴影或拾取时按相反的深度方向推理。代码目前靠"距离判定"和"单一折叠点"躲过了 bug，但躲不过下一个读者。
+**Consequence**: a Mesh without normals (the importer produces one when the source mesh has none; `tests/test_graphics/GraphicsTest.cpp:2421` asserts exactly such geometry) drawn with the default lit program reads an undefined Vulkan vertex input; `normalize` can produce NaN -> whole surfaces of wrong colour or blotches. This is not about "DSL/value-semantics" engineering correctness; it is the three-dimensional data contract failing.
 
-**fix**：保留双层约定（这是合理设计），但把约定表提升为一份规范页（可与 `V1` 的 ADR 合并），写明"谁产出 GL 投影、谁折叠、谁不得折叠两次"，并改正上述两处注释；补一条测试断言 `CameraSnapshot::projection` 的 near 行为 GL 的 −1 而不是设备的 1。**doc + test**。
+**Peer comparison**: glTF/three.js allow geometry without normals and the renderer uses a flat/face-normal fallback; OSG also treats normal generation as an explicit local policy.
 
----
-
-### V7（光照语义 / 中）：光照单位与 glTF/物理约定不一致，"PBR"标签强于实际单位
-
-**证据**：`vine_params.glsl:127` 的衰减是 `1/(d²+1)`（再乘 range 窗口 `:133-134`），而 `KHR_lights_punctual` 规定 point/spot 用 candela、directional 用 lux，衰减 `≈1/d²`，推荐 `window / d²`；`Light.hpp:67,182` 的 intensity 只是无单位 multiplier；`vine_brdf.glsl:15-18` 明确漫反射不带 `1/π`（为兼容旧亮度），而镜面是物理形状的 GGX；`LightAbi.cpp:185-189` 在无灯时填 0.15 ambient fill。材质侧 `graphics-material.md:179` 已承认无环境贴图时金属近黑。
-
-**后果**：glTF 的 `KHR_lights_punctual` 强度导入后亮度与参考渲染器不可比；漫反射与镜面的量纲混用意味着"调高 roughness"改变的是两种不同单位项的比例，PBR 参数不能跨工具复用；金属件在无 IBL 的场景里几乎只剩高光。这是**刻意选择的单位约定**（文档写明了），但对外宣称 metallic-roughness PBR / glTF 兼容时应同时声明单位例外。
-
-**对照**：glTF 的上述规范；Filament/Unity 把 IBL 作为独立环境贡献，方向光的 lux 与点光的 cd 在类型上区分。
-
-**fix**：写清"引擎自有 intensity 单位"的 ADR/指南条目，并标明与 candela/lux 的换算或"不可直接互换"；若要严格兼容，则把衰减改为 `1/d²`（带软化下限）、漫反射补 `1/π` 并整体调权，同时更新导入表与像素基线。这是语义决策，不宜只改一行 shader。**decision + doc（+ code 视选择）**。
+**fix**: choose one and write it into the convention: (a) generate face normals in the content bridge `geometryFromShape()` and the `setPositions()` path (data side), or (b) make the default program use the `VN_FLAT` vertex/fragment path when the channel is missing (render side). Also correct the sentence at `Geometry.hpp:489` and add an end-to-end pixel test. **code + doc + test**.
 
 ---
 
-### V8（阴影 / 中）：单次深度比较、仅首个投影灯、固定偏移，属于"刻意简化"但需被标注为能力边界
+### V5 (camera semantics / medium-high): a degenerate camera silently falls back to the identity view, frustum parameters are unvalidated, and the stored up is not the actual basis
 
-**证据**：`BuiltinShaders.cpp:143` 一次 `texture().r` 比较，无 PCF；`Light.hpp:39-41` 明确没有滤波旋钮；`Light.hpp:284-288` 与 `ChainPresets.cpp` 只为首个启用且投影的 directional/spot 灯建深度 pass；`ShadowSettings::bias` 是归一深度标量（`BuiltinShaders.cpp:143` 直接加到 reverse-Z 深度上），无 slope-scale 或基于世界单位的偏移。backlog `S6`（逐灯阴影 / 立方阴影）与 `S7`（逐对象选灯）已跟踪前两项。
+**Evidence**: in `Transform3.cpp:68-70`, `eye == target` returns `{}` directly; `Matrix4x4`'s default constructor is the identity matrix (`Matrix4x4.hpp:60-66`), so this is the identity view, not a zero matrix; `Camera.cpp:34-40` accepts it unchanged; `setPerspective()` (`Camera.cpp:42-48`) does not check `fovy`, `zNear>0` or `zFar>zNear`, and `setOrthographic()` (`:50-62`) does not check the left/right/bottom/top/near/far order. By contrast `setAspect()` (`:129-134`) explicitly ignores non-positive values and has a test (`GraphicsTest.cpp:1033-1036`) - the same validation style is missing from the frustum parameters. `Camera.cpp:38` stores only the normalized `up`, but `lookAt` **picks a different reference axis** when up is parallel to the view direction (`Transform3.cpp:76-96`), so `up()` reports an up that the view matrix does not actually use; `CameraSnapshot::up` carries that value into the billboard orientation at `AutoTransform.cpp:250`.
 
-**评价**：这与模块"只声明被实现的开关"的纪律一致，不是 bug；但从三维体验看，硬边阴影、阴影只跟随第一盏灯、掠射面 acne/ detach 是用户首先察觉的差别。
+**Consequence**: when `eye == target`, the view silently becomes the identity matrix (not all zero), and the camera returns to the world origin looking down -Z; the frustum can still be extracted, so there is no "six degenerate planes / nothing culled", but the picture silently switches to a pose nobody asked for and there is no diagnostic. Illegal near/far/fov values produce NaN or a negative depth range in the projection, again with no diagnostic beyond a wrong picture. A parallel up makes the billboard orientation disagree with the picture.
 
-**fix**：不急着实现；在指南里把它写进**能力矩阵**（每场景一个投影灯、无 PCF、bias 为深度单位），使宿主可以提前选择自己实现。若实现 alpha-to-coverage 时顺带做 PCF，应与 `T58` 同批决策。**doc + backlog（已存在 S6/S7）**。
+**Peer comparison**: three.js/OSG/Unity treat a degenerate lookAt and an illegal frustum as call errors or an explicit fallback; this project itself "rejects and reports" non-power-of-two sample counts.
 
----
-
-### V9（透明度语义 / 中）：Mask 下 opacity 参与裁切阈值，却被排进不透明队列；设计页 2.7 与代码不一致
-
-**证据**：`Material.cpp:23-31` 的 `alphaModeSortsTransparent()` 对 Mask 恒返回 false；`builtin_forward.frag:89` 与 `builtin_gbuffer.frag:62` 的阈值是 `vn_draw.params.x * vn_surface.alpha < cutoff`，即 drawable 的 opacity 改变镂空形状。`.ai/design/graphics-material.md:70-73` 却写 "`isTransparent()` 变成 opacity<1 or Blend"，与 §2.7 的代码语义相反；同页 §3.5/C4 又写 Mask 不进透明队列。
-
-**后果**：宿主用一个统一的 `setOpacity()` 淡出场景时，Mask 物体不是变淡而是逐渐消失/破洞，且因为在不透明队列里无法混合出半透明效果。glTF 的 alphaMask 阈值来自材质 alpha（纹理×factor），物体 opacity 是另一个量。
-
-**fix**：决定语义：(a) 阈值只用材质 alpha，opacity 仅用于 Opaque/Blend 的输出/排序（与 glTF 一致）；或 (b) 保留现行为但把 opacity 从 `alphaModeSortsTransparent` 的文档句子中移除，并在指南里警告"淡出 Mask 会侵蚀轮廓"。无论哪种，§2.7 的句子必须与代码同源。**code or doc + test**。
+**fix**: give `Camera` a named refusal/fallback answer (following the `PlanRefusal`/`EngineNotReadyReason` style); a degenerate lookAt keeps the last valid view and reports; set up to the basis `lookAt` actually resolved, or make `up()` recover it from `view_`; add four parameter-validation tests. **code + test**.
 
 ---
 
-### V10（文档一致性 / 低）：排序键注释把深度方向说反了
+### V6 (convention boundary / medium): the SDK and device clip conventions split, and a few documentation sentences state the direction backwards
 
-**证据**：`DrawListBake.hpp:429` 写 "Quantized camera-space depth (near = larger)"，但 `DrawListBake.cpp:541-544` 计算 `depth = -(view*point).z`（近处 z≈−1 → depth≈1，远处 z≈−10 → depth≈10），`SelectTest.cpp:199` 断言 "camera-space depth grows away from the eye"，`operator<`（`DrawListBake.hpp:456-457`）据此让不透明从近到远、透明从远到近。实现与测试都对，注释反了。
+**Evidence**: `Camera.hpp:38-43` correctly states that the SDK projection is GL z in [-1,1], and `ContentDraw.cpp:87-93` folds it at the one boundary into reverse-Z [0,1] with Y flipped. But `CameraSnapshot.hpp:58-60` says "the projection carries which clip depth is NEAR (this tree renders Reverse-Z)", while `CameraSnapshot::of()` (`Camera.cpp:188`) writes the GL projection; `CameraSnapshot::screenRay()` (`Camera.cpp:204-206`) actually decides which end is near by "distance to the eye", so the code is right and **the sentence is wrong**. `BuiltinShaders.cpp:125-126` says the light clip z is "0 at near, 1 at far", while the same block's code at `:137` uses `1 - (z*0.5+0.5)` to map GL -1 to 1 (near) and +1 to 0 (far) - that comment states the same thing backwards.
 
-**fix**：把注释改为 "depth grows away from the eye"；doc-only。**doc**。
+**Consequence**: a host that treats the SDK `projectionMatrix()` as a device projection (writing its own depth effect, GPU-side unproject, depth reconstruction) gets a silently wrong picture; the wrong comments make a maintainer reason in the opposite depth direction when changing shadows or picking. The code currently avoids the bug through the "distance decides" rule and the single fold point, but it will not save the next reader.
 
-## 4. 不建议照搬的对标项
+**fix**: keep the two-layer convention (it is a reasonable design), but promote the convention table to a normative page (it can merge with `V1`'s ADR), state "who produces the GL projection, who folds it, who must not fold twice", and correct the two comments above; add a test asserting that `CameraSnapshot::projection`'s near is GL -1, not the device 1. **doc + test**.
 
-| Peer 机制 | 本模块的判断 |
+---
+
+### V7 (lighting semantics / medium): light units do not match glTF/physical conventions, and the "PBR" label promises more than the units deliver
+
+**Evidence**: the attenuation at `vine_params.glsl:127` is `1/(d^2+1)` (then multiplied by the range window at `:133-134`), while `KHR_lights_punctual` specifies candela for point/spot and lux for directional, attenuation `~1/d^2`, recommending `window / d^2`; `Light.hpp:67,182`'s intensity is only a unitless multiplier; `vine_brdf.glsl:15-18` explicitly states that the diffuse lobe carries no `1/pi` (to preserve the old brightness), while the specular lobe is a physically shaped GGX; `LightAbi.cpp:185-189` fills a 0.15 ambient fill when there is no light. On the material side `graphics-material.md:179` already admits that metal is nearly black without an environment map.
+
+**Consequence**: a glTF `KHR_lights_punctual` intensity imports to a brightness that is not comparable with a reference renderer; mixing the dimensions of the diffuse and specular lobes means "raise roughness" changes the ratio of two differently-unitised terms, so PBR parameters cannot be reused across tools; metal objects in a scene without IBL are almost only specular. This is a **deliberately chosen unit convention** (the documentation says so), but a claim of metallic-roughness PBR / glTF compatibility should state the unit exception at the same time.
+
+**Peer comparison**: the glTF specification above; Filament/Unity treat IBL as a separate environment contribution and distinguish directional lux from point cd in their types.
+
+**fix**: write an ADR/guide entry for "the engine's own intensity unit" and state the conversion to candela/lux or "not directly interchangeable"; for strict compatibility, change the attenuation to `1/d^2` (with a softening floor), add `1/pi` to the diffuse lobe and rebalance, then update the import table and pixel baselines. This is a semantic decision and should not be a one-line shader edit. **decision + doc (+ code depending on the choice)**.
+
+---
+
+### V8 (shadows / medium): one depth compare, only the first shadow-casting light, fixed bias - deliberate simplifications that need to be stated as capability boundaries
+
+**Evidence**: `BuiltinShaders.cpp:143` does one `texture().r` compare, with no PCF; `Light.hpp:39-41` explicitly has no filter knob; `Light.hpp:284-288` and `ChainPresets.cpp` build a depth pass only for the first enabled directional/spot light that casts; `ShadowSettings::bias` is a normalized depth scalar (`BuiltinShaders.cpp:143` adds it directly to the reverse-Z depth), with no slope-scale or world-unit-based offset. Backlog `S6` (per-light shadows / cube shadows) and `S7` (per-object light selection) already track the first two.
+
+**Assessment**: this is consistent with the module's "only declare switches that are implemented" discipline and is not a bug; but from a three-dimensional experience, hard-edged shadows, shadows following only the first light, and grazing-angle acne/detach are the differences a user notices first.
+
+**fix**: do not rush to implement; write it into the guide's **capability matrix** (one shadow-casting light per scene, no PCF, bias in depth units) so a host can choose to implement its own. If PCF is added together with alpha-to-coverage, decide it in the same batch as `T58`. **doc + backlog (S6/S7 already exist)**.
+
+---
+
+### V9 (transparency semantics / medium): under Mask, opacity feeds the cutout threshold, yet the object is sorted into the opaque queue; design page 2.7 disagrees with the code
+
+**Evidence**: `Material.cpp:23-31`'s `alphaModeSortsTransparent()` always returns false for Mask; the threshold at `builtin_forward.frag:89` and `builtin_gbuffer.frag:62` is `vn_draw.params.x * vn_surface.alpha < cutoff`, i.e. the drawable's opacity changes the cutout shape. `.ai/design/graphics-material.md:70-73` instead says "`isTransparent()` becomes opacity<1 or Blend", which is the opposite of the code semantics in §2.7; the same page's §3.5/C4 also says Mask does not enter the transparent queue.
+
+**Consequence**: when a host fades a scene with one `setOpacity()`, a Mask object does not become fainter - it gradually disappears / develops holes - and because it is in the opaque queue it cannot blend to a translucent result. glTF's alphaMask threshold comes from material alpha (texture x factor); object opacity is a different quantity.
+
+**fix**: decide the semantics: (a) the threshold uses material alpha only, and opacity is used only for Opaque/Blend output/sorting (matching glTF); or (b) keep the current behaviour but remove opacity from the `alphaModeSortsTransparent` documentation sentence, and warn in the guide that "fading a Mask erodes its outline". Either way, the sentence in §2.7 must have the same source as the code. **code or doc + test**.
+
+---
+
+### V10 (documentation consistency / low): the sort-key comment states the depth direction backwards
+
+**Evidence**: `DrawListBake.hpp:429` says "Quantized camera-space depth (near = larger)", but `DrawListBake.cpp:541-544` computes `depth = -(view*point).z` (near z ~ -1 -> depth ~ 1, far z ~ -10 -> depth ~ 10), `SelectTest.cpp:199` asserts "camera-space depth grows away from the eye", and `operator<` (`DrawListBake.hpp:456-457`) uses that to draw opaque from near to far and transparent from far to near. The implementation and the test are right; the comment is backwards.
+
+**fix**: change the comment to "depth grows away from the eye"; doc-only. **doc**.
+
+## 4. Peer material not to copy
+
+| Peer mechanism | This module's judgement |
 |---|---|
-| three.js 的单头 JS API / 动态材质编译 | 本模块是跨 DLL 的 C++ ABI；法线矩阵应进 ABI，不能靠对象上的隐式字段 |
-| Unity/Unreal 的世界单位固定为米 / 厘米 | 本模块服务 CAD 与机器人几何，单位交给上层更符合现有 `Placement<T>` 的中性设计；需要的是**声明与边界转换**，不是硬编码米 |
-| glTF 的完整 IBL / 光强物理单位 | 本轮只建议声明差异；强行切单位会破坏现有亮度基线与 `graphics-material.md` 的迁移记录 |
-| WebGPU 的完全显式 barrier / bind group | 已由 vk 后端按本项目 ADR 处理，与三维语义无关 |
-| OSG 的多父 DAG / 节点级灯 | 已由 `ADR-2026-10-23` 与 backlog T7 明确否决/跟踪，不重开 |
-| wgpu/Filament 的 bindless 阴影与多灯 | 本模块的 8 槽 + 首灯投影是容量决策（`S6/S7/T69`），不是语义错误 |
+| three.js's single-header JS API / dynamic material compilation | This module is a cross-DLL C++ ABI; the normal matrix belongs in the ABI, not in an implicit field on an object |
+| Unity/Unreal fixing world units to metres/centimetres | This module serves CAD and robotics geometry; leaving units to the layer above fits the existing neutral `Placement<T>` design better. What is needed is a **declaration and boundary conversion**, not hard-coded metres |
+| glTF's full IBL / physical light units | This round only recommends declaring the difference; forcing a unit switch would break the existing brightness baseline and the migration record in `graphics-material.md` |
+| WebGPU's fully explicit barriers / bind groups | Already handled by the vk backend under this project's ADR; unrelated to three-dimensional semantics |
+| OSG's multi-parent DAG / node-level lights | Already rejected/tracked by `ADR-2026-10-23` and backlog T7; do not reopen |
+| wgpu/Filament's bindless shadows and many lights | This module's 8 slots + first-light shadow is a capacity decision (`S6/S7/T69`), not a semantic error |
 
-## 5. 建议顺序（供 owner 批准，不自动进入 backlog）
+## 5. Proposed order (for the owner to approve; not automatically added to the backlog)
 
-1. **先定规范**（`V1` + `V6`）：一份 ADR 声明手性/up/单位/空间流转，改正两处说反的深度注释。此后所有修复都有唯一引用点。
-2. **再修高风险的三维数学**（`V2`、`V3`、`V4`）：法线矩阵进 ABI → 负行列式 front-face 策略 → 缺失法线回退。三者都涉及 ABI 或程序变体，最好同批规划，避免多次 ABI bump；每项配一条像素/数值测试。
-3. **相机健壮性**（`V5`）：沿用现有"命名拒绝"风格，不引入新机制；与 `CameraSnapshot`/`AutoTransform` 的 up 语义一起改。
-4. **语义澄清**（`V7`、`V8`、`V9`）：先写清单位与能力边界，再决定是否改数值；`V9` 可与材质指南的既有漂移修正一起做。
-5. **单行修正**（`V10`）。
+1. **Settle the convention first** (`V1` + `V6`): one ADR declares handedness/up/units/space flow and corrects the two backwards depth comments. Every later fix then has one reference point.
+2. **Then fix the high-risk three-dimensional maths** (`V2`, `V3`, `V4`): normal matrix into the ABI -> negative-determinant front-face policy -> missing-normal fallback. All three involve ABI or program variants and should be planned as one batch to avoid repeated ABI bumps; each gets a pixel/numeric test.
+3. **Camera robustness** (`V5`): follow the existing "named refusal" style and introduce no new mechanism; change it together with the `CameraSnapshot`/`AutoTransform` up semantics.
+4. **Semantic clarification** (`V7`, `V8`, `V9`): state the units and capability boundaries first, then decide whether to change the numbers; `V9` can go with the existing drift correction in the material guide.
+5. **Single-line correction** (`V10`).
 
-候选 backlog 条目（**未添加**）：法线矩阵与负行列式（可合并一条，trigger：首个非均匀缩放/镜像资产进入渲染）；无设法线回退（trigger：首个无 normal 通道的导入模型走默认 lit 程序）；相机退化/非法视锥拒绝（trigger：宿主观察到 NaN 画面或需要诊断）；光照单位与 glTF 换算（trigger：第一个 `KHR_lights_punctual` 导入需求）。
+Candidate backlog entries (**not added**): normal matrix and negative determinant (can be one entry; trigger: the first non-uniformly scaled/mirrored asset enters rendering); no-normal fallback (trigger: the first imported model without a normal channel drawn with the default lit program); camera degenerate/illegal frustum refusal (trigger: a host observes NaN pixels or needs a diagnostic); light units and glTF conversion (trigger: the first `KHR_lights_punctual` import requirement).
 
-## 6. 复核命令
+## 6. Verification commands
 
 ```bash
-# 本轮证据的几个入口
+# the entry points for this round's evidence
 grep -rn "mat3(vn_model) \* vn_Normal" src/viz/graphics/shaders
 grep -rn "kFrontFace\|frontFace" src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/StateMapping.hpp src/plugins/gfx_backend_vk/src/internal/ContentCaches.cpp
 grep -rn "derives normals from the positions\|hasNormals" src/viz/graphics
