@@ -467,6 +467,20 @@ bool WindowTarget::attach(const WindowDevice& device, vn::String* why)
         return false;
     }
 
+    // THE QUEUE MUST BE ABLE TO PRESENT TO THIS SURFACE. The family was chosen from the FIRST surface the session had
+    // (`Device::initialize`), and a session's SECOND window may sit on a surface that family cannot serve - a swapchain
+    // built there would be refused by every present, forever. Asked here, once per surface, before anything is made;
+    // the caller forwards the sentence through `vk.window.attach_failed`.
+    VkBool32 presents = VK_FALSE;
+    if (vkGetPhysicalDeviceSurfaceSupportKHR(device.physical, device.queue_family, impl->surface, &presents) != VK_SUCCESS || presents == VK_FALSE) {
+        if (why != nullptr) {
+            *why = vn::String(u8"vk: the device's queue family cannot present to this window's surface (the family is "
+                              "the one the session chose for its first surface, and a second window may need another)");
+        }
+        impl->attached = false;
+        return false;
+    }
+
     // THE ACQUIRE SEMAPHORE IS CREATED WITH THE SWAPCHAIN'S OBJECTS (see createSwapchainObjects), because it has to be
     // rebuilt whenever the chain is: an abandoned acquire (see abandonFrame) leaves it signalled, and a rebuild is the
     // moment that signal is retired.
