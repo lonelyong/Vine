@@ -91,12 +91,18 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (90)
+## decisions/ — decision records (ADRs) (91)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
+
+- `ADR-2026-11-26-a-window-frame-owns-the-device-gate.md` — **a window frame keeps the device's frame gate exclusive**:
+  present cannot move under the queue's external-synchronisation lock without making a v-sync-blocked present stall every
+  other driver's submit, and the window half's refusal episodes are device state. The cost (two windows, or a window and
+  an off-screen driver, run their frame bodies one at a time) is stated, and the trigger to revisit is a measured
+  two-window render loop.
 
 - `ADR-2026-11-26-buffer-bytes-are-caller-managed.md` — **byte content is caller-managed, and `Buffer` holds no
   lock**: the revision pair orders the bytes (rewrite in place + announce is the streaming path), while growing or
