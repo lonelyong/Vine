@@ -130,7 +130,7 @@ There is exactly one answer to "when does this copy expire": the publication val
   Two duties stay with the host, each because the framework has no object to gate: `device->initialize()` is the creator's and happens before any frame,
   and a window target's `setWindowHandle` belongs to the surface the host owns (call it between frames - `waitForFrame()` first, P3).
   `RenderEngine::setDevice` waits on its own before it hands the old driver back, because that driver is what the engine half is executing through - the rule
-  `applyPlan` (refuse while busy) and `setFrameThreading(false)` (wait) already followed.
+  `applyPlan` (refuse while busy) and `setFrameThreading` (refuse while the interval is held, 2.17) already followed.
 
 ### 2.7 Parallelism lives only in the derivation layer
 
@@ -355,6 +355,7 @@ There is exactly one answer to "when does this copy expire": the publication val
   | another `FrameDriver`'s frame body | not needed - the device serves several | **runs beside it** | `FrameGate::Shared` (`C21`) |
   | the thread that already holds the interval | no - it would wait for itself | **refused**: `EngineNotReadyReason::Reentrant`, `vk.device.reentry`, `vk.session.frame_reentry` | `FrameGate`'s empty lease / `FramePump::Build` |
   | a second HOST thread calling `frame()` / `prepare()` | no - two frames are a queue (`D12`), and the content half writes a single-writer world | **refused**: `EngineNotReadyReason::Concurrent` | `FramePump::claimInterval` |
+  | `setFrameThreading` (a mode change) asked while a frame is being BUILT (its content half) | no - the switch back ends by JOINING the frame thread | **refused** by the same two reasons, reported as `engine.threading.refused_from_frame` / `refused_in_flight` | `FramePump::takeInterval` |
 
 - **Why the last row is a refusal, not a wait**: a device body can be deferred behind another and still produce the
   same picture whenever it runs. A frame cannot: its content half is the host's own hooks and description, so waiting
@@ -369,12 +370,26 @@ There is exactly one answer to "when does this copy expire": the publication val
   instead of two policies that can drift. The two reasons stay apart (`G4`): `Reentrant` is a call from the thread that
   holds the interval (a hook or a diagnostic sink driving this engine), `Concurrent` is a call from another host thread.
   The claim is a compare-exchange, not a lock: a refused caller does not block, and two threads may still drive the
-  engine in TURN - only not at once.
+  engine in TURN - only not at once. **The turn is ordered, not merely tolerated**: the claim's release/acquire pair is
+  what makes the next thread's write of the slots, of `current_` and of the frame clock read safely, which is why the
+  same thread-local (`s_building_`) that names the refusal reason can be a plain pointer.
+- **A MODE CHANGE IS ONE OF THOSE ENTRIES, not a bystander** (`G4` / `G6`): `setFrameThreading` replaces the fact a
+  frame asks before it builds ("where does my other half run"), and switching back joins the thread an answer runs on -
+  so `FramePump::setThreaded` takes the same interval (`takeInterval`) and answers the same two refusals, and the engine
+  reports which one it was (`engine.threading.refused_from_frame` / `refused_in_flight`, once per episode). One
+  asymmetry is deliberate: it refuses while a frame is being BUILT (the content half, `compiling_`) and WAITS for an
+  ANSWER already in flight (`waitIdle`, as `shutdown` does) - the thread cannot be joined under the frame it is running,
+  and an answer is bounded. It used to write `runner_` beside a frame's reads of it: a data race on a `unique_ptr`, and a
+  silent no-op that left a host believing its frames had moved. The same hazard is why `runner_` is published by SHARED
+  ownership: `waitForFrame` is allowed from any thread, so a waiter takes the runner object instead of naming a pointer
+  that a mode change may free, and `FrameRunner::live_` (an atomic, set false after the join) answers "is anything still
+  in flight" without reading the `std::thread` another thread is joining.
 - **Boundary**: the rule covers ENTRY only. Waiting stays a plain wait for a caller with nothing to enter -
   `waitForFrame` from any thread, `releaseContent` / `releaseRenderTarget`, a host device verb - and that is what a
-  second thread is for. `applyPlan` keeps its own answer (`PlanRefusal::Busy`) because it edits the shape the interval
-  protects, and it is refused under the same `phaseGate` the claim takes. Reading values (`frameNumber`,
-  `presentRecord`) is never gated.
+  second thread is for: several threads may wait for the SAME frame, and the one-in-flight handshake is the runner's, so
+  no waiter waits on a notification sent to another. `applyPlan` keeps its own answer (`PlanRefusal::Busy`) because it
+  edits the shape the interval protects, and it is refused under the same `phaseGate` the claim takes. Reading values
+  (`frameNumber`, `presentRecord`) is never gated.
 
 ## 3. Features
 
@@ -630,6 +645,8 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T36 | a shape change inside a build is refused (inline, threaded, and from a second thread) | `PlanTest.AFrameRefusesAPlanFromInsideItsOwnCompile` / `PlanTest.APrepareRefusesAPlanFromInsideItsOwnCompile` / `PlanTest.APlanFromAnotherThreadIsRefusedWhileThisOneCompiles` + `FramePumpTest.ThePhaseCoversTheBuildAndTheAnswer` | implemented |
 | T37 | the frame report is a closed frame's value, readable while the next frame runs | `VkConcurrentFrameTest.TheFrameReportIsTheFrameThatEndedWhileTheNextOneRuns` (TSan: 15 reports with the live-books read, 0 with the published one) | implemented |
 | T38 | a second entry into the interval is a value, not a race: the other host thread gets `Concurrent`, the same thread gets `Reentrant`, and both take no frame number | `RenderEngineTest.AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCompile` | implemented |
+| T39 | two host threads DRIVE IN TURN: every frame is numbered once, a prepare from the second thread is refused while the first builds, and several threads waiting for one frame are all answered | `FramePumpTest.TheIntervalAnswersWhyASecondEntryWasRefused` / `FramePumpTest.TwoHostThreadsDriveThePumpInTurnAndNumberEveryFrameOnce` / `RenderEngineTest.APrepareFromInsideAPreparesCompileIsRefusedInsteadOfWaitingForItself` / `RenderEngineTest.TwoHostThreadsPreparingAtOnceLeaveOneAnswered` / `RenderEngineTest.ASecondHostThreadDrivesTheNextFrameOnceTheIntervalIsFree` / `RenderEngineTest.TwoThreadsWaitingForOneFrameAreBothAnswered` | implemented |
+| T40 | a mode change is an interval verb: refused by the same two reasons while a build holds it (the cause reported once), applied between frames, the mode unchanged - it WAITS for an answer already in flight instead, and a build that leaves by an exception leaves the interval free for another thread | `FramePumpTest.AThreadModeChangeIsAnIntervalVerb` / `FramePumpTest.ABuildThatLeavesByAnExceptionLeavesTheIntervalFree` / `FramePumpTest.OneThreadMayHoldTwoPumpsAndEachKeepsItsOwnInterval` / `RenderEngineTest.ASecondThreadCannotChangeTheFrameThreadWhileAFrameIsInFlight` / `RenderEngineTest.SwitchingBackToInlineWaitsForAnAnswerInsteadOfRefusingIt` / `RenderEngineTest.ASinkDrivingAnotherEngineLeavesTheFirstOneWhole` | implemented |
 
 ## 9. Status and Evolution
 

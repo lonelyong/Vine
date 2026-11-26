@@ -267,7 +267,7 @@ TEST(FramePumpTest, ThePhaseCoversTheBuildAndTheAnswer)
 TEST(FramePumpTest, ThePhaseStaysOpenUntilAFrameHandedToItsThreadIsAnswered)
 {
     FramePump pump;
-    ASSERT_TRUE(pump.setThreaded(true));
+    ASSERT_EQ(pump.setThreaded(true), FramePump::Build::Refusal::None);
 
     std::mutex              gate;
     std::condition_variable changed;
@@ -311,7 +311,7 @@ TEST(FramePumpTest, ThePhaseStaysOpenUntilAFrameHandedToItsThreadIsAnswered)
 TEST(FramePumpTest, AFrameThePumpNeverHandedOutIsAnsweredWithoutWaitingForTheOneInFlight)
 {
     FramePump pump;
-    ASSERT_TRUE(pump.setThreaded(true));
+    ASSERT_EQ(pump.setThreaded(true), FramePump::Build::Refusal::None);
 
     std::mutex              gate;
     std::condition_variable changed;
@@ -345,4 +345,207 @@ TEST(FramePumpTest, AFrameThePumpNeverHandedOutIsAnsweredWithoutWaitingForTheOne
     changed.notify_all();
     EXPECT_TRUE(pump.wait(1U, std::chrono::milliseconds(5000))) << "and the frame that does exist still answers";
     pump.stop();
+}
+
+/*
+ * @brief Two ways in, two answers: the interval names WHY an entry was refused, and a refused entry changes nothing.
+ *
+ * The pair is the whole point of `Build::Refusal` (design `graphics-threading.md` 2.17): "this thread already holds it"
+ * is a call whose next step would wait for itself, "another thread holds it" is a second driver - two mistakes a host
+ * fixes differently - and neither of them may take a frame number, rotate a slot or start a clock.
+ */
+TEST(FramePumpTest, TheIntervalAnswersWhyASecondEntryWasRefused)
+{
+    FramePump pump;
+
+    // THIS THREAD, INSIDE THE INTERVAL: a frame asked while this thread builds one.
+    {
+        const FramePump::Build held = pump.beginFrame();
+        ASSERT_TRUE(held);
+        EXPECT_EQ(held.frame().number, 1U);
+
+        const FramePump::Build again = pump.beginFrame();
+        EXPECT_FALSE(again) << "a second frame is not queued behind the one this thread is inside";
+        EXPECT_EQ(again.refusal(), FramePump::Build::Refusal::Reentrant) << "and the answer names the cause";
+
+        const FramePump::Build prepared = pump.beginBuild();
+        EXPECT_FALSE(prepared) << "a prepare is a build: the same interval, the same answer";
+        EXPECT_EQ(prepared.refusal(), FramePump::Build::Refusal::Reentrant);
+        EXPECT_EQ(pump.lastNumber(), 1U) << "a refused entry takes no frame number";
+    }
+    EXPECT_FALSE(pump.recording()) << "the owned build's guard is the one place the phase ends";
+
+    // ANOTHER HOST THREAD, WHILE THIS ONE HOLDS IT: the second driver.
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside = false;
+    bool                    leave  = false;
+    std::thread             holder([&] {
+        const FramePump::Build       build = pump.beginBuild();
+        std::unique_lock<std::mutex> lock(gate);
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return leave; });
+    });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return inside; })) << "the holder is inside";
+    }
+    EXPECT_TRUE(pump.recording()) << "the interval is held from another thread";
+    EXPECT_EQ(pump.beginFrame().refusal(), FramePump::Build::Refusal::Concurrent);
+    EXPECT_EQ(pump.beginBuild().refusal(), FramePump::Build::Refusal::Concurrent);
+    EXPECT_EQ(pump.lastNumber(), 1U) << "the refused callers took nothing";
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        leave = true;
+    }
+    changed.notify_all();
+    holder.join();
+
+    // AND THE NEXT ENTRY IS ACCEPTED: a refusal is about the moment, not about the caller.
+    EXPECT_FALSE(pump.recording());
+    const FramePump::Build afterwards = pump.beginFrame();
+    ASSERT_TRUE(afterwards);
+    EXPECT_EQ(afterwards.frame().number, 2U) << "numbers continue where the accepted frame left them";
+}
+
+/*
+ * @brief A build that leaves by an exception leaves the interval FREE - for this thread and for every other.
+ *
+ * The guard exists for exactly this path (see `Build`): a pass' `describe` that throws walks out of the content half,
+ * and a phase left set would refuse every later frame for the life of the engine. The second half of the case asks from
+ * ANOTHER thread, because the thread-local bookkeeping could hide the same leak from this one's point of view.
+ */
+TEST(FramePumpTest, ABuildThatLeavesByAnExceptionLeavesTheIntervalFree)
+{
+    FramePump pump;
+    EXPECT_ANY_THROW({
+        const FramePump::Build build = pump.beginFrame();
+        EXPECT_TRUE(pump.recording());
+        throw std::runtime_error("a pass' describe threw");
+    });
+    EXPECT_FALSE(pump.recording()) << "the guard ended the phase on the way out";
+
+    FramePump::Build::Refusal refusal = FramePump::Build::Refusal::Concurrent;
+    std::thread               other([&] { refusal = pump.beginBuild().refusal(); });
+    other.join();
+    EXPECT_EQ(refusal, FramePump::Build::Refusal::None) << "another thread finds the interval free, not half held";
+    EXPECT_EQ(pump.lastNumber(), 1U) << "the abandoned frame still counted: it WAS handed out";
+}
+
+/*
+ * @brief Two host threads drive in TURN, and every frame is numbered exactly once.
+ *
+ * "Two threads may still drive the engine in TURN - only not at once" (design 2.17) is a claim about the hand-off: each
+ * entry claims, rotates and releases, so the next thread's write of `slot_` / `current_` is ordered after the previous
+ * one's read. TSan is the witness; the numbers are the observable half - one per frame, no gap and no duplicate, which a
+ * race would produce as two frames with one number.
+ */
+TEST(FramePumpTest, TwoHostThreadsDriveThePumpInTurnAndNumberEveryFrameOnce)
+{
+    FramePump                              pump;
+    constexpr int                          kFrames = 40;
+    std::vector<std::uint64_t>             numbers;
+    std::vector<FramePump::Build::Refusal> refusals(static_cast<std::size_t>(kFrames), FramePump::Build::Refusal::Concurrent);
+    numbers.reserve(static_cast<std::size_t>(kFrames));
+
+    for (int frame = 0; frame < kFrames; ++frame) {
+        // ONE ENTRY PER THREAD, joined before the next: the turns are the point, and a thread per turn keeps them honest
+        // (a loop in one thread would never test the hand-off at all).
+        std::thread driver([&pump, &numbers, &refusals, frame] {
+            const FramePump::Build build              = pump.beginFrame();
+            refusals[static_cast<std::size_t>(frame)] = build.refusal();
+            if (build) {
+                numbers.push_back(build.frame().number);
+            }
+        });
+        driver.join();
+    }
+
+    for (const FramePump::Build::Refusal refusal : refusals) {
+        EXPECT_EQ(refusal, FramePump::Build::Refusal::None) << "a turn taken after the previous one ended is not a queue";
+    }
+    ASSERT_EQ(numbers.size(), static_cast<std::size_t>(kFrames));
+    for (int frame = 0; frame < kFrames; ++frame) {
+        EXPECT_EQ(numbers[static_cast<std::size_t>(frame)], static_cast<std::uint64_t>(frame) + 1U) << "frame " << frame << " got its own number";
+    }
+    EXPECT_EQ(pump.lastNumber(), static_cast<std::uint64_t>(kFrames));
+}
+
+/*
+ * @brief One thread may hold two pumps at once: two engines are two intervals, and each build puts back what it found.
+ *
+ * This is the invariant `Build::previous_` exists for. A single thread-local would read "this thread is building" for
+ * BOTH engines, so a sink driving a second engine from inside the first one's frame would be refused as a re-entry of
+ * an interval it does not hold - and the outer build's ownership would be lost on the way back.
+ */
+TEST(FramePumpTest, OneThreadMayHoldTwoPumpsAndEachKeepsItsOwnInterval)
+{
+    FramePump first;
+    FramePump second;
+    {
+        const FramePump::Build outer = first.beginBuild();
+        ASSERT_TRUE(outer) << "the first engine's interval is free";
+        {
+            const FramePump::Build inner = second.beginBuild();
+            EXPECT_TRUE(inner) << "another engine's interval is not the first one's";
+        }
+        EXPECT_FALSE(second.recording());
+        const FramePump::Build again = first.beginBuild();
+        EXPECT_FALSE(again) << "the inner build put back the entry it displaced";
+        EXPECT_EQ(again.refusal(), FramePump::Build::Refusal::Reentrant);
+    }
+    EXPECT_FALSE(first.recording());
+    EXPECT_FALSE(second.recording());
+    EXPECT_TRUE(first.beginBuild()) << "and both are free again once their own builds ended";
+    EXPECT_TRUE(second.beginBuild());
+}
+
+/*
+ * @brief A thread-mode change is an INTERVAL VERB: the same two refusals a frame gets, and never a mode half applied.
+ *
+ * It changes the fact a frame asks before it builds ("where does my other half run") and switching back joins the thread
+ * an answer runs on, so it takes the interval instead of writing `runner_` beside the frame's reads of it (design
+ * `graphics-threading.md` 2.17).
+ */
+TEST(FramePumpTest, AThreadModeChangeIsAnIntervalVerb)
+{
+    FramePump pump;
+    {
+        const FramePump::Build build = pump.beginFrame();
+        ASSERT_TRUE(build);
+        EXPECT_EQ(pump.setThreaded(true), FramePump::Build::Refusal::Reentrant) << "the mode a build is running under cannot change from inside it";
+        EXPECT_FALSE(pump.threaded()) << "and the mode did not change";
+    }
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside = false;
+    bool                    leave  = false;
+    std::thread             holder([&] {
+        const FramePump::Build       build = pump.beginBuild();
+        std::unique_lock<std::mutex> lock(gate);
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return leave; });
+    });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return inside; }));
+    }
+    EXPECT_EQ(pump.setThreaded(true), FramePump::Build::Refusal::Concurrent)
+        << "a frame being built on another host thread is not a mode change's to interrupt";
+    EXPECT_FALSE(pump.threaded());
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        leave = true;
+    }
+    changed.notify_all();
+    holder.join();
+
+    // BETWEEN FRAMES IT LANDS, and `threaded()` - the fact `frame()` reads - follows it both ways.
+    EXPECT_EQ(pump.setThreaded(true), FramePump::Build::Refusal::None);
+    EXPECT_TRUE(pump.threaded());
+    EXPECT_EQ(pump.setThreaded(false), FramePump::Build::Refusal::None);
+    EXPECT_FALSE(pump.threaded()) << "the thread was joined, so the pump is inline again";
 }

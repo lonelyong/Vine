@@ -141,7 +141,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
     `Plan::describe()` 打出人能读的表。`addPass` / `removePass` 已删，计划是唯一的形状。
   - **预热**：`prepare()` 不提交任何帧，只把下一帧要编译 / 上传的身份建好，返回 `PrepareReport`（这次调用建了什么）；
     预热过的帧再录制时 `builds` / `uploads` 增量为 0。
-  - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关）、
+  - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关；**在帧之间调用**——
+    帧温编译期间从别的宿主线程改模式会被拒绝并报 `engine.threading.refused_in_flight`）、
     `waitForFrame(n)`（唯一显式等待，“这一帧上屏了”）、`frameResult()`（上一帧的完整值：`query.snapshot` /
     `query.view`（`View`：相机快照 + 设备像素区域 + 层掩码）/ passes / draw_packets / draws / 诊断 / present）、`presentRecord()` / `presentedCamera()`（后者的相机半边与两个简写）。
     拾取 / 锚点 / fit 一律用 `frameResult().query`，不要用活相机或活场景。

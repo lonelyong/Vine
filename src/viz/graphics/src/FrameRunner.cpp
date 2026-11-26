@@ -11,12 +11,14 @@ FrameRunner::FrameRunner(RunnerMode mode)
     if (mode_ == RunnerMode::Threaded) {
         thread_ = std::thread([this]() { loop(); });
         thread_id_ = thread_.get_id();
+        // PUBLISHED LAST: a reader that sees `live_` sees the id it is compared against (see live_).
+        live_.store(true, std::memory_order_release);
     }
 }
 
 bool FrameRunner::onRunnerThread() const noexcept
 {
-    return thread_.joinable() && std::this_thread::get_id() == thread_id_;
+    return live_.load(std::memory_order_acquire) && std::this_thread::get_id() == thread_id_;
 }
 
 FrameRunner::~FrameRunner()
@@ -43,7 +45,7 @@ void FrameRunner::runHere(const Job& job)
 
 void FrameRunner::submit(Job job)
 {
-    if (mode_ == RunnerMode::Inline || !thread_.joinable() || std::this_thread::get_id() == thread_.get_id()) {
+    if (mode_ == RunnerMode::Inline || !live_.load(std::memory_order_acquire) || std::this_thread::get_id() == thread_id_) {
         // Inline - and a stopped runner IS one, and a job asked for FROM the engine thread runs where it stands (waiting
         // on itself would deadlock). None of these is a reason to change WHAT the job does; only where it runs.
         runHere(job);
@@ -60,7 +62,7 @@ void FrameRunner::submit(Job job)
 
 bool FrameRunner::wait(std::chrono::milliseconds timeout)
 {
-    if (!thread_.joinable()) {
+    if (!live_.load(std::memory_order_acquire)) {
         return true; // an inline (or stopped) runner has nothing that could still be running
     }
     if (onRunnerThread()) {
@@ -74,7 +76,7 @@ bool FrameRunner::wait(std::chrono::milliseconds timeout)
 
 void FrameRunner::waitIdle()
 {
-    if (!thread_.joinable() || onRunnerThread()) {
+    if (!live_.load(std::memory_order_acquire) || onRunnerThread()) {
         return; // inline, stopped, or the frame thread asking about its own frame: no self-wait
     }
     std::unique_lock<std::mutex> lock(mutex_);
@@ -84,7 +86,7 @@ void FrameRunner::waitIdle()
 void FrameRunner::run(Job job)
 {
     submit(std::move(job));
-    if (mode_ == RunnerMode::Threaded && thread_.joinable() && std::this_thread::get_id() != thread_.get_id()) {
+    if (mode_ == RunnerMode::Threaded && live_.load(std::memory_order_acquire) && std::this_thread::get_id() != thread_id_) {
         (void)wait();
     }
 }
@@ -107,6 +109,9 @@ void FrameRunner::stop()
         return;
     }
     thread_.join();
+    // A JOINED RUNNER IS AN INLINE ONE (see live_): published after the join, so a waiter that sees "not live" knows
+    // the thread is gone and nothing it was waiting for can still arrive.
+    live_.store(false, std::memory_order_release);
 }
 
 RunnerMode FrameRunner::mode() const noexcept

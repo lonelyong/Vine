@@ -94,8 +94,9 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     }
     // A FRAME IN FLIGHT IS FINISHED FIRST. The driver about to go back is the one the engine half may be executing
     // through, and `session_` is about to be replaced: every other session change already obeys this rule
-    // (`applyPlan` refuses while busy, `setFrameThreading(false)` and `shutdown` wait for the pump), so the one
-    // lifecycle swap that frees a driver must not be the exception (design `graphics-threading.md` §2.6).
+    // (`applyPlan` refuses while busy, `setFrameThreading` refuses while the interval is held, `shutdown` waits for the
+    // pump), so the one lifecycle swap that frees a driver must not be the exception (design `graphics-threading.md`
+    // §2.6).
     pump_->waitIdle();
     // The route this engine installed on the OLD device goes with the old device: it was borrowed there (see
     // RenderDevice::setDiagnosticsRoute) and is about to stop being valid for it.
@@ -289,13 +290,11 @@ PrepareReport RenderEngine::prepare()
         return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
-    // A REQUEST FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED, NOT WAITED OUT (see FramePump::onEngineThread): the
-    // frame in flight IS the caller (a hook or a diagnostic sink driving the same engine), so `waitIdle` below would be
-    // the thread waiting for itself. The answer is a value, like every other refusal this module makes.
-    if (pump_->onEngineThread()) {
-        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReadyReason::Reentrant };
-    }
-
+    // A REQUEST FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED, NOT WAITED OUT: the frame in flight IS the caller (a
+    // hook or a diagnostic sink driving the same engine), so `waitIdle` below would be the thread waiting for itself.
+    // The refusal is the pump's now (see FramePump::takeInterval), which is the class that owns the thread: it answers
+    // Reentrant for this thread and Concurrent for another, and this call only spells the answer.
+    //
     // ONE INTERVAL, ONE OWNER, AND THE CLAIM COMES FIRST (see FramePump::beginBuild): a prepare from ANOTHER host
     // thread is refused here as a value instead of blocking behind this one. The wait that follows is for the engine
     // half that already owns the other slot - the expansion writes the per-view memos and those are that half's state
@@ -348,13 +347,11 @@ FrameCallOutcome RenderEngine::frame()
         return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
-    // A FRAME ASKED FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED, NOT QUEUED (see FramePump::onEngineThread): the
-    // content half is built on the caller's thread and `beginFrame` waits for the frame in flight, which - on the frame
-    // thread - is the caller itself. A hook or a diagnostic sink driving the same engine gets this answer and the
-    // frame it interrupted continues.
-    if (pump_->onEngineThread()) {
-        return FrameCallOutcome{ FrameCallOutcome::Status::NotReady, EngineNotReadyReason::Reentrant };
-    }
+    // A FRAME ASKED FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED, NOT QUEUED: the content half is built on the
+    // caller's thread and `beginFrame` waits for the frame in flight, which - on the frame thread - is the caller
+    // itself. The pump owns that answer (see FramePump::takeInterval), because it is the class that knows where the
+    // engine half runs; a hook or a diagnostic sink driving the same engine gets Reentrant and the frame it
+    // interrupted continues.
 
     // The frame will really run, so this is where the frame clock takes its one reading (see frameContext): a
     // NotReady frame is not a frame's interval, and counting it would report a stalled engine as one slow frame.
@@ -394,19 +391,31 @@ FrameCallOutcome RenderEngine::frame()
 
 void RenderEngine::setFrameThreading(FrameThreading mode)
 {
-    if (pump_->setThreaded(mode == FrameThreading::EngineThread)) {
+    // A SWITCH IS AN ENTRY LIKE A FRAME'S (see FramePump::setThreaded): it takes the same interval and answers the same
+    // two refusals, because it changes the fact a frame asks before it builds and ends by joining the thread an answer
+    // runs on.
+    const detail::FramePump::Build::Refusal refusal = pump_->setThreaded(mode == FrameThreading::EngineThread);
+    if (refusal == detail::FramePump::Build::Refusal::None) {
         frame_thread_change_episode_.rearm();
         return;
     }
-    // A SWITCH ASKED FROM INSIDE THIS ENGINE'S OWN FRAME IS REFUSED (see FramePump::setThreaded): the mode a thread is
-    // running under cannot be ended from inside it, and a silent no-op would leave a host believing its frames had
-    // moved. Said once per episode, re-armed by the next switch that lands.
-    if (frame_thread_change_episode_.shouldReport()) {
+    // SAID ONCE PER EPISODE, WITH THE CAUSE (`G4`): "asked from inside the frame that is running" and "asked while
+    // another host thread is building one" are two different mistakes, and a host can only act on them as values.
+    if (!frame_thread_change_episode_.shouldReport()) {
+        return;
+    }
+    if (refusal == detail::FramePump::Build::Refusal::Reentrant) {
         reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_from_frame",
                                                   DiagnosticCategory::PassProtocolViolation,
                                                   u8"setFrameThreading() was called from this engine's own frame thread; the mode a "
                                                   u8"frame is running under cannot be changed from inside it - ask between frames"));
+        return;
     }
+    reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_in_flight",
+                                              DiagnosticCategory::PassProtocolViolation,
+                                              u8"setFrameThreading() was called from another host thread while a frame was being "
+                                              u8"built; switching the mode ends by joining the frame thread, so it is an entry that "
+                                              u8"belongs between frames - the frame in flight was left alone"));
 }
 
 FrameThreading RenderEngine::frameThreading() const noexcept

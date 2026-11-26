@@ -68,6 +68,8 @@ class FramePump {
      *   for the two reasons that cannot be resolved by waiting: THIS thread already holds the interval, or ANOTHER
      *   thread does. A second frame is never QUEUED behind the first (design 2.12 / D12) and never RACES it
      *   (`graphics-threading.md` 2.17).
+     * - IT IS THE LEASE EVERY INTERVAL VERB TAKES, not only a frame's: a thread-mode change replaces the fact a frame
+     *   asks before it builds, so `setThreaded` enters the same interval and answers the same two refusals.
      */
     class Build {
       public:
@@ -200,9 +202,9 @@ class FramePump {
      * @brief Answers whether the CALLING thread is the engine thread (false inline, and false on every other thread).
      *
      * @details
-     * - WHAT THE ENGINE ASKS BEFORE IT BUILDS A FRAME (`RenderEngine::frame` / `prepare`): a frame asked from inside a
-     *   frame would wait for the frame it is inside (see `beginFrame`), so the question has one owner - this pump,
-     *   which is the class that knows where the engine half runs.
+     * - WHAT THE INTERVAL ASKS AFTER IT IS CLAIMED (see takeInterval): a frame asked from inside a frame would wait for
+     *   the frame it is inside (see `beginFrame`), so the question has one owner - this pump, which is the class that
+     *   knows where the engine half runs.
      *
      * @return true when the frame thread is the caller.
      */
@@ -242,19 +244,24 @@ class FramePump {
     [[nodiscard]] std::unique_lock<std::mutex> phaseGate();
 
     /**
-     * @brief Chooses where the engine half runs (waits for the frame in flight before switching).
+     * @brief Chooses where the engine half runs: an INTERVAL VERB, answered with the same two refusals a frame gets.
      *
      * @details
-     * - A CALL FROM THE ENGINE THREAD CHANGES NOTHING and answers false: the mode that thread is running under cannot
-     *   be ended from inside it (see FrameRunner::stop). It USED to be a silent no-op, which made "I asked for a
-     *   thread and did not get one" indistinguishable from "it is on a thread already" (`G4`: a verb that can fail
-     *   says so, and the caller decides whether to report it).
+     * - WHY IT TAKES THE INTERVAL (`G4` / `G6`): what it changes is the fact a frame asks before it builds ("where does
+     *   my other half run"), and switching back ends by JOINING the thread - so it is one of the entries the interval
+     *   orders, exactly as `frame()` and `prepare()` are. Before it did, the write to `runner_` happened beside the
+     *   reads `frame()` / `wait()` / `onEngineThread()` make of it: a data race on a `unique_ptr`, not a refusal.
+     * - TWO REFUSALS, THE SAME SPELLINGS AS EVERY OTHER ENTRY: #Build::Refusal::Reentrant is a call from the thread
+     *   that already holds the interval (the engine thread's own frame cannot be joined from inside it - see
+     *   FrameRunner::stop), #Build::Refusal::Concurrent one from another host thread while a frame is built. Both leave
+     *   the mode untouched; #Build::Refusal::None means it was applied (or already was that mode).
+     * - It USED to be a silent no-op, which made "I asked for a thread and did not get one" indistinguishable from "it
+     *   is on a thread already" (`G4`: a verb that can fail says so, and the caller decides whether to report it).
      *
      * @param threaded Where the engine half runs.
-     * @return true when the mode was applied; false when the caller refused it (the engine thread, or a frame still
-     *         being answered inline).
+     * @return #Build::Refusal::None when the mode is now @p threaded; otherwise why the entry was refused, unchanged.
      */
-    [[nodiscard]] bool setThreaded(bool threaded);
+    [[nodiscard]] Build::Refusal setThreaded(bool threaded);
 
     /**
      * @brief Publishes ONE answered frame: the picture's fate, its whole answer, and the completion a host waits for.
@@ -319,14 +326,22 @@ class FramePump {
     inline static thread_local const FramePump* s_building_{ nullptr };
     /// Takes the interval for the calling thread without waiting; false when this thread or another already holds it.
     [[nodiscard]] bool claimInterval() noexcept;
+    /// Takes the interval for a build (or another interval verb), or answers why the entry was refused with nothing
+    /// taken. #Build::Refusal::None means the CALLER now holds it and must release it (see Build).
+    [[nodiscard]] Build::Refusal takeInterval() noexcept;
+    /// Ends the calling thread's ownership of the interval (the one place `compiling_` is cleared; see ~Build).
+    void releaseInterval() noexcept;
     /// A frame was handed to the engine thread and has not been answered (set by submit, cleared by publishAnswer).
     std::atomic<bool> answering_{ false };
     /// The gate a shape change holds across its decision and its change, against the phase flip that starts a build.
     mutable std::mutex phase_mutex_;
     /// The id of the last frame whose engine half finished (read by wait).
     std::atomic<std::uint64_t> completed_{ 0 };
-    /// Where the engine half runs; null means inline - the thread exists only when a host asked for one.
-    std::unique_ptr<FrameRunner> runner_;
+    /// Where the engine half runs; null means inline - the thread exists only when a host asked for one. PUBLISHED BY
+    /// SHARED OWNERSHIP because "where does my other half run" is read from threads that do not hold the interval
+    /// (`wait`, `threaded`, `onEngineThread`) while the thread that does may replace it: a caller takes the object, and
+    /// a mode change ends on a runner a waiter still owns instead of freeing one underneath it.
+    std::atomic<std::shared_ptr<FrameRunner>> runner_{};
     /// The last answered frame's id and picture outcome, packed into one word so both halves of the answer are read
     /// without a lock and without tearing.
     std::atomic<std::uint64_t> present_{ 0 };

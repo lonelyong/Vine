@@ -35,10 +35,20 @@ FramePump::Build::~Build()
     // built frame stays open through `answering` (set by submit, cleared by publishAnswer); a prepare never answers, so
     // this store is the whole of its interval. A REFUSED build ends nothing: it never held the phase.
     if (pump_ != nullptr) {
+        // THE THREAD-LOCAL IS THIS BUILD'S TO PUT BACK: it recorded the entry it found when it started (a build of
+        // ANOTHER pump, or none), so a hook driving another engine leaves the outer entry intact.
         s_building_ = previous_;
-        const std::lock_guard<std::mutex> gate(pump_->phase_mutex_);
-        pump_->compiling_.store(false, std::memory_order_release);
+        pump_->releaseInterval();
     }
+}
+
+void FramePump::releaseInterval() noexcept
+{
+    // ONLY THE PHASE IS CLEARED HERE: the thread-local belongs to the BUILD that took the interval, which is the object
+    // that knows what it displaced (see ~Build) - `takeInterval`'s refused-after-win path on the engine thread owns no
+    // build and must not touch it (it never displaced anything: an open build of this pump would have failed the claim).
+    const std::lock_guard<std::mutex> gate(phase_mutex_);
+    compiling_.store(false, std::memory_order_release);
 }
 
 bool FramePump::claimInterval() noexcept
@@ -52,6 +62,23 @@ bool FramePump::claimInterval() noexcept
     return compiling_.compare_exchange_strong(free, true, std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
+FramePump::Build::Refusal FramePump::takeInterval() noexcept
+{
+    // ONE ENTRY, TWO REASONS (see Build): a claim that loses is told apart by the thread-local - "this thread holds
+    // it" is a call from inside a build whose next step would wait for itself, "another thread holds it" is a second
+    // driver. A claim that WINS on the engine thread is the same self-wait one step later (`waitIdle` would wait for
+    // the job this thread is inside), so it is refused here, before anything reads a slot - which is what lets
+    // `frame()` / `prepare()` / `setThreaded()` state the rule once, in the class that owns the thread.
+    if (!claimInterval()) {
+        return s_building_ == this ? Build::Refusal::Reentrant : Build::Refusal::Concurrent;
+    }
+    if (onEngineThread()) {
+        releaseInterval();
+        return Build::Refusal::Reentrant;
+    }
+    return Build::Refusal::None;
+}
+
 EngineFrame& FramePump::Build::frame() const noexcept
 {
     return *frame_;
@@ -59,10 +86,12 @@ EngineFrame& FramePump::Build::frame() const noexcept
 
 FramePump::Build FramePump::beginFrame()
 {
-    // A SECOND FRAME IS REFUSED, NOT QUEUED (see claimInterval): the interval is claimed BEFORE anything is read or
-    // moved, so a caller on another thread is answered here - and the slot below is only rotated by the winner.
-    if (!claimInterval()) {
-        return Build{ s_building_ == this ? Build::Refusal::Reentrant : Build::Refusal::Concurrent };
+    // A SECOND FRAME IS REFUSED, NOT QUEUED (see takeInterval): the interval is claimed BEFORE anything is read or
+    // moved, so a caller on another thread - and the engine's own thread asking about a frame it is inside - is
+    // answered here, and the slot below is only rotated by the winner.
+    const Build::Refusal refusal = takeInterval();
+    if (refusal != Build::Refusal::None) {
+        return Build{ refusal };
     }
     // ONE FRAME IN FLIGHT: the previous engine half is finished before this value moves, so a caller cannot queue
     // frames and no two jobs ever touch the publications or the device at once (design 2.12, D12). The wait happens
@@ -79,10 +108,11 @@ FramePump::Build FramePump::beginFrame()
 
 FramePump::Build FramePump::beginBuild()
 {
-    // A PREPARE CLAIMS THE SAME INTERVAL (see claimInterval): it walks the same tables, so the two rules - one owner,
-    // refused not queued - are one rule, not two.
-    if (!claimInterval()) {
-        return Build{ s_building_ == this ? Build::Refusal::Reentrant : Build::Refusal::Concurrent };
+    // A PREPARE CLAIMS THE SAME INTERVAL (see takeInterval): it walks the same tables, so the rules - one owner,
+    // refused not queued, and never for the thread that is already inside - are one rule, not three.
+    const Build::Refusal refusal = takeInterval();
+    if (refusal != Build::Refusal::None) {
+        return Build{ refusal };
     }
     return Build{ *this, *current_ };
 }
@@ -104,13 +134,16 @@ void FramePump::submit(Job job)
     // frame as open, not merely as "a job the runner may not have picked up yet".
     answering_.store(true, std::memory_order_release);
     try {
-        if (runner_ == nullptr) {
+        // THE RUNNER IS COPIED, NOT READ TWICE (see runner_): this caller holds the interval, so no mode change can be
+        // in flight - and the copy is what a hand-over needs if one ever were.
+        const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+        if (runner == nullptr) {
             // Inline: the calling thread IS the engine thread, so "hand it over" has nowhere else to go. The answer is
             // complete when this returns - which is what `frame()` reports as Ran.
             job();
             return;
         }
-        runner_->submit(std::move(job));
+        runner->submit(std::move(job));
     }
     catch (...) {
         // A FAILED HAND-OVER LEAVES NOTHING TO ANSWER: the frame was never built, so the phase must not stay closed
@@ -122,8 +155,9 @@ void FramePump::submit(Job job)
 
 void FramePump::waitIdle()
 {
-    if (runner_ != nullptr) {
-        runner_->waitIdle();
+    const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+    if (runner != nullptr) {
+        runner->waitIdle();
     }
 }
 
@@ -142,12 +176,17 @@ bool FramePump::wait(std::uint64_t number, std::chrono::milliseconds timeout)
     if (completed_.load(std::memory_order_acquire) >= number) {
         return true;
     }
-    if (runner_ == nullptr) {
+    // THE WAIT IS ON THE RUNNER, NOT ON THIS PUMP'S IDEA OF ONE (`G4`): a host may wait from any thread, and a host
+    // may also switch the mode from another one - so the object is taken by shared ownership and the wait cannot
+    // outlive it. A runner that was stopped meanwhile answers "nothing is in flight", which is the truth: the frame
+    // was answered, or it will never be.
+    const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+    if (runner == nullptr) {
         // Inline: every frame this pump handed out was answered before submit() returned, so a number it does not know
         // is simply not built yet.
         return completed_.load(std::memory_order_acquire) >= number;
     }
-    (void)runner_->wait(timeout);
+    (void)runner->wait(timeout);
     return completed_.load(std::memory_order_acquire) >= number;
 }
 
@@ -158,12 +197,17 @@ std::uint64_t FramePump::lastNumber() const noexcept
 
 bool FramePump::threaded() const noexcept
 {
-    return runner_ != nullptr;
+    // A PUBLISHED FACT, not a lookup of a pointer another thread may be replacing (see runner_): this is what a HUD or
+    // a benchmark asks while frames run.
+    return runner_.load(std::memory_order_acquire) != nullptr;
 }
 
 bool FramePump::onEngineThread() const noexcept
 {
-    return runner_ != nullptr && runner_->onRunnerThread();
+    // THE CALLER ASKS ABOUT ITSELF, so it is asked of the runner that exists for it: taken by shared ownership, because
+    // `RenderEngine::shutdown` is the one caller that asks while another thread may be driving (see stop).
+    const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+    return runner != nullptr && runner->onRunnerThread();
 }
 
 bool FramePump::recording() const
@@ -179,30 +223,37 @@ std::unique_lock<std::mutex> FramePump::phaseGate()
     return std::unique_lock<std::mutex>(phase_mutex_);
 }
 
-bool FramePump::setThreaded(bool threaded)
+FramePump::Build::Refusal FramePump::setThreaded(bool threaded)
 {
-    if (threaded == (runner_ != nullptr)) {
-        return true; // already there
+    // THE MODE IS AN INTERVAL FACT (see the header): it is what a frame asks before it builds ("where does my other
+    // half run"), and switching back JOINS the thread an answer runs on - so the switch enters the interval like any
+    // other entry and answers the same two refusals. On the engine thread `takeInterval` refuses first, before anything
+    // here could try to join the thread it is running on.
+    const Build::Refusal refusal = takeInterval();
+    if (refusal != Build::Refusal::None) {
+        return refusal;
     }
-    if (onEngineThread()) {
-        // A MODE CHANGE FROM INSIDE THE FRAME IS REFUSED, not half applied: stopping the runner from its own thread
-        // cannot join it (see FrameRunner::stop), and dropping it here would leave a joinable thread for its destructor.
-        // The caller may switch between frames, never from a frame body - and it is TOLD, rather than left to believe
-        // the switch happened.
-        return false;
+    // THE INTERVAL ENDS WHEN THIS RETURNS, WHICHEVER WAY IT GOES: the same guard a build uses, over the value the last
+    // compile filled (nothing is compiled here, so that value is never read).
+    const Build lease{ *this, *current_ };
+    if (threaded == (runner_.load(std::memory_order_acquire) != nullptr)) {
+        return Build::Refusal::None; // already there
     }
     if (threaded) {
         // The thread exists only when a host asked for one: an engine that never does allocates nothing and starts
         // nothing, and the inline path stays literally the same code.
-        runner_ = std::make_unique<FrameRunner>(RunnerMode::Threaded);
-        return true;
+        runner_.store(std::make_shared<FrameRunner>(RunnerMode::Threaded), std::memory_order_release);
+        return Build::Refusal::None;
     }
     // Back to inline: a frame in flight is finished first (the thread is joined, not detached), so nothing is being
-    // answered while the host goes on to describe frames here.
-    runner_->waitIdle();
-    runner_->stop();
-    runner_.reset();
-    return true;
+    // answered while the host goes on to describe frames here. The store comes BEFORE the join, so a thread that is
+    // waiting (see wait) already sees the inline answer; a waiter that took the old runner by shared ownership finishes
+    // on a stopped object, which answers "nothing is in flight" - the truth, since the frame was answered.
+    const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+    runner->waitIdle();
+    runner_.store(nullptr, std::memory_order_release);
+    runner->stop();
+    return Build::Refusal::None;
 }
 
 void FramePump::publishAnswer(std::uint64_t number, PresentOutcome outcome, FrameResult result, std::span<const PassCost> pass_costs)
@@ -243,15 +294,18 @@ std::uint64_t FramePump::packedPresent() const noexcept
 
 void FramePump::stop()
 {
-    if (runner_ != nullptr) {
-        runner_->waitIdle();
-        runner_->stop(); // a call from the frame thread only asks it to leave (see FrameRunner::stop)
+    // THE RUNNER IS TAKEN ONCE (see runner_): a waitForFrame from another thread may be holding it at the same moment,
+    // and the answer to "is anything in flight" must not depend on which of the two got there first.
+    const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+    if (runner != nullptr) {
+        runner->waitIdle();
+        runner->stop(); // a call from the frame thread only asks it to leave (see FrameRunner::stop)
         if (onEngineThread()) {
             // THE JOIN BELONGS TO ANOTHER THREAD: the loop exits after the job it is inside, and the next stop() - from
             // the destructor or from shutdown() on the host's thread - performs it.
             return;
         }
-        runner_.reset();
+        runner_.store(nullptr, std::memory_order_release);
     }
     // NOTHING IS ANSWERING ANY MORE: the phase this pump owns is left where the next frame may start from, whether the
     // pump was stopped between frames or from its own frame thread (the frame it was inside has been answered by the

@@ -12789,8 +12789,8 @@ TEST(RenderEngineTest, SwappingTheDeviceWaitsForTheFrameInFlight)
 {
     // REVIEW 6 / P1-2. `setDevice` gives the OLD frame driver back and replaces `session_`, while the engine thread may
     // be inside `session_->executeFrame`. Every other session change already obeys the rule (`applyPlan` refuses while
-    // busy, `setFrameThreading(false)` and `shutdown` wait for the pump); this pins the one lifecycle swap that returns
-    // the object a frame is running through.
+    // busy, `setFrameThreading` refuses while the interval is held, `shutdown` waits for the pump); this pins the one
+    // lifecycle swap that returns the object a frame is running through.
     auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
@@ -16151,4 +16151,389 @@ TEST(RenderEngineTest, AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCom
     EXPECT_EQ(nested.reason, EngineNotReadyReason::Reentrant);
     EXPECT_TRUE(outer.ran()) << "the driver's own frame still ran";
     EXPECT_EQ(engine->presentRecord().frame, 1U);
+}
+
+/*
+ * @brief A prepare asked from inside a prepare is refused as a value, and the outer one still answers.
+ *
+ * A prepare is a BUILD (see FramePump::beginBuild): it walks the pass table a frame's compile walks, so an entry from
+ * inside it is the same self-wait - and the same two answers. The unpublished scene is where the compile reports, i.e.
+ * inside the interval.
+ */
+TEST(RenderEngineTest, APrepareFromInsideAPreparesCompileIsRefusedInsteadOfWaitingForItself)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto     camera      = vn::make_intrusive<Camera>();
+    auto     unpublished = vn::make_intrusive<Scene>();
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = unpublished;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    bool             nested_asked{ false };
+    FrameCallOutcome nested_frame{};
+    PrepareReport    nested_prepare{};
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (nested_asked) {
+            return;
+        }
+        nested_asked   = true;
+        nested_frame   = engine->frame();
+        nested_prepare = engine->prepare();
+    });
+
+    const PrepareReport outer = engine->prepare();
+    EXPECT_TRUE(nested_asked) << "the compile reported, so the interval was held while the sink ran";
+    EXPECT_EQ(nested_frame.status, FrameCallOutcome::Status::NotReady) << "a frame asked from inside the prepare drove nothing";
+    EXPECT_EQ(nested_frame.reason, EngineNotReadyReason::Reentrant);
+    EXPECT_EQ(nested_prepare.outcome, PrepareReport::Outcome::NotReady);
+    EXPECT_EQ(nested_prepare.reason, EngineNotReadyReason::Reentrant) << "and a prepare asked from inside it says the same";
+    EXPECT_NE(outer.outcome, PrepareReport::Outcome::NotReady) << "the outer prepare is the one that ran";
+    EXPECT_EQ(engine->frameNumber(), 0U) << "a prepare takes no frame number, and the refusals took none either";
+    EXPECT_TRUE(engine->frame().ran()) << "the interval was released: the next frame is not refused";
+}
+
+/*
+ * @brief Two host threads preparing at once leave ONE answer that is not a refusal, and one that is.
+ *
+ * `prepare()` is an entry like `frame()` (design 2.17): it is refused, never queued, and the refusal is a value the
+ * driver thread's own hook cannot stall. The second half matters as much - the driver's prepare must still complete, so
+ * a refused caller never leaves the interval held.
+ */
+TEST(RenderEngineTest, TwoHostThreadsPreparingAtOnceLeaveOneAnswered)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto     camera      = vn::make_intrusive<Camera>();
+    auto     unpublished = vn::make_intrusive<Scene>();
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = unpublished;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside   = false;
+    bool                    released = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        std::unique_lock<std::mutex> lock(gate);
+        // THE FIRST REPORT IS INSIDE THE COMPILE, and the ones after it are the outer call's own: only the first block
+        // (a later one would be the same thread waiting on itself by test design, not by product design).
+        if (inside) {
+            return;
+        }
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    });
+
+    PrepareReport first{};
+    std::thread   driver([&] { first = engine->prepare(); });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return inside; })) << "the driver is inside";
+    }
+
+    const PrepareReport second = engine->prepare();
+    EXPECT_EQ(second.outcome, PrepareReport::Outcome::NotReady) << "nothing was prepared by the second caller";
+    EXPECT_EQ(second.reason, EngineNotReadyReason::Concurrent) << "and it was told why, at once";
+    EXPECT_EQ(engine->frameNumber(), 0U);
+
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        released = true;
+    }
+    changed.notify_all();
+    driver.join();
+    EXPECT_NE(first.outcome, PrepareReport::Outcome::NotReady) << "the prepare that held the interval still answered";
+    EXPECT_TRUE(engine->frame().ran()) << "and it released it";
+}
+
+/*
+ * @brief A second host thread drives the NEXT frame: the interval is a claim, not a thread affinity.
+ *
+ * Design 2.17's "in turn, only not at once": each turn waits for its own frame, so the hand-off covers everything the
+ * content half writes (`slot_`, `current_`, the frame clock) and every frame is numbered exactly once. It is also the
+ * cross-thread wait: the thread that drove a frame is not the thread that answers it (FrameThreading::EngineThread).
+ */
+TEST(RenderEngineTest, ASecondHostThreadDrivesTheNextFrameOnceTheIntervalIsFree)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    constexpr int              kFrames = 6;
+    std::vector<std::uint64_t> numbers;
+    numbers.reserve(kFrames);
+    for (int frame = 0; frame < kFrames; ++frame) {
+        std::thread driver([&] {
+            EXPECT_TRUE(engine->frame().submitted()) << "turn " << frame << " drove a frame";
+            EXPECT_TRUE(engine->waitForFrame(std::chrono::milliseconds(5000))) << "turn " << frame << " was answered";
+            numbers.push_back(engine->frameNumber());
+        });
+        driver.join();
+    }
+    engine->setFrameThreading(FrameThreading::Inline);
+
+    ASSERT_EQ(numbers.size(), static_cast<std::size_t>(kFrames));
+    for (int frame = 0; frame < kFrames; ++frame) {
+        EXPECT_EQ(numbers[static_cast<std::size_t>(frame)], static_cast<std::uint64_t>(frame) + 1U)
+            << "turn " << frame << " got the number of the frame it drove";
+    }
+    EXPECT_EQ(engine->frameNumber(), static_cast<std::uint64_t>(kFrames));
+    EXPECT_EQ(engine->presentRecord().frame, static_cast<std::uint64_t>(kFrames));
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented);
+}
+
+/*
+ * @brief Several threads may WAIT for the same frame - waiting is what a second thread is for.
+ *
+ * The boundary of 2.17: entry is refused, waiting is not. A screenshot thread beside a UI thread both wait for the frame
+ * they asked for, and both must see the same completion - the one-in-flight handshake is the runner's, so nobody waits
+ * for a notification that was sent to somebody else.
+ */
+TEST(RenderEngineTest, TwoThreadsWaitingForOneFrameAreBothAnswered)
+{
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered(); // the frame is IN FLIGHT, and cannot finish on its own
+
+    std::atomic<int> answered{ 0 };
+    const auto       waiter = [&] {
+        if (engine->waitForFrame(1U, std::chrono::milliseconds(5000))) {
+            ++answered;
+        }
+    };
+    std::thread first(waiter);
+    std::thread second(waiter);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_EQ(answered.load(), 0) << "neither returned while the frame was in flight";
+
+    backend->release();
+    first.join();
+    second.join();
+    EXPECT_EQ(answered.load(), 2) << "both waiters were answered by the same completion";
+    EXPECT_EQ(engine->presentRecord().frame, 1U);
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented);
+    engine->setFrameThreading(FrameThreading::Inline);
+}
+
+/*
+ * @brief A sink may drive ANOTHER engine from inside this one's frame: two engines are two intervals.
+ *
+ * One thread-local per thread would read "this thread is building" for both, so the second engine would be refused as a
+ * re-entry of an interval it does not hold - and the outer build's ownership would be lost on the way back
+ * (`FramePump::Build::previous_` is what puts it back).
+ */
+TEST(RenderEngineTest, ASinkDrivingAnotherEngineLeavesTheFirstOneWhole)
+{
+    auto backend_a = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine_a  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine_a->setDevice(backend_a);
+    ASSERT_TRUE(engine_a->initialize());
+
+    auto scene_b = intrusive_ptr<Scene>(new Scene());
+    auto root_b  = setIdentityRoot(*scene_b);
+    root_b->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri_b"));
+    auto camera_b = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera_b);
+    auto backend_b = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine_b  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine_b->setDevice(backend_b);
+    ASSERT_TRUE(engine_b->initialize());
+    PassDesc pass_b;
+    pass_b.camera  = camera_b;
+    pass_b.content = scene_b;
+    (void)vn::test::applyPassForTest(*engine_b, std::move(pass_b), 0);
+    (void)scene_b->publish();
+
+    // A's picture is the one whose compile reports (see the case above): the sink is where the nesting happens.
+    auto     camera_a      = vn::make_intrusive<Camera>();
+    auto     unpublished_a = vn::make_intrusive<Scene>();
+    PassDesc pass_a;
+    pass_a.camera  = camera_a;
+    pass_a.content = unpublished_a;
+    (void)vn::test::applyPassForTest(*engine_a, std::move(pass_a), 0);
+
+    bool             nested_asked{ false };
+    FrameCallOutcome nested_other{};
+    FrameCallOutcome nested_own{};
+    std::uint64_t    nested_other_number{ 0 };
+    engine_a->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (nested_asked) {
+            return;
+        }
+        nested_asked        = true;
+        nested_other        = engine_b->frame();
+        nested_other_number = engine_b->frameNumber();
+        // ...AND THE OUTER ENGINE'S INTERVAL IS STILL ITS OWN, which is what the restore has to get right.
+        nested_own          = engine_a->frame();
+    });
+
+    const FrameCallOutcome outer = engine_a->frame();
+    EXPECT_TRUE(outer.ran()) << "the interrupted frame still ran";
+    EXPECT_TRUE(nested_asked) << "the sink ran inside A's compile";
+    EXPECT_TRUE(nested_other.ran()) << "another engine's interval is not A's - it ran whole, inline";
+    EXPECT_EQ(nested_other_number, 1U) << "and it took its own number";
+    EXPECT_EQ(nested_own.status, FrameCallOutcome::Status::NotReady) << "A asked from inside A is still refused";
+    EXPECT_EQ(nested_own.reason, EngineNotReadyReason::Reentrant);
+    EXPECT_EQ(engine_b->presentRecord().frame, 1U) << "B's frame was answered whole";
+    EXPECT_EQ(engine_b->presentRecord().outcome, PresentOutcome::Presented);
+    EXPECT_EQ(engine_a->presentRecord().frame, 1U) << "and A's frame was answered after it";
+}
+
+/*
+ * @brief A mode change from another host thread is refused while a frame is being built - with the cause, and not applied.
+ *
+ * `setFrameThreading` changes the fact a frame asks before it builds, and switching back joins the thread an answer runs
+ * on, so it is an interval verb (design 2.17 / FramePump::setThreaded). It used to write `runner_` beside the frame's
+ * reads of it - a race on a `unique_ptr` instead of a refusal - and it said nothing, so a host believed its frames had
+ * moved. Now the mode stays put and `engine.threading.refused_in_flight` says why, once.
+ */
+TEST(RenderEngineTest, ASecondThreadCannotChangeTheFrameThreadWhileAFrameIsInFlight)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto     camera      = vn::make_intrusive<Camera>();
+    auto     unpublished = vn::make_intrusive<Scene>();
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = unpublished;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside   = false;
+    bool                    released = false;
+    int                     refusals = 0;
+    engine->setDiagnosticSink([&](const RenderDiagnostic& diagnostic) {
+        std::unique_lock<std::mutex> lock(gate);
+        if (diagnostic.code == u8"engine.threading.refused_in_flight") {
+            ++refusals;
+        }
+        if (inside) {
+            return;
+        }
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    });
+
+    FrameCallOutcome outer{};
+    std::thread      driver([&] { outer = engine->frame(); });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return inside; })) << "the driver is inside its compile";
+    }
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::Inline) << "the mode did not change under the frame";
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        EXPECT_EQ(refusals, 1) << "the same refusal is reported once per episode, not once per call";
+        released = true;
+    }
+    changed.notify_all();
+    driver.join();
+
+    EXPECT_TRUE(outer.ran()) << "the frame that held the interval was left alone";
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        EXPECT_EQ(refusals, 1);
+    }
+
+    // BETWEEN FRAMES THE SAME CALL LANDS, and the mode is readable from any thread.
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::EngineThread);
+    engine->setFrameThreading(FrameThreading::Inline);
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::Inline);
+}
+
+/*
+ * @brief The one asymmetry of a mode change: it REFUSES a build, and WAITS for an answer already in flight.
+ *
+ * The two halves of the interval are not alike. A content half is the host's own hook, so a switch asked beside it is
+ * refused (it would be one host thread waiting for another's hook). An answer is bounded and is what the thread is
+ * running, so switching back to inline must LET IT FINISH before joining - refusing there would strand a frame that is
+ * already recorded, and joining under it would be a join on a thread inside its own job (design 2.17).
+ */
+TEST(RenderEngineTest, SwitchingBackToInlineWaitsForAnAnswerInsteadOfRefusingIt)
+{
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish();
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered(); // the ANSWER half is inside the device
+
+    std::atomic<bool> returned{ false };
+    std::thread       switcher([&] {
+        engine->setFrameThreading(FrameThreading::Inline);
+        returned.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_FALSE(returned.load()) << "the switch waits for the answer, it does not refuse it";
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::EngineThread) << "and the old mode stands while it waits";
+
+    backend->release();
+    switcher.join();
+    EXPECT_TRUE(returned.load());
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::Inline);
+    EXPECT_EQ(engine->presentRecord().frame, 1U) << "the frame in flight was answered, not disturbed";
+    EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented);
 }

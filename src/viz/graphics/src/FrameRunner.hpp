@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -149,6 +150,10 @@ class FrameRunner {
     std::thread             thread_;
     /// The frame thread's id, taken once at start: what onRunnerThread compares against.
     std::thread::id         thread_id_{};
+    /// Whether a frame thread exists and has not been joined yet. ATOMIC, because the readers are not the writer: a
+    /// caller that only WAITS (`wait` / `waitIdle`, and the pump's `waitForFrame` from any thread) asks this while
+    /// another thread may be inside `stop()`, and reading `thread_.joinable()` there would race the join itself.
+    std::atomic<bool>       live_{ false };
     mutable std::mutex      mutex_;
     std::condition_variable wake_; ///< Engine thread: a job arrived, or the runner is stopping.
     std::condition_variable done_; ///< Caller: the job in flight finished.

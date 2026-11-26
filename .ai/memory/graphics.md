@@ -2697,3 +2697,36 @@ stated once for both layers.
   suites; 12 gates + `--strict` exit 0; clang-format clean. Mutation: `claimInterval` forced to answer `true` -
   `RenderEngineTest.AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCompile` fails ("a refused call takes no frame
   number"), restored and green.
+
+## 2026-11-26 - review 16: every entry that changes the interval takes it, and the wait outlives the mode
+
+The audit question was "what else may a second host thread call". The answer was "everything except the entries" -
+and one verb was neither: a thread-mode change wrote `runner_` beside a frame's reads of it.
+
+- **`FramePump::setThreaded` is an interval verb now** (`takeInterval`, answering `Build::Refusal`), because it changes
+  the fact a frame asks before it builds and switching back joins the thread an answer runs on. `frame()` and `prepare()`
+  lost their own `onEngineThread()` pre-checks: the pump answers `Reentrant` for the engine's own thread (after claiming,
+  then releasing - a claim won on the engine thread is the same self-wait one `waitIdle` later) and `Concurrent` for
+  another host thread, which removed one TOCTOU read of `runner_` per frame.
+- **`runner_` is `std::atomic<std::shared_ptr<FrameRunner>>`**, and `FrameRunner` gained `live_` (an atomic set false
+  after the join). Reason: `waitForFrame` is documented as callable from any thread, and both the pointer and
+  `thread_.joinable()` were read by a waiter while a mode change could free or join underneath it. A waiter now holds the
+  object by shared ownership and asks `live_`, so a switch ends on a runner a waiter still owns instead of a dangling one.
+- **Two codes, two causes** (`G4`): `engine.threading.refused_from_frame` (this thread holds it) and the new
+  `engine.threading.refused_in_flight` (another host thread is building), both once per episode.
+- Design: `graphics-threading.md` **2.17** gained the mode-change row, the "the turn is ordered, not merely tolerated"
+  sentence and the `runner_`-publication paragraph; **T39** (driving in turn / concurrent prepare / two waiters) and
+  **T40** (mode change as an interval verb, exceptional exit, two pumps on one thread, nested engines) are new.
+- Eleven cases at the pump and the engine, plus one for the deliberate asymmetry (a switch REFUSES a build and WAITS
+  for an answer already in flight): `FramePumpTest.{TheIntervalAnswersWhyASecondEntryWasRefused, ABuildThatLeavesByAn
+  ExceptionLeavesTheIntervalFree, TwoHostThreadsDriveThePumpInTurnAndNumberEveryFrameOnce, OneThreadMayHoldTwoPumpsAnd
+  EachKeepsItsOwnInterval, AThreadModeChangeIsAnIntervalVerb}` and `RenderEngineTest.{APrepareFromInsideAPreparesCompile
+  IsRefusedInsteadOfWaitingForItself, TwoHostThreadsPreparingAtOnceLeaveOneAnswered, ASecondHostThreadDrivesTheNextFrame
+  OnceTheIntervalIsFree, TwoThreadsWaitingForOneFrameAreBothAnswered, ASinkDrivingAnotherEngineLeavesTheFirstOneWhole,
+  ASecondThreadCannotChangeTheFrameThreadWhileAFrameIsInFlight, SwitchingBackToInlineWaitsForAnAnswerInsteadOfRefusingIt}`.
+- **Verified**: build 0 errors (three targets); `test_graphics` 673/673 (84 suites), `test_vk` 223/223 (46); TSan **0
+  warnings** on both suites (309 third-party suppressions on vk: 306 `libvulkan_lvp.so`, 3 validation layer); 12 gates +
+  `--strict` exit 0; clang-format clean. Mutation: `setThreaded` forced to skip `takeInterval` - both new mode-change
+  cases fail ("the mode did not change under the frame"), restored and green. ASan on `test_graphics` is NOT runnable in
+  this tree (pre-existing ODR violation at load: the target compiles `SnapshotSource.cpp` itself while linking
+  `libvnGraphics`), so TSan carried the concurrency evidence.

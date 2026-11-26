@@ -496,12 +496,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @details
      * - A LIFETIME DECISION, made once: switching to EngineThread starts this engine's frame thread, switching back to
-     *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
-     *   from inside a FrameUpdate::onFrame() call).
+     *   Inline stops and joins it. The switch takes the frame interval first, and joining still waits for an answer
+     *   that is already in flight, so a host may switch between frames (not from inside a FrameUpdate::onFrame() call).
      * - A CALL MADE FROM THE ENGINE'S OWN FRAME THREAD CHANGES NOTHING, because the mode that thread is running under
      *   cannot be ended from inside it (`FrameRunner::stop` answers the same) - and it SAYS SO: the refusal is reported
      *   once per episode (`engine.threading.refused_from_frame`), so a host that asked for a thread is not left
      *   believing its frames moved.
+     * - A CALL FROM ANOTHER HOST THREAD WHILE A FRAME IS BEING BUILT IS REFUSED TOO (`engine.threading.refused_in_flight`,
+     *   once per episode, the mode unchanged): a switch ends by joining the frame thread, so it is an entry that
+     *   belongs between frames - the same interval `frame()` and `prepare()` claim, with the same two refusals
+     *   (`graphics-threading.md` 2.17). Waiting for the frame instead would make a host verb turn into a stall of
+     *   unknown length on whichever thread happened to ask.
      * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
      *   and only the publications, the surface's window half and the device are touched on the other side.
      *
