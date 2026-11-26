@@ -74,8 +74,9 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
  *   range of [0, 1] that this backend reads with the GREATER comparison (see StateMapping::compareOp): a nearer
  *   fragment must own the LARGER stored value.
  * - One matrix carries both parts, exactly as the reference backend's `foldToDeviceClip` does: y is negated
- *   (diag(1, -1, 1, 1) keeps the picture and the front-face rule right, see StateMapping::kFrontFace) and z is
- *   mapped to `0.5 - 0.5 z` (near -1 -> 1, far +1 -> 0, matching the depth the pass clears to).
+ *   (diag(1, -1, 1, 1) makes the picture upright in the device's top-left framebuffer space) and z is
+ *   mapped to `0.5 - 0.5 z` (near -1 -> 1, far +1 -> 0, matching the depth the pass clears to). The winding this
+ *   leaves is stated once, by measurement, in StateMapping::kFrontFace.
  * - FOLDING ONLY Y WAS A DEPTH BUG: the fragments' stored depths kept the OpenGL direction, so with GREATER the
  *   FARTHER fragment won whenever two overlapped. This backend's own tests had stated their depths in the folded
  *   direction, which is why they could not see it; the parity suite, which hands the SAME frame to both backends,

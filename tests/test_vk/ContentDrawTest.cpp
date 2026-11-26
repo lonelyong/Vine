@@ -61,6 +61,7 @@ using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ColorReadback;
+using vn::graphics::CullMode;
 using vn::graphics::DepthPolicy;
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
@@ -185,6 +186,17 @@ layout(location = 0) out vec4 out_color;
 void main()
 {
     out_color = vec4(vn_material.base_color.rgb, vn_draw.params.x * vn_material.base_color.a);
+}
+)";
+
+/// @brief Writes which side the rasteriser says the fragment is on: red = front, green = back.
+constexpr const char8_t* kFacingFragment = u8R"(
+#version 450
+layout(location = 0) out vec4 out_color;
+
+void main()
+{
+    out_color = gl_FrontFacing ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 1.0, 0.0, 1.0);
 }
 )";
 
@@ -757,6 +769,80 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     backend->shutdown();
+}
+
+TEST(VkContentDrawTest, TheFragmentStageSeesTheSdksFrontFace)
+{
+    // THE RULE TWO-SIDED SHADING AND CULLING BOTH STAND ON (review 17 W3): `gl_FrontFacing` must mean the SDK's
+    // counter-clockwise rule. The backend flips Y in the projection, so the winding Vulkan judges is not the winding
+    // the SDK wrote down - and this case is what states the mapping instead of an argument about a flipped coordinate
+    // system. It failed against the old `kFrontFace`: every correctly wound surface was a back face to the shading
+    // (so its normal was turned away from the light) and `CullMode::Back` culled the faces it was told to keep.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFacingFragment);
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+
+    const auto render = [&](const vn::math::Mat4d& model, const RenderState& authored) {
+        DrawItem draw_item(geometry, nullptr, model);
+        draw_item.program              = program;
+        draw_item.program_description  = program->description();
+        draw_item.authored_state       = authored;
+
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        commands->push_back(std::move(draw_item));
+
+        DrawPacket draw;
+        draw.kind        = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands    = commands;
+
+        FrameDescription frame;
+        FrameDescription::Pass entry;
+        entry.pass = vn::test::framePassForTest();
+        PassDraw pass;
+        pass.target                   = target.get();
+        pass.attachment_policy        = AttachmentPolicy{};
+        pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.packets.push_back(std::move(draw));
+        entry.draw = std::move(pass);
+        frame.passes.push_back(std::move(entry));
+        (void)backend->executeFrame(frame);
+
+        const ColorReadback read = backend->readColorImage(target.get(), 0);
+        EXPECT_TRUE(read.ok());
+        return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
+    };
+
+    // The triangle winds counter-clockwise in the picture (bottom left -> bottom right -> top), so the SDK calls the
+    // side the identity camera sees a FRONT face.
+    const std::array<int, 4> front = render(vn::math::Mat4d{}, RenderState{});
+    EXPECT_EQ(front, (std::array<int, 4>{ 255, 0, 0, 255 })) << "the SDK's front face reached the stage as a front face";
+
+    // A MIRRORED placement reverses the winding (a negative scale is legal, see PositionAttitudeTransform), so the
+    // same triangle is a BACK face - which is exactly what a per-draw determinant would have to correct.
+    const std::array<int, 4> back = render(vn::math::scale<double>(-1.0, 1.0, 1.0), RenderState{});
+    EXPECT_EQ(back, (std::array<int, 4>{ 0, 255, 0, 255 })) << "a mirrored placement is a back face";
+
+    // CULLING FOLLOWS THE SAME WORD: `Back` keeps the SDK's front face and drops the mirrored one; `Front` does the
+    // opposite. A pipeline that got the pair wrong culls exactly what it was asked to keep, and the object either
+    // vanishes or shows its interior.
+    RenderState cull_back;
+    cull_back.cullMode = CullMode::Back;
+    EXPECT_EQ(render(vn::math::Mat4d{}, cull_back), front) << "CullMode::Back keeps the SDK's front face";
+    EXPECT_EQ(render(vn::math::scale<double>(-1.0, 1.0, 1.0), cull_back), (std::array<int, 4>{ 0, 0, 0, 255 }))
+        << "CullMode::Back drops a mirrored (back) face";
+
+    RenderState cull_front;
+    cull_front.cullMode = CullMode::Front;
+    EXPECT_EQ(render(vn::math::Mat4d{}, cull_front), (std::array<int, 4>{ 0, 0, 0, 255 }))
+        << "CullMode::Front drops the SDK's front face";
+    EXPECT_EQ(render(vn::math::scale<double>(-1.0, 1.0, 1.0), cull_front), back) << "CullMode::Front keeps the back face";
 }
 
 TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)

@@ -93,7 +93,9 @@
 
 - Vulkan 1.3 floor with `synchronization2` + `dynamicRendering` + EDS1 / EDS3; a device without EDS3 is refused (`vk.init.dynamic_state_missing`).
 - Pipelines are keyed by the attachment SHAPE (formats + sample count) and state no extent: a resize recompiles nothing.
-- push constant 128 B; reverse-Z (far = 0); world CCW vs framebuffer CW ⇒ `frontFace = CLOCKWISE` (`StateMapping::kFrontFace`).
+- push constant 128 B; reverse-Z (far = 0); the SDK's picture-CCW front face is `VK_FRONT_FACE_COUNTER_CLOCKWISE`
+  (`StateMapping::kFrontFace`; measured by `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace`, and the old
+  `CLOCKWISE` value was inverted - see the review-17 follow-up below).
 - X11 / Win32 are measured on hardware; Wayland is implemented against the WSI contract only (backlog T13).
 - One frame in flight per driver (`Impl::kFramesInFlight = 1`), and a driver registers one `DeviceClock` window with that slot count.
 - Retirement window = `slots + 1`; `RetirementQueue::setSlots()` updates in place — do not assign a new queue (that zeroes the counters).
@@ -2772,3 +2774,30 @@ and one verb was neither: a thread-mode change wrote `runner_` beside a frame's 
   compiled into the binary now, following the rule that file already states for the private half.
 - **Verified**: build 0 errors; `test_graphics` 677/677 (84 suites), `test_vk` 223/223 (46), `test_meshio`,
   `test_gui` green; the 12 gates + `--strict` exit 0 (no clang-format binary on this Windows host).
+
+## 2026-11-26 (third) - review 17's follow-up: the front face was inverted all along
+
+The default demo lost its lighting and shadows after W3, and the cause was not the normal rule: it was
+`StateMapping::kFrontFace = CLOCKWISE`.
+
+- **What was wrong.** The SDK's front face is the picture's counter-clockwise polygon. The vk backend's
+  constant said `CLOCKWISE`, on the reasoning that the projection's Y fold turns CCW into CW. A W3-driven
+  pixel probe (`kFacingFragment`: red for `gl_FrontFacing`, green for a back face) measured the opposite:
+  the SDK's front triangle reported GREEN and a mirrored one RED. So every correctly wound surface was a
+  BACK face to the shading - W3 then turned its normal away from the light, which is why the demo's ground
+  and boxes went ambient-only and the shadow term had nothing to darken - and `CullMode::Back` culled the
+  faces it was told to keep.
+- **The fix.** `kFrontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE`, with the reasoning replaced by the
+  measurement. `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace` now pins four facts in pixels:
+  the SDK front reads front, a mirrored placement reads back, `CullMode::Back` keeps the first and drops
+  the second, `CullMode::Front` the other way. `VkStateMappingTest.TheFrontFaceStatesTheSdksCounterClockwiseRule`
+  pins the constant itself; the case that asserted the old value is gone.
+- **What it caught in the tests.** The shadow fixture had been "repaired" by me an hour earlier - its quads
+  re-wound and its light flipped - to make the then-green suite pass under the inverted constant. Reverting
+  that (`makeQuad` faces +z, light travels -z) is what the fixture's own comment always said, and it is
+  front-facing under the measured rule. Lesson recorded: when a fixture has to be re-wound to keep a rule
+  test green, the rule is the suspect.
+- **Demo verified by picture, not by argument**: `Vine.exe --open demo`, window captured before and after
+  (baseline: pre-W3 shaders; fixed: W3 + the constant). Lit faces and the ground's shading are back.
+- **Verified**: `test_vk` 230/230 (46 suites) - the contract case plus the restored shadow fixture;
+  `test_graphics` 677/677; `test_meshio`, `test_gui` green; the 12 gates + `--strict` exit 0.

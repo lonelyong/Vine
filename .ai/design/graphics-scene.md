@@ -89,7 +89,10 @@ is `resolve*` — and a function that composes two steps says so in its comment.
 2.13 **Face orientation is the content's rule, culling is the view's choice** (`G1` `G4` `G6`): a triangle is
 front-facing when its vertices are counter-clockwise to the camera in a right-handed world (`RenderState.hpp`'s
 `CullMode`), and that definition belongs to the SDK, not to a backend's framebuffer convention — each backend maps it onto
-its own front face after its clip fold (`StateMapping::kFrontFace` is `CLOCKWISE` because the vk projection flips Y).
+its own front face after its clip fold, and the vk backend's `StateMapping::kFrontFace` is the constant that agrees with
+`gl_FrontFacing` and with `CullMode` (pinned in pixels by `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace`, not by
+an argument about a flipped coordinate system — that argument had the sign wrong once and every correctly wound surface
+was a back face to the shading).
 The engine's DEFAULT is `CullMode::None`, stated here rather than left implicit in `ResolvedRenderState`: a tessellated
 B-rep face or a bounded sheet is a surface on both sides, so no culling is the safe default for content the engine builds
 itself. A source that STATES the fact is honoured at import (`models::Material::hasDoubleSided` → `CullMode::None` /

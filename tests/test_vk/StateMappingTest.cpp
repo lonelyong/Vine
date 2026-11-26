@@ -39,12 +39,15 @@ TEST(VkStateMappingTest, TheDepthComparisonIsReversedBecauseTheEngineRendersReve
     EXPECT_EQ(StateMapping::compareOp(CompareOp::Always), VK_COMPARE_OP_ALWAYS);
 }
 
-TEST(VkStateMappingTest, TheFrontFaceIsClockwiseBecauseTheProjectionFlipsY)
+TEST(VkStateMappingTest, TheFrontFaceStatesTheSdksCounterClockwiseRule)
 {
-    // The SDK calls a triangle front-facing when it is counter-clockwise in a right-handed world; the vk backend flips
-    // the projection's Y so the picture is upright in Vulkan's top-left framebuffer space, which turns that polygon
-    // into a clockwise one in framebuffer coordinates.
-    EXPECT_EQ(StateMapping::kFrontFace, VK_FRONT_FACE_CLOCKWISE);
+    // The SDK calls a triangle front-facing when it is counter-clockwise in the picture, and this constant is what
+    // makes the device agree. The value is MEASURED rather than reasoned about (review 17): a winding argument across
+    // the projection's Y fold is exactly the argument that gets the sign wrong, and this table briefly carried
+    // `CLOCKWISE` on one - which made every correctly wound surface a back face to the shading (its normal turned
+    // away from the light) and made `CullMode::Back` cull what it was told to keep. The witness is
+    // `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace` (front, back AND both cull directions in pixels).
+    EXPECT_EQ(StateMapping::kFrontFace, VK_FRONT_FACE_COUNTER_CLOCKWISE);
     EXPECT_EQ(StateMapping::cullMode(CullMode::None), VK_CULL_MODE_NONE);
     EXPECT_EQ(StateMapping::cullMode(CullMode::Front), VK_CULL_MODE_FRONT_BIT);
     EXPECT_EQ(StateMapping::cullMode(CullMode::Back), VK_CULL_MODE_BACK_BIT);

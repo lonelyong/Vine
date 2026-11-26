@@ -28,9 +28,15 @@ VN_BACKEND_VK_NS_BEGIN
  *     `CompareOp::Less` ("closer passes") is Vulkan's `GREATER`: a nearer fragment has the LARGER stored value.
  *     Mapping it literally would make every depth test pass backwards.
  *   - THE SDK'S FRONT FACE IS COUNTER-CLOCKWISE IN A RIGHT-HANDED WORLD, and this backend flips Y in the projection
- *     (`foldToDeviceClip`, see ContentDraw) so the picture is upright in Vulkan's top-left framebuffer space. That flip
- *     turns the SDK's CCW into a CLOCKWISE polygon in framebuffer coordinates, which is why @ref kVkFrontFace is
- *     CLOCKWISE.
+ *     (`foldToDeviceClip`, see ContentDraw) so the picture is upright in Vulkan's top-left framebuffer space. Vulkan
+ *     judges the winding with the sign of the polygon's area in FRAMEBUFFER coordinates, whose y axis points DOWN, so
+ *     the SDK's counter-clockwise front face is the device's COUNTER-CLOCKWISE polygon - the two names agree, and
+ *     @ref kFrontFace states the same word as the SDK.
+ *     THIS WAS MEASURED, NOT DERIVED (review 17: `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace`): the old
+ *     value was CLOCKWISE on the reasoning that the Y flip turns CCW into CW, and the case showed `gl_FrontFacing`
+ *     reporting FALSE for an SDK front face and TRUE for a mirrored one - which also made every `CullMode::Back` cull
+ *     the face it was told to keep. A winding argument about a coordinate system that flips is exactly the argument
+ *     that gets the sign wrong; a pixel does not.
  * - A value this header does not know (a new enumerator) falls back to the least surprising choice and is meant to be
  *   added here: the switches name every SDK value, so adding one makes the compiler point at this file.
  */
@@ -42,7 +48,7 @@ struct StateMapping {
      * - A single constant rather than a function: the SDK has ONE front-face convention, and a backend that flipped it
      *   per draw would be a second convention nobody asked for.
      */
-    static constexpr VkFrontFace kFrontFace = VK_FRONT_FACE_CLOCKWISE;
+    static constexpr VkFrontFace kFrontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     /**
      * @brief Gets the Vulkan comparison for an SDK depth comparison (reverse-Z, see the file note).

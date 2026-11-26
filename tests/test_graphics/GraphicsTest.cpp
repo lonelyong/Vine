@@ -12310,12 +12310,17 @@ TEST(CameraSnapshotTest, AnOrthographicPicturePicksWhatItShows)
     // pins: the ray started at clip 0 - the MIDDLE of an orthographic depth range - so a model fitted at its own
     // distance sat BEHIND the ray's origin and every pick answered "nothing" on the default GUI path
     // (SurfaceWindow hands the answered frame's snapshot to the manipulator).
+    //
+    // AN OFF-CENTRE PIXEL, deliberately: a CENTRE pixel's ray passes through the eye, so the old code fell back to the
+    // eye as the origin and was accidentally right there - measured, that mutation leaves the centre case green while
+    // the origin sits 50.05 deep (half of 0.1..100). An off-centre line has no eye on it, so the origin is whatever the
+    // projection says, which is what makes this case discriminate.
     auto scene = intrusive_ptr<Scene>(new Scene());
     auto root  = setIdentityRoot(*scene);
-    // The unit triangle spans +x/+y from its node's origin and the centre pixel's ray passes through (0, 0), so the
-    // offset puts its interior on the ray. Depth 10 from the eye is inside the near HALF of the 0.1..100 range -
-    // exactly where the old middle-of-the-range origin cut the picture away.
-    root->addChild(makeTriangleNode(Vec3d(-0.1, -0.1, -5.0), nullptr, u8"fitted"));
+    // The unit triangle spans +x/+y from its node's origin. Screen (0.2, 0.8) of this window is the view-space point
+    // (-2.4, -1.8), so the offset puts the triangle's interior exactly under that pixel. Depth 10 from the eye is
+    // inside the near HALF of the 0.1..100 range - where the middle-of-the-range origin cut the picture away.
+    root->addChild(makeTriangleNode(Vec3d(-2.5, -1.9, -5.0), nullptr, u8"fitted"));
 
     auto camera = intrusive_ptr<Camera>(new Camera());
     camera->setOrthographic(-4.0, 4.0, -3.0, 3.0, 0.1, 100.0);
@@ -12324,10 +12329,11 @@ TEST(CameraSnapshotTest, AnOrthographicPicturePicksWhatItShows)
     const CameraSnapshot       picture = CameraSnapshot::of(*camera);
     Vec3d                      origin;
     Vec3d                      direction;
-    ASSERT_TRUE(picture.screenRay(Vec2d(0.5, 0.5), origin, direction));
+    ASSERT_TRUE(picture.screenRay(Vec2d(0.2, 0.8), origin, direction));
+    EXPECT_NEAR(origin.z, 5.0 - camera->nearPlane(), 1e-9) << "the ray starts at the near plane, not mid-range";
     const vn::geom::spatial::Rayd ray(vn::math::Point3d(origin.x, origin.y, origin.z), direction);
     const RayIntersectionResult  hit = RayIntersection::intersectScene(ray, scene.get());
-    ASSERT_TRUE(hit.hit) << "the picture's centre pixel shows the triangle, so a pick through it must reach it";
+    ASSERT_TRUE(hit.hit) << "the picture's pixel shows the triangle, so a pick through it must reach it";
     EXPECT_NEAR(hit.point.z, -5.0, 1e-9);
 }
 
