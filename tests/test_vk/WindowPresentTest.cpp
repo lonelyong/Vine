@@ -29,6 +29,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/Device.hpp>
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
@@ -367,6 +368,59 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
         << "validation reported something on the window path";
+
+    backend->shutdown();
+#endif
+}
+
+TEST(VkWindowPresentTest, AFrameWhoseSubmitIsRefusedGivesItsImageBackAndTheNextOnePresents)
+{
+#if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
+    GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
+#else
+    // THE ACQUIRED IMAGE IS A PAIR OR IT IS A LEAK (see Device's `giveBackWindowImage`): a frame that dies after
+    // `vkAcquireNextImageKHR` - here the queue refuses the submit - hands the image back through
+    // `WindowTarget::abandonFrame`, and the NEXT frame has to acquire again. That acquire hands the semaphore
+    // `vkAcquireNextImageKHR` an UNSIGNALLED one (VUID-vkAcquireNextImageKHR-semaphore-01286), which is why the chain - and
+    // the acquire semaphore with it - is rebuilt: the abandoned acquire's signal was never consumed by a submit.
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
+    }
+    TestHostWindow window(display, kWindowWidth, kWindowHeight);
+    if (window.handle() == nullptr) {
+        GTEST_SKIP() << "a host window could not be created on this desktop";
+    }
+    ASSERT_TRUE(window.wasViewableAtCreation()) << "the fixture waits for a viewable window before a case presents anything";
+
+    const DeviceDesc desc{ DevicePresentation::Handle, window.handle() };
+    auto             backend = RenderBackendRegistry::instance().create(u8"vk", desc);
+    ASSERT_NE(backend, nullptr) << "the factory did not answer the vk backend";
+
+    SurfaceTargetResult                            result = SurfaceTargetResult::NoPresentation;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(window.handle(), &result);
+    ASSERT_NE(target, nullptr) << "createSurfaceTarget answered " << static_cast<int>(result);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    // 1. A FRAME THAT NEVER REACHED THE QUEUE: the acquired image is given back and the picture is reported Lost (the
+    //    outcome a host acts on), while the device itself stays up.
+    device->refuseNextSubmit();
+    EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Skipped)
+        << "a frame that never reached the queue has no picture to report (and gives its image back)";
+    EXPECT_TRUE(backend->initialized()) << "a refused submit is not a lost device";
+
+    // 2. THE NEXT FRAME ACQUIRES AGAIN and presents. The semaphore state is what this pins: re-signalling the one the
+    //    abandoned acquire left signalled is the illegal reuse, and the validation layer names it here.
+    EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Presented)
+        << "an abandoned acquire left the window unusable for the frame after it";
+    EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Presented);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "validation reported something on the window path after an abandoned frame";
 
     backend->shutdown();
 #endif

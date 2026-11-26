@@ -119,6 +119,27 @@ struct WindowTarget::Impl {
         image_layouts.assign(images.size(), ImageLayout::Undefined);
         depth_layout = ImageLayout::Undefined;
         views.resize(images.size(), VK_NULL_HANDLE);
+
+        // THE ACQUIRE SEMAPHORE IS REBUILT WITH THE CHAIN, AND THAT IS THE REPAIR FOR AN ABANDONED FRAME: `abandonFrame`
+        // gives the acquired image back without presenting it, so the signal `vkAcquireNextImageKHR` left on this
+        // semaphore is never consumed - and the next acquire requires an UNSIGNALLED one
+        // (VUID-vkAcquireNextImageKHR-semaphore-01286). Every path here ran after `destroySwapchainWhenIdle`, so nothing
+        // waits on the old object and destroying it is legal.
+        if (image_available != VK_NULL_HANDLE) {
+            device.table->vkDestroySemaphore(device.device, image_available, nullptr);
+            image_available = VK_NULL_HANDLE;
+        }
+        {
+            VkSemaphoreCreateInfo acquire_info{};
+            acquire_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            if (device.table->vkCreateSemaphore(device.device, &acquire_info, nullptr, &image_available) != VK_SUCCESS) {
+                image_available = VK_NULL_HANDLE;
+                if (why != nullptr) {
+                    *why = vn::String(u8"vk: the window's acquire semaphore could not be created");
+                }
+                return false;
+            }
+        }
         for (std::size_t index = 0; index < images.size(); ++index) {
             VkImageViewCreateInfo view{};
             view.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -446,21 +467,9 @@ bool WindowTarget::attach(const WindowDevice& device, vn::String* why)
         return false;
     }
 
-    // THE ACQUIRE SEMAPHORE lives as long as the target (the swapchain can be rebuilt under it): the submit waits on
-    // it and the fence wait below that makes it free again, so one is enough. The present-wait pair is per IMAGE and
-    // is created with the swapchain's objects (see render_finished).
-    if (impl->image_available == VK_NULL_HANDLE) {
-        VkSemaphoreCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (device.table->vkCreateSemaphore(device.device, &info, nullptr, &impl->image_available) != VK_SUCCESS) {
-            if (why != nullptr) {
-                *why = vn::String(u8"vk: the window's acquire semaphore could not be created");
-            }
-            impl->attached = false;
-            return false;
-        }
-    }
-
+    // THE ACQUIRE SEMAPHORE IS CREATED WITH THE SWAPCHAIN'S OBJECTS (see createSwapchainObjects), because it has to be
+    // rebuilt whenever the chain is: an abandoned acquire (see abandonFrame) leaves it signalled, and a rebuild is the
+    // moment that signal is retired.
     if (!impl->createSwapchain(why)) {
         impl->attached = false;
         return false;
