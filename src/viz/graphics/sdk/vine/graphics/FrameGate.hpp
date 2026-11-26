@@ -40,8 +40,8 @@ VN_GRAPHICS_NS_BEGIN
  *   which gates this thread holds and which side of each - `heldByThisThread` and `inSharedEntry` are answered from
  *   it, without a lock and without asking the gate's own state (which says nothing about the CALLER).
  * - THE COUNTERS ARE THE WITNESS. `acquisitions` counts the entries taken (a refused re-entry is not one), and `waits`
- *   counts the entries that had to block first - measured the same way in both backends, by trying the lock before
- *   blocking on it, so "a steady frame never waited for a host verb" is a number rather than a claim.
+ *   counts the entries that had to block first, told apart from an entry that never contended by trying the lock
+ *   before blocking on it, so "a steady frame never waited for a host verb" is a number rather than a claim.
  *
  * @warning
  * - The gate orders frame bodies against host verbs. It does not make the device's tables thread-safe in general: two

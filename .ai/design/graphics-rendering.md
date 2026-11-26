@@ -219,7 +219,7 @@ with `VkPipelineRenderingCreateInfo` + `renderPass = VK_NULL_HANDLE` from the at
 2.11 **The pipeline identity is one value, and a backend adds only what its device cannot move** (`G1` / `G6`;
 [`ADR-2026-11-21`](../decisions/ADR-2026-11-21-state-identity-and-vertex-format.md)):
 
-- `vn::graphics::PipelineKey` is the PORTABLE identity both backends key a compiled pipeline by: draw kind, program
+- `vn::graphics::PipelineKey` is the PORTABLE identity a backend keys a compiled pipeline by: draw kind, program
   identity + revision, the vertex layout, render-pass compatibility, the sampled depth/colour counts, the program
   variant and the topology class. Its `vertex_layout` is **one slot per declared attribute, in binding order, with
   the slot's component count** - a locations-only key shared one compiled pipeline between a 2-component and a
@@ -511,6 +511,13 @@ See `../backlog/graphics.md`; open items stay by trigger condition.
 ### 9.3 Compatibility / migration
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
+
+2026-11-26 - the frame's three workload counts have one width (`BC-45`): `FrameCounts`, `PrepareReport`, `FrameResult`
+and `FrameCounters` all use `std::uint64_t` for `passes` / `draw_packets` / `draws`, and `drawItemsOf` no longer clamps a
+packet's draw count to 32 bits. Why: the asked workload and the recorded frame described the same three numbers in two
+widths, so a host comparing them needed a cast and an oversized packet could saturate silently (`G4` / `G6` / `G10`).
+What a host must change: recompile every backend module - `PrepareReport` crosses the seam, so
+`VN_RENDER_BACKEND_ABI_VERSION` moved to `3u`; a host that stored these fields in a 32-bit variable widens it.
 
 2026-11-25 - the pass-input header is named after what a host writes (`BC-44`): `ImageSource.hpp` is <!-- drift-ok -->
 `ImageInput.hpp`, and the include path moves with it (`<vine/graphics/ImageInput.hpp>`). Why: the file

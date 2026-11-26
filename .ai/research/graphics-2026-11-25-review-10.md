@@ -198,8 +198,12 @@ already tells a developer to follow a sentence that no longer matches it.
   seven-field provenance table: `StateResolution.hpp:71` (`RenderStateOrigin`) with one `StateOrigin` per item,
   written at `StateResolution.cpp:96-132` through the `take()` helper. Its own doc claims the table "turns
   'why is this drawn in Line?' from a code-reading exercise into a fact".
-- **Who reads it.** Nobody outside the tests. Every `.origin` read in the tree is
-  `tests/test_graphics/GraphicsTest.cpp:9601-11058`; the two backend call sites of `resolveRenderState`
+- **Who reads it.** Nobody outside the tests. At the page's verified tree (`1d817fd4`),
+  `git grep -nE 'resolved\.origin|topology_origin' -- src tests` answers `GraphicsTest.cpp` (the readers) plus the
+  field and its writer in `StateResolution.hpp` / `StateResolution.cpp` - the `DiagnosticOrigin` hits name a
+  different concept. `L3` later deleted those fields, so at HEAD the same grep only finds the `BC-43` changelog in
+  `BackendAbi.hpp`; the evidence therefore names the tree it was taken on. The two backend call sites of
+  `resolveRenderState`
   (`ContentCaches.cpp:1148,1240`) and every other consumer of `ResolvedCommandState` (`ContentDraw.cpp`,
   `FrameHead.hpp`) read `.state` / `.topology` only. No report part, no `FrameTable` row, no host accessor and
   no debug view exposes it, so the sentence above is false today.
@@ -324,7 +328,7 @@ ride an existing batch.
 | 1 | `L1` + `L2`: rewrite 2.11's rows as decision-site + grep, add the four missing rows, strip or label the two stale numbers | doc-only | the three doc gates; `measure_graphics_claims.py` for the two counts |
 | 2 | `L4`: the closed/open lists as one design point, and 2.11's criterion restated | doc-only, after 1 | the same gates |
 | 3 | `L3`: decide `origin` - delete, or give it a report part | code, ABI bump if deleted | a `GraphicsTest` case either way (`ResolveTest` today holds the only readers); `test_graphics` + `test_vk` |
-| 4 | `L5`: the default-verb rule in the `RenderDevice` class note; `releaseRenderTarget`'s sentence or its pure form | comment now, ABI batch later | rides the next seam change |
+| 4 | `L5`: the default-verb rule in the `RenderDevice` class note; `releaseRenderTarget`'s sentence or its pure form | comment now; the sentence was taken, so no ABI batch is owed (decided 2026-11-26) | rides the next seam change |
 | 5 | `L7`: the granularity rule, beside the guide's index | doc-only | doc gates |
 | 6 | `L6`: `ImageSource.hpp` → `ImageInput.hpp` | public-API batch | `BC#` note; `check_public_docs.py` |
 
@@ -342,23 +346,37 @@ is a new mechanism without a consumer today.
   `SEAM_SHARED_HEADERS`; the two `test_vk` counts name `measure_graphics_claims.py`). `L4`: new 2.17 states the
   closed / open / configurable split. `L7`: new 2.18 states the header granularity and naming rule.
 - `4140cd15` - `L3`: `StateOrigin`, `RenderStateOrigin`, `ResolvedCommandState::origin` and `::topology_origin`
-  deleted (`BC-43`), `VN_RENDER_BACKEND_ABI_VERSION` to `2u`, the 19 test assertions removed and the two tests
-  restated, `graphics-scene.md` 2.3 / 2.12 / F11 and the guide's §3 aligned.
+  deleted (`BC-43`), `VN_RENDER_BACKEND_ABI_VERSION` to `2u`, the `origin` assertions removed and the two tests
+  restated to read `.state` (`git show --numstat 4140cd15 -- tests/test_graphics/GraphicsTest.cpp` answers `6 31`),
+  `graphics-scene.md` 2.3 / 2.12 / F11 and the guide's §3 aligned.
 - `7990b2d9` - `L5`: the default-verb rule in `RenderDevice`'s class note, `releaseRenderTarget`'s sentence, and
   2.15 pointing at that sentence as the rule's one home.
 - `a8569946` - `L6`: `ImageSource.hpp` -> `ImageInput.hpp` (`BC-44`).
 
-Two of the plan's steps changed shape, and the reason is the §1.2 rule of evidence:
+Three of the plan's steps changed shape, and the reason is the §1.2 rule of evidence:
 
 - **`L2`'s regex gate was withdrawn.** Measured before writing it: ~40 legitimate sites read
   `SomeTest.cpp (N cases)`, so a `check_design_docs.py` rule would fire on them and be switched off - worse than
   none (that is `G8` applied to a gate). The rule is the writer's, and the three stale counts are gone.
 - **`L7` needed no file moves.** 2.18 states the rule and the guide's §5.1 table stays the index; moving 101
   headers would be churn (`G8`), which is what the finding itself said.
+- **`L5`'s second half was decided, not deferred.** The finding offered a sentence or a pure verb; the batch gave the
+  sentence, so `releaseRenderTarget`'s default is a stated legal answer for a device that builds no per-target state,
+  and no ABI batch is owed for it. §5's step-4 row now records the outcome rather than the original plan.
 
 `L3` was decided as (b) - delete - because no debug view is planned and the state table's prose already says the
 priority; the review's own recommendation.
 
+**Corrected 2026-11-26.** This round left one sentence of its own defect class behind and wrote another: `DrawKind.hpp`'s
+@note still sent a reader to the OLD row shape and still said "both backends' frame compilers", and 2.17 (written by
+`L4` here) said each backend maps a closed set "in its own switch", which holds for `Topology` alone - `DrawKind` has no
+switch at all, which is the very reason its row is a grep. Both are fixed, and the same class elsewhere in the corpus
+was fixed with them (`graphics-sessions.md` C3 and `graphics-shader-params.md` §9.1 counted two backends; so did six SDK
+sentences in `MaterialAbi.hpp`, `LightSet.hpp`, `FrameGate.hpp` and `FrameDescription.hpp`). The rule applied: a public
+sentence states the RULE and the ONE place that enforces it - a rule, a function, one computation - never how many
+implementations existed when it was written. This page's own evidence was corrected the same way: the `.origin` readers
+are named by the `git grep` above instead of a line range (the range given, 9601-11058, skipped the reads at 9192-9306),
+and "19 assertions" was wrong (the diff answers `6 31`).
 
 ## 6. Verification recipes
 

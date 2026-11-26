@@ -1,9 +1,7 @@
 #pragma once
 #include "graphics_global.hpp"
 
-#include <algorithm>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -323,13 +321,13 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
  * @brief Whether @p description is a draw packet a recorder ISSUES (see FrameCounts::draw_packets).
  *
  * @details
- * - THE ONE DEFINITION the two backends and the reports share. A packet is issued when its own value says so - it is
+ * - THE ONE DEFINITION the counts and the recorder share. A packet is issued when its own value says so - it is
  *   NOT about the GPU commands inside it (one drawable is one command whatever its primitives):
  *   - a packet with no camera (`view.present == false`) issues nothing - the pass said it has no view to build;
  *   - a full-screen packet needs a program (the object or its text) - without one there is nothing to run;
  *   - a scene packet needs commands - an empty list draws nothing.
  * - IT IS INLINE ON PURPOSE: a predicate over a value header must not become an exported symbol every backend links
- *   against, and it is what keeps "which packet counts" a single sentence instead of one per backend.
+ *   against, and it is what keeps "which packet counts" a single sentence instead of one per caller.
  *
  * @param description The draw packet as a frame describes it.
  * @return true when @p description is a packet a recorder issues.
@@ -375,33 +373,35 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
  * @brief The COUNTS a frame asks for: the passes that have an effect, their draw packets, and the draws inside them.
  *
  * @details
- * - ONE PLACE COMPUTES IT, so the two backends cannot report different counts for the same frame (they used to: one
- *   counted frame entries, the other compiled passes, and `FrameCounters` counted a third thing). `PrepareReport`'s
- *   `passes` / `draw_packets` / `draws` are this value; a recorded frame's `FrameCounters` follows the same rule.
+ * - ONE PLACE COMPUTES IT (`frameCountsOf`, below), so the prepare report and a recorded frame apply the same
+ *   rule. They answer different questions when a pass cannot be built: this value is the ASKED workload (a pass
+ *   whose target cannot be built still counts), while a recorded frame's `FrameCounters` counts the scopes that ran.
  * - THREE NUMBERS, THREE QUESTIONS: `passes` counts the passes with an effect, `draw_packets` counts the requests
  *   those passes issue (one per pass and view, see DrawPacket), and `draws` counts the `DrawItem`s those packets
  *   submit - the number a profiler calls a draw call. A pass that draws fifty drawables through one view issues ONE
  *   packet whose `draws` is FIFTY.
  * - IT IS THE ASKED WORKLOAD, not what a backend managed to build: a pass whose target cannot be built still counts
  *   here, and the report's `halves` / `pipelines` / ... are what say how much of it became objects.
+ * - ONE WIDTH FOR ONE COUNT: all three are `std::uint64_t`, the width `FrameCounters` and `FrameResult` use, so the
+ *   asked workload and the recorded frame can be compared without a cast and neither can saturate silently.
  */
 struct VN_GRAPHICS_API FrameCounts {
-    std::uint32_t passes{ 0 };       ///< Passes that draw something or clear something.
-    std::uint32_t draw_packets{ 0 }; ///< Draw packets those passes issue (one per pass and view).
-    std::uint32_t draws{ 0 };        ///< Draw items those packets submit (a full-screen packet submits one).
+    std::uint64_t passes{ 0 };       ///< Passes that draw something or clear something.
+    std::uint64_t draw_packets{ 0 }; ///< Draw packets those passes issue (one per pass and view).
+    std::uint64_t draws{ 0 };        ///< Draw items those packets submit (a full-screen packet submits one).
 };
 
 /**
  * @brief Gets how many draws ONE packet submits (0 when it issues nothing).
  *
  * @details
- * - The one definition the two backends use to fill `FrameCounts::draws`: a scene packet submits its command list's
- *   size, a full-screen packet submits one full-screen draw.
+ * - The one definition used to fill `FrameCounts::draws`: a scene packet submits its command list's size, a
+ *   full-screen packet submits one full-screen draw.
  *
  * @param description The draw packet as a frame describes it.
  * @return The draws it submits.
  */
-[[nodiscard]] inline std::uint32_t drawItemsOf(const DrawPacket& description) noexcept
+[[nodiscard]] inline std::uint64_t drawItemsOf(const DrawPacket& description) noexcept
 {
     if (!packetDraws(description)) {
         return 0U;
@@ -409,8 +409,7 @@ struct VN_GRAPHICS_API FrameCounts {
     if (description.kind == DrawKind::Fullscreen) {
         return 1U;
     }
-    const std::size_t items = description.commands->size();
-    return static_cast<std::uint32_t>(std::min<std::size_t>(items, std::numeric_limits<std::uint32_t>::max()));
+    return static_cast<std::uint64_t>(description.commands->size());
 }
 
 /**
@@ -426,8 +425,8 @@ struct VN_GRAPHICS_API FrameCounts {
         if (!entry.draw.has_value()) {
             continue; // it announced nothing at all - not even a target (see Pass)
         }
-        std::uint32_t packets = 0U;
-        std::uint32_t draws   = 0U;
+        std::uint64_t packets = 0U;
+        std::uint64_t draws   = 0U;
         for (const DrawPacket& description : entry.draw->packets) {
             if (!packetDraws(description)) {
                 continue;

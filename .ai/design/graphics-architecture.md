@@ -56,8 +56,8 @@ removing an unregistered pass and removing an already removed pass are the same 
     `shutdown` / `device` / `createArea` and the forwarding of reports). Why: these mechanisms each have their own state and failure modes; inside the composition root,
     changing the threading policy touched 9 files and adding one wiring check meant a paragraph in a 1500-line header (`G5` / `G12`). Boundary: a new **mechanism** belongs to `detail::`,
     not to `RenderEngine`; `FramePump` only answers "where does the other half run, when does it answer", `SessionShape` only "what does this frame run, in what order,
-    where is it wired wrong", `SurfaceLedger` only "which target does this frame land on, what is the size" — each has a consumer today (two threading modes, two backends'
-    compilation comparison, one engine one surface), none is a pre-built abstraction (`G8`).
+    where is it wired wrong", `SurfaceLedger` only "which target does this frame land on, what is the size" — each has a consumer today (two threading modes, the
+    plan's diff and the frame's compile, one engine one surface), none is a pre-built abstraction (`G8`).
     One terminology discipline comes with it: `PlanRefusal::Busy` means "**a frame is recording in the engine**"; the SDK has **no** `Session` type today,
     and needs none: **one engine drives one surface** ([ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)), `Session` only names the execution side of one engine as a design
     term. Documentation and new interfaces no longer refer to a type that does not exist.
@@ -123,7 +123,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 
 | Extension point | Decision site (the one place the new value is written) | Propagation rule |
 |---|---|---|
-| A **pass kind** | `DrawKind.hpp`'s `DrawKind` | `grep -rn 'DrawKind::' src` - the plan's validation and describe, the kind → node mapping (`SessionShape.cpp`), the frame value's expansion, each pass class, and each backend's frame compiler and recorder; a new node class follows `FullscreenPass.cpp` |
+| A **pass kind** | `DrawKind.hpp`'s `DrawKind` | `grep -rn 'DrawKind::' src` - the plan's validation and describe, the kind → node mapping (`SessionShape.cpp`), the frame value's expansion, each pass class, and the backend's frame compiler and recorder; a new node class follows `FullscreenPass.cpp` |
 | A **pass stage** | `PassStage.hpp` (and `passStageOrder`'s switch) | the preset recipes that place passes (`ChainBuilder.cpp`), and the pass whose stage it is |
 | A **topology** | `Topology.hpp` (and `isTriangleTopology`) | `TriangleStream.hpp`'s `triangleCountOf` / `triangleCorners`, each backend's mapping (vk `StateMapping.hpp`), and "one pipeline per enum value" |
 | A **built-in view mode** | `ShadingMode.hpp` | the switch in `PassChain::setShadingMode`, and the program it selects in `BuiltinShaders.cpp` (a new GLSL text is registered there) |
@@ -220,9 +220,9 @@ removing an unregistered pass and removing an already removed pass are the same 
       pool itself accounted) - landed 2026-11-23 **ahead of** its consumer on an explicit go, because the shape was
       already decided here and the reader the number serves (a HUD, a budget gate, a trim decision) reads it the same
       way on every backend.
-    Boundary: this decides what may be PUBLIC, not what a backend may HAVE. A mechanism both backends use is a fact about the
-    backends, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a second CONSUMER is
-    what moves a mechanism there, which is a different trigger from "a second backend exists".
+    Boundary: this decides what may be PUBLIC, not what a backend may HAVE. A mechanism shared across backends is a fact
+    about the backend side, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a
+    second CONSUMER is what moves a mechanism there, which is a different trigger from "a second backend exists".
 
 2.16 **A module that compiles against the SDK states the revision it was built against** (ABI, `G4` / `G6` / `G11`): the
     backend interfaces are virtual classes with no explicit ABI, so a change to one is invisible until a stale module's call
@@ -251,7 +251,7 @@ removing an unregistered pass and removing an already removed pass are the same 
     integrator asks, and the answer is a split, not a policy of "no".
     * **CLOSED** - edited by the framework, at the decision site 2.11 names: `DrawKind` (two values), `PassStage`,
       `Topology`, `ShadingMode`, the pixel-format table, `DiagnosticCategory`. A closed set is *why the model is small*
-      and why a backend can map it exhaustively; adding a member is an ordinary batch (2.11's propagation rule, plus an
+      and why its mapping fits in one place; adding a member is an ordinary batch (2.11's propagation rule, plus an
       ABI bump when a value crossing the seam changes), not a refactor.
     * **OPEN** - what a host extends without the framework changing: a pass is a declaration (`PassDesc`, whose target,
       inputs, program, viewport, state and hook are all data), a program is supplied (`PassDesc::program` /
@@ -262,8 +262,11 @@ removing an unregistered pass and removing an already removed pass are the same 
     Why: every peer states this split and makes it part of its answer (WebGPU's closed `GPUPrimitiveTopology` beside an
     open pipeline descriptor; Filament's five shading models beside material data compiled offline). Here it was only
     inferable from four enum @notes, and 2.11's criterion read as a ban on ever adding a member. Boundary: closed is a
-    decision about the MODEL, not about a backend - each backend maps the closed set in its own switch, and a closed
-    member's propagation is 2.11's grep. An extension point that would need a new member of a closed set *and* a change
+    decision about the MODEL, not about a backend, and the mapping lives where it is WRITTEN - vk maps `Topology` in one
+    switch (`StateMapping.hpp`; no `default`, so a new value is a compiler warning), `PassStage`'s order is a constexpr
+    switch beside the enum, `ShadingMode`'s program choice is `PassChain`'s - while `DrawKind` has none (name comparisons),
+    which is why its row is a grep rather than "the compiler will tell you". A closed member's propagation is
+    2.11's grep. An extension point that would need a new member of a closed set *and* a change
     to `FrameDescription`'s shape is a refactor and goes through an ADR (2.11's criterion).
 2.18 **A public header is named after what a host writes** (`G12` / `G4`): the file takes the name of the value a host
     constructs or subclasses, not of the value the engine derives from it, and it holds one concept - unless its parts

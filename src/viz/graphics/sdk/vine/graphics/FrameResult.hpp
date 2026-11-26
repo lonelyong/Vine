@@ -56,12 +56,12 @@ struct VN_GRAPHICS_API FrameResult {
     /// The world the picture saw: the publication it drew and the view it was taken with.
     FrameQuery query{};
     /// Enabled passes the frame ran.
-    std::uint32_t passes{ 0 };
+    std::uint64_t passes{ 0 };
     /// Draw packets those passes issued - one per pass and view (see DrawPacket); a pass that issued none counts 0
     /// here, as it does in the frame table.
-    std::uint32_t draw_packets{ 0 };
+    std::uint64_t draw_packets{ 0 };
     /// Draws those packets submitted (what a profiler calls draw calls).
-    std::uint32_t draws{ 0 };
+    std::uint64_t draws{ 0 };
     /// Diagnostics this engine reported while the frame was built and answered.
     std::uint64_t diagnostics{ 0 };
 

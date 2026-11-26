@@ -1,7 +1,7 @@
 # graphics review 11: 三维概念、规范与语义
 
-> **Status**: draft, non-authoritative — 工作记录。§2 是源码实际陈述的三维约定，§3 是发现，§4 是不建议照搬的对标项，§5 是建议顺序，§6 是复核命令。本轮除本页外不改任何文件；每条发现都留给 owner 决策。
-> **Last verified**: 2026-11-25, tree `9829e682` on `dev`（工作区干净）。
+> **Status**: draft, non-authoritative — 工作记录。§2 是源码实际陈述的三维约定，§3 是发现，§4 是不建议照搬的对标项，§5 是建议顺序，§6 是复核命令。本轮除本页与本页的索引登记外不改任何文件；每条发现都留给 owner 决策。
+> **Last verified**: 2026-11-26, tree `9829e682` on `dev`（V5 已复核：`return {}` 是单位矩阵，不是零矩阵）。
 > **Scope**: 前十轮审查分别走了实现质量(7)、增量编辑/线程(6)、seam 概念(8)、vk 后端系统(9)、规范语料/概念清单/扩展面(10)，**没有任何一轮把三维语义本身当审查维度**。本轮只看：空间与矩阵约定、相机/投影/拾取、变换层级、几何与光照材质的三维语义。不重走 6–10 的线程、帧机制、后端系统、概念盘点。
 > **Sources**: `src/viz/graphics/sdk/vine/graphics/*.hpp`、`src/viz/graphics/src/**`、`src/viz/graphics/shaders/**`、`src/plugins/gfx_backend_vk/src/internal/**`、`src/base/math/**`、`tests/test_graphics/**`、`tests/test_vk/**`、`.ai/design/graphics-*.md`、`.ai/decisions/**`。
 > **Backlog**: 本轮不擅自加条目；§5 列出候选，`T#` 编号留给 owner。
@@ -10,7 +10,7 @@
 
 ## 1. 为什么需要这一轮
 
-一个图形模块可以在工程意义上完全自洽——seam 干净、帧值不可变、诊断齐全、ABI 有单一声明——同时在**三维语义**上错误：法线用错矩阵、镜像翻转剔除面、无设法线的高亮读到未定义输入、相机退化时静默产出零矩阵、光照单位与导入格式不一致。这类错误不会被 review 9/10 的"一个概念一个 owner / 规范是否描述树"发现，因为它们的 owner 存在、拼写也一致，错的是**数学含义**。
+一个图形模块可以在工程意义上完全自洽——seam 干净、帧值不可变、诊断齐全、ABI 有单一声明——同时在**三维语义**上错误：法线用错矩阵、镜像翻转剔除面、无设法线的高亮读到未定义输入、相机退化时静默退回单位视图、光照单位与导入格式不一致。这类错误不会被 review 9/10 的"一个概念一个 owner / 规范是否描述树"发现，因为它们的 owner 存在、拼写也一致，错的是**数学含义**。
 
 本轮问三个问题：
 
@@ -38,7 +38,7 @@
 |---|---|---|
 | 世界 | 右手、默认 up `(0,1,0)`、相机默认 eye `(0,0,5)` 看向 `(0,0,0)`；**无世界单位声明** | `Camera.hpp:250-252`、`Camera.cpp:11-15` |
 | 世界 CCW | 正面为世界空间逆时针；vk framebuffer 下翻后 → `frontFace = CLOCKWISE` | `StateMapping.hpp:32,44`、`ContentCaches.cpp:780` |
-| 视图 | `lookAt` 行基（right/up/backward），相机看向视图 −Z；eye==target 时返回**零矩阵** | `Transform3.cpp:61-115`（`68-70` 退化路径） |
+| 视图 | `lookAt` 行基（right/up/backward），相机看向视图 −Z；eye==target 时返回**单位矩阵**（相机静默回到原点看向 −Z） | `Transform3.cpp:61-115`（`68-70` 退化路径） |
 | 裁剪（SDK） | 经典 GL：x/y ∈ [−1,1]、z ∈ [−1,1]，near = −1、far = +1 | `Camera.hpp:38-43`、`Transform3.hpp:280-296` |
 | 裁剪（vk 设备） | `fold = diag(1,−1,−0.5)` + `z'=0.5−0.5z`：y 下翻、reverse-Z、near = 1、far = 0 | `ContentDraw.cpp:87-93` |
 | 视锥剔除 | 从 SDK 的 `P*V` 用 Gribb–Hartmann 行提取六面；p-vertex 测 AABB | `Frustum.hpp:39-82` |
@@ -96,11 +96,11 @@
 
 ---
 
-### V5（相机语义 / 中高）：退化相机静默产出零矩阵，视锥参数无校验，存储的 up 不是实际基
+### V5（相机语义 / 中高）：退化相机静默退回单位视图，视锥参数无校验，存储的 up 不是实际基
 
-**证据**：`Transform3.cpp:68-70` 中 `eye == target` 直接 `return {}`，`Camera.cpp:34-40` 原样接受；`setPerspective()`（`Camera.cpp:42-48`）不检查 `fovy`、`zNear>0`、`zFar>zNear`，`setOrthographic()`（`:50-62`）不检查左右/上下/近远顺序。对照 `setAspect()`（`:129-134`）明确忽略非正值并有测试（`GraphicsTest.cpp:1033-1036`）——同一类的校验风格在视锥参数上缺席。`Camera.cpp:38` 只把传入 up 归一化后存起来，但 `lookAt` 在 up 与视线平行时**另选参考轴**（`Transform3.cpp:76-96`），`up()` 于是报告的不是视图矩阵实际使用的 up；`CameraSnapshot::up` 把该值带给 `AutoTransform.cpp:250` 的 billboard 朝向。
+**证据**：`Transform3.cpp:68-70` 中 `eye == target` 直接 `return {}`；`Matrix4x4` 的默认构造是单位矩阵（`Matrix4x4.hpp:60-66`），所以这里得到的是恒等视图，不是零矩阵；`Camera.cpp:34-40` 原样接受；`setPerspective()`（`Camera.cpp:42-48`）不检查 `fovy`、`zNear>0`、`zFar>zNear`，`setOrthographic()`（`:50-62`）不检查左右/上下/近远顺序。对照 `setAspect()`（`:129-134`）明确忽略非正值并有测试（`GraphicsTest.cpp:1033-1036`）——同一类的校验风格在视锥参数上缺席。`Camera.cpp:38` 只把传入 up 归一化后存起来，但 `lookAt` 在 up 与视线平行时**另选参考轴**（`Transform3.cpp:76-96`），`up()` 于是报告的不是视图矩阵实际使用的 up；`CameraSnapshot::up` 把该值带给 `AutoTransform.cpp:250` 的 billboard 朝向。
 
-**后果**：eye==target 时视图矩阵全零 → 视锥六面退化、不剔除任何东西、GPU 端 model-view 全零；near/far/fov 非法时投影矩阵产生 NaN 或负深度区间，只有画面异常而无诊断。平行 up 时 billboard 朝向与画面不一致。
+**后果**：eye==target 时视图静默变成单位矩阵（不是全零），相机回到世界原点看向 −Z；视锥仍可提取，所以不会出现"六面退化、不剔除任何东西"，但画面会静默换成一个无人要求的机位且没有诊断。near/far/fov 非法时投影矩阵产生 NaN 或负深度区间，只有画面异常而无诊断。平行 up 时 billboard 朝向与画面不一致。
 
 **对照**：three.js/OSG/Unity 都把退化 lookAt 与非法视锥当作调用错误或显式回退；本项目自身对非幂次样本数采用"拒绝并报告"。
 

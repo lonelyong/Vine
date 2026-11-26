@@ -12,8 +12,8 @@
  * - WHAT IT GOVERNS. A render backend is compiled as its own module (today an appfw plugin; a host may load one any
  *   way it likes) and implements virtual interfaces this SDK declares: `RenderBackendFactory`, `RenderBackend`,
  *   `RenderDevice` and `RenderFrameExecutor`.
- *   Those interfaces carry no explicit ABI, so their shape IS this number, and `1` is the shape these headers
- *   describe.
+ *   Those interfaces carry no explicit ABI, so their shape IS this number; the revision these headers describe is
+ *   the last entry in the list below.
  * - BUMP IT WHENEVER A MODULE'S COMPILED VIEW OF THE SDK STOPS BEING VALID:
  *   - a virtual is ADDED, REMOVED, REORDERED or re-signed in any class a backend derives from.
  *     An added virtual is not additive: a class compiled earlier has a shorter vtable, so the host's call reads past
@@ -41,8 +41,11 @@
  * 2u - `BC-43`: `ResolvedCommandState` lost the `origin` table and `topology_origin` (the seven-field provenance
  *      value had no consumer outside the tests, see `graphics-rendering.md` 9.3), so a backend built against 1u reads
  *      a different layout of a value it is handed per command.
+ * 3u - `PrepareReport`'s `passes` / `draw_packets` / `draws` widened from `std::uint32_t` to `std::uint64_t` so the
+ *      asked workload and the recorded frame's `FrameCounters` use one width; a backend built against 2u reads a
+ *      different layout of the report it returns from `prepareFrame`.
  */
-#define VN_RENDER_BACKEND_ABI_VERSION 2u
+#define VN_RENDER_BACKEND_ABI_VERSION 3u
 
 VN_GRAPHICS_NS_BEGIN
 

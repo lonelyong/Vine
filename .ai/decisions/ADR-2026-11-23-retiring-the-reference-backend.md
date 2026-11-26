@@ -394,3 +394,11 @@ and the item is deferred instead of implemented:
 
 `T64` stays open in `../backlog/graphics.md` with the destination and the trigger recorded there; nothing is built for it in
 this batch.
+
+## Correction (2026-11-26, appended)
+
+The 2026-11-25 amendment stated `VN_RENDER_BACKEND_ABI_VERSION` = 1, which was true on that date. It is 3u now: 2u
+deleted the state-provenance fields (`BC-43`), and 3u widened the three workload counts in `PrepareReport` (`BC-45`).
+The rule in that amendment - bump for a virtual set, a crossing value's layout or a signature, and ship a default with a
+new virtual - is unchanged; only the number moved. The current value and its changelog live in `BackendAbi.hpp`, and the
+migration entries in `graphics-rendering.md` 9.3.

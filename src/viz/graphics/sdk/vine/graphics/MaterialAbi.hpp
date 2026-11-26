@@ -12,9 +12,9 @@ VN_GRAPHICS_NS_BEGIN
  * @brief Packs a material's RESOLVED values into the shading block, field for field.
  *
  * @details
- * - THE ONE PACKING RULE for `VineMaterialBlock`: both backends fill the block through this function, so a factor added
- *   to `MaterialParameters` and to the block cannot reach one backend and miss the other (the failure mode is a
- *   material that looks right on one backend and stale on the other, with nothing in a log).
+ * - THE ONE PACKING RULE for `VineMaterialBlock`: this function is the only place that fills the block, so a factor
+ *   added to `MaterialParameters` and to the block cannot reach the C++ side and miss the shader's copy of it (the
+ *   failure mode is a material that looks right in one and stale in the other, with nothing in a log).
  * - The values are packed VERBATIM - no clamping and no sanitising: a material is data the host authored, and the
  *   shader clamps what it draws. The block's members keep their declared defaults, which are the default material's
  *   values (see `ShaderAbi.hpp`), so content without a material looks like content with the default one.

@@ -291,7 +291,7 @@ Built-in and user shaders share the same fragment: a typo → undeclared identif
 ### 9.1 Current status
 
 P0 is implemented: the parameter blocks have one GLSL declaration (`shaders/vine_params.glsl`, expanded at build time), the C++ shapes of the four dependency-free blocks are in
-`ShaderAbi.hpp`, the packing faces of lights / material / draw in `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`, and both backends use
+`ShaderAbi.hpp`, the packing faces of lights / material / draw in `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`, and the shipped backend uses
 the same copy. Bytes and the existing tests are unchanged.
 
 The light block is a "typed light array" (position / direction / range / cone angle, one UBO shared by both paths),

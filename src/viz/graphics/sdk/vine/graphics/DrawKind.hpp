@@ -28,11 +28,10 @@ VN_GRAPHICS_NS_BEGIN
  *   owns", which includes the full-screen programs.
  *
  * @note
- * - ADDING A VALUE IS A DESIGN BATCH, NOT A WORD SWEEP. The two values are compared by name
- *   (`kind == DrawKind::Fullscreen`) at the points that branch, and there is no `switch` to make the compiler
- *   list them, so a third kind means walking `graphics-architecture.md` 2.11's extension row (the pass
- *   declaration, the plan's validation, the kind -> node mapping, the frame description and both backends'
- *   frame compilers) instead of following compiler errors.
+ * - ADDING A VALUE IS A DESIGN BATCH, NOT A WORD SWEEP. The values are compared by name
+ *   (`kind == DrawKind::Fullscreen`) where they branch, so there is no `switch` for the compiler to check and a new
+ *   value is FOUND rather than flagged: `grep -rn 'DrawKind::' src` lists every site, and
+ *   `graphics-architecture.md` 2.11's pass-kind row says what each of them must answer.
  */
 enum class DrawKind : std::uint8_t
 {

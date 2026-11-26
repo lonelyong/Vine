@@ -56,9 +56,9 @@ struct VN_GRAPHICS_API PrepareReport {
 
     Outcome       outcome{ Outcome::NotReady }; // What became of the request (see Outcome).
     EngineNotReadyReason reason{ EngineNotReadyReason::NoDevice }; // Why, when @ref outcome is #Outcome::NotReady.
-    std::uint32_t passes{ 0 };       // Passes with an EFFECT: a draw packet or an announced clear (see FrameCounts).
-    std::uint32_t draw_packets{ 0 }; // Draw packets those passes issue - one per view (see DrawPacket).
-    std::uint32_t draws{ 0 };        // Draw items those packets submit (what a profiler calls draw calls).
+    std::uint64_t        passes{ 0 };                              // Passes with an EFFECT: a draw packet or an announced clear (see FrameCounts).
+    std::uint64_t        draw_packets{ 0 };                        // Draw packets those passes issue - one per view (see DrawPacket).
+    std::uint64_t        draws{ 0 };                               // Draw items those packets submit (what a profiler calls draw calls).
     std::uint64_t halves{ 0 };                  // Compiled halves THIS call built (0 = already there).
     std::uint64_t sets{ 0 };                    // Declared sets THIS call built.
     std::uint64_t uploads{ 0 };                 // Uploads THIS call built - streams and textures (the kinds FrameUploads reports).

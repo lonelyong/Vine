@@ -311,14 +311,19 @@ reviews compare against the peer engines at a level a design page cannot carry.
   is nowhere stated; `RenderDevice`'s 14 defaulted verbs have per-verb reasons but no rule, and
   `releaseRenderTarget`'s default leaks silently; `ImageSource.hpp` is named after the engine's half of a
   concept a host writes as `ImageInput`; and the surface's three header granularities have no stated rule.
+  All six steps landed the same day (`L3` deleted the origin table with an ABI bump, `L6` renamed the header);
+  the page's tail records where three of them changed shape, and a follow-up batch corrected the one pointer the
+  round itself left stale plus the remaining live "both backends" sentence in the corpus (the historical ledger
+  rows and the retired-backend page keep their original wording).
   Also the measured layering (`G2`: 0 leaks in five directions, 0 API-family dependencies) and the seven
   things the design does that the peer set does not.
 - `graphics-2026-11-25-review-11.md` — the eleventh pass, the first one on three-dimensional SEMANTICS
   rather than engine mechanisms: no single owner for handedness / up axis / world units; normals transformed
   by `mat3(modelView)` instead of the inverse transpose under the documented non-uniform scale; negative
   scale mirrors winding while `frontFace` is fixed; missing normal channels read an undefined attribute under
-  the default lit program although the header promises a derivation; degenerate `lookAt` yields a zero view
-  and frustum parameters are unvalidated while the stored up can disagree with the resolved basis; two
+  the default lit program although the header promises a derivation; degenerate `lookAt` silently falls back
+  to the identity view (not a zero matrix, as the first draft said) and frustum parameters are unvalidated while
+  the stored up can disagree with the resolved basis; two
   clip-space conventions whose prose says the near/far direction backwards; light units that are not glTF's
   cd/lux and a diffuse lobe without `1/π`; Mask opacity feeding the cutout threshold while sorting opaque;
   a sort-key comment with the depth direction inverted. Includes the peer comparison (three.js, OSG, glTF,

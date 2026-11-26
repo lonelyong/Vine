@@ -29,8 +29,8 @@ VN_GRAPHICS_NS_BEGIN
  *   (a full-screen pass with no scene says the first; a scene with no lights says the second, which is what restores a
  *   backend's default light), which is why the field is a nullable pointer and not a vector.
  *
- * @note The packing rule is NOT here: `packLightBlock` (LightAbi.hpp) turns the values into the shading block, and
- *       both backends call it, so a light's term cannot mean two things.
+ * @note The packing rule is NOT here: `packLightBlock` (LightAbi.hpp) is the one function that turns the values into
+ *       the shading block, so a light's term cannot mean two things.
  */
 class VN_GRAPHICS_API LightSet final {
   public:

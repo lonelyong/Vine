@@ -238,10 +238,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Sets the device used for drawing (see RenderDevice / RenderFrameExecutor).
      *
      * @details
-     * - The device is BORROWED: the engine keeps a reference so the device outlives this engine's use of it, and
-     *   never drives its lifecycle - the party that created the device brings it up and takes it down (see
-     *   RenderDevice::initialize), which is what lets two engines drive one device. Call before initialize().
-     *   Setting the same instance again is a no-op.
+     * - SHARED OWNERSHIP, BORROWED LIFECYCLE AUTHORITY: the engine takes an intrusive reference, so the device
+     *   cannot die while this engine still uses it, but it never brings the device up or takes it down - the party
+     *   that created the device owns initialize()/shutdown() (see RenderDevice::initialize). That split is what
+     *   lets two engines drive one device. Call before initialize(); setting the same instance again is a no-op.
      * - A frame already handed to the engine thread is FINISHED first: the driver it runs through is what this call
      *   gives back, and every other session change waits or refuses rather than racing a frame.
      * - The default content program is announced here, so a device brought up afterwards already knows what

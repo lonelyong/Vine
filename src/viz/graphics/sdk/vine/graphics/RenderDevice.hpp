@@ -130,11 +130,11 @@ struct VN_GRAPHICS_API DeviceDesc {
  *     the feature on);
  *   - diagnosticCount() / diagnosticsClean(): what it had to say, counted on the ONE route the engine handed over
  *     (setDiagnosticsRoute), so the host's sink and this device's own evidence read the same numbers.
- * - WHO DRIVES THE LIFECYCLE. The party that CREATED the device owns initialize()/shutdown(); an engine BORROWS the
- *   device (RenderEngine::setDevice) and never brings it up or takes it down. That is what makes one device serve
- *   several engines: two engines driving one device would otherwise tear each other's session down, and the second
- *   engine's initialize() would destroy the first one's - both silently. A borrowed device is up by definition, so
- *   an engine whose device is not up reports it instead of driving frames into nothing.
+ * - WHO DRIVES THE LIFECYCLE. The party that CREATED the device owns initialize()/shutdown(); an engine takes a
+ *   SHARED REFERENCE to it (RenderEngine::setDevice) but never brings it up or takes it down. That is what makes one
+ *   device serve several engines: two engines driving one device would otherwise tear each other's session down,
+ *   and the second engine's initialize() would destroy the first one's - both silently. A device an engine drives
+ *   is up by definition, so an engine whose device is not up reports it instead of driving frames into nothing.
  * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED. An executor call from a second thread WAITS for that
  *   executor's frame in flight and a re-entrant call is REFUSED - `FrameGate.hpp` is the shared
  *   implementation, one answer for every backend. SEVERAL EXECUTORS MAY RUN AT THE SAME TIME: a backend

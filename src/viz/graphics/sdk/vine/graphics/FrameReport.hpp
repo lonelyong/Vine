@@ -105,6 +105,22 @@ struct VN_GRAPHICS_API FrameUploads {
 };
 
 /**
+ * @brief What ONE pass cost on the device (see FrameTiming::passes).
+ *
+ * @details
+ * - THE ATTRIBUTION A HOST ACTUALLY ASKS FOR: "the frame took 8 ms" does not say whether the shadow pass or the
+ *   lighting pass is the one to fix. `pass` is the pass' own name (`RenderPass::name`), so it matches the plan a host
+ *   reads and the table a gate asserts - not a pointer, which no report can be compared against.
+ * - A PASS IS TIMED FROM ITS OWN BOUNDARY TO THE NEXT ONE, and that span INCLUDES the uploads and transitions recorded
+ *   between them: that work exists because the pass asked for it, so billing it to the preceding pass is the honest
+ *   split. The span before the first pass (the frame's own setup) belongs to no pass and is not reported here.
+ */
+struct VN_GRAPHICS_API PassTiming {
+    String        pass;            // The pass' name (the identity the frame carried).
+    std::uint64_t gpu_micros{ 0 }; // Device time between this pass' boundary and the next.
+};
+
+/**
  * @brief What a frame cost on the DEVICE, as the backend measured it.
  *
  * @details
@@ -121,22 +137,6 @@ struct VN_GRAPHICS_API FrameUploads {
  *   frames it did not measure, so a host reads `timing` as "this frame was measured" and takes an average over the
  *   frames that answer, never as "the device has no clock" - the per-pass rows below come and go with it.
  */
-/**
- * @brief What ONE pass cost on the device (see FrameTiming::passes).
- *
- * @details
- * - THE ATTRIBUTION A HOST ACTUALLY ASKS FOR: "the frame took 8 ms" does not say whether the shadow pass or the
- *   lighting pass is the one to fix. `pass` is the pass' own name (`RenderPass::name`), so it matches the plan a host
- *   reads and the table a gate asserts - not a pointer, which no report can be compared against.
- * - A PASS IS TIMED FROM ITS OWN BOUNDARY TO THE NEXT ONE, and that span INCLUDES the uploads and transitions recorded
- *   between them: that work exists because the pass asked for it, so billing it to the preceding pass is the honest
- *   split. The span before the first pass (the frame's own setup) belongs to no pass and is not reported here.
- */
-struct VN_GRAPHICS_API PassTiming {
-    String        pass;            // The pass' name (the identity the frame carried).
-    std::uint64_t gpu_micros{ 0 }; // Device time between this pass' boundary and the next.
-};
-
 struct VN_GRAPHICS_API FrameTiming {
     std::uint64_t gpu_micros{ 0 }; // Device time of the frame that just ended, in microseconds.
 

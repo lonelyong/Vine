@@ -396,7 +396,7 @@ while the frame records is parked to the device watermark (§2.6), so another dr
 |---|---|
 | C1 | The **device** owns a session; an engine only borrows it (`createFrameDriver` / `releaseFrameDriver`). |
 | C2 | The frame machinery (command pool / fence / ring / descriptor pools / frame books) exists **only** in a session. |
-| C3 | The recording path **must not** take the device caches' lock; device-cache reads happen at the frame-head snapshot only. It holds in both backends today: both sides' recording reads only the values resolved at the frame head. |
+| C3 | The recording path **must not** take the device caches' lock; device-cache reads happen at the frame-head snapshot only. The shipped backend holds it: vk's frame head resolves the cached values, and recording (`ContentDraw.cpp`) reads only that snapshot. |
 | C4 | Only a `Resident` entry may be used by a non-owner; `Uploading` equals `Absent` + a temporary copy for everyone else. |
 | C5 | One target has one session at a time; a claim is a lease, and the frame tail must give it back. |
 | C6 | Destruction may only happen after the **device watermark**; device idleness must not be traded for correctness. |
