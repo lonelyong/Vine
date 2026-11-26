@@ -35,9 +35,10 @@ pixel-comparison test against a readback proves something other than what the us
 
 ## Decision
 
-1. **The transfer function is a property of the TARGET FORMAT**, not of the shading, the material or the pass. The
-   `ColorFormat` a target states is what its texels mean, and two targets with different formats hold different kinds
-   of value.
+1. **The transfer function is a property of the TARGET FORMAT** - the concrete device format a backend picks for the
+   `ColorFormat` a target states (`RenderTarget.hpp` already calls `RGBA8` a projection over the `*_UNORM` and `*_SRGB`
+   spelling) - not of the shading, the material or the pass. Two targets whose device formats differ hold different
+   kinds of value.
 2. **The encode happens at the swap-chain write, and only there.** A presenting target carries an sRGB format, so the
    hardware applies the transfer when the linear fragment is stored: that store is the last step of the display
    pipeline. No shader and no pass in the engine encodes.

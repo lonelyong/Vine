@@ -49,6 +49,12 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      * - NOT A PIXEL-FORMAT MIRROR AND NOT AN UPLOAD FORMAT: no sRGB spelling (colour space is a projection, see
      *   `Colorf` / `Color`), no integer family (an integer attachment needs an integer fragment output - a different
      *   shader contract), no packed 10/11-bit colour. A target states what a pass PRODUCES.
+     * - THE TRANSFER FUNCTION IS THE DEVICE FORMAT'S, and an offscreen 8-bit target is LINEAR: nothing encodes into it,
+     *   so an 8-bit offscreen attachment is a DATA format (a mask, a weight, the bytes a test compares). The one encode
+     *   is the store into a PRESENTING target, whose sRGB format applies it; a lit picture that a human will look at,
+     *   and that must survive an offscreen hop, is `RGBA16F` until that write (see graphics-rendering.md 2.14 and
+     *   ADR-2026-11-26-linear-light-is-encoded-by-the-target-format). A readback of an 8-bit target answers those
+     *   stored linear bytes, not the picture the window shows.
      */
     enum class ColorFormat
     {
