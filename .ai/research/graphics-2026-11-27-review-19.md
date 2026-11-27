@@ -116,6 +116,17 @@ answer and the one that keeps the host's "swap a binding whenever" promise; or (
 docs and refuse outside the interval like `applyPlan` does. (a) matches what the class above already does.
 **code + doc (+ test: two threads, one publishing, one framing, TSan).**
 
+**Fixed 2026-11-27, and option (a) was not enough.** `FrameResources` now takes ONE lock over every table a host verb can
+reach - not four named methods - because the accessor those verbs shared (`hostBindings()`) handed out a reference to a
+locked container, i.e. one door that made the lock decorative. The compile reads a VALUE taken at the frame head
+(`beginFrame` copies the host's bindings; `frameBindings()` is the compile's copy, `hostBindingNames()` is the copy a
+plan validation between frames needs), so a publish landing mid-compile answers on the NEXT frame - which is what stops
+one frame from seeding, checking and resolving against two different sets of bindings (`G1`). The public docs now state
+the rule where a host reads it (`RenderEngine::publish` / `resolve` / `unpublish` / `transientTarget` and
+`OutputRegistry`), including what a borrowed answer means. Lock cost: one plain `std::mutex` per verb, 2.8 ns
+uncontended, a handful of verbs per frame. Rule: `graphics-threading.md` C23 / 2.18;
+`ADR-2026-11-27-a-door-is-gated-or-locked.md`.
+
 ### 2.3 Z2 (threading / medium-high): `bindPassContent` writes the declaration a plan writes and the compile reads, and
 is the one shape-change verb that does not take the gate
 
@@ -137,6 +148,15 @@ for the gate ("the pass slots ... are what a compile walks") applies verbatim.
 **Choice.** Route `bindPassContent` through `beginShapeChange` and answer a `bool`-shaped refusal, or - if re-binding
 content is meant to be cheap - make it a declaration diff with the gate's lease and the same episode. It cannot stay the
 unstated exception. **code + doc + test (a bind during a frame).**
+
+**Fixed 2026-11-27, with the third answer the `bool` could not carry.** `bindPassContent` takes the same
+`beginShapeChange` gate `applyPlan` takes and answers `ContentBindOutcome` - `Bound` / `NotRegistered` / `Refused` - so
+"no such pass" and "retry between frames" stop being one `false` (`G4`); the refusal reports the same
+`engine.pass.changed_during_frame` episode. The type deliberately has no `operator bool`: the compiler made every
+existing call site decide, which is the gate this defect needed. The one in-tree host arrival,
+`SceneView::setScene`, takes the remedy (a bounded wait, then a second attempt, then
+`engine.view.content_not_bound` rather than letting the chain's content check accuse the wrong cause). Rule:
+C20 / 2.18; case: `PlanTest.AFrameRefusesAContentBindFromInsideItsOwnCompile`.
 
 ### 2.4 Z3 (entry vocabulary / medium-low): the one entry that starts or stops a thread returns `void`, while the four
 verbs it shares its refusals with return a value
@@ -1284,8 +1304,8 @@ unobserved, and it is recorded here so the next round starts from it rather than
 
 | # | Round | Severity | One line | Evidence |
 |---|---|---|---|---|
-| `Z1` | R1 | high | `publish` / `unpublish` / `resolve` / `transientTarget` touch `FrameResources`, which says "no synchronisation is needed" because one thread calls it - and the public docs state no thread rule | `RenderEngine.cpp:851-913`; `FrameResources.hpp:47-48` |
-| `Z2` | R1 | medium-high | `bindPassContent` rewrites "the same one storage a plan writes and the compile reads" without the gate `applyPlan` takes | `RenderEngine.cpp:821-824`; `SessionShape.cpp:262-273`; `RenderEngine.cpp:740-796` |
+| `Z1` | R1 | high | `publish` / `unpublish` / `resolve` / `transientTarget` touch `FrameResources`, which says "no synchronisation is needed" because one thread calls it - and the public docs state no thread rule (**fixed 2026-11-27**: one lock over every table a host can reach, the frame head takes the bindings as a value, the public docs state the rule - `graphics-threading.md` C23) | `RenderEngine.cpp:851-913`; `FrameResources.hpp:47-48` |
+| `Z2` | R1 | medium-high | `bindPassContent` rewrites "the same one storage a plan writes and the compile reads" without the gate `applyPlan` takes (**fixed 2026-11-27**: the same `beginShapeChange` gate, answering `ContentBindOutcome::Status::Refused` - `graphics-threading.md` C20) | `RenderEngine.cpp:821-824`; `SessionShape.cpp:262-273`; `RenderEngine.cpp:740-796` |
 | `Z3` | R1 | medium-low | `setFrameThreading` is the only interval verb that answers `void`; its three siblings answer the same refusal as a value | `RenderEngine.hpp`; `RenderEngine.cpp:392-419` |
 | `Z4` | R1 | low | `frameContext()` says "the same answer all frame" and then reads three fields live | `RenderEngine.hpp`; `RenderEngine.cpp:445-456` |
 | `Z5` | R2 | low | the chunk-share test compares the fold's output; the select also reads `own.fold.placement`, which no comparison covers - the epoch is the only guard, and the epoch's list omits placements | `SceneSnapshot.cpp:55-68`; `DrawListBake.hpp:549-566`; `Node.hpp:296` |
@@ -1313,8 +1333,11 @@ unobserved, and it is recorded here so the next round starts from it rather than
 1. ~~**`Z7`** - one pattern applied twice, and it closes the gap between `graphics-threading.md` 2.16's claim and the tree.
    The only finding where the design's own promise is what fails.~~ **Done 2026-11-27**, at the cause: the rule got one owner
    type (`detail::DescriptionCache`) instead of two more hand-written copies, and 2.16 now names the rule (C22).
-2. **`Z1` + `Z2`** - one batch named "the doors that missed the rule": a mutex for `FrameResources` (the shape
-   `PublicationStore` already uses) and the gate for `bindPassContent`.
+2. ~~**`Z1` + `Z2`** - one batch named "the doors that missed the rule": a mutex for `FrameResources` (the shape
+   `PublicationStore` already uses) and the gate for `bindPassContent`.~~ **Done 2026-11-27**, at the rule instead of
+   the two call sites: the image tables take one lock in every verb a host can reach AND the frame head takes the host's
+   bindings as a value (C23), the content bind takes the shape's gate and answers the three-state
+   `ContentBindOutcome`; the rejected shapes are in `ADR-2026-11-27-a-door-is-gated-or-locked.md`.
 3. **`Z22`** - the third door, and the only one whose failure is a stale row in the frame: the take-back a destructor
    asks for has to survive the refusal, so it becomes a deferred removal (the `RetirementQueue` shape) or the view's
    death is ordered behind the frame. It is ahead of the picture findings because it leaves a pass nobody owns in a

@@ -23,6 +23,7 @@ set(SRC_FILE_LIST
 	RenderWorldTest.cpp
 	ReportOnceTest.cpp
 	DescriptionCacheTest.cpp
+	FrameResourcesTest.cpp
 	SelectTest.cpp
 	SnapshotShadowTest.cpp
 	PublicationStoreTest.cpp

@@ -22,6 +22,11 @@ class RenderTarget;
  *   the engine's; this handle only reaches them.
  * - A TRANSIENT is the compile's product, not the build's: `transientTarget()` answers the instance live NOW, and a
  *   handle kept across a resize describes a target the compile has already let go.
+ * - ANY THREAD, INCLUDING DURING A FRAME (`G4` / C23): these verbs are the host's, and a host swaps a standing
+ *   binding when it has something new to offer rather than when the frame loop happens to be idle - so the tables are
+ *   locked for a lookup, an insert or a withdrawal, and never across a device call. A frame already being built
+ *   answers the bindings its head took, so a swap lands on the next frame; the targets these verbs return are
+ *   BORROWED (kept alive by the binding, or by the pass that published them).
  * - The engine may be destroyed first and the handle knows it (a `Lease`): once it is gone every call answers the
  *   empty value instead of reaching into freed memory.
  */

@@ -51,12 +51,14 @@ std::optional<int> PassRegistry::orderOf(raw_ptr<RenderPass> pass) const
     return engine != nullptr ? engine->passOrder(pass) : std::nullopt;
 }
 
-bool PassRegistry::bindContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
+ContentBindOutcome PassRegistry::bindContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
 {
     if (raw_ptr<RenderEngine> engine = engine_.get()) {
         return engine->bindPassContent(pass, std::move(content));
     }
-    return false;
+    // A GONE ENGINE KNOWS NO SUCH PASS: the same answer `find` / `contentOf` give (null), and the honest one - the
+    // pass is not in a table this handle can reach, so nothing changed.
+    return ContentBindOutcome{};
 }
 
 raw_ptr<Scene> PassRegistry::contentOf(raw_ptr<RenderPass> pass) const

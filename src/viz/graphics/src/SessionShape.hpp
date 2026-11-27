@@ -275,9 +275,6 @@ class SessionShape {
     /** @brief Drops one registered pass and releases what the backend retained for it. */
     void removePass(raw_ptr<RenderPass> pass, RenderBackend* device);
 
-    /** @brief Answers the names the HOST publishes (see RenderEngine::publish). */
-    [[nodiscard]] std::vector<String> hostOutputNames() const;
-
   private:
     Diagnostics&       diagnostics_;
     PublicationStore&  publications_;

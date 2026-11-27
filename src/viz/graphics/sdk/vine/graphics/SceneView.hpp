@@ -413,6 +413,10 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // "The adopted chain draws none of this view's content" is one condition, not a per-call event (see
     // checkChainContent).
     ReportOnce content_mismatch_;
+
+    // "The presenting pass could not be rebound to this view's scene because a frame kept the interval" is one
+    // condition too: reported once per episode, after the remedy (a bounded wait) has been tried (see setScene).
+    ReportOnce content_bind_;
 };
 
 VN_GRAPHICS_NS_END

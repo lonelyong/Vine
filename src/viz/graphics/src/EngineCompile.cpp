@@ -548,7 +548,10 @@ void SessionShape::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
         }
         case ImageInput::Kind::Name:
         {
-            raw_ptr<RenderTarget> resolved = resources_.resolve(input.name());
+            // THE FRAME'S OWN RESOLUTION (C23): the bindings this frame's head took, not the live table - a host
+            // publish landing mid-compile answers on the next frame, so the row, the seeding and the wiring checks of
+            // one frame answer one set of bindings.
+            raw_ptr<RenderTarget> resolved = resources_.resolveForFrame(input.name());
             out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
             break;
         }
@@ -612,22 +615,17 @@ void SessionShape::publishRowOutput(raw_ptr<RenderPass> pass)
                                    reportedPassName(pass)));
         return;
     }
-    if (detail::FramePublication* published = resources_.findPublication(name); published != nullptr) {
-        if (published->target != nullptr && published->target != target) {
-            // Two passes published DIFFERENT targets under one name: every consumer of that name silently gets
-            // whichever pass ran last, and only the whole table can see the collision (each pass is
-            // individually valid).
-            const String first  = published->target->name().empty() ? String(u8"(unnamed)") : published->target->name();
-            const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
-            noteProblem(compileProblem(u8"engine.compile.duplicate_output",
-                                       vn::graphics::DiagnosticCategory::ContentSkipped,
-                                       String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
-                                           String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last")));
-        }
-        published->target = target; // the latest publication serves the name for the rest of the frame
-        return;
+    // RECORDING ANSWERS WHAT THE NAME SERVED BEFORE (see FrameResources::recordPublication): two passes publishing
+    // DIFFERENT targets under one name means every consumer of that name silently gets whichever pass ran last, and
+    // only the whole table can see the collision (each pass is individually valid).
+    if (raw_ptr<RenderTarget> previous = resources_.recordPublication(pass, target); previous != nullptr && previous != target) {
+        const String first  = previous->name().empty() ? String(u8"(unnamed)") : previous->name();
+        const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
+        noteProblem(compileProblem(u8"engine.compile.duplicate_output",
+                                   vn::graphics::DiagnosticCategory::ContentSkipped,
+                                   String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
+                                       String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last")));
     }
-    resources_.recordPublication(pass, target);
 }
 
 void SessionShape::noteProblem(const vn::graphics::RenderDiagnostic& diagnostic)
@@ -888,7 +886,7 @@ void SessionShape::collectOutputClaims()
     //
     // A host binding (publish) is filled by the HOST: it is there from the start of the frame and no pass owns its
     // hand-off, so a declared input addressing it is answered like one addressing a pass' target.
-    for (const auto& binding : resources_.hostBindings()) {
+    for (const auto& binding : resources_.frameBindings()) {
         if (binding.second != nullptr) {
             wiring_.noteFilled(Declaration{ nullptr, binding.second.get(), nullptr, 0 });
         }

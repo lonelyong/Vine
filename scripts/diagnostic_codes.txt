@@ -105,6 +105,7 @@ engine.present.no_chain               — a view with no chain has nothing to pr
 engine.present.pass_unregistered      — the pass named for presentation is not registered on this surface' engine
 engine.shadow.not_built               — shadow-casting lights have no shadow pass (or fewer maps than casters): they are drawn unshadowed
 engine.view.content_mismatch          — the view adopted a pipeline whose passes draw other content: its scene never reaches the surface
+engine.view.content_not_bound         — the view's scene could not be bound to its chain's presenting pass because a frame kept the interval (twice, the second time after waiting): the view keeps drawing the previous scene
 engine.frame.failed                   — the frame's engine half threw: the frame was not drawn, and the report names the exception
 
 # --- engine: a backend module the registry refused (see graphics-architecture.md 2.16) ---

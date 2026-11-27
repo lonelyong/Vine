@@ -818,9 +818,23 @@ std::size_t RenderEngine::passCount() const
     return shape_->passCount();
 }
 
-bool RenderEngine::bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
+ContentBindOutcome RenderEngine::bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content)
 {
-    return shape_->bindPassContent(pass, std::move(content));
+    // A CONTENT BIND IS A SHAPE CHANGE (see beginShapeChange): it rewrites the pass' declaration - "the same one
+    // storage a plan writes and the compile reads" - so it takes the same gate and answers the same refusal. It used
+    // to be the one door that skipped the gate, which is a race against the compile rather than a value the host can
+    // act on (review 19 Z2).
+    std::optional<std::unique_lock<std::mutex>> allowed = beginShapeChange("bindPassContent");
+    if (!allowed.has_value()) {
+        ContentBindOutcome refused;
+        refused.status = ContentBindOutcome::Status::Refused;
+        return refused;
+    }
+    ContentBindOutcome outcome; // NotRegistered until the table says otherwise
+    if (shape_->bindPassContent(pass, std::move(content))) {
+        outcome.status = ContentBindOutcome::Status::Bound;
+    }
+    return outcome;
 }
 
 raw_ptr<Scene> RenderEngine::contentOf(raw_ptr<RenderPass> pass) const

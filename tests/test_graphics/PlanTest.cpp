@@ -689,7 +689,7 @@ TEST(PlanTest, AFrameRefusesAPlanFromInsideItsOwnCompile)
     Plan shape;
     shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
     ASSERT_TRUE(engine->applyPlan(shape).applied());
-    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished));
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished).bound());
 
     PlanResult from_inside;
     bool       asked = false;
@@ -713,6 +713,95 @@ TEST(PlanTest, AFrameRefusesAPlanFromInsideItsOwnCompile)
 }
 
 /*
+ * @brief The SECOND door onto a pass' declaration takes the same gate: a content bind is a shape change.
+ *
+ * `applyPlan` refused a change from inside a compile and `bindPassContent` did not, although it rewrites
+ * `PassDesc::content` - "the same one storage a plan writes and the compile reads". A host re-binding a pass' scene at
+ * the moment a frame was compiled got a silent race where the same host re-stating the plan got a value back (review 19
+ * `Z2`): the two doors onto one storage answered the same question differently.
+ */
+TEST(PlanTest, AFrameRefusesAContentBindFromInsideItsOwnCompile)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera      = vn::make_intrusive<Camera>();
+    // NEVER PUBLISHED, so this frame's compile reports it - from inside itself, which is the hook this case needs.
+    auto bound       = vn::make_intrusive<Scene>();
+    auto replacement = vn::make_intrusive<Scene>();
+
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), bound).bound());
+
+    ContentBindOutcome from_inside;
+    bool              asked = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (asked) {
+            return; // the refusal's own report arrives through the same sink
+        }
+        asked       = true;
+        from_inside = engine->bindPassContent(engine->pass(u8"main"), replacement);
+    });
+
+    const FrameCallOutcome outcome = engine->frame();
+    EXPECT_TRUE(outcome.ran()) << "inline, the frame is answered before frame() returns";
+    ASSERT_TRUE(asked) << "the case rests on the compile reporting from inside its own build";
+    EXPECT_TRUE(from_inside.refused()) << "the declaration a compile was walking was rewritten under it";
+    EXPECT_EQ(engine->contentOf(engine->pass(u8"main")), bound.get()) << "the frame kept the declaration it was built from";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1U) << "one report for the episode";
+
+    EXPECT_TRUE(engine->bindPassContent(engine->pass(u8"main"), replacement).bound()) << "and the same bind works between frames";
+    EXPECT_EQ(engine->contentOf(engine->pass(u8"main")), replacement.get());
+}
+
+/*
+ * @brief Two passes publishing one name from different targets: one report, and the last one serves the name.
+ *
+ * The table now answers "what did this name serve before" from the SAME call that records the new target (see
+ * FrameResources::recordPublication) instead of handing out a row reference across its lock - so the collision policy
+ * reads its other half from the value, and this case is what proves the report still fires.
+ */
+TEST(PlanTest, TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+
+    std::vector<RenderDiagnostic> reported;
+    engine->setDiagnosticSink([&reported](const RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    Plan shape;
+    PassDesc writer_a = namedPass(u8"writer_a", colourTarget(), 0, camera);
+    writer_a.output.name = u8"SceneColor";
+    PassDesc writer_b = namedPass(u8"writer_b", colourTarget(), 10, camera);
+    writer_b.output.name = u8"SceneColor";
+    shape.passes.push_back(std::move(writer_a));
+    shape.passes.push_back(std::move(writer_b));
+    ASSERT_TRUE(engine->applyPlan(shape).applied());
+
+    engine->frame();
+
+    bool collision = false;
+    for (const RenderDiagnostic& diagnostic : reported) {
+        if (diagnostic.code == u8"engine.compile.duplicate_output") {
+            collision = true;
+        }
+    }
+    EXPECT_TRUE(collision) << "two passes serving one name from different targets is one report";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1U) << "and it is said once for the episode";
+
+    // The LATEST publisher serves the name for the rest of the frame (the rule the table states).
+    EXPECT_EQ(engine->resolve(u8"SceneColor"), engine->pass(u8"writer_b")->renderTarget());
+}
+
+/*
  * @brief A PREPARE compiles too, so it is a build - the interval the runner never described.
  *
  * `prepare()` is not a frame (nothing is answered), which is why it was left outside the old predicate altogether. It
@@ -732,7 +821,7 @@ TEST(PlanTest, APrepareRefusesAPlanFromInsideItsOwnCompile)
     Plan shape;
     shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
     ASSERT_TRUE(engine->applyPlan(shape).applied());
-    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished));
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished).bound());
 
     PlanResult from_inside;
     bool       asked = false;
@@ -774,7 +863,7 @@ TEST(PlanTest, APlanFromAnotherThreadIsRefusedWhileThisOneCompiles)
     Plan shape;
     shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
     ASSERT_TRUE(engine->applyPlan(shape).applied());
-    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished));
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), unpublished).bound());
 
     std::mutex              gate;
     std::condition_variable changed;

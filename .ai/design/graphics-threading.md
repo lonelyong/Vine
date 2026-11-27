@@ -330,10 +330,11 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **Boundary**: appfw does not use sharing yet (`SurfaceWindow` builds one device per window, and `docs/guides/render-views.md` §7 records
   "later"); the case `OneDeviceServesSeveralAreasWithoutCrossingThem` proves **sharing** (two frames run one after the other), and
   `VkMultiSessionTest`'s two cases are what prove **concurrency** (two threads with N frames each; with one frame stopped the other completes whole).
-- **The one host verb that may run mid-frame is a value write** (`G4`): `RenderEngine::setDefaultContentProgram` is not gated - it takes the program's
-  DESCRIPTION on the caller's thread and the backend reads that value under its own lock (`program_mutex`), so a host may switch the default shading while
-  a frame is in flight. It is the same shape as `releaseContent` (which parks instead of waiting): a verb whose answer is "this is the value from now on"
-  mutates nothing a frame is walking. Every other device-facing verb is the gate's (see above).
+- **A host verb may run mid-frame exactly when it is a VALUE or a LOCKED TABLE** (`G4` / C23): `RenderEngine::setDefaultContentProgram` is not gated -
+  it takes the program's DESCRIPTION on the caller's thread and the backend reads that value under its own lock (`program_mutex`) - and the output table
+  (`publish` / `unpublish` / `resolve` / `transientTarget`) is locked inside `detail::FrameResources`, with the frame head taking the bindings as a value
+  (§2.18). Both are the same shape as `releaseContent` (which parks instead of waiting): a verb whose answer is "this is the value from now on" mutates
+  nothing a frame is walking. Every device-facing verb that changes STRUCTURE is the gate's (see above).
 - **The device's locks, and the one order between them** (`G10` / `G11`): each shared piece has its own lock, and exactly one pair nests - `queue_submit`
   before `clock_mutex` (`Device.cpp`'s two submit paths take them in that order, and nothing takes `clock_mutex` and then `queue_submit`; the fence wait,
   where the time goes, happens outside both). `TargetTable`'s `map_mutex_` and `claims_mutex_` are never held together (each verb takes one; `drain()`
@@ -393,6 +394,46 @@ There is exactly one answer to "when does this copy expire": the publication val
   no waiter waits on a notification sent to another. `applyPlan` keeps its own answer (`PlanRefusal::Busy`) because it
   edits the shape the interval protects, and it is refused under the same `phaseGate` the claim takes. Reading values
   (`frameNumber`, `presentRecord`) is never gated.
+
+### 2.18 A door is gated or locked, never neither (`G1` / `G4` / `G6`)
+
+- **What it is**: the engine has two families of state a host can reach while a frame records, and each family has ONE
+  door rule, enforced where the state lives:
+  - **the session shape** (pass declarations) is one critical section under `detail::FramePump::phaseGate()`
+    (`RenderEngine::beginShapeChange`), and EVERY mutator of it stands behind that gate: `applyPlan` (in any form),
+    `bindPassContent` / `PassRegistry::bindContent`, and the take-back `removePassesOwnedBy`. Each answers the caller a
+    value - `PlanResult{Refused, Busy}`, `ContentBindOutcome::Status::Refused` - and reports one
+    `engine.pass.changed_during_frame` per episode (C20).
+  - **the image tables** (`detail::FrameResources`: the host's standing bindings, the frame's publications, the
+    transients) belong to TWO worlds, so the lock is the type's own rule: every verb a host can reach takes
+    `tables_mutex_` for a lookup, an insert or an eviction, never across a device call; and the frame head takes the
+    host's bindings as a VALUE (`beginFrame`), so the seeding, the wiring checks and the resolution of one frame answer
+    ONE set of bindings (C23).
+- **Why**: the interval (C20) is a rule about which verbs may run while a frame records, and each mechanism had been
+  written with one caller in mind - so when the engine grew a frame thread and public host doors, two of them stayed
+  outside the rule. `publish` / `unpublish` / `resolve` / `transientTarget` touched tables a compile walks while
+  `FrameResources` stated in its own doc "no synchronisation is needed", and `bindPassContent` rewrote "the same one
+  storage a plan writes and the compile reads" without the gate `applyPlan` takes (review 19 `Z1` / `Z2`). Fixing the
+  call sites one at a time would leave the next door free to make the same mistake; the fix is the rule, stated once per
+  family and enforced by the type that owns the state (`G12`: the class boundary shows the concurrency model).
+- **What the lock does NOT promise, and why that is not a gap** (`G4`): a borrowed answer (`resolve`, `transientTarget`)
+  says "the instance that was live at this instant", never "it survives" - a compile that later replaces or retires a
+  transient leaves a handle describing a target that has been let go, which is the contract the single-threaded path
+  already states ("re-ask after a shape change"). And a locked table makes READERS safe, not writers: publishing a
+  target is the host's act and editing a declaration is the gated act, exactly as C22 divides a description's readers
+  from an edit.
+- **One question, two answers, both stated**: `RenderEngine::resolve` answers the HOST - the live standing binding, so
+  a host that just published asks what it just published - while the compile resolves against the frame's own copy
+  (`FrameResources::resolveForFrame`), so the two can never disagree inside one frame.
+- **The one lock order this introduces** (`G10` / `G11`): the shape gate (`FramePump::phaseGate()`) may be held while the
+  image tables' lock is taken - `applyPlan` validates against `hostBindingNames()` - and the table's lock is never held
+  across anything that takes the gate, because `FrameResources` calls nothing in the engine. So the order is
+  `phaseGate` then `tables_mutex`, and nothing reverses it.
+- **Where the remedy lives for a convenience layer**: `SceneView::setScene` re-binds its chain's presenting pass, so it
+  takes the refusal seriously - it waits the frame out once (bounded, as a resize does before applying a plan) and, if
+  the bind is still refused, reports `engine.view.content_not_bound` instead of letting the chain's content check
+  accuse the wrong cause.
+- **Acceptance**: T42 (the image tables), T43 (the shape's second door).
 
 ## 3. Features
 
@@ -516,9 +557,10 @@ There is exactly one answer to "when does this copy expire": the publication val
 | C17 | A surface event is applied once at the frame head; the swap chain is rebuilt on the engine thread only; the UI side writes no engine-side state. |
 | C18 | The version does not advance inside a batch: after `beginEdit()` and before the outermost `endEdit()`, publication stays where it is — a frame landing mid-batch **publishes nothing** and draws the state at the batch's start; the whole batch lands as **one** publication on the frame after `endEdit()`. |
 | C19 | Material crosses the frame as a **value**: a command carries a `MaterialDescriptionPtr` (`revision` + resolved parameters), and the engine side reads the value only, not `Material::resolved()`. The values are taken on the content side, and not inside a batch. |
-| C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: while this engine is BUILDING a frame (its content half - hooks, publication, `compileFrame`) or ANSWERING one (its engine half), and while a `prepare()` compiles, `applyPlan` (in any form) and `removePassesOwnedBy` always answer `PlanResult::Refused` + `PlanRefusal::Busy`, and report **one** `PassProtocolViolation` per episode. The gate is `detail::FramePump::recording()`, and the decision plus the change are ONE critical section (`RenderEngine::beginShapeChange` holds `FramePump::phaseGate()`, the same lock a build is entered under) - so a change seen as allowed cannot be applied into a compile that started in between, and inline counts exactly like threaded. |
+| C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: while this engine is BUILDING a frame (its content half - hooks, publication, `compileFrame`) or ANSWERING one (its engine half), and while a `prepare()` compiles, EVERY mutator of it is refused - `applyPlan` (in any form) answers `PlanResult::Refused` + `PlanRefusal::Busy`, `bindPassContent` / `PassRegistry::bindContent` answer `ContentBindOutcome::Status::Refused`, `removePassesOwnedBy` takes the same gate and drops the take-back - and each reports **one** `PassProtocolViolation` per episode. The gate is `detail::FramePump::recording()`, and the decision plus the change are ONE critical section (`RenderEngine::beginShapeChange` holds `FramePump::phaseGate()`, the same lock a build is entered under) - so a change seen as allowed cannot be applied into a compile that started in between, and inline counts exactly like threaded. |
 | C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time. Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused rather than waiting for itself** (`vk.device.reentry`; a readback inside a frame answers `InsideFrame`), and the refusal comes from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's descriptions are safe for concurrent readers through one cache type (C22); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way every run). |
 | C22 | **A content description is built once per revision and shared by every reader, under one lock**: `Geometry::description()`, `MaterialValues::description()` and `ShaderProgram::description()` are one verb on one type (`detail::DescriptionCache`), which measures the source's revision, compares it with the cached value's and builds on a miss in ONE critical section — so several threads describing one object (two engines publishing one scene) get the same identity and no second value for one revision. The key is measured INSIDE the lock because a material instance's `revision()` resolves on read, and the lock is the plain kind (2.8 ns uncontended against 13.2 ns for the shared lock it replaced, measured 2026-11-27). An EDIT is still the owning thread's act: the cache makes readers safe, not a concurrent edit. |
+| C23 | **A door is gated or locked, never neither: the two families a host can reach while a frame records each have ONE rule, enforced by the type that owns the state** (`G1` / `G4` / `G6`). The session shape's mutators all take `RenderEngine::beginShapeChange` (C20). The image tables (`detail::FrameResources`: the standing bindings, the frame's publications, the transients) take `tables_mutex_` in every verb a host can reach - `publish` / `unpublish` / `resolve` / `transientTarget` / `transientCount` may run during a frame and never tear - and the frame head copies the host's bindings (`beginFrame`), so the seeding, the wiring checks and the input resolution of one frame answer ONE set, while the host's own `resolve` still answers the live table (the compile resolves through `resolveForFrame`). The lock covers a lookup, an insert or an eviction, never a device call; it makes READERS safe, not a concurrent edit (as C22 does for descriptions), and a borrowed answer (`raw_ptr`) means "the instance that was live at this instant", not "it survives". |
 ### 5.2 Requirements (R#)
 
 | # | Requirement |
@@ -652,6 +694,8 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T39 | two host threads DRIVE IN TURN: every frame is numbered once, a prepare from the second thread is refused while the first builds, and several threads waiting for one frame are all answered | `FramePumpTest.TheIntervalAnswersWhyASecondEntryWasRefused` / `FramePumpTest.TwoHostThreadsDriveThePumpInTurnAndNumberEveryFrameOnce` / `RenderEngineTest.APrepareFromInsideAPreparesCompileIsRefusedInsteadOfWaitingForItself` / `RenderEngineTest.TwoHostThreadsPreparingAtOnceLeaveOneAnswered` / `RenderEngineTest.ASecondHostThreadDrivesTheNextFrameOnceTheIntervalIsFree` / `RenderEngineTest.TwoThreadsWaitingForOneFrameAreBothAnswered` | implemented |
 | T40 | a mode change is an interval verb: refused by the same two reasons while a build holds it (the cause reported once), applied between frames, the mode unchanged - it WAITS for an answer already in flight instead, and a build that leaves by an exception leaves the interval free for another thread | `FramePumpTest.AThreadModeChangeIsAnIntervalVerb` / `FramePumpTest.ABuildThatLeavesByAnExceptionLeavesTheIntervalFree` / `FramePumpTest.OneThreadMayHoldTwoPumpsAndEachKeepsItsOwnInterval` / `RenderEngineTest.ASecondThreadCannotChangeTheFrameThreadWhileAFrameIsInFlight` / `RenderEngineTest.SwitchingBackToInlineWaitsForAnAnswerInsteadOfRefusingIt` / `RenderEngineTest.ASinkDrivingAnotherEngineLeavesTheFirstOneWhole` | implemented |
 | T41 | a description is one value per revision under concurrent readers: several threads describing one program, one material and one geometry get one identity each, a new revision is a new value, and `peek` never builds | `DescriptionCacheTest.OneBuilderAnswersEveryConcurrentReaderTheSameValue` / `DescriptionCacheTest.ANewRevisionIsANewValueAndTheOldOneKeepsItsRevision` / `DescriptionCacheTest.PeekNeverBuildsAndAnswersNullForAMovedRevision` / `DescriptionCacheTest.ThreadsDescribingOneProgramOneMaterialAndOneGeometryShareOneValue` + `scripts/tsan_check.sh` | implemented |
+| T42 | the image tables are gated by one lock and one frame-head value: a host publishing, withdrawing, resolving and reading transients while a frame compiles never tears the table, and one frame answers the bindings its head took | `FrameResourcesTest.AHostSwappingBindingsWhileAFrameCompilesNeverTearsTheTables` / `FrameResourcesTest.TheFrameAnswersTheBindingsItsHeadTook` + `scripts/tsan_check.sh` | implemented |
+| T43 | a content bind is a shape change: refused from inside a compile (the declaration unchanged, one report), accepted between frames, and two passes serving one name from different targets are reported once | `PlanTest.AFrameRefusesAContentBindFromInsideItsOwnCompile` / `PlanTest.TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt` | implemented |
 
 ## 9. Status and Evolution
 
@@ -686,6 +730,8 @@ This file describes the **present**, not the target. The target shape and its re
 - `src/viz/graphics/src/SceneRows.{hpp,cpp}` (`SceneBake` → the single gate into a snapshot)
 - `src/viz/graphics/src/SnapshotSource.{hpp,cpp}` (the snapshot's `DrawListSource` face)
 - `src/viz/graphics/src/PublicationStore.{hpp,cpp}` (the content side's publication/binding and the `SnapshotSource` table)
+- `src/viz/graphics/src/FrameResources.{hpp,cpp}` (the image tables: the host's standing bindings, the
+  frame's publications and transients, and the one lock over them - C23)
 - `src/viz/graphics/src/FrameExpand.{hpp,cpp}` (`bindSceneDraws` / `expandPass` / `expandFrame`)
 - `src/viz/graphics/src/FrameRunner.{hpp,cpp}` (the engine thread)
 - `src/viz/graphics/src/EngineCompile.cpp` (the content half: hooks / publication / describe / the engine half's entry)
@@ -701,6 +747,7 @@ This file describes the **present**, not the target. The target shape and its re
 - `tests/test_graphics/FrameRunnerTest.cpp` (T10 / T12 / T16)
 - `tests/test_graphics/SnapshotShadowTest.cpp` (T3 / T17 / T34)
 - `tests/test_graphics/DescriptionCacheTest.cpp` (T41: one build per revision, one identity for every concurrent reader)
+- `tests/test_graphics/FrameResourcesTest.cpp` (T42: the head's value, the collision answer, and the lock under two threads)
 - `tests/test_graphics/HeadlessBackendTest.cpp` (the two halves and the warm-up)
 - `tests/test_graphics/GraphicsTest.cpp` (memo reuse and T9's surface size)
 
@@ -710,6 +757,8 @@ This file describes the **present**, not the target. The target shape and its re
 - `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md` (the split and order of the snapshot taking over collection)
 - `../decisions/ADR-2026-11-27-a-description-is-built-once-behind-one-lock.md` (C22: one cache type, one lock, and the
   rejected per-class copies / shared-lock / lock-free shapes)
+- `../decisions/ADR-2026-11-27-a-door-is-gated-or-locked.md` (C23 / C20: the two families of shared state, why one
+  door was locked and the other gated, and the rejected "copy Geometry's answer" / "state the rule in five docs" shapes)
 - `../decisions/ADR-2026-11-10-render-world-mirrors-content.md` (**history**: the original mirror-shape decision, superseded by the two above)
 - `graphics-frame-pipeline.md` (the target shape and the step-by-step migration in §9.3)
 - `vk-backend.md` (backend implementation and synchronisation details)

@@ -231,7 +231,30 @@ void SceneView::setScene(intrusive_ptr<Scene> scene)
     if (pipeline_ != nullptr) {
         if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
             if (RenderPass* window = pipeline_->presentingPass(); window != nullptr) {
-                engine->bindPassContent(window, scene_);
+                // A BIND IS A SHAPE CHANGE, so a frame being recorded refuses it (see ContentBindOutcome and C20).
+                // THE RULE'S OWN REMEDY IS TAKEN HERE, at the one place a host arrives by (the same way a resize
+                // waits out the frame it cannot apply a plan into): wait the frame out and bind once more. Bounded,
+                // because this runs on the application thread, and normally already done - an inline engine, or a
+                // threaded one between frames, refuses nothing.
+                ContentBindOutcome bound = engine->bindPassContent(window, scene_);
+                if (bound.refused()) {
+                    (void)engine->waitForFrame(std::chrono::milliseconds(250));
+                    bound = engine->bindPassContent(window, scene_);
+                }
+                if (bound.refused() && content_bind_.shouldReport()) {
+                    // Still recording after the wait: the picture really does keep the OLD scene, so say that here
+                    // instead of letting checkChainContent read it as "the chain was built for other content".
+                    engine->reportEngineProblem(
+                        detail::engineProblem(u8"engine.view.content_not_bound",
+                                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                                              u8"this view's scene could not be bound to its chain's presenting pass: a frame was being"
+                                              u8" recorded when the bind was asked for, and another one after waiting for it - the view keeps"
+                                              u8" drawing the previous scene. Set the scene between frames (wait for them with"
+                                              u8" RenderEngine::waitForFrame)"));
+                }
+                else if (bound.bound()) {
+                    content_bind_.rearm(); // the wire is right again: a later refusal is a new episode
+                }
             }
         }
     }

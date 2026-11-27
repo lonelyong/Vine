@@ -160,8 +160,9 @@ PlanResult SessionShape::applyPlan(const Plan& plan, const void* owner, RenderBa
 {
     // The host's own bindings serve names too (see RenderEngine::publish), so validation must know them or it would
     // refuse a plan that reads a picture the host hands in. A SCOPED plan also reads names its siblings publish: those
-    // rows are not in this plan, so they are external inputs exactly like a host binding.
-    std::vector<String> external = hostOutputNames();
+    // rows are not in this plan, so they are external inputs exactly like a host binding. THE LIVE NAMES, not the
+    // frame's head copy: a plan is applied between frames and must see a binding published a moment ago (C23).
+    std::vector<String> external = resources_.hostBindingNames();
     if (owner != nullptr) {
         for (const Slot& slot : slots_) {
             if (slot.pass == nullptr || slot.owner == owner) {
@@ -418,16 +419,6 @@ void SessionShape::removePass(raw_ptr<RenderPass> pass, RenderBackend* device)
             device->releaseRenderTarget(target);
         }
     }
-}
-
-std::vector<String> SessionShape::hostOutputNames() const
-{
-    std::vector<String> names;
-    names.reserve(resources_.hostBindings().size());
-    for (const auto& binding : resources_.hostBindings()) {
-        names.push_back(binding.first);
-    }
-    return names;
 }
 
 } // namespace detail

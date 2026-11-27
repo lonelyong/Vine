@@ -11,7 +11,7 @@
 - **The host reads memory through two values (2026-11-23)**: `Features::MemoryUsage` says the device reports what its pool holds, and `FrameReport::memory`
   (`DeviceMemory`: `used_bytes` / `reserved_bytes` / `peak_used_bytes` / `free_bytes` / `largest_free_run`) answers it; it is the pool's own account - not the
   whole VRAM, not the frame's traffic (`FrameUploads`) - and the ledger's rows total no bytes (`ResidencyLedger::live`), so this is the public surface's only byte figure.
-- `frame()` returns `FrameCallOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
+- `frame()` returns `FrameCallOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` answers the three-state `ContentBindOutcome` (`Bound` / `NotRegistered` / `Refused` - a content bind is a shape change, gated like a plan). The output table (`publish` / `resolve` / `unpublish` / `transientTarget`) may be used from any thread, including during a frame (C23).
 - **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys); it is the last step of `selectRows`, so a caller receives a sorted `Selection`.
 - **A row is three parts** (`DrawListBake.hpp`): `RowLinks` (parent / subtree end / child count in walk order), `RowOwn` (`Fold`: placement, opacity, layers, draw order, view placement; `Body`: state, material, program, own bounds, geometry, draws) and `ResolvedRow` (the fold's one value, with `resolved_serial` moved only by `storeResolved`). `refreshRow` classifies an edit from the groups: `Body` equal → `RefoldSubtree`, otherwise `RebuildTable`; a chunk-share test compares `RowLinks` + `resolved_serial`.
 - **Chunk sharing and the publication cache are the publisher's**: `ScenePublisher::publication_cache_` holds the last snapshot; `SceneBake` is only the row table (+ `nodes` / `node_epochs` / `next_serial`).
@@ -3000,3 +3000,34 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   `peek` never builds, and one program + one material + one geometry described from 8 threads all give one identity;
   `test_graphics` 691/691; `scripts/tsan_check.sh` 691/691 with 0 warnings; ASan on `test_graphics` `RESULT: PASS`.
   `ADR-2026-11-27-a-description-is-built-once-behind-one-lock`; `graphics-threading.md` 2.4 / 2.14 / 2.16 / C22 / T41.
+
+## 2026-11-27 - Z1 + Z2: a door is gated or locked, never neither
+
+- **The defect (two doors).** The frame interval was stated (C20) but two ways into the engine's shared state stayed
+  outside it, each because its mechanism was written for one caller: (a) `publish` / `unpublish` / `resolve` /
+  `transientTarget` reached `detail::FrameResources`, whose own doc said "no synchronisation is needed", while the
+  compile walks those same tables every frame - a `std::map` mutated during `seedFromHostBindings` is UB, not a
+  refusal; (b) `bindPassContent` rewrote `PassDesc::content` ("the same one storage a plan writes and the compile
+  reads") without the `beginShapeChange` gate `applyPlan` takes, so one door answered `PlanRefusal::Busy` and the other
+  answered nothing.
+- **The rule (C23 + C20).** The image tables take ONE lock (`tables_mutex_`) in every verb a host can reach - lookup,
+  insert, eviction, never across a device call - and the frame head COPIES the host's bindings (`beginFrame`), so the
+  compile seeds, checks and resolves against one value while the host's `resolve` keeps answering the live table
+  (compile side: `frameBindings()` / `resolveForFrame()`). The content bind takes the shape's gate and answers
+  `ContentBindOutcome` (`Bound` / `NotRegistered` / `Refused`) - no `operator bool`, so every call site had to decide.
+- **Trap (the two patches that look like the fix).** Locking the four named host verbs is not enough while
+  `hostBindings()` hands out a reference into the locked container (a fifth door that makes the lock decorative) -
+  and `recordPublication` must not return a pointer into `publications_` for the same reason; it answers the target
+  the name served before, so the collision report reads its other half from a value. A `bool` refusal is the other
+  patch: "not registered" and "retry between frames" are different moves.
+- **Trap (release outside the lock).** A replaced or retired transient is told to the device AFTER the lock is dropped
+  (`releaseRenderTarget` takes the backend's locks); under the lock it would nest the table's lock under the backend's,
+  an order nothing else states.
+- **Cost.** One plain `std::mutex` per verb, 2.8 ns uncontended (same measurement as C22's cache); a handful of verbs
+  per frame (`recordPublication` per pass, `resolve` per declared input).
+- **Evidence.** `FrameResourcesTest` (the head's value; 2000 rounds of a host publishing/withdrawing/resolving/reading
+  transients against a compile); `PlanTest.AFrameRefusesAContentBindFromInsideItsOwnCompile`;
+  `PlanTest.TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt` (the collision report had no case before);
+  `test_graphics` 695/695; `scripts/tsan_check.sh` 695/695 with 0 warnings; ASan `RESULT: PASS`.
+  `ADR-2026-11-27-a-door-is-gated-or-locked`; `graphics-threading.md` 2.16 / 2.18 / C20 / C23 / T42 / T43;
+  `graphics-architecture.md` 2.7 (the three-state answer).

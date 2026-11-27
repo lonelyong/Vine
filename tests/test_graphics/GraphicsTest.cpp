@@ -6306,29 +6306,29 @@ TEST(RenderEngineTest, PassContentLivesInThePassDeclaration)
     EXPECT_EQ(engine->contentOf(nullptr), nullptr);
 
     // Runtime rebind of the registered pass.
-    EXPECT_TRUE(engine->bindPassContent(passA.get(), sceneB));
+    EXPECT_TRUE(engine->bindPassContent(passA.get(), sceneB).bound());
     EXPECT_EQ(engine->contentOf(passA.get()), sceneB.get());
 
     // Bind the previously content-less pass.
     auto sceneC = intrusive_ptr<Scene>(new Scene());
-    EXPECT_TRUE(engine->bindPassContent(passB.get(), sceneC));
+    EXPECT_TRUE(engine->bindPassContent(passB.get(), sceneC).bound());
     EXPECT_EQ(engine->contentOf(passB.get()), sceneC.get());
     EXPECT_EQ(engine->contentOf(passA.get()), sceneB.get());
 
     // Clearing a binding leaves the pass content-less (draws nothing).
-    EXPECT_TRUE(engine->bindPassContent(passB.get(), nullptr));
+    EXPECT_TRUE(engine->bindPassContent(passB.get(), nullptr).bound());
     EXPECT_EQ(engine->contentOf(passB.get()), nullptr);
     EXPECT_EQ(engine->contentOf(passA.get()), sceneB.get());
 
     // A pass the engine does not know is a binding that did not happen, and it says so.
     auto unregistered = intrusive_ptr<RenderPass>(new RenderPass());
-    EXPECT_FALSE(engine->bindPassContent(unregistered.get(), sceneC));
-    EXPECT_FALSE(engine->bindPassContent(nullptr, sceneC));
+    EXPECT_TRUE(engine->bindPassContent(unregistered.get(), sceneC).notRegistered());
+    EXPECT_TRUE(engine->bindPassContent(nullptr, sceneC).notRegistered());
     EXPECT_EQ(unregistered->content(), nullptr) << "a refused bind must not edit the pass either";
 
     // The registry handle is the same call, so it answers the same thing.
-    EXPECT_TRUE(engine->passes().bindContent(passB.get(), sceneC));
-    EXPECT_FALSE(engine->passes().bindContent(unregistered.get(), sceneC));
+    EXPECT_TRUE(engine->passes().bindContent(passB.get(), sceneC).bound());
+    EXPECT_TRUE(engine->passes().bindContent(unregistered.get(), sceneC).notRegistered());
 }
 
 TEST(RenderPassTest, NamedOutputAndInputSlots)

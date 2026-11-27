@@ -847,6 +847,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The witness of the compile owning transient storage: one per DISTINCT transient a frame declares
      *   (same identity and shape = ONE shared target), it does not grow with the frame count, and a shape
      *   change replaces rather than adds.
+     * - ANY THREAD, INCLUDING DURING A FRAME (C23): the count is one instant of a table the compile may be rewriting.
      *
      * @return Number of live transient targets.
      */
@@ -862,6 +863,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The answer is the instance live NOW: re-ask after a shape change, because a transient is REPLACED
      *   when its declared shape moves (PassDesc::target.shape) - a handle kept across a resize describes a
      *   target the compile has already let go.
+     * - ANY THREAD, INCLUDING DURING A FRAME (`G4` / C23): the lookup takes the table's lock, and the answer is
+     *   BORROWED - what is guaranteed is "the instance that was live at this instant", not its survival.
      *
      * @param identity Identity a pass declared (its target name).
      * @return The target, or null when nothing declares that identity (including every call before the
@@ -877,10 +880,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   content with this".
      * - Forwarded to the backend (before initialize() it is the session's decision; on a running session
      *   the backend re-bakes the shading side).
-     * - CONTENT THREAD, AND SAFE WHILE A FRAME IS IN FLIGHT: the program is taken as a value here (its
-     *   description, not the live object) and the backend reads it under its own lock, so this is one of the two
-     *   device-facing verbs a host may call without waiting for the frame (the other is `releaseContent`, which
-     *   parks what it drops - design 2.12 / 2.16).
+     * - SAFE WHILE A FRAME IS IN FLIGHT (`G4` / C23): the program is taken as a VALUE here (its description, not the
+     *   live object) and the backend reads it under its own lock, so a host may switch the default shading while a
+     *   frame runs - the same family as the `publish` table, while `releaseContent` parks what it drops instead.
      * - The engine's default is forwardProgram(): a NAMED program, chosen once in the constructor - not a
      *   lookup that hides which shading a scene gets. Hand it flatForwardProgram() to shade flat, or null to
      *   decline: content without its own program is then reported and not drawn, never shaded with something
@@ -942,15 +944,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Rebinds which scene a registered pass renders.
      *
      * @details
-     * - The binding is written into the pass' declaration (`PassDesc::content`) - the same one storage a plan
-     *   writes and the compile reads.
+     * - The binding is written into the pass' declaration (`PassDesc::content`) - the same one storage a plan writes
+     *   and the compile reads.
+     * - A SHAPE CHANGE LIKE A PLAN (`G4` / C20): refused with `ContentBindOutcome::Status::Refused` while this engine
+     *   is building or answering a frame, reported once per episode as `engine.pass.changed_during_frame`. The
+     *   declaration is what a compile walks, so the two doors onto it answer the same rule instead of one of them
+     *   being the unstated exception (review 19 `Z2`); the same call is accepted between frames.
      *
      * @param pass    Pass in the engine's table (by pointer).
      * @param content New content scene; null clears the binding (a base scene pass then draws nothing).
-     * @return true when @p pass is registered and its declaration now states @p content; false when no such pass is
-     *         registered, so nothing changed.
+     * @return Which of the three answers this call got (see ContentBindOutcome): the declaration now states
+     *         @p content, no such pass is registered, or a frame refused the change.
      */
-    bool bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content);
+    [[nodiscard]] ContentBindOutcome bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene> content);
 
     /** @brief Gets the content scene a registered pass renders.
      *
@@ -972,6 +978,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   target is published or unpublish() withdraws the name) instead of ignored - the host would
      *   otherwise believe the name is served.
      *
+     * - ANY THREAD, INCLUDING DURING A FRAME (`G4` / C23): the table is locked for the insert, and a frame already
+     *   being built answers the binding its head took - the swap lands on the next frame instead of making one frame
+     *   see two answers.
+     *
      * @param name   Slot name consumers resolve against.
      * @param target Target to bind (a reference is kept; null is reported).
      */
@@ -982,6 +992,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - A pass' publication from THIS frame wins over a host binding of the same name (the pass ran and its
      *   content is this frame's); otherwise a standing host binding answers.
+     * - ANY THREAD, INCLUDING DURING A FRAME (`G4` / C23): the tables it walks are locked, so a lookup racing a
+     *   compile or another host's publish never tears. The answer is BORROWED - the target is kept alive by the
+     *   binding it came from (or by the pass that published it), not by the value handed back.
      *
      * @param name Slot name to look up.
      * @return The published target, or nullptr when nothing is published under @p name.
@@ -989,6 +1002,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     raw_ptr<RenderTarget> resolve(const String& name) const;
 
     /** @brief Removes an output slot (a host binding and this frame's publication alike).
+     *
+     * @details
+     * - ANY THREAD, INCLUDING DURING A FRAME: the same rule as `publish` (C23) - a withdrawal is a table edit, and
+     *   the frame that already took its bindings keeps answering them until it is answered.
      *
      * @param name Slot name to remove (no-op when not published).
      */

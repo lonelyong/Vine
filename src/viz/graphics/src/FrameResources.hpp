@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <map>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -44,8 +45,17 @@ struct FramePublication {
  * - The boundary is deliberately about STORAGE and IDENTITY, not policy: collision reports, episode rules and
  *   "why did this input not resolve" stay in `RenderEngine`, where the diagnostics route and the compile's problem
  *   list live. This type answers "what exists" and "what was produced"; the engine decides what to say about it.
- * - All methods are called from the engine's single frame thread (see `RenderFrameExecutor`'s threading contract),
- *   so no synchronisation is needed.
+ * - TWO WORLDS REACH THESE TABLES, so the lock is this type's own rule (`G1` / `G4`; C23): the COMPILE writes the
+ *   frame's tables and walks them for the whole build, while the HOST may publish, withdraw, resolve or read a
+ *   transient at any time - including while a frame is being built or answered, because a standing binding is
+ *   swapped when the host has something new to offer, not when the frame loop happens to be between frames.
+ *   `tables_mutex_` therefore guards every table a host verb can reach (the standing bindings, the episode set,
+ *   the frame's publications, the transients); it is held for a lookup, an insert or an eviction, and NEVER across
+ *   a device call.
+ * - THE FRAME READS THE HOST'S BINDINGS AS A VALUE (`G1` / C23): `beginFrame` copies them, and the compile then
+ *   seeds, resolves and checks against that ONE copy - so a publish landing mid-compile answers on the next frame
+ *   instead of letting one frame see two answers to "what does this name serve". Those two tables (`frame_bindings_`,
+ *   `produced_`) belong to the compile alone and take no lock.
  */
 class FrameResources {
   public:
@@ -62,6 +72,8 @@ class FrameResources {
      * - A null target is an EPISODE keyed by the name: the first one returns a message, a repeat returns nothing,
      *   and a later real target (or `unpublish`) ends it. The engine reports the returned sentence, so the
      *   diagnostics route stays in one place.
+     * - ANY THREAD, INCLUDING DURING A FRAME: the binding is stored under the table's lock and answers on the NEXT
+     *   frame (a frame already building reads the bindings its head took, see frameBindings).
      *
      * @param name   Name consumers resolve against.
      * @param target Target to bind, or null to report that the name serves nothing.
@@ -75,16 +87,38 @@ class FrameResources {
      */
     void unpublish(const String& name);
 
-    /** @brief Gets the host's standing bindings, as the compile seeds a frame from.
+    /** @brief Gets the host bindings THIS frame took: the copy `beginFrame` made, as the compile seeds from.
      *
-     * @return The bindings; a binding with a null target is never stored.
+     * @details
+     * - The compile's own table, so it takes no lock and returns a reference: it is written once, by `beginFrame`,
+     *   and read only by the compile of the frame that took it. A host verb must never read it - `resolve` answers
+     *   the host, this answers the frame.
+     *
+     * @return The bindings this frame started with; a binding with a null target is never stored.
      */
-    [[nodiscard]] const std::map<String, intrusive_ptr<RenderTarget>>& hostBindings() const noexcept;
+    [[nodiscard]] const std::map<String, intrusive_ptr<RenderTarget>>& frameBindings() const noexcept;
 
-    /** @brief Clears the per-frame tables: one call at the start of a compile. */
+    /** @brief Gets the names the host serves RIGHT NOW, as a copy taken under the lock.
+     *
+     * @details
+     * - For a question asked outside a compile: a plan validated between frames must know the names the host hands in,
+     *   or it would refuse a row that reads one - and it must see a binding published a moment ago, which the frame's
+     *   head copy does not have yet. A frame's own question is `frameBindings`.
+     *
+     * @return The names of the standing bindings.
+     */
+    [[nodiscard]] std::vector<String> hostBindingNames() const;
+
+    /** @brief Opens a frame: takes the host's bindings as THIS frame's copy and clears the per-frame tables.
+     *
+     * @details
+     * - The head is where a frame's inputs are frozen (`G1` / C23): the bindings are copied under the table's lock,
+     *   so every later question of this frame (seeding, wiring, resolution) answers the same set even when the host
+     *   publishes from another thread while the compile runs.
+     */
     void beginFrame();
 
-    /** @brief Seeds "what this frame has produced" with the host's standing bindings.
+    /** @brief Seeds "what this frame has produced" with the bindings the frame took.
      *
      * @details
      * - A host binding is filled by the HOST, so it is available before any pass runs; an object-typed input
@@ -105,26 +139,44 @@ class FrameResources {
      */
     void recordProduced(raw_ptr<const RenderTarget> target);
 
-    /** @brief Finds this frame's publication for @p name, if any.
+    /** @brief Records a pass' publication, answering the target the name served before it.
      *
-     * @param name Name a pass published.
-     * @return The publication (mutable, so the latest publisher can replace its target), or null.
-     */
-    [[nodiscard]] FramePublication* findPublication(const String& name) noexcept;
-
-    /** @brief Records a pass' publication for the rest of the frame.
+     * @details
+     * - The LATEST publisher serves the name for the rest of the frame, so recording a second pass' target under one
+     *   name replaces the first (and keeps the first pass as the row's subject).
+     * - The previous target is returned rather than exposed as a row reference: the collision report is the compile's
+     *   (it owns the wording and the episode rule), and the table stays inside this type's lock.
      *
      * @param pass   Pass that published (borrowed; its `outputName()` is the key).
      * @param target Target the name serves.
+     * @return The different target the name already served this frame, or null when this is the name's first
+     *         publication (or it serves the same target again).
      */
-    void recordPublication(raw_ptr<const RenderPass> pass, raw_ptr<RenderTarget> target);
+    [[nodiscard]] raw_ptr<RenderTarget> recordPublication(raw_ptr<const RenderPass> pass, raw_ptr<RenderTarget> target);
 
-    /** @brief Resolves a name for this frame: a pass' publication, else the host's standing binding.
+    /** @brief Resolves a name as the HOST asks it now: a pass' publication, else the live standing binding.
+     *
+     * @details
+     * - ANY THREAD, INCLUDING DURING A FRAME: the tables it walks are locked, so a lookup racing a compile or
+     *   another host's publish never tears.
+     * - The answer is borrowed: the target is kept alive by the binding or by the pass that published it.
      *
      * @param name Name to resolve.
-     * @return The target the name serves, or null when nothing produced it.
+     * @return The target the name serves now, or null when nothing serves it.
      */
     [[nodiscard]] raw_ptr<RenderTarget> resolve(const String& name) const noexcept;
+
+    /** @brief Resolves a name as THIS FRAME asked it at its head: a pass' publication, else the binding it took.
+     *
+     * @details
+     * - The compile's resolution (see `SessionShape::resolveRowInputs`): the same tables `resolve` walks, except
+     *   that the standing bindings are the frame's own copy - so a host publish landing mid-compile cannot answer
+     *   a row of a frame whose head, seeds and wiring checks saw the previous binding (C23).
+     *
+     * @param name Name to resolve.
+     * @return The target this frame resolves the name to (borrowed), or null when nothing served it.
+     */
+    [[nodiscard]] raw_ptr<RenderTarget> resolveForFrame(const String& name) const noexcept;
 
     /** @brief Marks every transient as undeclared, ready for this compile's declarations. */
     void beginTransientCompile();
@@ -154,11 +206,20 @@ class FrameResources {
 
     /** @brief Gets how many transient targets are live.
      *
+     * @details
+     * - ANY THREAD, INCLUDING DURING A FRAME: the count is taken under the table's lock, so it is one instant of a
+     *   table the compile is rewriting.
+     *
      * @return The count.
      */
     [[nodiscard]] std::size_t transientCount() const noexcept;
 
     /** @brief Gets the live transient a declaration named.
+     *
+     * @details
+     * - ANY THREAD, INCLUDING DURING A FRAME: the lookup takes the table's lock, and the answer is borrowed - it is
+     *   the instance live at that instant, so a compile that replaces or retires it afterwards leaves the handle
+     *   describing a target that has been let go (re-ask).
      *
      * @param identity Declared identity.
      * @return The target, or null when no declaration names it.
@@ -204,11 +265,19 @@ class FrameResources {
     static void release(raw_ptr<RenderTarget> target, RenderDevice* device);
 
   private:
+    /// Guards every table a host verb can reach (see the class note): the lock is taken per verb, never across a
+    /// device call.
+    mutable std::mutex tables_mutex_;
+
     std::map<String, intrusive_ptr<RenderTarget>> host_outputs_;
     std::set<String>                              unpublishable_host_names_;
-    std::vector<raw_ptr<const RenderTarget>>      produced_;
     std::vector<FramePublication>                 publications_;
     std::vector<TransientTarget>                  transients_;
+
+    /// The host bindings THIS frame took: written once by `beginFrame`, then the compile's alone (no lock).
+    std::map<String, intrusive_ptr<RenderTarget>> frame_bindings_;
+    /// What this frame has filled so far: the compile's alone (no lock).
+    std::vector<raw_ptr<const RenderTarget>>      produced_;
 };
 
 } // namespace detail

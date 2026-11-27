@@ -92,13 +92,19 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (102)
+## decisions/ — decision records (ADRs) (103)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-door-is-gated-or-locked.md` — **a door into the engine's shared state is gated or locked, never
+  neither**: the image tables (`detail::FrameResources`: standing bindings, the frame's publications, its transients)
+  take one lock in every verb a host can reach and the frame head takes the host's bindings as a value, while the
+  second door onto a pass' declaration (`bindPassContent`) takes the shape gate `applyPlan` takes and answers the
+  three-state `ContentBindOutcome` - review 19 `Z1` / `Z2`, with the rejected "lock four methods", "refuse the host
+  verbs outside the interval" and "one lock per table" shapes.
 - `ADR-2026-11-27-a-description-is-built-once-behind-one-lock.md` — **a content description is built once per revision,
   behind one lock**: `detail::DescriptionCache` now holds the rule that `Geometry` / `MaterialValues` / `ShaderProgram`
   used to spell three times by hand, only one of them with a lock - `get` measures the revision, compares it and builds

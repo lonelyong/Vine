@@ -40,11 +40,13 @@ This file defines the current design of the graphics architecture: device, engin
 2.6 **Content belongs to the pass's declaration**: `PassDesc::content` is the only storage; the engine's slot holds only order / owner / role / transient / timing.
 Why: a pass is one declaration (`RenderPass.hpp`'s "ONE FACT, ONE STORAGE"), the content is written by the declarer and read by the compiler; a second copy in the engine
 would immediately become two writable values. Boundary: the same pass instance registered with two engines shares its content — a direct consequence of "one declaration"; for two pictures use two passes.
-`applyPlan(plan, owner)` only writes declarations; clearing uses `bindPassContent(pass, nullptr)` (or the plan no longer names that row).
+`applyPlan(plan, owner)` only writes declarations; clearing uses `bindPassContent(pass, nullptr)` (or the plan no longer names that row) -
+and both doors take the same gate, because the declaration is what a compile walks (see `graphics-threading.md` 2.18 / C20).
 It satisfies `G1` / `G4`; for `G1` it gives up "one instance, several contents".
 
 2.7 **A change that can fail is visible from the return value**: `applyPlan` returns the three-state `PlanResult` (`Applied` / `Invalid` + problems /
-`Refused` + `PlanRefusal::Busy`), `bindPassContent` / `PassRegistry::bindContent` return whether a registered pass was hit,
+`Refused` + `PlanRefusal::Busy`), `bindPassContent` / `PassRegistry::bindContent` return the three-state `ContentBindOutcome` (bound / not registered /
+refused while a frame records - the same gate `applyPlan` takes, see `graphics-threading.md` 2.18),
 `frame()`'s `FrameCallOutcome` answers only Ran / Submitted (`NotReady` + `EngineNotReadyReason` is a precondition, not a frame ending),
 `prepare()` reuses the same `EngineNotReadyReason`.
 Why: a silent no-op lets the host take "did not take effect" for "took effect"; the return value is the only answer the call site can judge by. Boundary: `removePass` stays idempotent and returns nothing —
@@ -308,8 +310,8 @@ removing an unregistered pass and removing an already removed pass are the same 
 
 | # | Feature | Notes |
 |---|---|---|
-| F6 | `PassRegistry` | The only pass registration table; `add` / `remove` / `count` / `orderOf` / `contentOf` / `bindContent(...) → bool`. |
-| F7 | `OutputRegistry` | Named outputs and transients: `publish` / `resolve` / `unpublish` / `transientTarget`. |
+| F6 | `PassRegistry` | The only pass registration table; `add` / `remove` / `count` / `orderOf` / `contentOf` / `bindContent(...) → ContentBindOutcome` (bound / not registered / refused while a frame records). |
+| F7 | `OutputRegistry` | Named outputs and transients: `publish` / `resolve` / `unpublish` / `transientTarget` - usable from any thread, including during a frame (the table is locked; a swap lands on the next frame). |
 | F8 | `DiagnosticsHandle` | Diagnostics: `setSink` / counts / `isClean`; the engine dies first ⇒ `isValid()` false. |
 
 ### 3.3 Chain (recipe + registration home)
@@ -362,7 +364,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Interface | Purpose |
 |---|---|
 | `PassRegistry::add(PassDesc)` / `remove()` / `count()` | Pass registration |
-| `PassRegistry::orderOf()` / `contentOf()` / `bindContent()` | A pass's order / content; `bindContent` returns whether a registered pass was hit |
+| `PassRegistry::orderOf()` / `contentOf()` / `bindContent()` | A pass's order / content; `bindContent` answers `ContentBindOutcome` (the declaration changed / no such pass / a frame refused it) |
 | `OutputRegistry::publish()` / `resolve()` / `unpublish()` | Named outputs |
 | `OutputRegistry::transientTarget()` / `transientCount()` | Transients |
 | `DiagnosticsHandle::setSink()` / `count()` / `isClean()` | Diagnostics |
