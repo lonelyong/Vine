@@ -70,6 +70,7 @@ using vn::graphics::DrawKind;
 using vn::graphics::DrawPacket;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
+using vn::graphics::Light;
 using vn::graphics::LightType;
 using vn::graphics::LightValue;
 using vn::graphics::Material;
@@ -228,14 +229,16 @@ void main()
 ///
 /// The z values are 0.5, not 0: the backend renders reverse-Z (the far plane is 0, which is what a depth buffer is
 /// cleared to), and the default pass policy TESTS depth - a fragment at the far plane would fail every comparison.
-[[nodiscard]] intrusive_ptr<Geometry> makeTriangle()
+///
+/// @param clockwise Author the triangle with its winding reversed, i.e. as the geometry's own BACK (see CullMode).
+[[nodiscard]] intrusive_ptr<Geometry> makeTriangle(bool clockwise = false)
 {
     std::vector<float> positions{
         -0.75F, -0.75F, 0.5F, // bottom left
         0.75F,  -0.75F, 0.5F, // bottom right
         0.0F,   0.75F,  0.5F, // top
     };
-    std::vector<std::uint32_t> indices{ 0U, 1U, 2U };
+    std::vector<std::uint32_t> indices = clockwise ? std::vector<std::uint32_t>{ 0U, 2U, 1U } : std::vector<std::uint32_t>{ 0U, 1U, 2U };
 
     auto geometry = intrusive_ptr<Geometry>(new Geometry());
     geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::move(positions))));
@@ -247,6 +250,60 @@ void main()
     primitive.indices  = Primitive::IndexSpan::whole(intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::move(indices))));
     geometry->clearPrimitives();
     geometry->addPrimitive(primitive);
+    geometry->bumpRevision();
+    return geometry;
+}
+
+/// @brief Builds a quad that fills the clip-space picture and is SYMMETRIC about x = 0, with per-vertex normals.
+///
+/// The symmetry is what makes a mirror witness possible: the placement `scale(-1, 1, 1)` maps the quad's covered
+/// pixels onto themselves, so both placements can be sampled at the SAME pixel.
+///
+/// @param normals_away Author the normals as `-z` instead of `+z`, i.e. as a surface whose far side faces the light.
+[[nodiscard]] intrusive_ptr<Geometry> makeFillingQuad(bool normals_away = false)
+{
+    const float nz       = normals_away ? -1.0F : 1.0F;
+    auto        geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+      -1.0F,
+      -1.0F,
+      0.5F,
+      1.0F,
+      -1.0F,
+      0.5F,
+      1.0F,
+      1.0F,
+      0.5F,
+      -1.0F,
+      -1.0F,
+      0.5F,
+      1.0F,
+      1.0F,
+      0.5F,
+      -1.0F,
+      1.0F,
+      0.5F,
+    })));
+    geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+      0.0F,
+      0.0F,
+      nz,
+      0.0F,
+      0.0F,
+      nz,
+      0.0F,
+      0.0F,
+      nz,
+      0.0F,
+      0.0F,
+      nz,
+      0.0F,
+      0.0F,
+      nz,
+      0.0F,
+      0.0F,
+      nz,
+    })));
     geometry->bumpRevision();
     return geometry;
 }
@@ -773,11 +830,11 @@ TEST(VkContentDrawTest, AFullscreenCopyIsDrawnWhateverThePassDepthPolicySays)
 
 TEST(VkContentDrawTest, TheFragmentStageSeesTheSdksFrontFace)
 {
-    // THE RULE TWO-SIDED SHADING AND CULLING BOTH STAND ON (review 17 W3): `gl_FrontFacing` must mean the SDK's
-    // counter-clockwise rule. The backend flips Y in the projection, so the winding Vulkan judges is not the winding
-    // the SDK wrote down - and this case is what states the mapping instead of an argument about a flipped coordinate
-    // system. It failed against the old `kFrontFace`: every correctly wound surface was a back face to the shading
-    // (so its normal was turned away from the light) and `CullMode::Back` culled the faces it was told to keep.
+    // THE RULE TWO-SIDED SHADING AND CULLING BOTH STAND ON (review 17 W3, review 18 Y1): `gl_FrontFacing` must mean the
+    // SDK's counter-clockwise rule - for EVERY placement. The backend flips Y in the projection, so the winding Vulkan
+    // judges is not the winding the SDK wrote down, and a placement with a negative determinant flips it again; a fixed
+    // front-face constant would get the second case wrong, and this case states both halves in pixels instead of an
+    // argument about a flipped coordinate system.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     if (!backend->initialize()) {
@@ -787,9 +844,11 @@ TEST(VkContentDrawTest, TheFragmentStageSeesTheSdksFrontFace)
     const intrusive_ptr<RenderTarget>  target   = makeTarget();
     const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFacingFragment);
     const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    // The SAME triangle as its geometry's own back: reversed indices, so the authored back is what faces the camera.
+    const intrusive_ptr<Geometry> authored_back = makeTriangle(true);
 
-    const auto render = [&](const vn::math::Mat4d& model, const RenderState& authored) {
-        DrawItem draw_item(geometry, nullptr, model);
+    const auto render = [&](const intrusive_ptr<Geometry>& shape, const vn::math::Mat4d& model, const RenderState& authored) {
+        DrawItem draw_item(shape, nullptr, model);
         draw_item.program              = program;
         draw_item.program_description  = program->description();
         draw_item.authored_state       = authored;
@@ -821,28 +880,105 @@ TEST(VkContentDrawTest, TheFragmentStageSeesTheSdksFrontFace)
 
     // The triangle winds counter-clockwise in the picture (bottom left -> bottom right -> top), so the SDK calls the
     // side the identity camera sees a FRONT face.
-    const std::array<int, 4> front = render(vn::math::Mat4d{}, RenderState{});
+    const std::array<int, 4> front = render(geometry, vn::math::Mat4d{}, RenderState{});
     EXPECT_EQ(front, (std::array<int, 4>{ 255, 0, 0, 255 })) << "the SDK's front face reached the stage as a front face";
 
-    // A MIRRORED placement reverses the winding (a negative scale is legal, see PositionAttitudeTransform), so the
-    // same triangle is a BACK face - which is exactly what a per-draw determinant would have to correct.
-    const std::array<int, 4> back = render(vn::math::scale<double>(-1.0, 1.0, 1.0), RenderState{});
-    EXPECT_EQ(back, (std::array<int, 4>{ 0, 255, 0, 255 })) << "a mirrored placement is a back face";
+    // THE PLACEMENT'S HANDEDNESS IS PART OF THE DRAW (DrawItem::reversesWinding): a mirror reverses the winding, and a
+    // backend that kept one fixed front face for it made every correctly authored surface a back face - which is what
+    // turned a mirrored solid's lit side into its far side. The authored front is still the front here.
+    const auto mirrored = vn::math::scale<double>(-1.0, 1.0, 1.0);
+    EXPECT_EQ(render(geometry, mirrored, RenderState{}), front) << "a mirrored placement is still the SDK's front face";
 
-    // CULLING FOLLOWS THE SAME WORD: `Back` keeps the SDK's front face and drops the mirrored one; `Front` does the
-    // opposite. A pipeline that got the pair wrong culls exactly what it was asked to keep, and the object either
-    // vanishes or shows its interior.
+    // The other value of the pair still works: an AUTHORED back is a back, mirrored or not (the two flips cancel).
+    const std::array<int, 4> back = render(authored_back, vn::math::Mat4d{}, RenderState{});
+    EXPECT_EQ(back, (std::array<int, 4>{ 0, 255, 0, 255 })) << "the geometry's own back is a back face";
+    EXPECT_EQ(render(authored_back, mirrored, RenderState{}), back) << "a mirrored authored back is still a back face";
+
+    // CULLING FOLLOWS THE SAME WORD, BOTH WAYS ROUND: `Back` keeps the authored front (whatever the placement did to
+    // the winding) and drops the authored back; `Front` does the opposite. A mirrored solid with `Back` therefore shows
+    // its OUTSIDE - the inside is exactly what a fixed-front-face backend used to leave visible.
     RenderState cull_back;
     cull_back.cullMode = CullMode::Back;
-    EXPECT_EQ(render(vn::math::Mat4d{}, cull_back), front) << "CullMode::Back keeps the SDK's front face";
-    EXPECT_EQ(render(vn::math::scale<double>(-1.0, 1.0, 1.0), cull_back), (std::array<int, 4>{ 0, 0, 0, 255 }))
-        << "CullMode::Back drops a mirrored (back) face";
+    EXPECT_EQ(render(geometry, vn::math::Mat4d{}, cull_back), front) << "CullMode::Back keeps the SDK's front face";
+    EXPECT_EQ(render(geometry, mirrored, cull_back), front) << "CullMode::Back keeps a mirrored placement's front too";
+    EXPECT_EQ(render(authored_back, vn::math::Mat4d{}, cull_back), (std::array<int, 4>{ 0, 0, 0, 255 })) << "CullMode::Back drops the geometry's own back";
 
     RenderState cull_front;
     cull_front.cullMode = CullMode::Front;
-    EXPECT_EQ(render(vn::math::Mat4d{}, cull_front), (std::array<int, 4>{ 0, 0, 0, 255 }))
-        << "CullMode::Front drops the SDK's front face";
-    EXPECT_EQ(render(vn::math::scale<double>(-1.0, 1.0, 1.0), cull_front), back) << "CullMode::Front keeps the back face";
+    EXPECT_EQ(render(geometry, vn::math::Mat4d{}, cull_front), (std::array<int, 4>{ 0, 0, 0, 255 })) << "CullMode::Front drops the SDK's front face";
+    EXPECT_EQ(render(geometry, mirrored, cull_front), (std::array<int, 4>{ 0, 0, 0, 255 })) << "CullMode::Front drops a mirrored placement's front face too";
+    EXPECT_EQ(render(authored_back, vn::math::Mat4d{}, cull_front), back) << "CullMode::Front keeps the geometry's back";
+}
+
+TEST(VkContentDrawTest, AMirroredPlacementIsLitAsItsUnmirroredTwin)
+{
+    // Y1 (review 18): two-sided shading turns a BACK face's normal toward the viewer (`vnFacingNormal`), which is right
+    // only while "front" means the AUTHORED front. A mirror reverses the winding and leaves the authored normal pointing
+    // outward (a reflection is orthogonal), so with a fixed front face every visible face of a mirrored solid was
+    // shaded as the solid's FAR side - the ambient term only, with culling off.
+    //
+    // Three placements of one white quad say it in pixels: the lit one, its mirror image over x = 0 (equal - the quad
+    // is symmetric, so the same pixel is covered by both), and a quad authored with its normals away from the light
+    // (darker, so the equality cannot pass as two unlit frames agreeing).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target  = makeTarget();
+    const intrusive_ptr<ShaderProgram> program = vn::graphics::forwardProgram();
+    const intrusive_ptr<Material>      white   = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    const intrusive_ptr<Geometry>      facing  = makeFillingQuad(false);
+    const intrusive_ptr<Geometry>      away    = makeFillingQuad(true);
+
+    // A light that travels along -z, so a surface facing +z is fully lit (`vnEvaluateLight` negates the direction).
+    auto light = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    light->setColor(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    light->setIntensity(1.0F);
+    std::vector<LightValue>         lights{ light->value() };
+    const vn::graphics::LightSetPtr light_set = vn::graphics::LightSet::create(std::move(lights));
+
+    const auto render = [&](const intrusive_ptr<Geometry>& shape, const vn::math::Mat4d& model) {
+        DrawItem draw_item(shape, white, model);
+        draw_item.program              = program;
+        draw_item.program_description  = program->description();
+        draw_item.material             = white;
+        draw_item.material_description = white->description();
+
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        commands->push_back(std::move(draw_item));
+
+        DrawPacket draw;
+        draw.kind         = DrawKind::Scene;
+        draw.view.camera  = identityCamera();
+        draw.commands     = commands;
+        draw.light_values = light_set;
+
+        FrameDescription       frame;
+        FrameDescription::Pass entry;
+        entry.pass = vn::test::framePassForTest();
+        PassDraw pass;
+        pass.target                   = target.get();
+        pass.attachment_policy        = AttachmentPolicy{};
+        pass.attachment_policy->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.packets.push_back(std::move(draw));
+        entry.draw = std::move(pass);
+        frame.passes.push_back(std::move(entry));
+        (void)backend->executeFrame(frame);
+
+        const ColorReadback read = backend->readColorImage(target.get(), 0);
+        EXPECT_TRUE(read.ok());
+        return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
+    };
+
+    const std::array<int, 4> lit      = render(facing, vn::math::Mat4d{});
+    const std::array<int, 4> mirrored = render(facing, vn::math::scale<double>(-1.0, 1.0, 1.0));
+    const std::array<int, 4> unlit    = render(away, vn::math::Mat4d{});
+
+    EXPECT_EQ(mirrored, lit) << "a mirrored placement is shaded as its unmirrored twin, not from behind";
+    EXPECT_LT(unlit[1], lit[1]) << "the fixture can tell lit from unlit: a normal turned away from the light is darker";
+    EXPECT_GT(lit[1], 0) << "the lit case is not the cleared target either";
 }
 
 TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
@@ -1321,7 +1457,7 @@ TEST(VkContentDrawTest, ARepeatedStateIsNotARepeatedCommand)
  *
  * WHY THIS CASE EXISTS (`K6`, review 9). `bindPipeline` used to reset the whole state shadow, on the reasoning that a
  * pipeline MAY declare a different dynamic set. Every pipeline this backend builds comes from `buildPipeline`, which
- * declares the same eleven dynamic states, and Vulkan resets no dynamic state on a bind - so the reset re-stated the
+ * declares the same twelve dynamic states, and Vulkan resets no dynamic state on a bind - so the reset re-stated the
  * viewport, the scissor and the whole raster half for a pipeline that reads exactly the values the buffer holds. Two
  * commands with DIFFERENT programs therefore cost one state command (the bind itself), not two statements of
  * everything. A mutation that restores the reset makes the deltas below read `2 * one_draw` (two commands) and

@@ -76,7 +76,10 @@ layout(set = 0, binding = 5) uniform sampler2D vn_emissiveMap;
  *   chunk multiplies by `faceDirection` for the same reason.
  * - `gl_FrontFacing` is the SDK's rule here, not a device accident: every backend states the front face so that it
  *   agrees with the SDK's counter-clockwise convention AFTER its own clip fold (see CullMode), so "front-facing"
- *   means the same polygon on every backend.
+ *   means the same polygon on every backend. It means the AUTHORED front too, even under a placement that mirrors it:
+ *   the front face a draw states follows that draw's own handedness (`DrawItem::reversesWinding`), which is why a
+ *   mirrored subtree reaches this stage as its authored front and keeps its authored normal. Reading the winding here
+ *   is therefore safe; a backend that forgot that half would light every visible face of a mirrored solid from behind.
  * - BOTH stages that shade a surface call this (the forward stage and the G-buffer writer), so the two paths
  *   cannot disagree about which side a fragment is on.
  *

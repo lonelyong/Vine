@@ -48,6 +48,11 @@ TEST(VkStateMappingTest, TheFrontFaceStatesTheSdksCounterClockwiseRule)
     // away from the light) and made `CullMode::Back` cull what it was told to keep. The witness is
     // `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace` (front, back AND both cull directions in pixels).
     EXPECT_EQ(StateMapping::kFrontFace, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    // A MIRRORED PLACEMENT REVERSES THE WINDING, and the draw states the other enumerator for it (`frontFace`): the
+    // authored front stays the front for the cull AND for `gl_FrontFacing`, which two-sided shading reads (review 18
+    // Y1). It is the same rule read the other way round, so it is derived from `kFrontFace` rather than written twice.
+    EXPECT_EQ(StateMapping::frontFace(false), StateMapping::kFrontFace);
+    EXPECT_EQ(StateMapping::frontFace(true), VK_FRONT_FACE_CLOCKWISE);
     EXPECT_EQ(StateMapping::cullMode(CullMode::None), VK_CULL_MODE_NONE);
     EXPECT_EQ(StateMapping::cullMode(CullMode::Front), VK_CULL_MODE_FRONT_BIT);
     EXPECT_EQ(StateMapping::cullMode(CullMode::Back), VK_CULL_MODE_BACK_BIT);

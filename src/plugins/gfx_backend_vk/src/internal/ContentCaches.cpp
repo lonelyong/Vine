@@ -922,23 +922,26 @@ struct ContentCaches::Impl {
         // writes are discarded, which is what a shadow pass states by writing no colour).
         blend.pAttachments    = blend_attachments.empty() ? nullptr : blend_attachments.data();
 
-        // THE ELEVEN DYNAMIC ITEMS, and the reason the key has no state: the four the recorder has always set
-        // (viewport, scissor, line width, depth bias) plus cull and the depth items (CORE in Vulkan 1.3) plus polygon
-        // mode and blend enable/equation (`VK_EXT_extended_dynamic_state3`, the one extension this floor requires).
-        const VkDynamicState dynamic_states[11]{ VK_DYNAMIC_STATE_VIEWPORT,
-                                                 VK_DYNAMIC_STATE_SCISSOR,
-                                                 VK_DYNAMIC_STATE_LINE_WIDTH,
-                                                 VK_DYNAMIC_STATE_DEPTH_BIAS,
-                                                 VK_DYNAMIC_STATE_CULL_MODE,
-                                                 VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
-                                                 VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-                                                 VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
-                                                 VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
-                                                 VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
-                                                 VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT };
+        // THE TWELVE DYNAMIC ITEMS, and the reason the key has no state: the four the recorder has always set
+        // (viewport, scissor, line width, depth bias) plus cull, the front face and the depth items (all CORE in Vulkan
+        // 1.3) plus polygon mode and blend enable/equation (`VK_EXT_extended_dynamic_state3`, the one extension this
+        // floor requires). FRONT FACE IS HERE BECAUSE A DRAW'S PLACEMENT CAN MIRROR IT (DrawItem::reversesWinding): one
+        // dynamic item serves every handedness, where a pipeline key would double the cache for one bit.
+        const VkDynamicState             dynamic_states[12]{ VK_DYNAMIC_STATE_VIEWPORT,
+                                                             VK_DYNAMIC_STATE_SCISSOR,
+                                                             VK_DYNAMIC_STATE_LINE_WIDTH,
+                                                             VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                                             VK_DYNAMIC_STATE_CULL_MODE,
+                                                             VK_DYNAMIC_STATE_FRONT_FACE,
+                                                             VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+                                                             VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+                                                             VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+                                                             VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
+                                                             VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
+                                                             VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT };
         VkPipelineDynamicStateCreateInfo dynamic{};
         dynamic.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamic.dynamicStateCount = 11U;
+        dynamic.dynamicStateCount = 12U;
         dynamic.pDynamicStates    = dynamic_states;
 
         VkGraphicsPipelineCreateInfo info{};

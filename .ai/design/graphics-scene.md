@@ -86,21 +86,27 @@ already walked the tree, so every call site is read twice (`G1`, `G4`). Boundary
 by its **inputs** — node and context together is `effective*`, a node alone is `collect*`, a value plus a context
 is `resolve*` — and a function that composes two steps says so in its comment.
 
-2.13 **Face orientation is the content's rule, culling is the view's choice** (`G1` `G4` `G6`): a triangle is
-front-facing when its vertices are counter-clockwise to the camera in a right-handed world (`RenderState.hpp`'s
-`CullMode`), and that definition belongs to the SDK, not to a backend's framebuffer convention — each backend maps it onto
-its own front face after its clip fold, and the vk backend's `StateMapping::kFrontFace` is the constant that agrees with
-`gl_FrontFacing` and with `CullMode` (pinned in pixels by `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace`, not by
-an argument about a flipped coordinate system — that argument had the sign wrong once and every correctly wound surface
-was a back face to the shading).
+2.13 **The front face is the AUTHORED face — the placement states it, culling is the view's choice** (`G1` `G4` `G6`
+`G10` `G12`): a triangle is front-facing when its vertices are counter-clockwise to the camera in a right-handed world
+(`RenderState.hpp`'s `CullMode`), and that definition belongs to the SDK, not to a backend's framebuffer convention —
+each backend maps it onto its own front face after its clip fold, and the vk backend's `StateMapping::kFrontFace` is the
+constant that agrees with `gl_FrontFacing` and with `CullMode` (pinned in pixels by
+`VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace`, not by an argument about a flipped coordinate system — that
+argument had the sign wrong once and every correctly wound surface was a back face to the shading).
 The engine's DEFAULT is `CullMode::None`, stated here rather than left implicit in `ResolvedRenderState`: a tessellated
 B-rep face or a bounded sheet is a surface on both sides, so no culling is the safe default for content the engine builds
 itself. A source that STATES the fact is honoured at import (`models::Material::hasDoubleSided` → `CullMode::None` /
-`Back` in `SceneBuild`), and "states nothing" is not "false" — an unstated OBJ keeps the engine default. Two consequences
-belong to the same rule: a BACK face is lit with its normal turned to face the viewer (`vnFacingNormal`, one call in both
-shading stages), because a back face is the same surface seen from behind; and a mirrored subtree (a negative scale) flips
-its winding against the fixed front-face constant, which is recorded as a known limit in §9.2 until a draw states a
-negative determinant.
+`Back` in `SceneBuild`), and "states nothing" is not "false" — an unstated OBJ keeps the engine default.
+THE PLACEMENT IS PART OF THE RULE, because "front" means the front the geometry was AUTHORED with: a reflection (a
+negative determinant — a negative scale in a transform, `DrawItem::reversesWinding()`) reverses the winding of every
+triangle it places and leaves the authored normal pointing outward, so the draw states the OTHER front face
+(`StateMapping::frontFace`; `VK_DYNAMIC_STATE_FRONT_FACE`, one command where the value changes, and none for the usual
+unmirrored run). One fact then keeps both readers of the winding on one meaning: `CullMode` culls a mirrored solid's
+authored back face instead of its outside, and `gl_FrontFacing` reports the authored front to two-sided shading
+(`vnFacingNormal`, one call in both shading stages, which turns a back face's normal toward the viewer because a back face
+is the same surface seen from behind). Nothing about a mirror reaches a shader, a varying or an ABI byte — the alternative
+(a per-draw flag plus a flat varying, or a determinant per vertex) pays for the same answer at every vertex or every
+fragment (`G10`). The one placement this cannot cover is an INSTANCE matrix, recorded in §9.2.
 
 ## 3. Features
 
@@ -195,6 +201,7 @@ negative determinant.
 | `Scene::addLight()` / `lights()` / `setLighting()` | Lights |
 | `Scene::lightSet()` | One **immutable shared value** of the lights (`LightSet`): cached by each light's `revision()`, zero copies when describing a pass (B11) |
 | `Scene::collectDrawItems()` | Collection |
+| `DrawItem::reversesWinding()` | Derived placement fact: the command's model matrix reflects, so what it draws is the authored winding reversed — the backend states the other front face for it (§2.13) |
 | `Scene::boundingBox(mask)` | Visible content box |
 | `Scene::setContentFrame()` | memo frame token |
 | `Scene::findNode(name)` | Lookup by name |
@@ -277,6 +284,7 @@ negative determinant.
 | T4 | Moving a subtree into the frustum is not hidden by a stale box; a layer conflict is reported once. |
 | T5 | `SceneTest.SettingAParentedNodeAsRootDetachesIt` / `SceneTest.ARootAttachedElsewhereTakesTheSceneOutOfThePicture`. |
 | T6 | Transparent order: two transparent objects whose local coordinates are far from the origin have a command order consistent with their bounding boxes' distance (the current gap is `../bugs/graphics-transparent-sort-uses-origin.md`). |
+| T7 | Face orientation under a placement: a mirrored draw is the AUTHORED front to both readers — `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace` (front, authored back, both cull directions, each with and without a mirror) and `VkContentDrawTest.AMirroredPlacementIsLitAsItsUnmirroredTwin` (a lit mirror image, against an unlit control). The derivation is device-free: `DrawItemTest.AMirroredPlacementReversesTheAuthoredWinding`, `VkStateMappingTest.TheFrontFaceStatesTheSdksCounterClockwiseRule`. |
 
 ## 9. Status and Evolution
 
@@ -288,15 +296,19 @@ Current design; the feature points and interfaces are the tables above.
 
 See `../backlog/graphics.md`; open items stay by trigger condition.
 
-Known limit, stated rather than tracked: a MIRRORED subtree (a negative scale in a transform) flips its winding against
-the fixed front-face constant, so with culling on, a mirrored solid's outer surface is culled as a back face (review 11
-`V3`). Mirroring stays legal as a placement; a per-draw determinant flip is the fix when a consumer needs it (trigger: the
-first mirrored part that must be culled). The orthographic pick origin (`W1`), opacity-only blending (`W2`) and the
-double-sided import (`W3`) are landed here rather than tracked.
+Known limit, stated rather than tracked: a MIRRORED INSTANCE is outside §2.13's fix — one draw states one front face,
+while an instance matrix is read per instance in the vertex stage, so a mirrored instance inside an unmirrored draw would
+still be culled and shaded as the reverse of what it is (trigger: the first host that places mirrored instances through
+one draw; the fix is a split per handedness, which the collection can do inside the existing mechanism). A mirrored NODE
+is served (§2.13). The orthographic pick origin (`W1`), opacity-only blending (`W2`) and the double-sided import (`W3`)
+are landed here rather than tracked.
 
 ### 9.3 Compatibility / migration
 
 Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
+`vnFacingNormal` keeps its name and its rule; what moved is the fact underneath it — the front face now follows the
+DRAW's placement, so a mirrored node reaches the shading as its authored front (§2.13), and `DrawItem::reversesWinding()`
+is the new derived fact a backend reads.
 
 ## 10. References
 

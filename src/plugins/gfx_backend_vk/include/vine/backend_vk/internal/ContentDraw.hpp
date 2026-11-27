@@ -12,14 +12,15 @@
 #include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/FrameHead.hpp>
+#include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/graphics/DrawAbi.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/MaterialAbi.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/graphics/DrawState.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -235,7 +236,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   states what is already stated costs a driver call per draw. The viewport and the scissor are PASS facts (they
      *   are computed from the pass' rectangle), so a pass with ten draws used to state the same rectangle ten times.
      * - IT SURVIVES A PIPELINE BIND, and that is a property of THIS BACKEND, not of Vulkan: a bind resets no dynamic
-     *   state, and every pipeline here comes from one builder that declares the same eleven dynamic states
+     *   state, and every pipeline here comes from one builder that declares the same twelve dynamic states
      *   (`buildPipeline`), so a value the buffer already holds is still one the new pipeline reads. A second builder
      *   with a narrower list would have to invalidate the shadow where it binds. Nothing else invalidates it either -
      *   dynamic state is command buffer state, and every other boundary (a new pass) states the same values anyway.
@@ -256,6 +257,7 @@ class VN_BACKEND_VK_API ContentDraw final {
         bool       raster_set{ false };
         VkPolygonMode      polygon{ VK_POLYGON_MODE_FILL };
         VkCullModeFlags    cull{ VK_CULL_MODE_NONE };
+        VkFrontFace        front_face{ StateMapping::kFrontFace };
         VkBool32           depth_test{ VK_FALSE };
         VkBool32           depth_write{ VK_FALSE };
         VkCompareOp        depth_compare{ VK_COMPARE_OP_ALWAYS };
@@ -290,14 +292,18 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param color_attachments How many colour attachments the pass writes (0 = depth-only: no blend).
      * @param depth_bias_units  The depth bias this call states (`DynamicState`'s, or zero for a full-screen draw).
      * @param depth_bias_factor The factor that goes with it.
+     * @param reverses_winding  Whether the draw's placement reverses the authored winding (`DrawItem::reversesWinding`),
+     *                          which states the other front face for this draw. A full-screen draw has no placement:
+     *                          its rectangle is authored in clip space, so a caller passes false.
      */
-    void recordCallState(VkCommandBuffer                            commands,
-                         const VkViewport&                          viewport,
-                         const VkRect2D&                            scissor,
-                         const vn::graphics::ResolvedCommandState&  resolved,
-                         std::uint32_t                              color_attachments,
-                         float                                      depth_bias_units,
-                         float                                      depth_bias_factor) noexcept;
+    void recordCallState(VkCommandBuffer                           commands,
+                         const VkViewport&                         viewport,
+                         const VkRect2D&                           scissor,
+                         const vn::graphics::ResolvedCommandState& resolved,
+                         std::uint32_t                             color_attachments,
+                         float                                     depth_bias_units,
+                         float                                     depth_bias_factor,
+                         bool                                      reverses_winding) noexcept;
 
   private:
     /**

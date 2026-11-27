@@ -45,10 +45,37 @@ struct StateMapping {
      * @brief Gets the Vulkan front face that means the SDK's counter-clockwise rule (see the file note).
      *
      * @details
-     * - A single constant rather than a function: the SDK has ONE front-face convention, and a backend that flipped it
-     *   per draw would be a second convention nobody asked for.
+     * - One constant per CONVENTION: the SDK has a single front-face rule, and this is the device's spelling of it.
+     *   The per-DRAW variation a mirrored placement needs is @ref frontFace's job, not this constant's - a second
+     *   constant would let two rows of this table disagree about the same rule.
      */
     static constexpr VkFrontFace kFrontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+    /**
+     * @brief Gets the front face one DRAW needs, which is @ref kFrontFace or its reverse.
+     *
+     * @details
+     * - A DRAW'S PLACEMENT CAN REVERSE THE WINDING (`DrawItem::reversesWinding`): a reflection maps an authored
+     *   counter-clockwise triangle to a clockwise one, so a device held to one fixed front face would call the
+     *   authored front a back face - in the cull AND in `gl_FrontFacing`, which is what two-sided shading reads.
+     *   Stating the other enumerator for that draw is what keeps both meanings on the AUTHORED side
+     *   (graphics-scene.md §2.13), and it needs no shader input, no varying and no ABI byte.
+     * - It is DYNAMIC state (core in Vulkan 1.3, like the cull mode beside it), so the fix costs one
+     *   `vkCmdSetFrontFace` where the value changes - not a pipeline variant per handedness, and nothing at all for
+     *   the usual unmirrored run.
+     * - Names the DEVICE value for the SDK fact: the rule itself (which face is the front, and that a placement may
+     *   reverse it) is the SDK's, stated in `DrawItem` and in the design page, never re-derived here.
+     *
+     * @param reverses_winding Whether the draw's placement reverses the authored winding.
+     * @return @ref kFrontFace, or its opposite when @p reverses_winding.
+     */
+    [[nodiscard]] static constexpr VkFrontFace frontFace(bool reverses_winding) noexcept
+    {
+        if (!reverses_winding) {
+            return kFrontFace;
+        }
+        return kFrontFace == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+    }
 
     /**
      * @brief Gets the Vulkan comparison for an SDK depth comparison (reverse-Z, see the file note).

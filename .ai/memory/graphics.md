@@ -2822,3 +2822,26 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   2026-11-23). `build/bin/test_vsg` is a stale binary that fails with an undefined `RetirementQueue::retire` symbol -
   that is not a regression from this batch.
 - **Verified**: whole tree builds; `test_graphics` 684/684, `test_vk` 224/224; the doc/API gates plus `--strict` exit 0.
+## 2026-11-27 - Y1 fixed at the raster, not in the shading: the front face follows the draw's placement
+
+- **The error.** `vnFacingNormal` turns a BACK face's normal toward the viewer, which is only right while "front" means
+  the AUTHORED front. A mirror (a negative scale) reverses the winding and leaves the authored normal pointing outward,
+  so after `W3` every visible face of a mirrored subtree was shaded as the solid's FAR side - with the engine's default
+  `CullMode::None`, i.e. on the shipped path. §9.2's recorded "costs culling only" trigger never fired.
+- **Why not the review's three routes.** A draw-block flag + flat varying + per-vertex `determinant(mat3(model))` pays per
+  vertex and still cannot serve an instance matrix; a dynamic front face "per instance" is not a thing; refusing a
+  negative scale loses a legal placement. The shading question ("which side of the surface is this") and the raster's
+  answer ("which winding is front") are ONE fact, so it is fixed where the winding is DECIDED.
+- **The model now.** `DrawItem::reversesWinding()` (derived, never stored: affine determinant < 0) + `StateMapping::frontFace(bool)`;
+  the backend states `VK_DYNAMIC_STATE_FRONT_FACE` per draw when the value changes (12th dynamic item, core Vulkan 1.3 -
+  no new extension, no pipeline variant, no shader/varying/ABI byte). `CullMode` and `gl_FrontFacing` then both mean the
+  AUTHORED side, so review 11 `V3`'s culling half is fixed by the same fact.
+- **Landing oracle.** `DrawItemTest.AMirroredPlacementReversesTheAuthoredWinding` (device-free),
+  `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace` (front + authored back x both cull directions x mirrored/not) and
+  `VkContentDrawTest.AMirroredPlacementIsLitAsItsUnmirroredTwin` (a symmetric quad, `scale(-1,1,1)`, same centre pixel;
+  the normals-away twin is the unlit control). Mutation: forcing `false` at the call site fails exactly the mirrored
+  assertions and the lit-vs-mirrored equality.
+- **Remaining limit (§9.2).** A MIRRORED INSTANCE inside an unmirrored draw (one draw states one front face); trigger = the
+  first host that needs it, fix = a split per handedness in the collection.
+- **Trap.** The old pixel expectation "a mirrored placement is a BACK face" WAS the bug written down; if a fixture has to
+  be re-wound or a front-face sign flipped to keep a rule case green, the rule is the suspect.

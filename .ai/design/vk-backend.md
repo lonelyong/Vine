@@ -430,12 +430,13 @@ and every cache has a witness a test can read.**
     dependency per source. Before this, a seven-attachment multisampled pass issued seven `vkCmdPipelineBarrier2` calls
     that each said the same thing about a different image - the same ordering, stated expensively.
   * **A STATE COMMAND IS ISSUED WHEN THE STATE CHANGES** (`ContentDraw::RecordedState`): viewport, scissor, line width,
-    depth bias, cull, polygon mode, depth test/write/compare and blend are diffed against what this frame's command
-    buffer already holds. The viewport and the scissor are PASS facts (they are computed from the pass' rectangle), so a
-    pass with ten draws used to state the same rectangle ten times. The shadow SURVIVES a pipeline bind, and that is a
-    property of THIS backend rather than of Vulkan: a bind resets no dynamic state, and every pipeline here comes from
-    `buildPipeline`, which declares the same eleven dynamic states - so the value the buffer holds is still one the new
-    pipeline reads, and a pass that alternates two pipelines pays one command per bind instead of re-stating everything
+    depth bias, cull, front face, polygon mode, depth test/write/compare and blend are diffed against what this frame's
+    command buffer already holds. The viewport and the scissor are PASS facts (they are computed from the pass'
+    rectangle), so a pass with ten draws used to state the same rectangle ten times. The shadow SURVIVES a pipeline
+    bind, and that is a property of THIS backend rather than of Vulkan: a bind resets no dynamic state, and every
+    pipeline here comes from `buildPipeline`, which declares the same twelve dynamic states - so the value the buffer
+    holds is still one the new pipeline reads, and a pass that alternates two pipelines pays one command per bind
+    instead of re-stating everything
     (review 9 `K6`). It is reset by `beginFrame()` alone, because every frame begins a new command buffer.
   * **THE FRAME NAMES ITSELF** (`Device::debugMarkers`): one `VK_EXT_debug_utils` region around the frame and one around
     each pass, named from `RenderPass::name` - so a capture tool's tree, the host's `PrepareReport` and

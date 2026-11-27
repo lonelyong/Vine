@@ -126,6 +126,31 @@ struct VN_GRAPHICS_API DrawItem {
     /** World-space model matrix. */
     Mat4d model_matrix;
 
+    /** @brief Returns whether this command's placement presents the authored front on the other side.
+     *
+     * @details
+     * - A MIRROR IS A PLACEMENT, NOT A SURFACE. A `model_matrix` with a negative determinant (a negative scale in a
+     *   transform, or any matrix that reflects) reverses the WINDING of every triangle it places: the authored
+     *   counter-clockwise front reaches the rasteriser clockwise. The authored NORMAL is untouched - a reflection is
+     *   orthogonal, so it maps an outward normal to an outward normal - which is why only the rasteriser's wording is
+     *   wrong, and nothing about the geometry is.
+     * - THE FRONT FACE BELONGS TO THE GEOMETRY (graphics-scene.md §2.13), so a backend states the OTHER front face for
+     *   such a draw. One fact then repairs both consumers at once: `CullMode` culls the authored back face, and
+     *   `gl_FrontFacing` reports the authored front to two-sided shading (`vnFacingNormal`) - no shader, varying or ABI
+     *   byte has to know that mirrors exist.
+     * - DERIVED, never stored, for the same reason as @ref isTransparent: a flag could disagree with the matrix it
+     *   describes. The cost is one 3x3 determinant per draw, and an affine matrix's 4x4 determinant IS that 3x3 one
+     *   (see Matrix4x4::determinant).
+     * - AN INSTANCE MATRIX IS A PLACEMENT TOO, and one draw states one front face: a mirrored instance inside an
+     *   unmirrored draw cannot be served, which is recorded in graphics-scene.md §9.2 with its trigger.
+     *
+     * @return true when the placement reverses the authored winding (a negative affine determinant).
+     */
+    [[nodiscard]] bool reversesWinding() const noexcept
+    {
+        return model_matrix.determinant() < 0.0;
+    }
+
     /** @brief Returns whether the object is transparent and therefore needs sorted rendering.
      *
      * @details

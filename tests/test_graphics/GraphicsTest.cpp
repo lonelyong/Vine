@@ -589,6 +589,29 @@ ViewDependence resolveView(const Node& node, const Mat4d& parent_world, const Vi
     return vn::graphics::localToWorldForView(*placement, parent_world, view, world);
 }
 
+TEST(DrawItemTest, AMirroredPlacementReversesTheAuthoredWinding)
+{
+    // graphics-scene.md 2.13: the front face is the AUTHORED one, so a placement that reflects has to be REPORTED and a
+    // backend then states the other front face for that draw. This is the device-free half of the contract; the pixel
+    // half is VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace (front and back, both cull directions) and
+    // VkContentDrawTest.AMirroredPlacementIsLitAsItsUnmirroredTwin (a lit mirror image).
+    DrawItem command;
+    EXPECT_FALSE(command.reversesWinding()) << "the identity places the authored winding";
+
+    command.model_matrix = vn::math::scale(Vec3d(2.0, 3.0, 4.0));
+    EXPECT_FALSE(command.reversesWinding()) << "a positive scale keeps the orientation";
+
+    command.model_matrix = vn::math::scale(Vec3d(-1.0, 1.0, 1.0));
+    EXPECT_TRUE(command.reversesWinding()) << "a negative scale reverses the winding";
+
+    command.model_matrix = vn::math::scale(Vec3d(-1.0, -1.0, 1.0));
+    EXPECT_FALSE(command.reversesWinding()) << "two reflections are a rotation, not a mirror";
+
+    command.model_matrix               = vn::math::scale(Vec3d(-1.0, 1.0, 1.0));
+    command.model_matrix.element(0, 3) = 7.0;
+    EXPECT_TRUE(command.reversesWinding()) << "a mirrored placement that also translates is still mirrored";
+}
+
 TEST(SceneTest, CollectCommandsSortsOpaqueFrontToBack)
 {
     Scene scene;

@@ -193,20 +193,21 @@ void ContentDraw::bindPipeline(const VkCommandBuffer commands, const VkPipeline 
     ++state_commands_;
     // THE STATE SURVIVES THE BIND, BECAUSE THE DYNAMIC SET IS A CONSTANT HERE. A bind resets no dynamic state, and a
     // value only stops being usable when the NEW pipeline does not declare that state. Every pipeline this backend
-    // builds - content and full-screen alike - comes from `buildPipeline`, which declares one list of eleven dynamic
+    // builds - content and full-screen alike - comes from `buildPipeline`, which declares one list of twelve dynamic
     // states, so every value the buffer holds is still a value the new pipeline reads: re-stating the rectangle after
     // each bind would be one command per item with no new meaning (the case `TwoAlternatingPipelinesRestateNoState`
     // pins it). An edit that gives a SECOND builder a narrower list must reset the shadow where it binds.
     recorded.pipeline = pipeline;
 }
 
-void ContentDraw::recordCallState(const VkCommandBuffer                          commands,
-                                  const VkViewport&                              viewport,
-                                  const VkRect2D&                                scissor,
-                                  const vn::graphics::ResolvedCommandState&      resolved,
-                                  const std::uint32_t                            color_attachments,
-                                  const float                                    depth_bias_units,
-                                  const float                                    depth_bias_factor) noexcept
+void ContentDraw::recordCallState(const VkCommandBuffer                     commands,
+                                  const VkViewport&                         viewport,
+                                  const VkRect2D&                           scissor,
+                                  const vn::graphics::ResolvedCommandState& resolved,
+                                  const std::uint32_t                       color_attachments,
+                                  const float                               depth_bias_units,
+                                  const float                               depth_bias_factor,
+                                  const bool                                reverses_winding) noexcept
 {
     const VolkDeviceTable& table = caches.table();
 
@@ -255,6 +256,16 @@ void ContentDraw::recordCallState(const VkCommandBuffer                         
     if (!recorded.raster_set || recorded.cull != cull) {
         table.vkCmdSetCullMode(commands, cull);
         recorded.cull = cull;
+        ++state_commands_;
+    }
+    // THE FRONT FACE FOLLOWS THE DRAW, NOT THE PICTURE (graphics-scene.md §2.13, `DrawItem::reversesWinding`): a
+    // mirrored placement presents the authored front clockwise, so this draw is told which enumerator is its front -
+    // and then `CullMode` and `gl_FrontFacing` (two-sided shading) both mean the AUTHORED side. Unmirrored draws keep
+    // the pipeline's constant, so the usual pass states nothing here.
+    const VkFrontFace front_face = StateMapping::frontFace(reverses_winding);
+    if (!recorded.raster_set || recorded.front_face != front_face) {
+        table.vkCmdSetFrontFace(commands, front_face);
+        recorded.front_face = front_face;
         ++state_commands_;
     }
     const VkBool32 depth_test = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
@@ -512,7 +523,8 @@ void ContentDraw::record(const DrawScope&                         scope,
                         resolved,
                         plan.color_attachments,
                         dynamic.polygon_offset.units,
-                        dynamic.polygon_offset.factor);
+                        dynamic.polygon_offset.factor,
+                        command.reversesWinding());
         const VkDescriptorSet sets[2]{ content_set, draw_set };
         // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets: material (0), lights
         // (6) and the shadow block (8) of set 0, then the draw block (0) of set 1.
@@ -664,8 +676,9 @@ void ContentDraw::recordFullscreen(const DrawScope&                scope,
 
     bindPipeline(commands, pipeline);
     // THE SAME STATE PATH AS THE CONTENT DRAW (see recordCallState), except the bias: this draw is the canonical triangle
-    // at the far plane, so it states zero rather than the pass' polygon offset.
-    recordCallState(commands, viewport, scissor, resolved, plan.color_attachments, 0.0F, 0.0F);
+    // at the far plane, so it states zero rather than the pass' polygon offset. It also states the SDK's front face
+    // (false): a full-screen rectangle is generated in clip space and carries no placement to mirror.
+    recordCallState(commands, viewport, scissor, resolved, plan.color_attachments, 0.0F, 0.0F, false);
     // The full-screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
     const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + scratch.lightsOffset()),
                                      static_cast<std::uint32_t>(slice + scratch.shadowOffset()) };
