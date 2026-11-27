@@ -180,6 +180,14 @@ keeps the old argument.
   units - two definitions of one private class in one process is an ODR violation ASan reports at load, and the
   `if(WIN32)` guard and a second export macro are rejected (the first leaves Windows holding the duplicate, the second
   puts `src/` types on the export table).
+- `ADR-2026-11-27-an-upload-is-prepared-then-recorded.md` — **an upload is prepared, then recorded**: a command the
+  driver already holds cannot be taken back, so `ContentImages`' texture upload is two halves with opposite contracts -
+  PREPARE builds the image, its memory, its view and ONE staging buffer holding every layer and mip (it may fail and
+  records nothing), RECORD states the two transitions and one copy carrying every region and answers `void`. The `Z15`
+  failure (a refused staging destroying an image the frame had already recorded) no longer exists, the stand-in creates
+  its view before its copy, and the upload's barriers now carry the tally - which is what makes "a refused upload
+  records nothing" a number `Device::recordingNumbers()` answers (the mutation that records first is red). Review 19
+  `Z15`, `vk-backend.md` 2.23 / C16 / P21 / T15 / D13.
 - `ADR-2026-11-26-host-program-contract-is-the-push-range.md` — **the host-program contract is the push range, stated
   in the SDK**: `VinePushRange` (128 B: the folded projection and `view * model`) declares what a host-authored stage
   receives and which clip convention the projection carries, while the unbound `VineViewBlock` (288 B, uploaded by no

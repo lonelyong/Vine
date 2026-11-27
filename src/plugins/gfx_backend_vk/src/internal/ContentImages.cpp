@@ -98,6 +98,25 @@ namespace
     return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
 
+/**
+ * @brief Rounds @p offset up to the four-byte boundary a `vkCmdCopyBufferToImage` source offset must respect.
+ *
+ * @details
+ * - `VkBufferImageCopy::bufferOffset` must be a multiple of the format's texel block size, which is four for every
+ *   uncompressed format and larger only for block-compressed ones; a level that is not a multiple of four bytes (an odd
+ *   `R8` mip, say) would otherwise put the next region at an offset the driver is entitled to refuse.
+ * - It is a free function because it is a fact about the COPY, not about one upload: both the sizing walk and the
+ *   writing walk of `prepareUpload` have to round the same way, or the buffer would be sized for one layout and filled
+ *   by another.
+ *
+ * @param offset The byte offset to round.
+ * @return The smallest four-byte multiple that is not below @p offset.
+ */
+[[nodiscard]] constexpr VkDeviceSize alignedCopyOffset(const VkDeviceSize offset) noexcept
+{
+    return (offset + 3U) & ~VkDeviceSize{ 3U };
+}
+
 } // namespace
 
 struct ContentImages::Impl {
@@ -149,6 +168,26 @@ struct ContentImages::Impl {
         std::vector<std::pair<VkBuffer, MemorySlice>> staging;
     };
     std::unordered_map<std::uint64_t, Batch> batches;
+
+    /**
+     * @brief What the PREPARE phase built for one upload: one host-visible buffer holding every layer and mip, the image
+     *        range it fills, and the copy regions that read it.
+     *
+     * @details
+     * - ONE BUFFER PER UPLOAD, NOT ONE PER LAYER: the whole upload is one allocation, one mapping and one
+     *   `vkCmdCopyBufferToImage` (that call takes the whole region array), so a cube map's six faces cost one object
+     *   instead of six - and a failure has one thing to give back rather than the layers built so far (see §2.23).
+     * - THE REGIONS ARE BUILT HERE, ONCE: the recording phase states them to the driver and allocates nothing, which is
+     *   what lets it answer no failure at all (see the class note: "prepared, then recorded").
+     */
+    struct StagedUpload
+    {
+        VkBuffer                       buffer{ VK_NULL_HANDLE }; ///< The staging buffer (handed to the batch on record).
+        MemorySlice                    memory{};                 ///< The pool range that buffer is bound into.
+        VkImageSubresourceRange        range{};                  ///< Every layer and mip the upload fills.
+        std::vector<VkBufferImageCopy> regions;                  ///< One per layer and mip, in buffer order.
+        std::uint64_t                  bytes{ 0 };               ///< Bytes copied in (the entry's residency weight).
+    };
 
     std::vector<std::pair<vn::graphics::Sampler, VkSampler>> samplers;
 
@@ -344,34 +383,39 @@ struct ContentImages::Impl {
         return true;
     }
 
-    /**
-     * @brief Records the copy of every layer and mip into @p entry, leaving the image `SHADER_READ_ONLY_OPTIMAL`.
-     *
-     * @param texture  The texture whose CPU images are copied.
-     * @param entry    The entry whose image receives them.
-     * @param commands The frame's command buffer.
-     * @param why      Receives the reason on failure.
-     * @return true when every layer was copied.
-     */
-    [[nodiscard]] bool recordUpload(const vn::graphics::Texture& texture, Entry& entry, VkCommandBuffer commands, std::uint64_t batch, vn::String* why)
+    /** @brief Gives a prepared upload back: it was never recorded, so nothing names it and it dies at once. */
+    void discardStaged(StagedUpload& staged) const noexcept
     {
-        const auto aspect       = static_cast<VkImageAspectFlags>(VK_IMAGE_ASPECT_COLOR_BIT);
-        const ImageState from   = stateOf(ImageLayout::Undefined);
-        const ImageState to     = transferWriteState();
+        destroyBuffer(staged.buffer, staged.memory);
+        staged.regions.clear();
+        staged.range = VkImageSubresourceRange{};
+        staged.bytes = 0;
+    }
 
-        // THE WHOLE IMAGE, NOT ITS LAYER 0: the loop below copies every layer and mip, and a barrier that names one
-        // subresource leaves the rest UNDEFINED - which is what the validation layer reports at submit time for a
-        // cube map's faces 1..5 (and what leaves them in TRANSFER_DST for the shader that samples them).
-        VkImageSubresourceRange whole{};
-        whole.aspectMask     = aspect;
-        whole.baseMipLevel   = 0U;
-        whole.levelCount     = static_cast<std::uint32_t>(texture.mipCount());
-        whole.baseArrayLayer = 0U;
-        whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
-
-        const VkImageMemoryBarrier2 to_transfer = barrierBetween(entry.image, from, to, whole);
-        recordBarrier(*table, commands, to_transfer);
-
+    /**
+     * @brief Builds the bytes one texture revision is filled from: ONE host-visible buffer with every layer and mip, and
+     *        the copy regions that read it.
+     *
+     * @details
+     * - THIS IS THE WHOLE FALLIBLE HALF OF AN UPLOAD (see the class note): it records no command, so a refusal here
+     *   destroys what it built and leaves the caller's command buffer exactly as it found it - which is the property
+     *   that lets the recording half answer no failure at all (review 19 `Z15`).
+     * - ONE ALLOCATION AND ONE MAPPING FOR THE WHOLE UPLOAD: the layers of a cube map are regions of one buffer rather
+     *   than six buffers, so a mid-way refusal cannot leave half the faces' staging behind - there is no half.
+     * - EVERY LEVEL'S BASE IS ROUNDED to the copy command's four-byte rule, so a mip chain whose levels are not a
+     *   multiple of four bytes (an `R8` texture with an odd level) still states a legal `bufferOffset` - the sizing walk
+     *   and the writing walk round identically, which is what keeps the buffer and the regions the same layout.
+     *
+     * @param texture The texture whose CPU images are staged.
+     * @param staged  Receives the buffer, its slice, the image range and the regions (populated only on true).
+     * @param why     Receives the reason on failure.
+     * @return true when every layer was copied into one buffer.
+     */
+    [[nodiscard]] bool prepareUpload(const vn::graphics::Texture& texture, StagedUpload& staged, vn::String* why)
+    {
+        // THE TOTAL FIRST, from the same walk the copy below takes: every level of every layer, each starting on a
+        // copy-aligned boundary.
+        VkDeviceSize total = 0;
         for (int layer = 0; layer < texture.layerCount(); ++layer) {
             const raw_ptr<const vn::imaging::Image> image = texture.layer(layer);
             if (image == nullptr) {
@@ -380,50 +424,111 @@ struct ContentImages::Impl {
                 }
                 return false;
             }
-
-            VkBuffer     staging_buffer{ VK_NULL_HANDLE };
-            MemorySlice  staging_memory{};
-            const std::size_t bytes = image->totalByteSize();
-            if (bytes == 0U || !createHostBuffer(static_cast<VkDeviceSize>(bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging_buffer, staging_memory)) {
-                if (why != nullptr) {
-                    *why = vn::String(u8"vk: a material texture's staging buffer could not be created");
-                }
-                return false;
-            }
-
-            // THE POOL'S MAPPING IS PERSISTENT (see MemoryAllocator::map): a coherent block needs no flush, so a
-            // staging buffer is written and forgotten rather than mapped and unmapped around one memcpy.
-            void* const mapped = allocator->map(staging_memory);
-            if (mapped == nullptr) {
-                destroyBuffer(staging_buffer, staging_memory);
-                if (why != nullptr) {
-                    *why = vn::String(u8"vk: a material texture's staging buffer could not be mapped");
-                }
-                return false;
-            }
-            std::memcpy(mapped, image->mipData(0).data(), bytes);
-            // RESIDENCY WEIGHT: the bytes copied in, which is what a release has to make go down.
-            entry.bytes += static_cast<std::uint64_t>(bytes);
-
-            std::size_t offset = 0U;
             for (int mip = 0; mip < image->mipCount(); ++mip) {
+                total = alignedCopyOffset(total) + static_cast<VkDeviceSize>(image->mipByteSize(mip));
+            }
+        }
+        if (total == 0U) {
+            if (why != nullptr) {
+                *why = vn::String(u8"vk: a material texture holds no bytes to copy");
+            }
+            return false;
+        }
+        if (!createHostBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staged.buffer, staged.memory)) {
+            if (why != nullptr) {
+                *why = vn::String(u8"vk: a material texture's staging buffer could not be created");
+            }
+            return false;
+        }
+        // THE POOL'S MAPPING IS PERSISTENT (see MemoryAllocator::map): a coherent block needs no flush, so a staging
+        // buffer is written and forgotten rather than mapped and unmapped around one memcpy.
+        auto* const mapped = static_cast<std::byte*>(allocator->map(staged.memory));
+        if (mapped == nullptr) {
+            discardStaged(staged);
+            if (why != nullptr) {
+                *why = vn::String(u8"vk: a material texture's staging buffer could not be mapped");
+            }
+            return false;
+        }
+
+        const auto layers = static_cast<std::uint32_t>(texture.layerCount());
+        const auto mips   = static_cast<std::uint32_t>(texture.mipCount());
+        VkDeviceSize base = 0;
+        for (std::uint32_t layer = 0U; layer < layers; ++layer) {
+            const raw_ptr<const vn::imaging::Image> image = texture.layer(static_cast<int>(layer));
+            // THE IMAGE'S OWN MIP COUNT, the same walk the sizing above took: a chain that disagreed with the texture's
+            // would otherwise state regions for levels it does not hold.
+            for (int mip = 0; mip < image->mipCount(); ++mip) {
+                base                                      = alignedCopyOffset(base);
+                const std::size_t bytes                   = image->mipByteSize(mip);
+                std::memcpy(mapped + base, image->mipData(mip).data(), bytes);
                 VkBufferImageCopy region{};
-                region.bufferOffset                    = offset;
+                region.bufferOffset                    = base;
                 region.bufferRowLength                 = 0U;
                 region.bufferImageHeight               = 0U;
-                region.imageSubresource.aspectMask     = aspect;
+                region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
                 region.imageSubresource.mipLevel       = static_cast<std::uint32_t>(mip);
-                region.imageSubresource.baseArrayLayer = static_cast<std::uint32_t>(layer);
+                region.imageSubresource.baseArrayLayer = layer;
                 region.imageSubresource.layerCount     = 1U;
                 region.imageOffset                     = VkOffset3D{ 0, 0, 0 };
                 region.imageExtent                     = VkExtent3D{ static_cast<std::uint32_t>(image->mipWidth(mip)),
                                                                      static_cast<std::uint32_t>(image->mipHeight(mip)), 1U };
-                table->vkCmdCopyBufferToImage(commands, staging_buffer, entry.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1U, &region);
-                offset += image->mipByteSize(mip);
+                staged.regions.push_back(region);
+                // RESIDENCY WEIGHT: the texture bytes copied in, which is what a release has to make go down. The
+                // alignment padding between levels is the copy's cost, not the image's size.
+                staged.bytes += static_cast<std::uint64_t>(bytes);
+                base += static_cast<VkDeviceSize>(bytes);
             }
-            batches[batch].staging.emplace_back(staging_buffer, staging_memory);
         }
+
+        // THE WHOLE IMAGE, NOT ITS LAYER 0: the copies below fill every layer and mip, and a barrier that names one
+        // subresource leaves the rest UNDEFINED - which is what the validation layer reports at submit time for a
+        // cube map's faces 1..5 (and what leaves them in TRANSFER_DST for the shader that samples them).
+        staged.range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        staged.range.baseMipLevel   = 0U;
+        staged.range.levelCount     = mips;
+        staged.range.baseArrayLayer = 0U;
+        staged.range.layerCount     = layers;
         return true;
+    }
+
+    /**
+     * @brief Records one PREPARED upload and leaves the image `SHADER_READ_ONLY_OPTIMAL`.
+     *
+     * @details
+     * - IT ANSWERS NOTHING, AND THAT IS THE RULE (see the class note): every object it names was built by the prepare
+     *   phase, so there is nothing left to refuse - and a command the driver already holds cannot be taken back, so a
+     *   failure here could only be paid for by destroying something the command buffer names.
+     * - ONE COPY COMMAND FOR THE WHOLE UPLOAD: the regions are one call's argument, so a cube map's six faces and their
+     *   mips are a single `vkCmdCopyBufferToImage` rather than one per face.
+     * - The staging buffer becomes the BATCH's here: only this driver's command buffer names it, so it is destroyed when
+     *   that batch completes (`batchCompleted`) and parked when it never ran (`batchAbandoned`).
+     *
+     * @param entry    The image the copy fills.
+     * @param staged   What the prepare phase built (its buffer is handed to @p book).
+     * @param commands The frame's command buffer, outside any rendering instance.
+     * @param book     The recording driver's books.
+     * @param tally    Receives the barriers this recorded (see `RecordingTally`), or null.
+     */
+    void recordUpload(Entry& entry, StagedUpload& staged, VkCommandBuffer commands, Batch& book, RecordingTally* tally)
+    {
+        const ImageState from = stateOf(ImageLayout::Undefined);
+        const ImageState to   = transferWriteState();
+
+        const VkImageMemoryBarrier2 to_transfer = barrierBetween(entry.image, from, to, staged.range);
+        recordBarrier(*table, commands, to_transfer, tally);
+
+        table->vkCmdCopyBufferToImage(commands, staged.buffer, entry.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                      static_cast<std::uint32_t>(staged.regions.size()), staged.regions.data());
+
+        // THE SAME RANGE THE UPLOAD WRITES (every layer and mip): a single-subresource transition here would leave the
+        // faces the descriptor samples in TRANSFER_DST, which is the layout error the app measured.
+        const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry.image, to, stateOf(ImageLayout::ShaderReadOnly), staged.range);
+        recordBarrier(*table, commands, to_sampled, tally);
+
+        book.staging.emplace_back(staged.buffer, staged.memory);
+        staged.buffer = VK_NULL_HANDLE;
+        staged.memory = MemorySlice{};
     }
 };
 
@@ -685,7 +790,7 @@ bool ContentImages::hasPendingUploads(const BatchId batch) const noexcept
     return found != impl->batches.end() && (!found->second.staging.empty() || !found->second.pending.empty());
 }
 
-ContentImages::TextureView ContentImages::viewFor(const vn::graphics::Texture& texture, const VkCommandBuffer commands, const BatchId batch, vn::String* why)
+ContentImages::TextureView ContentImages::viewFor(const vn::graphics::Texture& texture, const VkCommandBuffer commands, const BatchId batch, vn::String* why, RecordingTally* tally)
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return {};
@@ -722,29 +827,20 @@ ContentImages::TextureView ContentImages::viewFor(const vn::graphics::Texture& t
     auto entry      = std::make_shared<Impl::Entry>();
     entry->texture  = vn::intrusive_ptr<const vn::graphics::Texture>(&texture);
     entry->revision = texture.revision();
+    // PREPARE, THEN RECORD (see the class note). The image and the bytes it will be filled from are built FIRST, so a
+    // refusal releases objects no command names yet - and the recording half, which runs only once everything exists,
+    // has nothing left to refuse (review 19 `Z15`: a mid-record failure used to destroy an image the command buffer
+    // already held a barrier and copies for, and the frame then submitted that command buffer).
     if (!impl->createTextureImage(texture, *entry, why)) {
         return {};
     }
-
-    // The image starts UNDEFINED; a fresh entry is uploaded whole, while a REVISION replacement is a new image (the
-    // old one is retired below), so both take the same path.
-    if (!impl->recordUpload(texture, *entry, commands, batch, why)) {
+    Impl::StagedUpload staged;
+    if (!impl->prepareUpload(texture, staged, why)) {
         impl->destroyEntry(*entry);
         return {};
     }
-
-    const ImageState transfer = transferWriteState();
-    const ImageState sampled  = stateOf(ImageLayout::ShaderReadOnly);
-    // THE SAME RANGE THE UPLOAD WRITES (every layer and mip): a single-subresource transition here would leave the
-    // faces the descriptor samples in TRANSFER_DST, which is the layout error the app measured.
-    VkImageSubresourceRange whole{};
-    whole.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    whole.baseMipLevel   = 0U;
-    whole.levelCount     = static_cast<std::uint32_t>(texture.mipCount());
-    whole.baseArrayLayer = 0U;
-    whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
-    const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry->image, transfer, sampled, whole);
-    recordBarrier(*impl->table, commands, to_sampled);
+    entry->bytes = staged.bytes;
+    impl->recordUpload(*entry, staged, commands, book, tally);
 
     // THE BOOKS: built and copied now, RESIDENT only when THIS BATCH COMPLETES (see batchCompleted). The resident entry
     // this revision will replace stays exactly where it is until then - a frame that never ran must leave the last
@@ -796,7 +892,7 @@ VkSampler ContentImages::samplerFor(const vn::graphics::Sampler& sampler)
     return handle;
 }
 
-ContentImages::TextureView ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId batch, vn::String* why)
+ContentImages::TextureView ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId batch, vn::String* why, RecordingTally* tally)
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return {};
@@ -854,42 +950,9 @@ ContentImages::TextureView ContentImages::ensureFallback(const VkCommandBuffer c
         return {};
     }
 
-    VkBuffer    staging_buffer{ VK_NULL_HANDLE };
-    MemorySlice staging_memory{};
-    if (!impl->createHostBuffer(4U, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging_buffer, staging_memory)) {
-        if (why != nullptr) {
-            *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be created");
-        }
-        impl->destroyEntry(*entry);
-        return {};
-    }
-    void* const mapped = impl->allocator->map(staging_memory);
-    if (mapped == nullptr) {
-        impl->destroyBuffer(staging_buffer, staging_memory);
-        if (why != nullptr) {
-            *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be mapped");
-        }
-        impl->destroyEntry(*entry);
-        return {};
-    }
-    const std::uint8_t white[4]{ 255U, 255U, 255U, 255U };
-    std::memcpy(mapped, white, sizeof(white));
-
-    const ImageState transfer = transferWriteState();
-    const VkImageMemoryBarrier2 to_transfer = barrierBetween(entry->image, stateOf(ImageLayout::Undefined), transfer, VK_IMAGE_ASPECT_COLOR_BIT);
-    recordBarrier(*impl->table, commands, to_transfer);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1U;
-    region.imageExtent                 = VkExtent3D{ 1U, 1U, 1U };
-    impl->table->vkCmdCopyBufferToImage(commands, staging_buffer, entry->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1U, &region);
-
-    const ImageState sampled = stateOf(ImageLayout::ShaderReadOnly);
-    const VkImageMemoryBarrier2 to_sampled = barrierBetween(entry->image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
-    recordBarrier(*impl->table, commands, to_sampled);
-    impl->batches[batch].staging.emplace_back(staging_buffer, staging_memory);
-
+    // THE VIEW BEFORE THE COPY, because a view does not need content: creating it here keeps every fallible call in the
+    // prepare phase, so a refused `vkCreateImageView` destroys an image no command names yet (review 19 `Z15` - it used
+    // to run AFTER the barrier and the copy were recorded).
     VkImageViewCreateInfo view{};
     view.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view.image                           = entry->image;
@@ -906,6 +969,41 @@ ContentImages::TextureView ContentImages::ensureFallback(const VkCommandBuffer c
         }
         return {};
     }
+
+    // THE BYTES, then the commands: one 4-byte buffer, one region, then the same record verb a texture's upload uses
+    // (see Impl::recordUpload) - so the stand-in states no copy path of its own.
+    Impl::StagedUpload staged;
+    staged.range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    staged.range.levelCount     = 1U;
+    staged.range.layerCount     = 1U;
+    if (!impl->createHostBuffer(4U, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staged.buffer, staged.memory)) {
+        impl->destroyEntry(*entry);
+        if (why != nullptr) {
+            *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be created");
+        }
+        return {};
+    }
+    const std::uint8_t white[4]{ 255U, 255U, 255U, 255U };
+    auto* const mapped = static_cast<std::byte*>(impl->allocator->map(staged.memory));
+    if (mapped == nullptr) {
+        impl->discardStaged(staged);
+        impl->destroyEntry(*entry);
+        if (why != nullptr) {
+            *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be mapped");
+        }
+        return {};
+    }
+    std::memcpy(mapped, white, sizeof(white));
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1U;
+    region.imageExtent                 = VkExtent3D{ 1U, 1U, 1U };
+    staged.regions.push_back(region);
+    staged.bytes = sizeof(white);
+    entry->bytes = staged.bytes;
+
+    impl->recordUpload(*entry, staged, commands, impl->batches[batch], tally);
+
     // PENDING UNTIL THIS BATCH COMPLETES (see the class note): the copy above is recorded, not proven.
     impl->fallback               = std::move(entry);
     impl->fallback_pending_batch = batch;

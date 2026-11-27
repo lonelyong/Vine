@@ -2287,7 +2287,8 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
                                     ContentRefusal&                                refusal,
                                     const Lock&                                    held,
                                     const ContentImages::BatchId                   batch,
-                                    FrameBuilds&                                   builds)
+                                    FrameBuilds&                                   builds,
+                                    RecordingTally*                                tally)
 {
     (void)held;
     plan.slots = {};
@@ -2296,7 +2297,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
     // and the two samplers are the same for every call of one frame, so they land on the HEAD, not on the plan.
     vn::String why;
     if (commands != VK_NULL_HANDLE) {
-        const ContentImages::TextureView stand_in = impl->images.ensureFallback(commands, batch, &why);
+        const ContentImages::TextureView stand_in = impl->images.ensureFallback(commands, batch, &why, tally);
         // THE STAND-IN IS A SHARED CONSTANT, BUT THE FRAME THAT BOUND IT STILL KEEPS IT: a batch that failed on another
         // driver drops and rebuilds the stand-in (see batchAbandoned), and this frame's plan names the view it resolved.
         builds.borrow(stand_in.owner);
@@ -2321,7 +2322,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
             continue;
         }
         vn::String                       upload_why;
-        const ContentImages::TextureView image = impl->images.viewFor(*named.texture, commands, batch, &upload_why);
+        const ContentImages::TextureView image = impl->images.viewFor(*named.texture, commands, batch, &upload_why, tally);
         if (image.view == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                            contentRefusalCode(ContentRefusalCause::MaterialTextureSkipped),

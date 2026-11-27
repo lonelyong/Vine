@@ -15,6 +15,8 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
+struct RecordingTally;
+
 /**
  * @brief The content path's sampled images: `Texture` objects uploaded once per revision, and the samplers that read
  *        them.
@@ -31,6 +33,17 @@ VN_BACKEND_VK_NS_BEGIN
  *   command buffer a warm-up submits of its own (see `RenderFrameExecutor::prepareFrame`). Staging buffers therefore
  *   stay alive until the command buffer that recorded them has completed - and each driver's are grouped in its own
  *   batch (@ref BatchId), so the frame that ends first never frees the staging of the frame that is still recording.
+ * - PREPARED, THEN RECORDED (`G3` / `G4` / `G10`; review 19 `Z15`). An upload has two halves with different contracts.
+ *   The PREPARE half builds every object the copy names - the image, its memory, its view and ONE host-visible buffer
+ *   holding every layer and mip with the regions that read it - and may fail: it records no command, so a refusal
+ *   destroys what it built and leaves the caller's command buffer exactly as it found it. The RECORD half states the
+ *   two transitions and the copy, hands the staging buffer to the batch, and ANSWERS NOTHING - the signature is the
+ *   rule (`G4`), because a command the driver already holds cannot be taken back.
+ *   What that forbids is the one destroy Vulkan cannot forgive: an object destroyed while a RECORDED command still
+ *   names it. Every destroy this cache performs is either a prepare-phase refusal (no command names anything) or a
+ *   release through the batch's books (@ref batchAbandoned / `ParkFn`).
+ * - ONE STAGING BUFFER PER UPLOAD, NOT ONE PER LAYER: one allocation, one mapping and one `vkCmdCopyBufferToImage` for
+ *   a cube map's six faces, and a refusal that costs one object instead of "the faces built so far".
  * - AN IMAGE BECOMES RESIDENT WHEN ITS COPY IS PROVEN, NOT WHEN ITS COPY IS RECORDED (`G6` / `G10`). The two kinds of
  *   content this backend fills from GPU work follow ONE rule: a geometry publishes on the frame's fence
  *   (`ContentCaches::FrameBuilds`), and a texture is PENDING in the batch that recorded it until that batch completes
@@ -241,14 +254,18 @@ class VN_BACKEND_VK_API ContentImages final {
      *   proven - a competitor records its own copy, which is the cost of never binding an image nobody filled.
      * - THE ANSWER CARRIES THE SHARE (see `TextureView`): the caller keeps it for the frame's life, which is what lets
      *   a host release the texture while this frame is still recording.
+     * - THE UPLOAD IS PREPARED BEFORE IT IS RECORDED (see the class note): an image that cannot be built, or bytes that
+     *   cannot be staged, answer no view and leave @p commands untouched - so the caller's frame submits a command
+     *   buffer that names nothing this cache then destroyed.
      *
      * @param texture  The texture to sample.
      * @param commands The command buffer the current frame is being recorded into.
      * @param batch    The driver recording the copy (see @ref BatchId).
      * @param why      Receives the reason when no view can be served, or null to ignore.
+     * @param tally    Receives the barriers the upload recorded (see `RecordingTally`), or null.
      * @return The view and its share (`view == VK_NULL_HANDLE` when nothing can serve it).
      */
-    [[nodiscard]] TextureView viewFor(const vn::graphics::Texture& texture, VkCommandBuffer commands, BatchId batch, vn::String* why);
+    [[nodiscard]] TextureView viewFor(const vn::graphics::Texture& texture, VkCommandBuffer commands, BatchId batch, vn::String* why, RecordingTally* tally = nullptr);
 
     /**
      * @brief Gets (or creates) the sampler for @p sampler.
@@ -264,9 +281,10 @@ class VN_BACKEND_VK_API ContentImages final {
      * @param commands The command buffer the current frame is being recorded into.
      * @param batch    The driver recording the copy (see @ref BatchId).
      * @param why      Receives the reason when the fallback cannot be built, or null to ignore.
+     * @param tally    Receives the barriers the upload recorded (see `RecordingTally`), or null.
      * @return The stand-in's view and its share (see `TextureView`); `view == VK_NULL_HANDLE` when it cannot be built.
      */
-    [[nodiscard]] TextureView ensureFallback(VkCommandBuffer commands, BatchId batch, vn::String* why);
+    [[nodiscard]] TextureView ensureFallback(VkCommandBuffer commands, BatchId batch, vn::String* why, RecordingTally* tally = nullptr);
 
     /**
      * @brief Gets the 1x1 white view every absent slot is bound to (null until @ref ensureFallback succeeded).

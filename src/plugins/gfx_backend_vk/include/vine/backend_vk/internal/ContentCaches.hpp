@@ -657,6 +657,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param held     The cache lock (see @ref Lock).
      * @param batch    The driver recording the uploads (see @ref ContentImages::BatchId).
      * @param builds   This frame's book: every image entry served here is BORROWED for the frame's life.
+     * @param tally    Receives the barriers the uploads recorded (see `RecordingTally`), or null.
      */
     void resolveTextures(const vn::graphics::MaterialDescription* material,
                          VkCommandBuffer                          commands,
@@ -665,7 +666,8 @@ class VN_BACKEND_VK_API ContentCaches final {
                          ContentRefusal&                          refusal,
                          const Lock&                              held,
                          ContentImages::BatchId                   batch,
-                         FrameBuilds&                             builds);
+                         FrameBuilds&                             builds,
+                         RecordingTally*                          tally = nullptr);
 
     /** @brief Gets whether @p batch recorded a texture copy into a command buffer that has not been waited for yet. */
     [[nodiscard]] bool hasPendingUploads(ContentImages::BatchId batch) const;

@@ -588,6 +588,118 @@ TEST(VkResidencyTest, ReleasingATextureLowersTheImageResidency)
     backend->shutdown();
 }
 
+TEST(VkResidencyTest, ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage)
+{
+    // PREPARED, THEN RECORDED (`.ai/design/vk-backend.md` 2.23): a texture's bytes are built BEFORE the first command is
+    // recorded, so a refused allocation releases what it built and leaves the caller's command buffer exactly as it
+    // found it. The defect this case kills (review 19 `Z15`): the staging was allocated INSIDE the recording loop, so a
+    // refusal came AFTER the barrier into TRANSFER_DST had been recorded - and the failure path then destroyed the image
+    // that barrier named, while the frame went on to SUBMIT that command buffer (validation:
+    // `VUID-vkDestroyImage-image-01000`; on a driver without the layer, undefined behaviour).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    // THE SIZE IS THE LEVER (see MemoryBlockSizes): the pool's first host-visible block is 16 MiB and its first
+    // device-local one 64 MiB, so a 21 MiB image still comes out of the open device-local block while its staging buffer
+    // has no block to come from - which is what makes the refusal land on the STAGING, the allocation that used to
+    // happen after the recording had begun. A device that caps those fills smaller refuses the IMAGE instead, one
+    // allocation earlier, and the assertions below hold for the same reason.
+    constexpr int kTexels = 2304; // 2304 x 2304 x RGBA8 = 21 MiB
+
+    Content content = makeContent();
+    content.program = makeProgramWith(kTextureFragment);
+    const intrusive_ptr<vn::graphics::Material> textured = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    auto image = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(kTexels, kTexels, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::span<std::byte> texels = image->mipData(0);
+    for (std::size_t texel = 0; texel < texels.size(); texel += 4U) {
+        texels[texel + 0U] = std::byte{ 0U };
+        texels[texel + 1U] = std::byte{ 0U };
+        texels[texel + 2U] = std::byte{ 255U };
+        texels[texel + 3U] = std::byte{ 255U };
+    }
+    const auto texture = intrusive_ptr<Texture2D>(new Texture2D(kTexels, kTexels, vn::imaging::PixelFormat::Rgba8Unorm));
+    texture->setImage(image);
+    textured->setTexture(TextureSlot::BaseColor, texture);
+
+    const intrusive_ptr<RenderTarget> target = makeTarget();
+
+    // THE TWO NUMBERS THIS CASE READS, as the frame path has spent them so far (see `Device::RecordingNumbers`).
+    const auto recorded = [device]() {
+        const vn::backend_vk::Device::RecordingNumbers numbers = device->recordingNumbers();
+        return std::pair<std::uint64_t, std::uint64_t>{ numbers.barrier_dependencies, numbers.barriers };
+    };
+
+    // THE WARM-UP FRAME OWNS EVERYTHING THIS CASE IS NOT ABOUT: the target's attachments, the program's pipeline, the
+    // geometry's streams and the 1x1 stand-in all exist before the frames below, so their barriers do not move the
+    // numbers this case reads.
+    const intrusive_ptr<vn::graphics::Material> plain = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, plain))), PresentOutcome::Skipped);
+
+    // THE BASELINE: the same pass and the same program, but a material that names no texture, so this frame uploads
+    // nothing - its barriers ARE the pass' own, and the two frames below are read against it.
+    const auto baseline_before = recorded();
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, plain))), PresentOutcome::Skipped);
+    const auto baseline = recorded();
+    const std::uint64_t baseline_dependencies = baseline.first - baseline_before.first;
+    const std::uint64_t baseline_barriers     = baseline.second - baseline_before.second;
+    ASSERT_GT(baseline_barriers, 0U) << "the pass itself records barriers, so a zero below would prove nothing";
+
+    // THE REFUSAL: every NEW pool block is refused from here on, and only the texture's staging buffer needs one.
+    int refusals = 0;
+    device->setMemoryBlockCreator([&refusals](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        ++refusals;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    });
+    const auto refused_before = recorded();
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, textured))), PresentOutcome::Skipped);
+    EXPECT_GT(refusals, 0) << "the injection was never reached: the case proved nothing";
+    const auto refused = recorded();
+
+    // THE FRAME STILL RAN, AND IT BOUND THE STAND-IN: a texture that could not be uploaded is ABSENT, not black.
+    const FrameReport rejected = backend->frameReport();
+    ASSERT_TRUE(rejected.uploads.has_value());
+    EXPECT_EQ(rejected.uploads->texture_uploads, 0U) << "a refused upload published an entry";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 1U) << "the refused upload was not reported";
+    const ColorReadback skipped = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(skipped.ok());
+    EXPECT_EQ(pixelAt(skipped.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 255, 255, 255 }))
+        << "the slot a refused upload could not fill must sample the stand-in, not a picture nobody wrote";
+
+    // A REFUSED UPLOAD RECORDED NOTHING AT ALL - the frame spent exactly what the baseline spent, because the failure
+    // came from the PREPARE phase and no command had named the image yet. This is the half that used to be false: the
+    // old shape recorded the transition into TRANSFER_DST before the allocation it failed on, so this frame spent one
+    // barrier more than the baseline - one command naming an image the failure path then destroyed.
+    EXPECT_EQ(refused.first - refused_before.first, baseline_dependencies) << "the refused upload left a command naming the image it let go";
+    EXPECT_EQ(refused.second - refused_before.second, baseline_barriers) << "the refused upload left a barrier naming the image it let go";
+
+    // AND THE SAME FRAME WITH THE POOL WORKING AGAIN spends exactly the upload's own two barriers on top (UNDEFINED ->
+    // TRANSFER_DST, then TRANSFER_DST -> SHADER_READ_ONLY) - which is what the numbers above are read against.
+    device->setMemoryBlockCreator({});
+    const auto filled_before = recorded();
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, textured))), PresentOutcome::Skipped);
+    const auto filled = recorded();
+    EXPECT_EQ(filled.first - filled_before.first, baseline_dependencies + 2U) << "an accepted upload still records its two barriers";
+    EXPECT_EQ(filled.second - filled_before.second, baseline_barriers + 2U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "the driver reported something (a destroyed image in a submitted command buffer is the Z15 shape)";
+
+    // AND THE TEXTURE IS UPLOADED ONCE THE POOL CAN SERVE IT - nothing about the refusal was remembered as done.
+    const FrameReport rerun = backend->frameReport();
+    ASSERT_TRUE(rerun.uploads.has_value());
+    EXPECT_EQ(rerun.uploads->texture_uploads, 1U) << "the refused upload was remembered as done";
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
+        << "the frame after the refusal did not upload and sample the texture";
+
+    backend->shutdown();
+}
+
 TEST(VkResidencyTest, ReleasingATargetFreesItsAttachmentsAndTheNextFrameBuildsThemAgain)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
