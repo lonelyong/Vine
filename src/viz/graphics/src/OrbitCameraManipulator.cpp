@@ -148,17 +148,32 @@ void OrbitCameraManipulator::pan(double screenDx, double screenDy)
     if (forward.length() < kTiny) {
         return;
     }
-    const Vec3d right = forward.cross(cam->up()).normalized();
-    const Vec3d up    = right.cross(forward).normalized();
+    // The picture's own axes, with the camera's up first and the manipulator's own basis behind it: a camera whose
+    // authored up is degenerate or parallel to the view (a case lookAt() resolves) would otherwise turn every pan into
+    // a silent no-op, because a zero vector normalises to zero.
+    Vec3d right = forward.cross(cam->up()).normalized();
+    if (right.length() < kTiny) {
+        right = forward.cross(viewUp(yaw_, pitch_)).normalized();
+    }
+    if (right.length() < kTiny) {
+        right = forward.cross(kWorldUp).normalized();
+    }
+    if (right.length() < kTiny) {
+        return;
+    }
+    const Vec3d up = right.cross(forward).normalized();
 
-    const double tan_half        = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
-    double       world_per_pixel = 0.0;
+    double world_per_pixel = 0.0;
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
-        world_per_pixel = 2.0 * distance_ * tan_half / vh;
+        // ONE SCALE, AND IT IS THE WINDOW: a parallel picture has no depth, so the eye-to-centre distance and the field
+        // of view (which an orthographic camera does not have) must not enter here. The window's height over the
+        // picture's pixel height is the whole answer, and it is exact for an authored off-centre window too.
+        world_per_pixel = cam->orthographicHeight() / vh;
     }
     else {
-        const double depth = anchor_on_ray_ ? std::max((anchor_ - eye).dot(forward), kTiny) : std::max(distance_, kTiny);
-        world_per_pixel    = 2.0 * depth * tan_half / vh;
+        const double tan_half = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
+        const double depth    = anchor_on_ray_ ? std::max((anchor_ - eye).dot(forward), kTiny) : std::max(distance_, kTiny);
+        world_per_pixel       = 2.0 * depth * tan_half / vh;
     }
 
     const Vec3d delta = (-right * screenDx + up * screenDy) * world_per_pixel;
@@ -168,34 +183,44 @@ void OrbitCameraManipulator::pan(double screenDx, double screenDy)
 
 void OrbitCameraManipulator::dolly(double factor)
 {
-    if (camera_ == nullptr || factor <= 0.0) {
+    Camera* cam = camera_;
+    if (cam == nullptr || !(factor > 0.0) || !std::isfinite(factor)) {
         return;
     }
+
+    // A PARALLEL PICTURE IS ZOOMED BY ITS WINDOW, never by the eye: the eye's position along the view axis changes
+    // nothing but clipping, so moving it here would be a change the user cannot see, and deriving the window from it
+    // (what this class used to do) made a zoom-in impossible wherever the eye had to stay outside the content.
+    if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
+        zoomOrthoWindow(factor);
+        return;
+    }
+
     const double d0 = distance_;
-    const double d1 = clampDistance(d0 * factor);
+    double       d1 = clampDistance(d0 * factor);
     if (std::abs(d1 - d0) < 1e-9) {
         return;
     }
 
-    // Keep the anchor (a picked world point under the cursor) fixed on screen
-    // while zooming: slide the orbit centre laterally so the anchor's screen
-    // offset is unchanged after the distance change.
+    // Keep the anchor (a picked world point under the cursor) fixed on screen while zooming: slide the orbit centre
+    // laterally so the anchor's screen offset is unchanged after the distance change. The invariant is the anchor's
+    // lateral-offset-over-depth ratio, so the slide is exact rather than a correction that has to be iterated.
     if (dolly_to_cursor_ && anchor_on_ray_) {
-        const Vec3d eye     = camera_->eye();
+        const Vec3d eye     = cam->eye();
         const Vec3d forward = (center_ - eye).normalized();
         if (forward.length() >= kTiny) {
-            double pz  = 0.0;
-            double pz1 = 0.0;
-            if (camera_->projectionType() == Camera::ProjectionType::Orthographic) {
-                // In orthographic, the screen offset of a point scales with 1 / distance.
-                pz  = d0;
-                pz1 = d1;
+            const double pz = std::max((anchor_ - eye).dot(forward), kTiny);
+            // Zooming in shortens every depth by (d0 - d1), so an anchor nearer than that would pass BEHIND the eye,
+            // where a picture position has no meaning (the ratio would mirror it to the wrong side). The zoom stops
+            // at the surface instead - which is what makes the region just approached the next orbit centre.
+            if (d1 < d0) {
+                d1 = std::max(d1, std::min(d0, d0 - pz + cam->nearPlane()));
+                if (std::abs(d1 - d0) < 1e-9) {
+                    return;
+                }
             }
-            else {
-                pz  = std::max((anchor_ - eye).dot(forward), kTiny);
-                pz1 = pz + (d1 - d0);
-            }
-            if (pz > kTiny) {
+            const double pz1 = pz + (d1 - d0);
+            if (pz1 > kTiny) {
                 const Vec3d base    = eye + forward * pz;
                 const Vec3d lateral = anchor_ - base;
                 center_ += lateral * (1.0 - pz1 / pz);
@@ -253,19 +278,17 @@ bool OrbitCameraManipulator::fitToScreen()
     const Vec3d             centre(centre_p.x, centre_p.y, centre_p.z);
     const Vec3d             size = bounds.size();
     // Bounding-sphere radius around the box centre.
-    const double radius          = (size * 0.5).length();
+    const double radius          = std::max((size * 0.5).length(), 1e-9);
 
     center_              = centre;
     const double fov_rad = cam->fieldOfView() * kDegToRad;
-    const double aspect  = viewportAspect();
+    const double aspect  = std::max(viewportAspect(), 1e-3);
     const double margin  = 1.15;
 
+    // The EYE is placed the same way for both projections - far enough that the content sits between the clip planes -
+    // but only a perspective picture reads that distance as a SCALE. A parallel picture is fitted by its window below.
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
-        // Frustum half-height needed to frame the sphere in both dimensions.
-        const double half_w        = radius * margin * aspect;
-        const double needed_half_h = std::max(radius * margin, half_w / aspect);
-        const double tan_half      = std::tan(fov_rad * 0.5);
-        distance_                  = std::max(needed_half_h / tan_half, radius * 1.05);
+        distance_ = radius * 2.0 + margin;
     }
     else {
         const double tan_half        = std::tan(fov_rad * 0.5);
@@ -282,10 +305,11 @@ bool OrbitCameraManipulator::fitToScreen()
     const double near_plane = std::max(distance_ * 0.01, 1e-4);
     const double far_plane  = std::max(distance_ * 100.0, near_plane * 1000.0);
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
-        const double tan_ortho = std::tan(fov_rad * 0.5);
-        const double half_h    = distance_ * tan_ortho;
-        const double half_w    = half_h * viewportAspect();
-        cam->setOrthographic(-half_w, half_w, -half_h, half_h, near_plane, far_plane);
+        // The window is the picture, so the fit sizes the WINDOW: one height that covers the bounding sphere in both
+        // dimensions (the tighter axis decides), because a parallel picture's extent is what shows the content.
+        const double height = 2.0 * radius * margin / std::min(1.0, aspect);
+        const double width  = height * aspect;
+        cam->setOrthographic(-width * 0.5, width * 0.5, -height * 0.5, height * 0.5, near_plane, far_plane);
     }
     else {
         cam->setPerspective(cam->fieldOfView(), near_plane, far_plane);
@@ -368,6 +392,9 @@ void OrbitCameraManipulator::apply()
     }
     pitch_ = std::clamp(pitch_, -kMaxElevationRad, kMaxElevationRad);
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
+        // A parallel picture has no eye depth to speak of: keeping the eye outside the content is a CLIPPING placement
+        // (geometry between the eye and the near plane is cut), so it may move the eye freely - it must never reach
+        // the window, which is the picture.
         clampEyeOutsideBounds();
     }
     distance_ = clampDistance(distance_);
@@ -384,17 +411,15 @@ void OrbitCameraManipulator::apply()
         up                   = rotateAround(up, view_fwd, roll_);
     }
     cam->lookAt(eye, center_, up);
-
-    if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
-        updateOrthoProjection();
-    }
+    // The projection is the CAMERA's: an orthographic window is written only where the user asks for it to change (a
+    // zoom, a resize that reshapes it, fitToScreen), never from the viewpoint state. That is what lets an authored
+    // off-centre window survive a gesture.
 }
 
 void OrbitCameraManipulator::onMousePress(const vn::window::MouseEvent& event)
 {
-    last_x_        = event.x;
-    last_y_        = event.y;
-    pointer_known_ = true;
+    last_x_ = event.x;
+    last_y_ = event.y;
 
     switch (event.button) {
     case vn::window::MouseButton::Left: drag_ = CameraManipulator::DragAction::Rotate; break;
@@ -418,12 +443,13 @@ void OrbitCameraManipulator::onMouseMove(const vn::window::MouseEvent& event)
     const double dy = event.y - last_y_;
     last_x_         = event.x;
     last_y_         = event.y;
-    pointer_known_  = true;
 
     switch (drag_) {
     case CameraManipulator::DragAction::Rotate:
         if (mode_ == Mode::FirstPerson) {
-            orbit(dx * drag_sensitivity_, -dy * drag_sensitivity_);
+            // A first-person look turns ABOUT THE EYE: the eye must not travel an arc of the orbit radius while the
+            // user looks (that is what orbit() does, and it is not a look).
+            lookRotate(dx, dy);
         }
         else {
             // Rotate the whole rig rigidly about the press anchor (the
@@ -452,51 +478,12 @@ void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
     if (cam == nullptr || std::abs(event.deltaY) < 1e-6) {
         return;
     }
-    // Anchor at the current pointer position (falls back to the view centre).
-    const double sx = pointer_known_ ? last_x_ : viewport_w_ * 0.5;
-    const double sy = pointer_known_ ? last_y_ : viewport_h_ * 0.5;
-    anchor_         = resolveAnchor(sx, sy, anchor_on_ray_);
-
-    // The wheel performs a dolly (translate the camera along a direction)
-    // rather than shrinking a radius about a fixed point, so in perspective
-    // the camera can move through the scene instead of stopping at a target.
-    //
-    // While the picked anchor lies in front of the camera the dolly dives
-    // along the ray eye -> anchor, which keeps that model point pinned under
-    // the cursor (anchored zoom). Once the eye has passed through the anchor
-    // (it falls behind the near plane) the dive direction is released and the
-    // camera keeps moving straight along the view axis, so it travels through
-    // the model instead of stopping at its surface.
-    const Vec3d eye     = cam->eye();
-    const Vec3d forward = (cam->target() - eye).normalized();
-    if (forward.length() < kTiny) {
-        return;
-    }
-    // The dive is what setDollyToCursor switches: with it off the wheel is a plain dolly along the view axis, so
-    // the point under the cursor is not held. Both readers of the switch (this one and dolly()) then agree.
-    Vec3d dir = forward;
-    if (anchor_on_ray_ && dolly_to_cursor_) {
-        const Vec3d  to_anchor    = anchor_ - eye;
-        const double d            = to_anchor.length();
-        // Keep the dive aimed at the anchor while it is clearly in front (it
-        // then stays pinned under the cursor). Once the eye is essentially at
-        // the surface (the anchor is within a few near planes), release the
-        // anchor and keep flying straight so the camera passes through the
-        // model instead of hovering in front of it.
-        const double release_dist = cam->nearPlane() * 3.0;
-        if (d > release_dist && to_anchor.dot(forward) > 0.0) {
-            dir = to_anchor / d;
-        }
-    }
-
-    // One notch moves the eye a fixed FRACTION of the orbit distance (eye-to-centre), and the wheel does not change
-    // that distance - the centre travels with the eye. Measured against the target plane this is exactly the nominal
-    // factor per notch (d -> d / wheel_factor_); against a picked anchor NEARER than the centre the eye closes faster
-    // than that, which is what the release rule above answers.
-    const double ratio = 1.0 - 1.0 / wheel_factor_;
-    const double step  = (event.deltaY > 0.0 ? distance_ * ratio : -distance_ * ratio);
-    center_ += dir * step;
-    apply();
+    // THE WHEEL IS ONE ZOOM, and `dolly()` is that operation: the event picks the point it aims at and states a
+    // direction; the factor per notch, the anchor policy (`setDollyToCursor`) and the projection's own scale all live
+    // in the one implementation. A positive deltaY is the wheel turned away from the user (the window's convention)
+    // and zooms in, which is the direction this manipulator has always shown.
+    anchor_ = resolveAnchor(event.x, event.y, anchor_on_ray_);
+    dolly(event.deltaY > 0.0 ? 1.0 / wheel_factor_ : wheel_factor_);
 }
 
 void OrbitCameraManipulator::onKeyDown(const vn::window::KeyEvent& event)
@@ -545,8 +532,10 @@ void OrbitCameraManipulator::onResize(const vn::window::ResizeEvent& event)
     // The camera already holds the shape of its picture (see Camera): the view that owns it pushes the pane's shape
     // there and calls this with the same rectangle, so what onResize keeps is the PIXEL extent the interaction math
     // needs (gains per pixel, the pointer's default centre), not a second copy of the aspect (see viewportAspect).
+    // A parallel picture is the exception that proves the rule: its window IS the picture, so a new shape has to reach
+    // the window - and only the SHAPE does, because the height is the scale the user zoomed to.
     if (cam->projectionType() == Camera::ProjectionType::Orthographic) {
-        updateOrthoProjection();
+        fitOrthoWindowToAspect();
     }
 }
 
@@ -664,6 +653,41 @@ void OrbitCameraManipulator::pivotRotate(double screenDx, double screenDy)
     syncFromCamera();
 }
 
+void OrbitCameraManipulator::lookRotate(double screenDx, double screenDy)
+{
+    Camera* cam = camera_;
+    if (cam == nullptr) {
+        return;
+    }
+    const double ayaw   = -screenDx * drag_sensitivity_;
+    const double apitch = -screenDy * drag_sensitivity_;
+    if (std::abs(ayaw) < 1e-12 && std::abs(apitch) < 1e-12) {
+        return;
+    }
+    const Vec3d eye = cam->eye();
+    Vec3d       fwd = (cam->target() - eye).normalized();
+    Vec3d       up  = cam->up().normalized();
+    if (fwd.length() < kTiny || up.length() < kTiny) {
+        return;
+    }
+    // Yaw about the WORLD UP through the eye keeps the horizon level, which is what a look means in a Z-up world; the
+    // camera up turns with it, so the pitch below is about the picture's own right axis. The eye does not move - only
+    // the direction does - so the target follows at the same eye distance and the orbit state stays meaningful.
+    fwd               = rotateAround(fwd, kWorldUp, ayaw);
+    up                = rotateAround(up, kWorldUp, ayaw);
+    const Vec3d right = fwd.cross(up).normalized();
+    if (right.length() < kTiny) {
+        return; // Looking along the world up: the pitch axis is undefined, so the step is refused rather than guessed.
+    }
+    fwd = rotateAround(fwd, right, apitch);
+    up  = rotateAround(up, right, apitch).normalized();
+    if (fwd.length() < kTiny || up.length() < kTiny) {
+        return;
+    }
+    cam->lookAt(eye, eye + fwd * std::max(distance_, kTiny), up);
+    syncFromCamera();
+}
+
 void OrbitCameraManipulator::syncFromCamera()
 {
     Camera* cam = camera_;
@@ -743,16 +767,60 @@ double OrbitCameraManipulator::clampDistance(double distance) const
     return std::max(distance, low);
 }
 
-void OrbitCameraManipulator::updateOrthoProjection()
+void OrbitCameraManipulator::fitOrthoWindowToAspect()
 {
     Camera* cam = camera_;
     if (cam == nullptr || cam->projectionType() != Camera::ProjectionType::Orthographic) {
         return;
     }
-    const double tan_half = std::tan(cam->fieldOfView() * kDegToRad * 0.5);
-    const double half_h   = distance_ * tan_half;
-    const double half_w   = half_h * viewportAspect();
-    cam->setOrthographic(-half_w, half_w, -half_h, half_h, cam->nearPlane(), cam->farPlane());
+    // The HEIGHT is the picture's scale - it is what a zoom changes - so a new shape changes only the width and keeps
+    // the window's own centre: an off-centre window (a tiled view, one eye of a stereo pair) stays off-centre.
+    const double height = cam->orthographicHeight();
+    if (!(height > 0.0)) {
+        return;
+    }
+    const double centre_x = 0.5 * (cam->orthographicLeft() + cam->orthographicRight());
+    const double centre_y = 0.5 * (cam->orthographicBottom() + cam->orthographicTop());
+    const double width    = height * viewportAspect();
+    cam->setOrthographic(centre_x - 0.5 * width, centre_x + 0.5 * width, centre_y - 0.5 * height, centre_y + 0.5 * height, cam->nearPlane(), cam->farPlane());
+}
+
+void OrbitCameraManipulator::zoomOrthoWindow(double factor)
+{
+    Camera* cam = camera_;
+    if (cam == nullptr || cam->projectionType() != Camera::ProjectionType::Orthographic) {
+        return;
+    }
+    double left   = cam->orthographicLeft() * factor;
+    double right  = cam->orthographicRight() * factor;
+    double bottom = cam->orthographicBottom() * factor;
+    double top    = cam->orthographicTop() * factor;
+    // A window with no extent has no inverse (the projection divides by it), so a scale that would collapse it is
+    // refused instead of passed on. Precision, not a limit: fp64 carries about fifteen decades of it.
+    if (!(top - bottom > 0.0) || !(right - left > 0.0) || !std::isfinite(top) || !std::isfinite(right)) {
+        return;
+    }
+    // Pin the picked point: scaling the window about the camera's own axis moves every picture position except the
+    // axis itself, so the window slides by exactly the amount that keeps the anchor where it was. The identity is
+    // left' = factor * left + x * (1 - factor) for the anchor's view-space x, and the same for the vertical pair.
+    if (dolly_to_cursor_ && anchor_on_ray_) {
+        const Vec3d eye = cam->eye();
+        const Vec3d fwd = (center_ - eye).normalized();
+        if (fwd.length() >= kTiny) {
+            const Vec3d right_axis = fwd.cross(cam->up()).normalized();
+            const Vec3d up_axis    = right_axis.cross(fwd).normalized();
+            if (right_axis.length() >= kTiny && up_axis.length() >= kTiny) {
+                const Vec3d  offset  = anchor_ - eye;
+                const double slide_x = offset.dot(right_axis) * (1.0 - factor);
+                const double slide_y = offset.dot(up_axis) * (1.0 - factor);
+                left += slide_x;
+                right += slide_x;
+                bottom += slide_y;
+                top += slide_y;
+            }
+        }
+    }
+    cam->setOrthographic(left, right, bottom, top, cam->nearPlane(), cam->farPlane());
 }
 
 double OrbitCameraManipulator::viewportAspect() const

@@ -2801,3 +2801,24 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   (baseline: pre-W3 shaders; fixed: W3 + the constant). Lit faces and the ground's shading are back.
 - **Verified**: `test_vk` 230/230 (46 suites) - the contract case plus the restored shadow fixture;
   `test_graphics` 677/677; `test_meshio`, `test_gui` green; the 12 gates + `--strict` exit 0.
+## 2026-11-27 - navigation redesign: the viewpoint and the picture have separate owners
+
+- **The error.** The orthographic picture's scale was `distance * tan(fieldOfView / 2)`; `apply()` rewrote the window on
+  every gesture (so an authored off-centre window was erased by the first one); `pan` divided by a field of view an
+  orthographic camera does not have; and the wheel and `dolly()` were two different models of "zoom" - one flew the eye
+  through the scene and moved the orbit centre with it, the other shrank a radius - of which only `dolly` read
+  `setDollyToCursor`. `Mode::Pan` / `Mode::Zoom` were compared nowhere, and a first-person drag called `orbit()`.
+- **The model now.** The manipulator owns the viewpoint and `apply()` writes `lookAt` and nothing else; the CAMERA owns
+  the picture, so `Camera::orthographicHeight()` is the parallel picture's scale and `clampEyeOutsideBounds` is clipping
+  only. The wheel is `dolly(factor)`: perspective multiplies the eye-to-centre distance and stops at the picked surface,
+  orthographic scales the window and does not move the eye. Travel is `moveForward` / `moveRight` / `moveUp` (WASD), and
+  `Mode` is `{Orbit, FirstPerson}`.
+- **Landing oracle.** `.ai/design/graphics-navigation.md` (10 chapters) and `CameraManipulatorTest` (18 cases); the
+  load-bearing ones are `TheWheelIsOneFactorInBothProjections`,
+  `WheelKeepsThePickedPointWhereItWasUnlessDollyToCursorIsOff` (drop the lateral slide and it reports 0.2894 vs 0.3328),
+  `AnAuthoredOffCentreOrthographicWindowSurvivesGestures`, `AnOrthographicPanMovesThePictureAtTheWindowsOwnScale` and
+  `AFirstPersonLookTurnsAboutTheEye`.
+- **Trap for the next session.** `test_vsg` no longer exists in `build/` (the reference backend was retired on
+  2026-11-23). `build/bin/test_vsg` is a stale binary that fails with an undefined `RetirementQueue::retire` symbol -
+  that is not a regression from this batch.
+- **Verified**: whole tree builds; `test_graphics` 684/684, `test_vk` 224/224; the doc/API gates plus `--strict` exit 0.

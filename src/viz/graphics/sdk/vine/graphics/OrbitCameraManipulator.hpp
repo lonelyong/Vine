@@ -9,29 +9,36 @@ VN_GRAPHICS_NS_BEGIN
 class Scene;
 
 /**
- * @brief Orbit-style camera manipulator with pivot picking and projection agnostic controls.
+ * @brief Orbit-style camera manipulator with pivot picking and projection-agnostic controls.
  *
  * @details
- * - Implements a pivot-anchored orbit / pan / zoom camera with a pickable anchor point:
- *   - Left-drag rotates the whole camera rig rigidly about the press anchor (the grabbed model point,
- *     or the scene centre on empty space), so that point stays pinned under the cursor while the model
- *     turns about it. The camera up is carried rigidly by the rotation, which gives the view the roll
- *     freedom it needs to sweep over the top to a true top-down / bottom-up view and beyond, without
- *     gimbal shake or a sudden 180 deg flip.
- *   - Middle/right-drag pans.
- *   - The wheel dollies along the view: it dives along the ray to the anchor (the point under the
- *     cursor stays pinned to it) and, once the camera reaches the surface, keeps moving forward so it
- *     can travel through the scene instead of stopping at a fixed point.
- * - On every button press / scroll the manipulator ray-picks the scene under the cursor. When a model
- *   is hit, the hit point becomes the anchor (the rotate pivot and the pan / zoom depth reference);
- *   when nothing is hit the anchor falls back to the scene bounding-box centre, or to the world origin
- *   when there is no scene. In FirstPerson mode WASD / arrow keys drive movement instead.
- * - A rotate press never applies the pivot (no jump). Away from a drag, pan / zoom and the keyboard
- *   orbit are expressed as a level spherical orbit (yaw / pitch / roll about the camera target) so
- *   programmatic motion stays stable and level.
- * - Both projection types are supported through a single distance parameter: the camera keeps an
- *   eye-to-centre distance, which drives the perspective dolly step and the orthographic frustum
- *   height.
+ * - ONE STATE, ONE PICTURE. The manipulator owns the VIEWPOINT - an orbit centre, the eye-to-centre distance and the
+ *   three angles that place the eye on that sphere - and the camera owns the PICTURE its projection makes of it. The
+ *   two meet in `apply()`, which writes the camera's view (`lookAt`) and nothing else; in particular the ORTHOGRAPHIC
+ *   WINDOW belongs to the camera, so an authored off-centre window survives every gesture and the eye-to-centre
+ *   distance is never a picture scale (see `.ai/design/graphics-navigation.md` 2.1 / 2.2).
+ * - Left-drag rotates the whole camera rig rigidly about the press anchor (the grabbed model point, or the scene
+ *   centre on empty space), so that point stays pinned under the cursor while the model turns about it. The camera up
+ *   is carried rigidly by the rotation, which gives the view the roll freedom it needs to sweep over the top to a true
+ *   top-down / bottom-up view and beyond, without gimbal shake or a sudden 180 deg flip. In FirstPerson mode the same
+ *   drag looks ABOUT THE EYE instead and leaves the eye where it is.
+ * - Middle/right-drag pans, scaled by the picture's OWN extent: the anchor depth for a perspective picture, the
+ *   window's height for a parallel one, so a pixel is a pixel in both projections.
+ * - The wheel is a ZOOM and it is exactly `dolly()`'s operation: the picture's scale changes by one factor. Perspective
+ *   multiplies the eye-to-centre distance (so the step is proportional to the current scale); orthographic scales the
+ *   camera's window, because a parallel picture does not depend on where the eye sits along the view axis. With
+ *   `setDollyToCursor(true)` (the default) the picked point under the cursor keeps its picture position: the orbit
+ *   centre slides for a perspective picture, the window slides for a parallel one.
+ * - TRAVEL IS A VERB OF ITS OWN: `moveForward` / `moveRight` / `moveUp` (and WASD in FirstPerson) move the rig without
+ *   changing the picture's scale. The wheel does not fly through the scene - it stops at the surface it is aiming at,
+ *   which is what lets the next rotation orbit the region just approached.
+ * - On every button press / scroll the manipulator ray-picks the scene under the POINTER THE EVENT NAMES. A model hit
+ *   becomes the anchor (the rotate pivot, the pan depth reference and the zoom target); nothing hit falls back to the
+ *   scene bounding-box centre, or to the world origin when there is no scene.
+ * - A rotate press never applies the pivot (no jump). Away from a drag, pan / zoom and the keyboard orbit are expressed
+ *   as a level spherical orbit (yaw / pitch / roll about the orbit centre) so programmatic motion stays stable and
+ *   level. The world is right-handed and Z-up (`kWorldUp`), and the manipulator's horizon is that axis; the world unit
+ *   is the content's.
  */
 class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
   public:
@@ -78,24 +85,30 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Pans the camera based on screen-space deltas.
      *
-     * The pan is scaled at the current anchor depth, so the grabbed world
-     * point stays under the cursor.
+     * @details
+     * - The pan is scaled by the picture's own extent at the grabbed point, so the world point under the cursor
+     *   travels with it: a perspective picture reads the anchor depth and its field of view, a parallel picture reads
+     *   the camera's window height, and the eye-to-centre distance is not consulted there - a parallel picture has one
+     *   scale and it is the window.
      *
      * @param screenDx Horizontal screen delta in pixels.
      * @param screenDy Vertical screen delta in pixels.
      */
     void pan(double screenDx, double screenDy);
 
-    /** @brief Dollies by a multiplicative factor: moves the eye along the view, changing no field of view.
+    /** @brief Zooms the picture by a multiplicative factor: the one operation the wheel also performs.
      *
      * @details
-     * - Keeps the current anchor fixed on screen when it lies on the cursor ray (see dollyToCursor());
-     *   otherwise scales the eye-to-centre distance. The distance is multiplied by the factor, so a
-     *   factor below 1 moves the camera closer and a factor above 1 moves it away.
-     * - It is a DOLLY, not a zoom: the projection is untouched, which is what keeps an orthographic view's
-     *   extent unchanged and lets the eye travel through the scene.
+     * - A PERSPECTIVE camera zooms by multiplying the eye-to-centre distance, so the world step is proportional to the
+     *   current scale and the same ratio is one notch at every zoom level. With `dollyToCursor()` on and a picked
+     *   anchor on the cursor ray, the orbit centre slides so that point keeps its picture position, and the zoom stops
+     *   rather than passing THROUGH it (the anchor stays in front of the near plane).
+     * - An ORTHOGRAPHIC camera zooms by scaling its window - the picture's extent - and does not move the eye at all: a
+     *   parallel picture does not depend on where the eye sits along the view axis. With `dollyToCursor()` on and a
+     *   picked anchor, the window slides by the amount that keeps that point where it was on screen. The eye is still
+     *   kept outside the content, because that is a CLIPPING placement, not a scale.
      *
-     * @param factor Dolly factor; <1 moves closer, >1 moves away.
+     * @param factor Zoom factor; <1 zooms in (closer / narrower window), >1 zooms out.
      */
     void dolly(double factor);
 
@@ -133,16 +146,17 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Restores the view captured when the manipulator was constructed. */
     void home() override;
 
-    /** @brief Sets whether a wheel dolly keeps the cursor anchor fixed on screen.
+    /** @brief Sets whether a zoom keeps the cursor anchor fixed on screen.
      *
      * @details
-     * - When enabled, dollying towards a picked point keeps that world point under the cursor; the orbit
-     *   centre slides towards the anchor so successive rotations orbit around the region just approached.
-     * - When disabled the wheel moves straight along the view axis and the point under the cursor is not
-     *   held. Both paths that read the switch (`onScroll` and `dolly`) honour it, so a host gets one answer
-     *   whichever route its input takes.
+     * - When enabled, zooming towards a picked point keeps that world point under the cursor: a perspective picture
+     *   slides the orbit centre towards it, a parallel one slides its window. The orbit centre / window then covers
+     *   the region just approached, so the next rotation orbits what the user just zoomed at.
+     * - When disabled the zoom changes the picture's scale only and the point under the cursor moves with it. Both
+     *   readers of the switch (`dolly` and the wheel, which is the same operation) honour it, so a host gets one
+     *   answer whichever route its input takes.
      *
-     * @param enabled True to dolly towards the cursor anchor.
+     * @param enabled True to zoom towards the cursor anchor.
      */
     void setDollyToCursor(bool enabled);
 
@@ -228,7 +242,13 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Handles a key release. */
     void onKeyUp(const vn::window::KeyEvent& event) override;
 
-    /** @brief Updates viewport size and the camera projection on a resize. */
+    /** @brief Updates viewport size and, for a parallel picture, the window's shape.
+     *
+     * @details
+     * - A resize keeps the orthographic window's HEIGHT - that is the picture's scale, and a resize must not change
+     *   what the user zoomed to - and gives it the camera's own shape (see Camera). A perspective picture needs
+     *   nothing here: its shape lives in the camera.
+     */
     void onResize(const vn::window::ResizeEvent& event) override;
 
   private:
@@ -240,6 +260,18 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
 
     /** @brief Re-aims the view at a point without moving the eye. */
     void aimCenterAt(const Vec3d& point);
+
+    /** @brief Looks about the EYE: turns the view, leaves the eye where it is (FirstPerson's left-drag).
+     *
+     * @details
+     * - Yaws about the world-up axis through the eye, then pitches about the resulting screen-right axis, so the
+     *   horizon stays level and the eye does not travel. The target follows the view at the same eye distance, which
+     *   is what keeps the orbit state (centre / distance) meaningful after the look.
+     *
+     * @param screenDx Horizontal screen delta in pixels.
+     * @param screenDy Vertical screen delta in pixels.
+     */
+    void lookRotate(double screenDx, double screenDy);
 
     /** @brief Rotates the whole camera rig about the press anchor.
      *
@@ -262,8 +294,11 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Clamps distance to the allowed minimum. */
     double clampDistance(double distance) const;
 
-    /** @brief Updates the orthographic projection from distance and aspect. */
-    void updateOrthoProjection();
+    /** @brief Gives the orthographic window the camera's own shape, keeping its height (the scale) and its centre. */
+    void fitOrthoWindowToAspect();
+
+    /** @brief Scales the orthographic window by @p factor, pinning the picked anchor when the switch is on. */
+    void zoomOrthoWindow(double factor);
 
     /** @brief Gets the aspect of the picture this manipulator's interaction works in.
      *
@@ -303,10 +338,9 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     Vec3d anchor_{ 0.0, 0.0, 0.0 };
     bool  anchor_on_ray_ = false; // anchor was a geometry hit on the cursor ray.
 
-    CameraManipulator::DragAction drag_          = CameraManipulator::DragAction::None;
-    double                        last_x_        = 0.0;
-    double                        last_y_        = 0.0;
-    bool                          pointer_known_ = false;
+    CameraManipulator::DragAction drag_   = CameraManipulator::DragAction::None;
+    double                        last_x_ = 0.0;
+    double                        last_y_ = 0.0;
 
     // Viewport size in device pixels (fed by onResize).
     int viewport_w_ = 800;

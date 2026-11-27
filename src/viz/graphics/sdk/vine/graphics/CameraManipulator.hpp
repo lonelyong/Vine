@@ -33,12 +33,18 @@ class Camera;
  */
 class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
   public:
+    /**
+     * @brief The navigation METAPHOR a manipulator is in: which way a drag moves the view, never which button pans.
+     *
+     * @details
+     * - The metaphors are distinct voyages of the viewpoint, so a mode is a fact about the view, not about a gesture:
+     *   a drag pans in both of them, and which button a drag uses belongs to `DragAction`.
+     * - `Orbit` turns about the orbit centre; `FirstPerson` looks about the eye and travels with the keyboard.
+     */
     enum class Mode
     {
-        Orbit,       // Orbit around a target point.
-        Pan,         // Pan (translate) the view.
-        Zoom,        // Zoom in/out.
-        FirstPerson, // First-person navigation.
+        Orbit,       // Turn the view about its orbit centre (a CAD turntable).
+        FirstPerson, // Look about the eye; WASD travels (a walkthrough).
     };
 
     /** @brief Mouse button that drives the current drag interaction. */

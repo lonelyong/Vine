@@ -20,14 +20,15 @@ applications** (`src/apps/vine` → `Vine.exe`); `tools/<name>` holds **non-inst
 module's own process half (e.g. `src/base/crash/handler`'s `CrashHandler.exe`) stays in the module and
 does not move into `src/apps/`.
 
-## design/ — the living design (59)
+## design/ — the living design (60)
 
 Every design page has the same shape: **one-line purpose → design points (2.x) → features (F#) →
 public interface → caveats (N#) → rejected options (D#, one line + ADR link) → acceptance (T#) →
 related documents**.
 
-**graphics / vk / vsg (13)**
+**graphics / vk / vsg (14)**
 - `graphics-architecture.md` — layering, device/window/engine/chain/view, a frame and scheduling.
+- `graphics-navigation.md` — the viewpoint and the picture: the manipulator's state model, one zoom (the wheel is a factor), the orthographic window as the parallel picture's scale, the first-person look, the pointer's pixel, the world conventions.
 - `graphics-scene.md` — nodes, state, collection, layers, view context, picking.
 - `graphics-geometry.md` — channels, `Primitive`, instancing, revision, bounding boxes, storage and sharing; mesh triangle identity (`triangleCount()` / `triangleCorners()`) and the triangle-tree cache (F32).
 - `graphics-rendering.md` — targets, MSAA, image sources, colour, shading, shadows.

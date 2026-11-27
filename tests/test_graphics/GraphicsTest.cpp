@@ -1329,47 +1329,62 @@ TEST(CameraManipulatorTest, DollyClampsAtMinOrbitDistance)
     EXPECT_NEAR((cam->eye() - cam->target()).length(), manip.orbitDistance(), 1e-6);
 }
 
-TEST(CameraManipulatorTest, WheelStepIsAFractionOfTheOrbitDistance)
+TEST(CameraManipulatorTest, WheelZoomsByARatioAndNotByALength)
 {
-    // ONE NOTCH IS A FRACTION, NOT A LENGTH: the eye travels a fixed fraction of the eye-to-centre distance, and the
-    // wheel does not change that distance - the orbit centre travels with the eye. Two orbits of 10 and 20 units
-    // therefore travel twice as far per notch, which is what "the speed tracks the zoom level" has to mean here:
-    // against the target plane the factor per notch is constant.
-    const auto one_notch = [](double orbit) {
+    // ONE NOTCH IS A RATIO, NOT A LENGTH: the wheel multiplies the eye-to-centre distance, so the world step shrinks
+    // with the picture and one notch is the same scale change at every zoom level. It used to move the eye by a
+    // fraction of a distance the wheel itself never changed - a constant world length that could not ease.
+    struct Notch {
+        double ratio;  // Orbit distance after / before.
+        double travel; // World units the eye moved.
+    };
+
+    const auto one_notch = [](double orbit) -> Notch {
         auto cam = intrusive_ptr<Camera>(new Camera());
         // 30 deg above the horizon in a Z-up world: a basis the spherical model carries without the pole.
         cam->lookAt(Vec3d(0.0, orbit * 0.86602540378443865, orbit * 0.5), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
         cam->setPerspective(60.0, 0.1, 1000.0);
+        EXPECT_NEAR(cam->fieldOfView(), 60.0, 1e-12);
 
         OrbitCameraManipulator manip(cam.get()); // no scene: nothing is picked, so no anchor sits on the ray
         const Vec3d            eye0 = cam->eye();
-        EXPECT_NEAR(manip.orbitDistance(), orbit, 1e-9);
 
-        vn::window::ScrollEvent scroll;
+        vn::window::ScrollEvent scroll; // one notch toward the user: zoom in
         scroll.deltaY = 1.0;
         manip.onScroll(scroll);
 
-        EXPECT_NEAR(manip.orbitDistance(), orbit, 1e-9) << "the step's reference is the orbit distance, and the wheel does not change it";
-        return (cam->eye() - eye0).length();
+        EXPECT_NEAR((cam->eye() - cam->target()).length(), manip.orbitDistance(), 1e-9) << "the radius the manipulator reports is the one the camera holds";
+        return { manip.orbitDistance() / orbit, (cam->eye() - eye0).length() };
     };
 
-    const double ten    = one_notch(10.0);
-    const double twenty = one_notch(20.0);
-    EXPECT_GT(ten, 0.0);
-    EXPECT_NEAR(twenty, 2.0 * ten, 1e-9);
+    const Notch ten    = one_notch(10.0);
+    const Notch twenty = one_notch(20.0);
+    EXPECT_LT(ten.ratio, 1.0);
+    EXPECT_NEAR(twenty.ratio, ten.ratio, 1e-12) << "the same ratio per notch at every scale";
+    EXPECT_NEAR(twenty.travel, 2.0 * ten.travel, 1e-9) << "and the world step is proportional to the scale";
 }
 
-TEST(CameraManipulatorTest, WheelDivesAtThePickedAnchorUnlessDollyToCursorIsOff)
+TEST(CameraManipulatorTest, WheelKeepsThePickedPointWhereItWasUnlessDollyToCursorIsOff)
 {
-    // The pointer names a pixel whose ray meets the model OFF the view axis, so "dive at the anchor" and "move along
-    // the view axis" are different directions and the switch's effect is visible in the eye's path.
+    // The pointer names a pixel whose ray meets the model OFF the view axis, so "the picked point keeps its screen
+    // position" is a statement with content: the zoom slides the orbit centre by exactly the amount that holds it.
     struct Notch {
-        Vec3d moved;     // Eye displacement of one notch.
-        Vec3d to_anchor; // Unit eye -> picked point, before the notch.
-        Vec3d forward;   // Unit eye -> target, before the notch.
+        double before_x, before_y; // Anchor's picture offset (x / depth, y / depth) before the notch.
+        double after_x, after_y;
     };
 
-    const auto notch_at = [](bool dolly_to_cursor) -> Notch {
+    const auto picture_offset = [](const Camera& cam, const Vec3d& p, double& x, double& y) {
+        const Vec3d  eye   = cam.eye();
+        const Vec3d  fwd   = (cam.target() - eye).normalized();
+        const Vec3d  right = fwd.cross(cam.up()).normalized();
+        const Vec3d  up    = right.cross(fwd).normalized();
+        const Vec3d  d     = p - eye;
+        const double depth = d.dot(fwd);
+        x                  = d.dot(right) / depth;
+        y                  = d.dot(up) / depth;
+    };
+
+    const auto notch_at = [&](bool dolly_to_cursor) -> Notch {
         Scene scene;
         scene.setRoot(makeTriangleNode(Vec3d(1.4, 0.0, 0.0), nullptr, u8"tri"));
 
@@ -1382,34 +1397,177 @@ TEST(CameraManipulatorTest, WheelDivesAtThePickedAnchorUnlessDollyToCursorIsOff)
         manip.onResize(vn::window::ResizeEvent{ 800, 600 });
         manip.setDollyToCursor(dolly_to_cursor);
 
-        Vec3d anchor;
-        EXPECT_TRUE(manip.pickAt(600.0, 250.0, anchor)) << "the fixture's triangle must cover the chosen pixel";
-        const Vec3d forward = (cam->target() - eye).normalized();
-
-        vn::window::MouseEvent move;
-        move.x = 600.0;
-        move.y = 250.0;
-        manip.onMouseMove(move); // no button held: this records the pointer and moves nothing
-
+        // The wheel event names the pixel it turned at, and that pixel is the point the zoom aims at.
         vn::window::ScrollEvent scroll;
+        scroll.deltaY = 1.0;
+        scroll.x      = 600.0;
+        scroll.y      = 250.0;
+
+        Vec3d anchor;
+        EXPECT_TRUE(manip.pickAt(scroll.x, scroll.y, anchor)) << "the fixture's triangle must cover the chosen pixel";
+        Notch notch{};
+        picture_offset(*cam, anchor, notch.before_x, notch.before_y);
+        manip.onScroll(scroll);
+        picture_offset(*cam, anchor, notch.after_x, notch.after_y);
+        return notch;
+    };
+
+    const Notch held = notch_at(true);
+    const Notch free = notch_at(false);
+
+    // The fixture is meaningful: the picked point is off the view axis, so the two answers differ.
+    EXPECT_GT(std::hypot(held.before_x, held.before_y), 0.05);
+    // On (the documented default): the picked point keeps its picture position.
+    EXPECT_NEAR(held.after_x, held.before_x, 1e-9);
+    EXPECT_NEAR(held.after_y, held.before_y, 1e-9);
+    // Off: the zoom changes the scale only, so the point under the cursor travels with the picture.
+    EXPECT_GT(std::abs(free.after_x - free.before_x), 1e-3);
+}
+
+TEST(CameraManipulatorTest, TheWheelIsOneFactorInBothProjections)
+{
+    // ONE WHEEL FACTOR, TWO PROJECTIONS: a perspective picture multiplies its eye-to-centre distance by it, a parallel
+    // picture multiplies its WINDOW by it, and the eye of a parallel picture does not move at all - its position along
+    // the view axis changes nothing the picture shows (it is a clipping placement, see dolly's contract).
+    struct Reading {
+        double ratio      = 1.0; // The picture's scale after / before.
+        double eye_travel = 0.0;
+    };
+
+    const auto one_notch = [](bool orthographic) -> Reading {
+        auto cam = intrusive_ptr<Camera>(new Camera());
+        cam->lookAt(Vec3d(0.0, 8.6602540378443865, 5.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+        if (orthographic) {
+            cam->setOrthographic(-4.0, 4.0, -3.0, 3.0, 0.1, 100.0);
+        }
+        else {
+            cam->setPerspective(60.0, 0.1, 1000.0);
+        }
+
+        OrbitCameraManipulator manip(cam.get()); // no scene: nothing is picked, so the wheel slides nothing
+        const Vec3d            eye0   = cam->eye();
+        const double           scale0 = orthographic ? cam->orthographicHeight() : manip.orbitDistance();
+
+        vn::window::ScrollEvent scroll; // one notch toward the user: zoom in
         scroll.deltaY = 1.0;
         manip.onScroll(scroll);
 
-        return { cam->eye() - eye, (anchor - eye).normalized(), forward };
+        if (orthographic) {
+            EXPECT_NEAR((cam->orthographicRight() - cam->orthographicLeft()) / cam->orthographicHeight(), 8.0 / 6.0, 1e-12)
+                << "a zoom scales both axes: the window keeps the shape it had";
+        }
+        const double scale1 = orthographic ? cam->orthographicHeight() : manip.orbitDistance();
+        return { scale1 / scale0, (cam->eye() - eye0).length() };
     };
 
-    const Notch diving = notch_at(true);
-    const Notch plain  = notch_at(false);
+    const Reading perspective = one_notch(false);
+    const Reading parallel    = one_notch(true);
 
-    EXPECT_GT(diving.moved.length(), 0.0);
-    // The fixture is meaningful: the picked point is off the view axis, so the two answers differ.
-    EXPECT_LT(diving.to_anchor.dot(diving.forward), 0.99);
-    // On (the documented default): the eye travels straight at the picked point, which stays under the cursor.
-    EXPECT_NEAR(diving.moved.normalized().dot(diving.to_anchor), 1.0, 1e-9);
-    // Off: the wheel moves along the view axis and does not hold the anchor.
-    EXPECT_NEAR(plain.moved.normalized().dot(plain.forward), 1.0, 1e-9);
-    // The switch chooses the DIRECTION, not the amount: one notch moves the same distance either way.
-    EXPECT_NEAR(plain.moved.length(), diving.moved.length(), 1e-9);
+    EXPECT_LT(perspective.ratio, 1.0);
+    EXPECT_NEAR(parallel.ratio, perspective.ratio, 1e-12) << "one wheel factor, both projections";
+    EXPECT_GT(perspective.eye_travel, 0.0) << "a perspective zoom moves the eye";
+    EXPECT_NEAR(parallel.eye_travel, 0.0, 1e-12) << "a parallel picture does not care where the eye is";
+}
+
+TEST(CameraManipulatorTest, AnAuthoredOffCentreOrthographicWindowSurvivesGestures)
+{
+    // An off-centre window is a legal picture (a tiled view, one eye of a stereo pair, a shifted shadow frustum) and the
+    // camera keeps all four bounds on purpose. The manipulator used to rewrite it from the eye distance and the field of
+    // view on EVERY gesture, so the first one erased it; the window is now only written where the user changes it.
+    auto cam = intrusive_ptr<Camera>(new Camera());
+    cam->lookAt(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+    cam->setOrthographic(-2.0, 6.0, -1.0, 3.0, 0.1, 100.0);
+
+    OrbitCameraManipulator manip(cam.get());
+    manip.setOrbitDistance(25.0);
+    manip.orbit(0.4, 0.2);
+    manip.pan(60.0, -20.0);
+
+    EXPECT_DOUBLE_EQ(cam->orthographicLeft(), -2.0);
+    EXPECT_DOUBLE_EQ(cam->orthographicRight(), 6.0);
+    EXPECT_DOUBLE_EQ(cam->orthographicBottom(), -1.0);
+    EXPECT_DOUBLE_EQ(cam->orthographicTop(), 3.0);
+}
+
+TEST(CameraManipulatorTest, AnOrthographicPanMovesThePictureAtTheWindowsOwnScale)
+{
+    // A parallel picture's scale is its WINDOW, so a pan reads the window's height over the picture's pixel height -
+    // not the eye distance, and not a field of view an orthographic camera does not have. A drag of one picture height
+    // moves the orbit centre by exactly the window's height, whatever the eye distance says.
+    auto cam = intrusive_ptr<Camera>(new Camera());
+    cam->lookAt(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+    cam->setOrthographic(-2.0, 6.0, -1.0, 3.0, 0.1, 100.0); // height 4, authored off centre
+    cam->setAspect(800.0 / 600.0);
+
+    OrbitCameraManipulator manip(cam.get());
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
+
+    const Vec3d before = manip.orbitCenter();
+    const Vec3d up     = cam->up().normalized();
+    manip.pan(0.0, 600.0); // one picture height, downward
+
+    const Vec3d moved = manip.orbitCenter() - before;
+    EXPECT_NEAR(moved.length(), 4.0, 1e-9) << "one picture height of drag is one window height of world";
+    EXPECT_NEAR(moved.normalized().dot(up), 1.0, 1e-9);
+    EXPECT_NEAR(cam->orthographicHeight(), 4.0, 1e-12) << "a pan moves the picture, it does not rescale it";
+}
+
+TEST(CameraManipulatorTest, AFirstPersonLookTurnsAboutTheEye)
+{
+    // The first-person drag is a LOOK, not an orbit: the eye stays where it is and the view direction turns. Orbiting
+    // the centre would carry the eye along an arc of the orbit radius (a 0.5 rad look on a 10 unit radius moves it
+    // about 5 units), which is the turntable, not a walkthrough.
+    auto        cam = intrusive_ptr<Camera>(new Camera());
+    const Vec3d eye(8.0, 0.0, 6.0);
+    cam->lookAt(eye, Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+    cam->setPerspective(60.0, 0.1, 1000.0);
+
+    OrbitCameraManipulator manip(cam.get());
+    manip.setMode(CameraManipulator::Mode::FirstPerson);
+    manip.onResize(vn::window::ResizeEvent{ 800, 600 });
+
+    vn::window::MouseEvent press;
+    press.button  = vn::window::MouseButton::Left;
+    press.x       = 400.0;
+    press.y       = 300.0;
+    press.pressed = true;
+    manip.onMousePress(press);
+
+    const Vec3d forward0 = (cam->target() - eye).normalized();
+
+    vn::window::MouseEvent move;
+    move.pressed = true;
+    move.x       = 450.0;
+    move.y       = 300.0;
+    manip.onMouseMove(move);
+
+    EXPECT_NEAR((cam->eye() - eye).length(), 0.0, 1e-9) << "a look does not carry the eye";
+    const Vec3d forward1 = (cam->target() - cam->eye()).normalized();
+    EXPECT_LT(forward1.dot(forward0), 0.999) << "the view turned";
+    EXPECT_NEAR((cam->target() - cam->eye()).length(), manip.orbitDistance(), 1e-9)
+        << "the target stays at the orbit distance, so the orbit state stays meaningful";
+}
+
+TEST(CameraManipulatorTest, AnOrthographicFitToScreenSizesTheWindowToTheScene)
+{
+    Scene scene;
+    scene.setRoot(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    const Aabbd  box    = scene.boundingBox();
+    const double radius = (box.size() * 0.5).length();
+
+    auto cam = intrusive_ptr<Camera>(new Camera());
+    cam->lookAt(Vec3d(0, 0, 10), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
+    cam->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 1000.0);
+    cam->setAspect(1.0);
+
+    OrbitCameraManipulator manip(cam.get(), &scene);
+    ASSERT_TRUE(manip.fitToScreen());
+
+    // The picture's extent covers the scene's bounding sphere with the fit's margin...
+    EXPECT_GE(cam->orthographicHeight() * 0.5, radius * 1.14);
+    EXPECT_GE((cam->orthographicRight() - cam->orthographicLeft()) * 0.5, radius * 1.14);
+    // ... and the eye sits outside the content, because what is behind the near plane is clipped.
+    EXPECT_GT(manip.orbitDistance(), radius * 1.05);
 }
 
 TEST(CameraManipulatorTest, FitToScreenFramesScene)
