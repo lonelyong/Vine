@@ -20,27 +20,19 @@ TEST(ThreadPoolTest, EnqueueReturnsResult)
     EXPECT_EQ(future.get(), 42);
 }
 
-TEST(ThreadPoolTest, TryEnqueueReportsAStoppedPool)
+TEST(ThreadPoolTest, DiscardingTheFutureStillRunsTheTask)
 {
-    // A stopped pool used to accept the task and drop it, so a caller with no future to inspect
-    // (a scheduler hop, an event post) waited forever. The refusal is part of the answer now.
-    ThreadPool pool(1);
-    pool.stop();
-    EXPECT_FALSE(pool.tryEnqueue([] {})) << "a stopped pool took a task it will never run";
-}
-
-TEST(ThreadPoolTest, TryEnqueueRunsTheTask)
-{
+    // A caller with no result to collect takes the same entry point: the future is dropped, the callable still runs.
     ThreadPool         pool(1);
     std::promise<void> done;
     auto               future = done.get_future();
-    ASSERT_TRUE(pool.tryEnqueue([&done] { done.set_value(); }));
+    (void)pool.enqueue([&done] { done.set_value(); });
     EXPECT_EQ(future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
 }
 
 TEST(ThreadPoolTest, EnqueueOnAStoppedPoolThrows)
 {
-    // enqueue() is the try* pair's throwing sibling: a caller that got a future back has a task that will run.
+    // The refusal is thrown where the request is made, so a caller holding a future holds a task that will run.
     ThreadPool pool(2);
     pool.stop();
     EXPECT_THROW(pool.enqueue([] { return 1; }), std::logic_error) << "the caller was handed a future for a task the pool will never run";

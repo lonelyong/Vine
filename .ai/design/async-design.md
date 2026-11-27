@@ -124,19 +124,19 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 
 ### 2.7 A hop that cannot be taken is reported, not dropped
 
-- `ThreadPool::tryEnqueue` answers whether the pool accepted the callable; a stopped pool answers `false` and never runs it.
-- `ThreadPoolScheduler::ScheduleAwaiter::await_suspend` turns that `false` into `std::logic_error`. The awaiter's contract is “resume on a
+- `ThreadPool::enqueue` is the pool's only entry point, and a stopped pool refuses it with `std::logic_error` at the call: the
+  caller is handed no future for a task that will never run, so there is nothing to defer the answer to.
+- `ThreadPoolScheduler::ScheduleAwaiter::await_suspend` lets that exception through. The awaiter's contract is “resume on a
   worker of this pool”, and there is no honest fallback: resuming inline silently moves the coroutine onto a thread the caller did not ask
   for, and returning without scheduling parks it forever. A throw is the module's existing answer to a programming error (awaiting an empty
   `Task`, `SharedTask::result()` before completion).
-- `ThreadPool::enqueue` refuses the same pool state at the call, with `std::logic_error`: a caller holding a `future` therefore
-  holds a task that will run, and nothing has to be decoded from a `broken_promise` later.
-- Both forms are templates over the callable and funnel into one private `pushTask(std::function<void()>)`, so the queue's type
-  erasure happens once and the pair differs only in what it answers with.
+- A caller with no result to collect takes that same entry point and discards the future; the callable still runs, so one rule
+  serves both uses.
 
-Serves G4 (the failure mode is in the signature and the doc), G6 (the `try*` pair means here what `setResult`/`trySetResult` and
-`push`/`tryPush` mean), G10 (one type-erased entry point, one allocation policy) and G11 (a teardown race produces an exception at
-a known point, not a hang).
+Serves G1 (one refusal, one spelling) and G4 (the failure mode is in the signature and the doc). It **violates G10** on the
+fire-and-forget path: a scheduler hop now pays the `packaged_task` and its shared state, plus a future nobody reads, where the
+`bool` sibling allocated nothing. That price buys one entry point and one rule (§7 D12); if a hop shows up in a profile, the
+answer is a private allocation-free path inside `ThreadPoolScheduler`, not a second public verb.
 
 ### 2.8 `try*` reports what it did
 
@@ -358,6 +358,7 @@ Serves G4 (the position rule is stated and enforced) and G12 (the constraint nam
 | D9 | keeping `bool tryPop(T& out)` | G4: it requires move-assignment the API never states, and reports a stranded element as “nothing there”. `std::optional<T> tryPop()` carries the same information with fewer requirements and no lie (§2.8). | — |
 | D10 | resuming inline when the pool refuses a hop | G4: it would silently drop the awaiter's only promise, the thread it lands on. A throw keeps the promise and turns a teardown race into a reported error (§2.7). | — |
 | D11 | rejecting `co_await` on an rvalue `SharedTask` (`operator co_await() const&& = delete`) | it would forbid the safe forms (`auto v = co_await sharedTask(t);` copies the value) to prevent the unsafe one (`const T& v = co_await sharedTask(t);`). G8: a lifetime requirement (R8) is the narrower cost. | — |
+| D12 | a `bool tryEnqueue` sibling next to `enqueue` | G1: it gave “refused” a second spelling, and its only consumer (`ThreadPoolScheduler::await_suspend`) turned it straight back into `std::logic_error` - so the pair read as throw/nothrow while neither was true. The per-hop cost the single entry point pays instead is stated in §2.7. | — |
 
 ## 8. Tests and Acceptance
 
@@ -370,7 +371,7 @@ Serves G4 (the position rule is stated and enforced) and G12 (the constraint nam
 | T5 | a mutation counter-check: reverting to the old spelling must turn it red | `git checkout -- <header>` → rebuild → run the target cases |
 | T6 | a destroyed park leaves no handle behind | `WhenLifetimeTest.ADestroyedParkWithdrawsItsHandle` |
 | T7 | `notify_all` releases one generation only, and returns | `AsyncConditionVariableTest.NotifyAllReleasesOnlyTheGenerationItWasCalledWith` |
-| T8 | a refused hop is an exception, not a hang | `ThreadPoolSchedulerTest.ASchedulingRequestOnAStoppedPoolThrows`, `ThreadPoolTest.TryEnqueueReportsAStoppedPool`, `ThreadPoolTest.EnqueueOnAStoppedPoolThrows` |
+| T8 | a refused hop is an exception, not a hang | `ThreadPoolSchedulerTest.SchedulingOnAStoppedPoolThrowsInsteadOfHanging`, `ThreadPoolTest.EnqueueOnAStoppedPoolThrows` |
 | T9 | the generator's position rule and its constraint | `GeneratorTest.YieldsSequence`, `GeneratorTest.SecondBeginReportsTheCurrentPosition`, the `ProducedValue` `static_assert`s |
 
 ## 9. Status and Evolution

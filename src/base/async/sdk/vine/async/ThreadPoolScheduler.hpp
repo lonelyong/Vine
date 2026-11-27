@@ -21,8 +21,8 @@ VN_ASYNC_NS_BEGIN
  * onto a worker thread of the bound pool. The pool must outlive every
  * coroutine scheduled on it.
  *
- * A stopped pool cannot honour a hop, and schedule() says so with std::logic_error instead of
- * choosing silently: resuming inline would move the coroutine onto a thread the caller did not
+ * A stopped pool cannot honour a hop, and the pool's std::logic_error reaches the awaiting coroutine
+ * instead of a silent choice: resuming inline would move the coroutine onto a thread the caller did not
  * ask for, and returning without scheduling would park it forever.
  */
 class ThreadPoolScheduler {
@@ -50,16 +50,16 @@ class ThreadPoolScheduler {
         }
 
         /**
-         * @brief Queues the continuation on the pool, or reports that the pool refused it.
+         * @brief Queues the continuation on the pool; the pool's refusal propagates.
          *
          * @param h Coroutine to resume on a worker thread.
          * @throws std::logic_error when the pool is stopped; the coroutine is not suspended.
          */
         void await_suspend(std::coroutine_handle<> h)
         {
-            if (!pool_.tryEnqueue([h]() mutable { h.resume(); })) {
-                throw std::logic_error("async::ThreadPoolScheduler: the pool is stopped");
-            }
+            // The refusal is the pool's to report (ThreadPool::enqueue throws std::logic_error) and it propagates here:
+            // the awaiter's promise is the thread it lands on, so resuming elsewhere or never resuming are both worse.
+            (void)pool_.enqueue([h]() mutable { h.resume(); });
         }
 
         void await_resume() const noexcept
