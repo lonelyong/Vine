@@ -1,36 +1,35 @@
-# vn_add_library — one module, one set of objects, one or two images.
+# vn_add_library — one module: its sources, and the image(s) they are built into.
 #
-# The shared library is the module's image for its CLIENTS: it exports the SDK and nothing else. A module's own
-# test that drives the PRIVATE half is not such a client - it has to call the same definitions, and it may not
-# hold a second copy of them: two definitions of one class in one process is an out-of-line ODR violation, and
-# AddressSanitizer aborts on the duplicate typeinfo before a single case runs.
+# Usage:
 #
-# `OBJECT_TARGET <variable>` answers that need once, at the module: the translation units are compiled into an object
-# set named `<ShortName>Objects`, and the shared library is built from it. Call it as
+#     vn_add_library(<target_name_var> <ShortName> [OBJECT_TARGET <objects_var>])
 #
-#     vn_add_library(<target_var> <ShortName> OBJECT_TARGET <objects_var>)
+# @param target_name_var  Name of the variable that receives the shared library's target name. `vn::<ShortName>` is
+#                         an alias of the same target, and that target is the module's installed name.
+# @param short_name       The module's name (`Graphics`): the target's name, the library file's, and the prefix of the
+#                         object set (`<ShortName>Objects`).
+# @param OBJECT_TARGET    Optional keyword. It takes the NAME OF A VARIABLE, not a target name: the helper derives
+#                         the object set's target name itself and sets that variable in the caller's scope, so the
+#                         module, its test and any loop over both images cannot disagree about it. Asking for it
+#                         makes the object set the target that COMPILES the module; the shared library becomes a
+#                         shell around it, and both are configured from the same glob and the same includes.
 #
-# and `<objects_var>` receives that target's name, so the caller names nothing itself. The module's test links the
-# object set (no file list in tests/, no source compiled twice) and does not load the library, so exactly one
-# definition exists per process on every platform. Without the keyword the function behaves as before (the shared
-# target compiles its own sources).
+# The object set has ONE consumer: the module's own test, when it drives the private half. Such a test may not link the
+# library AND compile its translation units - two definitions of one class in one process is an out-of-line ODR
+# violation, and AddressSanitizer aborts on the duplicate typeinfo before a single case runs. Because the object set
+# is what compiles, whatever the shared image states for itself (compile definitions, compile options, link
+# libraries) must be stated on the object set too; the helper compares the two at the end of the caller's directory
+# and stops the configure when one is missing.
 #
-# The object set is a BUILD-TREE target: it is not installed, not exported and carries no `vn::` alias, because that
-# namespace belongs to the installed package - a name there that `find_package` cannot resolve is a promise the build
-# cannot keep.
-#
-# A caller that asks for it owns one thing: the object set is now what COMPILES the module, so whatever the shared
-# library states for itself (its public compile definitions and its link libraries) has to be stated on the object
-# set too - one loop over both images, see src/viz/graphics/CMakeLists.txt. The helper checks that at the end of the
-# caller's directory and stops the configure if a setting the shipping image carries is missing from the compiling
-# one, because the shell compiles nothing and a definition it alone carries changes no compilation at all.
+# The object set is a BUILD-TREE target: not installed, not exported, no `vn::` alias - that namespace is the
+# installed package, and a name there that `find_package` cannot resolve is a promise the build cannot keep.
 #
 # Rationale and the rejected alternatives: ADR-2026-11-27-a-module-test-links-the-modules-objects.
 function(vn_add_library target_name_var short_name)
-    cmake_parse_arguments(VN_LIB "" "OBJECT_TARGET" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "OBJECT_TARGET" "" ${ARGN})
     set(has_object_set FALSE)
-    if(DEFINED VN_LIB_OBJECT_TARGET)
-        if("${VN_LIB_OBJECT_TARGET}" STREQUAL "")
+    if(DEFINED ARG_OBJECT_TARGET)
+        if("${ARG_OBJECT_TARGET}" STREQUAL "")
             message(SEND_ERROR
                 "vn_add_library(${short_name}): OBJECT_TARGET needs the name of the variable that receives the object target")
         else()
@@ -164,7 +163,7 @@ function(vn_add_library target_name_var short_name)
     if(object_set)
         # The caller's name for the image that compiles; the target's name stays the helper's to choose, so a
         # test, the module and the `foreach` over both images cannot disagree about it.
-        set(${VN_LIB_OBJECT_TARGET} ${object_set} PARENT_SCOPE)
+        set(${ARG_OBJECT_TARGET} ${object_set} PARENT_SCOPE)
         # The caller configures the two images AFTER this call, so they are compared at the end of its directory.
         # The names are expanded HERE: `DEFER` records its arguments for expansion when the call runs, and this
         # function's locals are gone by then.
