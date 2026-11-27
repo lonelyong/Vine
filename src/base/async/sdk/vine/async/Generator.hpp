@@ -23,9 +23,12 @@ VN_ASYNC_NS_BEGIN
  * range-for, and a C++20 input_range, so ranges algorithms and views accept it.
  * Move-only; not awaitable.
  *
- * @tparam T Produced value type. Must be storable (see StorableValue).
+ * Position: the coroutine is the position, so begin() starts the body once and never resumes it
+ * again; a later begin() reports the current position, and an exhausted generator reports end().
+ *
+ * @tparam T Produced value type (see ProducedValue: void is not a value).
  */
-template <StorableValue T>
+template <ProducedValue T>
 class Generator {
   public:
     /**
@@ -164,6 +167,7 @@ class Generator {
 
     Generator(Generator&& other) noexcept
       : coro_(std::exchange(other.coro_, {}))
+      , started_(std::exchange(other.started_, false))
     {}
 
     Generator& operator=(Generator&& other) noexcept
@@ -172,7 +176,8 @@ class Generator {
             if (coro_) {
                 coro_.destroy();
             }
-            coro_ = std::exchange(other.coro_, {});
+            coro_    = std::exchange(other.coro_, {});
+            started_ = std::exchange(other.started_, false);
         }
         return *this;
     }
@@ -188,26 +193,37 @@ class Generator {
     Generator& operator=(const Generator&) = delete;
 
     /**
-     * @brief Resumes to the first co_yield and returns an iterator.
+     * @brief Returns an iterator at the generator's current position, starting the body on the first call.
      *
-     * @return Iterator to the first value, or end() for an empty generator.
+     * @details
+     * - The body is resumed on the first call only. A later call reports the current position, which
+     *   is what a single-pass (input) range means: every iterator obtained from one position
+     *   compares equal, and advancing any of them invalidates the rest.
+     * - An exhausted generator returns end(). Its frame is parked at `final_suspend` and `done()`,
+     *   and resuming a done coroutine is undefined behaviour, so this reports an empty range instead.
+     *
+     * @return Iterator at the current value, or end() when there is none.
      */
     [[nodiscard]]
     iterator begin()
     {
-        if (coro_) {
+        if (!coro_ || coro_.done()) {
+            return end(); // Empty, or already exhausted.
+        }
+        if (!started_) {
+            started_ = true;
             coro_.resume();
             if (coro_.done()) {
-                // The generator finished before (or without) its first co_yield.
-                // This frame is done, so free it here: dropping the handle instead
-                // would leak it, and rethrowing before dropping it would leave a
-                // handle parked at final_suspend behind.
+                // The generator finished before (or without) its first co_yield. This frame is done,
+                // so free it here: dropping the handle instead would leak it, and rethrowing before
+                // dropping it would leave a handle parked at final_suspend behind.
                 std::exception_ptr ex = coro_.promise().exception();
                 coro_.destroy();
                 coro_ = nullptr;
                 if (ex) {
                     std::rethrow_exception(ex);
                 }
+                return end();
             }
         }
         return iterator{ coro_ };
@@ -222,6 +238,8 @@ class Generator {
 
   private:
     std::coroutine_handle<promise_type> coro_{};
+    /// true once begin() has started the body; the coroutine is the position, this is "ever resumed".
+    bool started_{ false };
 };
 
 VN_ASYNC_NS_END

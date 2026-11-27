@@ -264,19 +264,19 @@ void wakeAll(const std::shared_ptr<AsyncQueueState<T>>& state) noexcept
  * @brief Removes one item for the non-suspending tryPop(); never wakes anybody.
  *
  * The value is move-constructed out of the front element, so only move-construction is required
- * of T - not default construction or move-assignment.
+ * of T - not default construction or move-assignment. The element is popped only after that move
+ * succeeded, so a throwing move leaves an (already moved-from) element in the queue rather than
+ * destroying it.
  *
  * @param state Queue state.
- * @return The item, or nullopt when the queue holds none; throws when it is closed and empty.
+ * @return The item, or nullopt when the queue holds none - a closed queue included: the caller of
+ *         tryPop() asked "is there anything to take?", and the answer is the same either way.
  */
 template <typename T>
 std::optional<T> popOne(const std::shared_ptr<AsyncQueueState<T>>& state)
 {
     std::lock_guard<std::mutex> lock(state->mutex);
     if (state->items.empty()) {
-        if (state->closed) {
-            throw std::runtime_error("async::AsyncQueue: closed");
-        }
         return std::nullopt;
     }
     std::optional<T> value;
@@ -582,8 +582,7 @@ class QueuePushAwaiter {
  *
  * Failure contract: construction allocates the shared state, so it can throw
  * std::bad_alloc; push() and pop() report a throwing element move as the task's error instead of
- * terminating the process. pop() only requires T to be move-constructible; tryPop() additionally
- * requires move-assignment, because it stores the value into the caller's sink.
+ * terminating the process. pop() and tryPop() only require T to be move-constructible.
  *
  * @tparam T Element type.
  */
@@ -685,23 +684,25 @@ class AsyncQueue {
     /**
      * @brief Removes the next value without suspending.
      *
-     * @param out Receives the value on success.
-     * @return true if a value was removed.
+     * @details
+     * - nullopt means nothing was taken: the queue holds no item, or it is closed and drained.
+     *   A closed queue is not reported as an error here - tryPush refuses the same way.
+     * - The item is returned rather than assigned into a caller-provided sink, so only T's move
+     *   constructor is required, exactly as pop() does.
+     * - A throwing move propagates. The item has left the queue by then, which is how pop() reports
+     *   it too; the difference from a bool/out-parameter form is that the failure can never be
+     *   mistaken for "there was nothing to take".
+     *
+     * @return The item, or std::nullopt when none was available.
      */
     [[nodiscard]]
-    bool tryPop(T& out)
+    std::optional<T> tryPop()
     {
-        std::optional<T> value;
-        bool             has_pusher = false;
-        try {
-            value = detail::popOne(state_);
-        }
-        catch (const std::exception&) {
-            return false;
-        }
+        std::optional<T> value = detail::popOne(state_);
         if (!value) {
-            return false;
+            return std::nullopt;
         }
+        bool has_pusher = false;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             has_pusher = !state_->pushers.empty();
@@ -709,13 +710,7 @@ class AsyncQueue {
         if (has_pusher) {
             detail::wakeOnePusher(state_);
         }
-        try {
-            out = std::move(*value);
-        }
-        catch (...) {
-            return false;
-        }
-        return true;
+        return value;
     }
 
     /**

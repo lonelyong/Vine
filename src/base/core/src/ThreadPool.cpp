@@ -87,16 +87,17 @@ void ThreadPool::stop()
     d->workers.clear();
 }
 
-void ThreadPool::enqueueTask(std::function<void()> task)
+bool ThreadPool::tryEnqueue(std::function<void()> task)
 {
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         if (d->stop) {
-            return;
+            return false; // Stopped: the caller is told, rather than the task disappearing.
         }
         d->tasks.push(std::move(task));
     }
     d->cv.notify_one();
+    return true;
 }
 
 std::size_t ThreadPool::threadCount() const

@@ -2,7 +2,9 @@
 
 #include "async_global.hpp"
 
+#include <coroutine>
 #include <functional>
+#include <stdexcept>
 #include <type_traits>
 
 #include <vine/ThreadPool.hpp>
@@ -18,6 +20,10 @@ VN_ASYNC_NS_BEGIN
  * co_await scheduler.schedule() (or resumeOn(scheduler)) hops the coroutine
  * onto a worker thread of the bound pool. The pool must outlive every
  * coroutine scheduled on it.
+ *
+ * A stopped pool cannot honour a hop, and schedule() says so with std::logic_error instead of
+ * choosing silently: resuming inline would move the coroutine onto a thread the caller did not
+ * ask for, and returning without scheduling would park it forever.
  */
 class ThreadPoolScheduler {
   public:
@@ -43,9 +49,17 @@ class ThreadPoolScheduler {
             return false;
         }
 
+        /**
+         * @brief Queues the continuation on the pool, or reports that the pool refused it.
+         *
+         * @param h Coroutine to resume on a worker thread.
+         * @throws std::logic_error when the pool is stopped; the coroutine is not suspended.
+         */
         void await_suspend(std::coroutine_handle<> h)
         {
-            pool_.enqueue([h]() mutable { h.resume(); });
+            if (!pool_.tryEnqueue([h]() mutable { h.resume(); })) {
+                throw std::logic_error("async::ThreadPoolScheduler: the pool is stopped");
+            }
         }
 
         void await_resume() const noexcept

@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <coroutine>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -27,12 +28,17 @@ class CvWaiter;
  * never allocates and there is no bad_alloc in the noexcept await path.
  * notified is a sticky flag that preserves a notification issued while no
  * waiter was registered; see AsyncConditionVariable for the exact semantics.
+ * notify_epoch is the generation counter notify_all() bounds its release loop with: a waiter
+ * stamped with the value current when it queued is released by a later notify_all, never by the
+ * one that is running while it registers.
  */
 struct CvState {
-    std::mutex mutex;
-    CvWaiter*  head{ nullptr };
-    CvWaiter*  tail{ nullptr };
-    bool       notified{ false };
+    std::mutex    mutex;
+    CvWaiter*     head{ nullptr };
+    CvWaiter*     tail{ nullptr };
+    bool          notified{ false };
+    /// Incremented by every notify_all() that finds a waiter; see notify_all().
+    std::uint64_t notify_epoch{ 0 };
 };
 
 /**
@@ -45,6 +51,9 @@ struct CvState {
  * resume outside the lock without racing a concurrent destructor
  * (list-structure safety). Coroutine frame lifetime follows the framework
  * contract in async_global.hpp.
+ * epoch_ records the generation this wait belongs to; notify_all() releases only the waiters
+ * stamped before its own, so a predicate loop that registers again while the call is still
+ * resuming waiters is left for the next notification.
  */
 class CvWaiter {
   public:
@@ -94,6 +103,9 @@ class CvWaiter {
     /// true while this node is linked into the waiter list.
     bool queued_{ false };
 
+    /// The notify generation this wait belongs to; see notify_all().
+    std::uint64_t epoch_{ 0 };
+
     /// List links; non-null while queued.
     CvWaiter* next_{ nullptr };
     CvWaiter* prev_{ nullptr };
@@ -108,6 +120,7 @@ inline bool CvWaiter::await_suspend(std::coroutine_handle<> h) noexcept
         state_->notified = false;
         return false; // A pending notification was consumed; do not suspend.
     }
+    epoch_  = state_->notify_epoch;
     queued_ = true;
     prev_   = state_->tail;
     next_   = nullptr;
@@ -182,6 +195,9 @@ inline CvWaiter::~CvWaiter() noexcept
  * Threading: notify_one()/notify_all() may be called from any thread, and the waiters they wake
  * are resumed on the notifying thread. The condition variable must outlive every waiting
  * coroutine; the predicate and the mutex stay the caller's (see the loop rule above).
+ * notify_all() releases the waiters that were queued when it was called: a waiter that a resumed
+ * predicate loop registers again during that call belongs to the next generation and waits for the
+ * next notification.
  */
 class AsyncConditionVariable {
   public:
@@ -270,15 +286,22 @@ class AsyncConditionVariable {
     /**
      * @brief Resumes every waiting coroutine, or records a pending notification.
      *
-     * Waiters are popped and resumed one at a time; this never holds a waiter
-     * pointer across a resume. That is essential because resuming a waiter
-     * can synchronously destroy another waiter: if the resumed waiter is the
-     * winner of a whenAny, its completion destroys the still-suspended
-     * siblings (structured concurrency). A batch loop that detached the whole
-     * list first would then resume a dangling handle for each destroyed
-     * sibling; popping one at a time lets a destroyed sibling's destructor
-     * unregister it under the lock, so the next iteration simply finds it
-     * gone.
+     * @details
+     * - Waiters are popped and resumed one at a time; this never holds a waiter
+     *   pointer across a resume. That is essential because resuming a waiter
+     *   can synchronously destroy another waiter: if the resumed waiter is the
+     *   winner of a whenAny, its completion destroys the still-suspended
+     *   siblings (structured concurrency). A batch loop that detached the whole
+     *   list first would then resume a dangling handle for each destroyed
+     *   sibling; popping one at a time lets a destroyed sibling's destructor
+     *   unregister it under the lock, so the next iteration simply finds it
+     *   gone.
+     * - The release loop is bounded by a generation number, not by "the list is empty": this call
+     *   releases exactly the waiters that were queued when it started. A resumed waiter whose
+     *   predicate is still false registers again inside this call, and it belongs to the next
+     *   generation - releasing it here would hand the same waiter back to this loop forever, so a
+     *   predicate loop would make notify_all() never return. AsyncEvent::set() bounds itself the
+     *   same way.
      *
      * The sticky flag is armed in the SAME critical section as the emptiness
      * check. Arming it afterwards lets a waiter slip into the gap: it
@@ -289,13 +312,20 @@ class AsyncConditionVariable {
      */
     void notify_all() noexcept
     {
-        bool woke_any = false;
+        std::uint64_t boundary = 0;
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (!state_->head) {
+                state_->notified = true; // Preserve the notification.
+                return;
+            }
+            boundary = ++state_->notify_epoch;
+        }
         for (;;) {
             detail::CvWaiter* w = nullptr;
             {
                 std::lock_guard<std::mutex> lock(state_->mutex);
-                if (state_->head) {
-                    woke_any     = true;
+                if (state_->head && state_->head->epoch_ < boundary) {
                     w            = state_->head;
                     state_->head = w->next_;
                     if (!state_->head) {
@@ -308,14 +338,11 @@ class AsyncConditionVariable {
                     w->prev_   = nullptr;
                     w->queued_ = false;
                 }
-                else {
-                    if (!woke_any) {
-                        state_->notified = true; // Preserve the notification.
-                    }
-                    break;
-                }
             }
-            assert(w && w->handle_);
+            if (!w) {
+                break;
+            }
+            assert(w->handle_);
             w->handle_.resume(); // Resume outside the lock.
         }
     }

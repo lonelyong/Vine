@@ -53,6 +53,9 @@ enum class WhenMode
  *   it without suspending. That is the "the event is already set" rule, with no re-arm window: a
  *   manual-reset flag had to be cleared before each wait, and a completion landing in that window
  *   would be lost.
+ * - The slot is a *registration*, not a write into shared state: the driver withdraws its handle in
+ *   `~WhenPark` (unpark), so a wake-up posted before the driver died finds an empty slot and reports
+ *   `noop_coroutine()` instead of handing back a freed frame (see WhenPark).
  */
 class WhenSignal {
   public:
@@ -97,6 +100,26 @@ class WhenSignal {
         return std::noop_coroutine();
     }
 
+    /**
+     * @brief Withdraws a parked driver that is going away, so no later wake can reach it.
+     *
+     * @details
+     * - The mirror of park(): the driver's frame is about to be destroyed, while a wake-up already
+     *   posted to the timer thread may still run afterwards. Clearing the slot here makes that
+     *   wake-up find nothing.
+     * - Only the handle being withdrawn is cleared, so a stale awaiter cannot cancel a park that
+     *   replaced it.
+     *
+     * @param driver Handle to withdraw; ignored when the slot no longer holds it.
+     */
+    void unpark(std::coroutine_handle<> driver) noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (parked_ == driver) {
+            parked_ = {};
+        }
+    }
+
   private:
     std::mutex              mutex_;
     /// The driver's handle while it is parked; empty otherwise.
@@ -128,6 +151,24 @@ class WhenPark {
     WhenPark(const WhenPark&)            = delete;
     WhenPark& operator=(const WhenPark&) = delete;
 
+    /**
+     * @brief Withdraws the park when this awaiter dies while the driver is still parked.
+     *
+     * @details
+     * - The driver frame is destroyed while suspended here when a `Destroy` parent, a `Scope`
+     *   teardown or a thread-pool shutdown abandons the composition. A cancellation wake-up already
+     *   posted to the timer thread keeps the state alive and runs afterwards, so the slot has to be
+     *   empty by then - otherwise it hands back a freed frame and resumes it.
+     * - The await that completes normally clears the handle in await_resume(), so this destructor
+     *   only takes the signal's lock on the abandoned path.
+     */
+    ~WhenPark() noexcept
+    {
+        if (driver_) {
+            state_->signal.unpark(driver_);
+        }
+    }
+
     [[nodiscard]]
     bool await_ready() const noexcept
     {
@@ -142,14 +183,19 @@ class WhenPark {
      */
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
+        driver_ = h;
         return state_->signal.park(h);
     }
 
-    void await_resume() const noexcept
-    {}
+    void await_resume() noexcept
+    {
+        driver_ = {}; // The await completed; nothing is parked any more.
+    }
 
   private:
-    std::shared_ptr<State> state_;
+    std::shared_ptr<State>  state_;
+    /// The driver parked in `state_->signal`, non-null only while the await is suspended.
+    std::coroutine_handle<> driver_{};
 };
 
 /**

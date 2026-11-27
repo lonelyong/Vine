@@ -24,8 +24,10 @@ Construct the return value from the front element, so the unnecessary default co
 ## Fix
 
 - `detail::popOne()` and `QueuePopAwaiter::await_resume()` use `std::optional<T>` plus `emplace(std::move(front))`: only move construction of `T` is required.
-- The contract of `pop()` is narrowed to "`T` is move-constructible"; `tryPop(T&)` still needs move assignment because the value is written into the caller's sink, and the class comment now says so.
-
+- The contract of `pop()` is narrowed to "`T` is move-constructible"; `tryPop(T&)` still needs move assignment because the value is written into the caller's sink, and the class comment now says so.- **Correction (2026-11-27)**: the `tryPop(T&)` sentence above is history. `tryPop()` now returns
+  `std::optional<T>` instead of assigning into an out-parameter, so it carries the same "move-constructible only"
+  requirement as `pop()`, and a thrown element move propagates instead of being reported as "the queue was empty".
+  See `.ai/design/async-design.md` §2.8.
 ## Verification
 
 - `AsyncQueueTest.PopSupportsAMoveOnlyTypeWithoutDefaultConstruction`: a type with both the default constructor and move assignment deleted can still `push` and `pop`.

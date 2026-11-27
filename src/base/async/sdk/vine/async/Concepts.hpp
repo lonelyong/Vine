@@ -121,7 +121,7 @@ concept Awaitable = detail::Awaiter<detail::AwaiterType<T&&>>;
 /**
  * @brief Constrains a type the module can carry as a result value.
  *
- * Task, SharedTask and Generator cache their result in a std::optional, which
+ * Task and SharedTask cache their result in a std::optional, which
  * cannot hold a reference, an array or a function type (and std::destructible
  * is false for void, which the result-less forms do need). Requiring this at
  * the template's own boundary turns what would be an error deep inside
@@ -131,6 +131,19 @@ concept Awaitable = detail::Awaiter<detail::AwaiterType<T&&>>;
  */
 template <typename T>
 concept StorableValue = std::is_void_v<T> || (std::destructible<T> && !std::is_reference_v<T> && !std::is_array_v<T> && !std::is_function_v<T>);
+
+/**
+ * @brief Constrains a type a generator can produce.
+ *
+ * @details
+ * - A generator fills an `std::optional` slot before each `co_yield`, so it needs what
+ *   StorableValue guarantees - except `void`: `Task<void>` and `SharedTask<void>` are result-less
+ *   tasks, while a `Generator<void>` would produce nothing at all.
+ * - Keeping this separate from StorableValue makes `Generator<void>` a constraint failure at the
+ *   template boundary instead of a hard error inside `std::optional<void>`.
+ */
+template <typename T>
+concept ProducedValue = StorableValue<T> && !std::is_void_v<T>;
 
 /**
  * @brief Constrains a type that can decide where a coroutine resumes.

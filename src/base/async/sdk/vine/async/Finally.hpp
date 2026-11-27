@@ -15,16 +15,20 @@ VN_ASYNC_NS_BEGIN
  * destroyed mid-suspension. The callback must not throw (destructors are
  * noexcept). Use dismiss() to skip it.
  *
+ * The guard is as movable as the callback is: the constructor and the move constructor are
+ * `noexcept` exactly when `F`'s move is, because claiming otherwise would turn a throwing move
+ * into std::terminate rather than into the caller's exception.
+ *
  * @tparam F Callback type invoked on destruction.
  */
 template <typename F>
 class Finally {
   public:
-    explicit Finally(F f) noexcept
+    explicit Finally(F f) noexcept(std::is_nothrow_move_constructible_v<F>)
       : f_(std::move(f))
     {}
 
-    Finally(Finally&& other) noexcept
+    Finally(Finally&& other) noexcept(std::is_nothrow_move_constructible_v<F>)
       : f_(std::move(other.f_))
       , active_(std::exchange(other.active_, false))
     {}

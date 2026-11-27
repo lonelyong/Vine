@@ -19,6 +19,23 @@ TEST(ThreadPoolTest, EnqueueReturnsResult)
     EXPECT_EQ(future.get(), 42);
 }
 
+TEST(ThreadPoolTest, TryEnqueueReportsAStoppedPool)
+{
+    // A stopped pool used to accept the task and drop it, so a caller with no future to inspect
+    // (a scheduler hop, an event post) waited forever. The refusal is part of the answer now.
+    ThreadPool pool(1);
+    pool.stop();
+    EXPECT_FALSE(pool.tryEnqueue([] {})) << "a stopped pool took a task it will never run";
+}
+
+TEST(ThreadPoolTest, EnqueuingOnAStoppedPoolFailsTheFuture)
+{
+    ThreadPool pool(2);
+    pool.stop();
+    auto future = pool.enqueue([] { return 1; });
+    EXPECT_THROW(future.get(), std::future_error) << "the caller waited for a task the pool never ran";
+}
+
 TEST(ThreadPoolTest, ExecutesAllTasks)
 {
     ThreadPool                     pool(4);

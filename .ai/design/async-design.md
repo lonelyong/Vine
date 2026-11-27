@@ -1,7 +1,7 @@
 # the async module (`src/base/async`)
 
 > **Status**: current
-> **Last verified**: 2026-10-23
+> **Last verified**: 2026-11-27
 > **Scope**: the lifetime, combinators, cancellation and blocking drive of a header-only coroutine runtime.
 > **Sources**: `src/base/async/sdk/vine/async/**`, `tests/test_async`.
 > **Backlog**: `../backlog/async.md`
@@ -31,8 +31,11 @@ lifetime windows such as “one completion wakes several waiters” down as rule
 
 ### 1.4 One-paragraph conclusion
 
-A coroutine frame's lifetime has one iron rule: **when one completion wakes several waiters, take one waiter out of the queue per round under the lock and resume it outside the lock**;
-every other design decision (symmetric transfer, the two blocking gates, the explicit cancellation policy) serves that rule.
+A coroutine frame's lifetime has one iron rule: **when one completion wakes several waiters, take one waiter out of the queue per round under the
+lock, resume it outside the lock, and stop at the generation the call started with**; every other design decision (symmetric transfer,
+the two blocking gates, the explicit cancellation policy) serves that rule. Two consequences run through the whole module: a borrowed
+handle is registered and withdrawn by its owner (never merely written into shared state), and a capability that cannot do what it was
+asked reports that instead of dropping the request.
 
 ## 2. Design Points
 
@@ -43,6 +46,10 @@ every other design decision (symmetric transfer, the two blocking gates, the exp
 - Every awaiter carries its own unregister logic (`AsyncEvent::Awaiter::queued_`, `CvWaiter::queued_`,
   `AsyncMutex::LockAwaiter::waiter_`、`TcsAwaiter::handle_`、`SharedTaskAwaiter::handle_`、
   `SleepAwaiter::scheduled_` and so on).
+- The duty covers a slot that is not a list. A composition has exactly one waiter, so its park slot (`detail::WhenSignal`) is a borrowed
+  handle in shared state, and `~WhenPark` withdraws it (§2.6). Without that, a posted cancellation wake arriving after the driver was
+  destroyed resumes a freed frame - the one path “no waiter pointer across a resume” cannot reach, because the waiter is found through
+  the state rather than through a list.
 
 ### 2.2 One completion, several waiters: one out of the queue per round under the lock, resume outside
 
@@ -52,7 +59,11 @@ Therefore:
 - no waiter pointer / handle may be held across `resume()`;
 - you cannot “swap the whole list out and then resume one by one” — after the swap a sibling can no longer unregister itself, and the loop would resume a freed frame
   (the `SharedTask` defect was exactly this);
-- the boundary is decided by a **generation number** (`AsyncEvent::set_epoch_`), not by a “tail pointer” — a destroyed waiter can be the boundary node.
+- the boundary is decided by a **generation number** (`AsyncEvent::set_epoch_`, `CvState::notify_epoch_`), not by a “tail pointer” — a
+  destroyed waiter can be the boundary node — and not by “the list is empty”.
+- “Emptiness” is the boundary of a *drain*, not of a notify. A waiter resumed inside the loop can re-check its predicate, find it still
+  false, and register again; ending on emptiness then releases that waiter too, so a predicate loop hands the notifier an endless stream
+  of the same waiter and `notify_all` never returns. A generation bound releases exactly the waiters that were queued when the call started.
 
 Obeying this: `AsyncEvent::set`, `AsyncConditionVariable::notify_one/notify_all`, `AsyncSemaphore::release`,
 `AsyncReaderWriterLock::resume`、`TaskCompletionSource::resumeWaitersOneByOne`、
@@ -104,8 +115,49 @@ In a composition child the returned handle is the driver's, which is also what l
   `drainChildren` is then a plain `while (remaining != 0) co_await park`, with no window between clearing a flag and waiting in which a completion could be lost.
 - The rule is checked where it can still be observed: `~WhenChild` / `~WhenAnyChild` assert that the child's final `await_suspend` is not on the stack (`async-design.md` §6.4).
 - Cancellation still posts its wake-up (`detail::deferWhenWake`): a `std::stop_callback` may not resume the driver either, for the same same-thread-destruction reason.
+- The hand-off has a second half. The driver can be destroyed while parked - a `Destroy` parent, a `Scope` teardown - and a posted
+  cancellation wake can still be queued behind it. The park slot is therefore *registered*, not merely written: `~WhenPark` calls
+  `WhenSignal::unpark`, so a later `wake()` finds nothing and reports `noop_coroutine()` instead of handing back a freed frame.
+  `unpark` clears the slot only when it still holds the handle being withdrawn, so it can never cancel a later park.
 
 Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acquisition per completion) and G11 (the invariant is asserted at the point where a violation becomes observable).
+
+### 2.7 A hop that cannot be taken is reported, not dropped
+
+- `ThreadPool::tryEnqueue` answers whether the pool accepted the callable; a stopped pool answers `false` and never runs it.
+- `ThreadPoolScheduler::ScheduleAwaiter::await_suspend` turns that `false` into `std::logic_error`. The awaiter's contract is “resume on a
+  worker of this pool”, and there is no honest fallback: resuming inline silently moves the coroutine onto a thread the caller did not ask
+  for, and returning without scheduling parks it forever. A throw is the module's existing answer to a programming error (awaiting an empty
+  `Task`, `SharedTask::result()` before completion).
+- `ThreadPool::enqueue` keeps its `future` shape and reports the refusal through it: the abandoned `packaged_task` leaves
+  `broken_promise`, so `get()` throws instead of blocking.
+
+Serves G4 (the failure mode is in the signature and the doc) and G11 (a teardown race produces an exception at a known point, not a hang).
+
+### 2.8 `try*` reports what it did
+
+- `AsyncQueue::tryPop` returns `std::optional<T>`: `nullopt` means “nothing was taken”, and a value means exactly one item left the queue.
+- It therefore never reports a consumed-but-undeliverable element as “empty”, which the old `bool tryPop(T& out)` did: a throwing move
+  became `false`, indistinguishable from an empty queue.
+- Returning the value instead of assigning into a caller-provided sink narrows the requirement to what `pop()` already needs - `T`
+  move-constructible - and drops the move-assignment and default-construction the out-parameter form implied.
+- A throwing move still propagates; the item has left the queue by then, and `pop()` reports the same thing as the task's error. Nothing
+  can make a throwing move safe, so the rule is only that the failure is never disguised as “there was nothing there”.
+
+Serves G4 (return value, requirement and failure mode agree) and G6 (the `try*` form of a suspending operation means the same thing on
+both sides of the queue).
+
+### 2.9 A single-pass generator has one position
+
+- `Generator` is an input range: the position is the coroutine, so `begin()` may be called more than once. It resumes the body only on the
+  first call (`started_`); later calls report the current position, which is the input-range rule (the iterators from one position compare
+  equal and are invalidated by advancing).
+- An exhausted generator yields `end()`. Its frame is parked at `final_suspend` and is `done()`, and resuming a done coroutine is undefined
+  behaviour, so a second `begin()` after the range ran out reports an empty range instead of crashing.
+- `Generator<T>` is constrained by `ProducedValue`, not `StorableValue`: a generator produces values, while `StorableValue` admits `void`
+  for `Task`/`SharedTask`. `Generator<void>` is therefore rejected at the template boundary instead of failing inside `std::optional<void>`.
+
+Serves G4 (the position rule is stated and enforced) and G12 (the constraint names what the concept is).
 
 ## 3. Features
 
@@ -140,8 +192,9 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 
 ### 3.1.3 F3 synchronisation primitives
 
-- **Behaviour**: event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield.
-- **Constraints** (C3): one completion waking several waiters must follow §2.2; a destructor unregisters itself and is `noexcept`.
+- **Behaviour**: event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield. `AsyncQueue::tryPop()` answers with the item or `nullopt`.
+- **Constraints** (C3): one completion waking several waiters must follow §2.2; a destructor unregisters itself and is `noexcept`;
+  `tryPop` reports a taken item as a value and a stranded one as an exception, never as `nullopt` (§2.8).
 - **Requirements** (R3): no resume under a lock; no resume on the canceller's stack; a cross-thread wake goes through `detail::deferWake()`;
   `AsyncQueue`'s `push`/`pop` suspend themselves before handing off (`WakePeerAndContinue`), while `tryPush`/`tryPop`/`close`
   only post a wake, so a wake may be spurious and a waiter must re-check its condition.
@@ -151,8 +204,10 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 ### 3.1.4 F4 scheduling and the generator
 
 - **Behaviour**: `InlineScheduler` / `resumeOn` / `scheduleOn` / `ThreadPoolScheduler`; `Generator<T>` is a synchronous single-pass generator.
-- **Constraints** (C4): `Generator` is not awaitable; `ThreadPoolScheduler`'s `run` corresponds to C#'s `Task.Run`.
-- **Requirements** (R4): a scheduler offers only `schedule()`/`resumeOn` and does not decide the thread policy for the caller.
+- **Constraints** (C4): `Generator` is not awaitable and its `T` satisfies `ProducedValue`; `ThreadPoolScheduler`'s `run` corresponds to
+  C#'s `Task.Run`; a pool that refuses a hop is reported as `std::logic_error` (§2.7).
+- **Requirements** (R4): a scheduler offers only `schedule()`/`resumeOn` and does not decide the thread policy for the caller - including
+  when the pool refuses: the fallback is never “run it here”.
 - **Acceptance** (T4): the Scheduler/Generator cases in `test_async`.
 - **Caveats** (N4): the window between `sleepFor`'s timer-thread resume and the final check is the caller's contract.
 
@@ -197,6 +252,7 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 | C4 | no resume under a lock; no resume on the canceller's stack; a cross-thread wake goes through `deferWake()`. |
 | C5 | cancellation is a request; `Destroy` does not “request, then destroy”. |
 | C6 | `result()` blocks without dispatching; `runToCompletion` takes the pump from the caller. |
+| C7 | a capability that cannot do what it was asked reports it: a refused hop throws (§2.7), a stranded element is an exception and never `nullopt` (§2.8). |
 
 ### 5.2 Requirements (R#)
 
@@ -208,6 +264,8 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 | R4 | an injected cancellation token is visible only at the layer that was combined. |
 | R5 | a `Scope` destructor does not wait; without `detach()` it asks the children to stop, and an explicit `join()` is what waits. |
 | R6 | no implicit dispatch on `Task`, no global pump. |
+| R7 | an RAII guard's constructor and move constructor are `noexcept` exactly when the callback's move is (`Finally`). |
+| R8 | a reference returned by `result()` / `co_await` stays valid while some handle to the same computation is alive; it does not outlive the last `SharedTask` copy. |
 
 ### 5.3 Invariants (N#)
 
@@ -218,6 +276,8 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 | N3 | `AsyncConditionVariable`'s sticky flag keeps a notify that arrived with no waiter. |
 | N4 | `TimerService` deliberately never destructs (a process-wide singleton plus a worker thread). |
 | N5 | `SharedTask` takes its waiters out one at a time and never holds a handle across a resume. |
+| N6 | `notify_all` releases the generation queued when the call started; a waiter that registers during the loop waits for the next notify. |
+| N7 | a parked composition driver withdraws its handle in `~WhenPark`; a later `wake()` reports `noop_coroutine()`. |
 
 ## 6. Caveats and Traps
 
@@ -262,6 +322,23 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
   only be destroyed from inside another granted reader's resume - which always leaves that other reader alive to unlock, and so to hand the
   lock on. Recorded as an invariant for whoever next edits `dequeueReader`.
 
+### 6.6 A composition driver destroyed while parked
+
+- How it fails: the driver's frame is destroyed (a `Destroy` parent, a `Scope` teardown) while its handle sits in `WhenSignal::parked_`.
+  A cancellation wake already posted to the timer thread keeps the *state* alive, so it runs, claims the stale handle and resumes a freed
+  frame. Neither ASan nor the debug asserts see it, because the state that holds the handle is not part of the frame.
+- How to detect it: `WhenLifetimeTest.ADestroyedParkWithdrawsItsHandle` parks a live probe frame, destroys the awaiter, and requires
+  `wake()` to report `noop_coroutine()`. Removing `WhenSignal::unpark` from `~WhenPark` turns it red.
+- How to prevent it: `~WhenPark` withdraws the handle (§2.1, §2.6); the park slot is a registration, not a write into shared state.
+
+### 6.7 The element a throwing move strands
+
+- How it fails: `detail::popOne` move-constructs the front element out of the deque. A throwing move leaves the element either still in the
+  queue but partially moved from (the throw happens before `pop_front`) or destroyed with the returned `optional` (it happens on the way out).
+- How to detect it: a type that throws on the Nth move (`ThrowingMove` in `tests/test_async`), with the counter swept across the moves.
+- How to prevent it: nothing makes a throwing move safe. The rule is only that the failure is *reported* - as the task's error from
+  `pop()`, as a propagated exception from `tryPop()` - and never disguised as “the queue was empty” (§2.8).
+
 ## 7. Rejected Options
 
 | # | Option | Why not | ADR |
@@ -274,6 +351,9 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 | D6 | turning `try_lock`/`try_acquire` into camelCase | they mirror `std::mutex`/`std::counting_semaphore`, and the rename would be a breaking change. | — |
 | D7 | a `set_stopped` cancellation result channel (a three-state `Task` result) | it would make cancellation not-an-error, but `Task<T>`'s result, every combinator, `result()` and the cancellation cases all change, while the layers above already classify `TaskCancelledException` as "cancelled"; the local tightening of `withTimeout` is the change to make instead, and `CancelPolicy` already expresses it. | — |
 | D8 | an executor or thread-affinity parameter on `Task` (P2300's scheduler environment, asio's bound executor, folly's executor that propagates through every continuation) | it would make every coroutine carry a context most of them never use, and move the choice from the call site into the library. cppcoro chose the same absence and offers `resume_on` only, which is exactly `resumeOn` / `scheduleOn`; a caller that must land somewhere says so with a `co_await` (G8: no call site needs it today). | — |
+| D9 | keeping `bool tryPop(T& out)` | G4: it requires move-assignment the API never states, and reports a stranded element as “nothing there”. `std::optional<T> tryPop()` carries the same information with fewer requirements and no lie (§2.8). | — |
+| D10 | resuming inline when the pool refuses a hop | G4: it would silently drop the awaiter's only promise, the thread it lands on. A throw keeps the promise and turns a teardown race into a reported error (§2.7). | — |
+| D11 | rejecting `co_await` on an rvalue `SharedTask` (`operator co_await() const&& = delete`) | it would forbid the safe forms (`auto v = co_await sharedTask(t);` copies the value) to prevent the unsafe one (`const T& v = co_await sharedTask(t);`). G8: a lifetime requirement (R8) is the narrower cost. | — |
 
 ## 8. Tests and Acceptance
 
@@ -284,6 +364,10 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
 | T3 | no lost wake, no UAF, in the primitives | `test_async` + ASan/TSan |
 | T4 | the blocking drive pumps exactly once, or not at all | the `result()`/`runToCompletion` cases in `test_async` |
 | T5 | a mutation counter-check: reverting to the old spelling must turn it red | `git checkout -- <header>` → rebuild → run the target cases |
+| T6 | a destroyed park leaves no handle behind | `WhenLifetimeTest.ADestroyedParkWithdrawsItsHandle` |
+| T7 | `notify_all` releases one generation only, and returns | `AsyncConditionVariableTest.NotifyAllReleasesOnlyTheGenerationItWasCalledWith` |
+| T8 | a refused hop is an exception, not a hang | `ThreadPoolSchedulerTest.ASchedulingRequestOnAStoppedPoolThrows`, `ThreadPoolTest.TryEnqueueReportsAStoppedPool` |
+| T9 | the generator's position rule and its constraint | `GeneratorTest.YieldsSequence`, `GeneratorTest.SecondBeginReportsTheCurrentPosition`, the `ProducedValue` `static_assert`s |
 
 ## 9. Status and Evolution
 

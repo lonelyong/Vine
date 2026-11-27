@@ -41,6 +41,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #if defined(__linux__)
@@ -418,6 +419,42 @@ concept TaskAcceptsResult = requires { taskOfType<T>(); };
 static_assert(TaskAcceptsResult<int>);
 static_assert(TaskAcceptsResult<void>);
 static_assert(!TaskAcceptsResult<int&>);
+
+// ProducedValue is what a generator needs: storable, but void produces nothing at all.
+static_assert(async::ProducedValue<int>);
+static_assert(async::ProducedValue<std::unique_ptr<int>>);
+static_assert(!async::ProducedValue<void>);
+static_assert(!async::ProducedValue<int&>);
+
+template <typename T>
+async::Generator<T> generatorOfType(); // Declared only: substitution, no coroutine created.
+
+template <typename T>
+concept GeneratorAcceptsResult = requires { generatorOfType<T>(); };
+
+static_assert(GeneratorAcceptsResult<int>);
+// Generator<void> must be rejected at the template boundary, not inside std::optional<void>.
+static_assert(!GeneratorAcceptsResult<void>);
+
+// The guard is exactly as movable as its callback: advertising noexcept over a throwing move
+// would turn the caller's exception into std::terminate.
+struct NotThrowOnMove {
+    NotThrowOnMove()                            = default;
+    NotThrowOnMove(NotThrowOnMove&&) noexcept   = default;
+    void operator()() const noexcept
+    {}
+};
+
+struct ThrowOnMove {
+    ThrowOnMove()                            = default;
+    ThrowOnMove(ThrowOnMove&&) noexcept(false)
+    {}
+    void operator()() const noexcept
+    {}
+};
+
+static_assert(std::is_nothrow_move_constructible_v<async::Finally<NotThrowOnMove>>);
+static_assert(!std::is_nothrow_move_constructible_v<async::Finally<ThrowOnMove>>);
 static_assert(!TaskAcceptsResult<int[3]>);
 
 async::Task<int> scheduleViaTaskReturningScheduler(TaskReturningScheduler& scheduler)
@@ -547,13 +584,13 @@ async::DetachedTask cvWaiterDetached(async::AsyncMutex& mutex, async::AsyncCondi
     mutex.unlock();
 }
 
-async::Task<void> cvWaiterCount(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<int>& registered, std::atomic<int>& woken)
+/// Waits once and counts the wake; eager, so it is registered and parked when the call returns.
+async::DetachedTask cvWaitCount(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<int>& woken)
 {
     co_await mutex.lock();
-    ++registered;
     co_await cv.wait(mutex);
-    ++woken;
     mutex.unlock();
+    woken.fetch_add(1, std::memory_order_release);
 }
 
 async::Task<void> cvWait(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv)
@@ -585,6 +622,18 @@ async::Task<void> cvWaitFlag(async::AsyncMutex& mutex, async::AsyncConditionVari
     co_await cv.wait(mutex);
     woken.store(true);
     mutex.unlock();
+}
+
+/// Waits while the predicate is false, re-registering after every wake (the std::condition_variable loop).
+async::DetachedTask cvWaitWhileFalse(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, const std::atomic<bool>& ready, std::atomic<int>& wakes, std::atomic<bool>& finished)
+{
+    co_await mutex.lock();
+    while (!ready.load(std::memory_order_acquire)) {
+        co_await cv.wait(mutex);
+        wakes.fetch_add(1, std::memory_order_release);
+    }
+    mutex.unlock();
+    finished.store(true, std::memory_order_release);
 }
 
 async::Task<void> cvWaitReacquire(async::AsyncMutex& mutex, async::AsyncConditionVariable& cv, std::atomic<bool>& ok)
@@ -1441,6 +1490,33 @@ TEST(GeneratorTest, SatisfiesTheCxx20InputRangeContract)
     EXPECT_EQ(arrowed.begin().operator->(), std::addressof(*arrowed.begin()));
 }
 
+TEST(GeneratorTest, SecondBeginReportsTheCurrentPosition)
+{
+    // A single-pass range has exactly one position: begin() starts the body once, and a second call
+    // reports where the generator already is instead of resuming the body past the current value.
+    auto gen = gen123();
+    auto it  = gen.begin();
+    ASSERT_NE(it, gen.end());
+    EXPECT_EQ(*it, 1);
+
+    EXPECT_EQ(gen.begin(), it) << "a second begin() moved the generator instead of reporting its position";
+    EXPECT_EQ(*gen.begin(), 1);
+
+    ++it;
+    EXPECT_EQ(*it, 2) << "the second begin() had already consumed the first value";
+}
+
+TEST(GeneratorTest, BeginAfterExhaustionReportsAnEmptyRange)
+{
+    // An exhausted generator's frame is parked at final_suspend and is done(); resuming it is
+    // undefined behaviour, so begin() reports an empty range instead of starting a second run.
+    auto gen = gen123();
+    EXPECT_EQ(std::ranges::distance(gen), 3);
+
+    EXPECT_TRUE(gen.begin() == gen.end());
+    EXPECT_EQ(std::ranges::distance(gen), 0);
+}
+
 TEST(AsyncMutexTest, LockUnlock)
 {
     async::AsyncMutex mutex;
@@ -1938,6 +2014,69 @@ TEST(WhenLifetimeTest, AStopAndWaitWinnerAndItsLastLoserBothWakeAParkedDriver)
     SUCCEED();
 }
 
+/// A coroutine that parks at initial_suspend, so a test holds a real, live frame handle.
+struct ParkProbe {
+    struct promise_type {
+        [[nodiscard]]
+        ParkProbe get_return_object() noexcept
+        {
+            return ParkProbe{ std::coroutine_handle<promise_type>::from_promise(*this) };
+        }
+
+        std::suspend_always initial_suspend() noexcept
+        {
+            return {};
+        }
+
+        std::suspend_always final_suspend() noexcept
+        {
+            return {};
+        }
+
+        void return_void() noexcept
+        {}
+
+        void unhandled_exception() noexcept
+        {}
+    };
+
+    std::coroutine_handle<promise_type> handle{};
+
+    ~ParkProbe()
+    {
+        if (handle) {
+            handle.destroy();
+        }
+    }
+};
+
+ParkProbe parkedProbe()
+{
+    co_return;
+}
+
+TEST(WhenLifetimeTest, ADestroyedParkWithdrawsItsHandle)
+{
+    // The park slot holds a borrowed handle in shared state. When a driver is destroyed while parked,
+    // a cancellation wake-up already posted to the timer thread runs afterwards and has to find the
+    // slot empty; without the withdrawal it hands the freed handle back and resumes it.
+    ParkProbe probe = parkedProbe();
+    auto      state = std::make_shared<async::detail::WhenState>();
+
+    async::detail::WhenPark<async::detail::WhenState> parked{ state };
+    ASSERT_TRUE(parked.await_suspend(probe.handle));
+    std::coroutine_handle<> registered = state->signal.wake();
+    EXPECT_TRUE(registered == probe.handle) << "the park did not register its driver";
+
+    // The abandoned path: the awaiter dies while the driver is still in the slot.
+    {
+        async::detail::WhenPark<async::detail::WhenState> abandoned{ state };
+        ASSERT_TRUE(abandoned.await_suspend(probe.handle));
+    }
+    std::coroutine_handle<> withdrawn = state->signal.wake();
+    EXPECT_TRUE(withdrawn == std::noop_coroutine()) << "a park whose awaiter is gone still handed its handle back";
+}
+
 TEST(SleepTest, SleepsForDuration)
 {
     auto start = std::chrono::steady_clock::now();
@@ -2135,48 +2274,35 @@ TEST(AsyncConditionVariableTest, NotifyAllWakesAll)
 {
     async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<int>              registered{ 0 };
     std::atomic<int>              woken{ 0 };
 
-    std::vector<async::Task<void>> tasks;
+    // DetachedTask is eager: every waiter has registered and parked by the time its call returns,
+    // so notify_all() runs with exactly four waiters queued. Waiting on a "registered" counter
+    // instead races - it is incremented before the wait is enqueued, and a waiter that enqueues
+    // while notify_all() runs belongs to the next generation and is not released by that call.
     for (int i = 0; i < 4; ++i) {
-        tasks.push_back(cvWaiterCount(mutex, cv, registered, woken));
+        cvWaitCount(mutex, cv, woken);
     }
-    auto        all = async::whenAll(std::move(tasks));
-    std::thread runner([&all, &registered] { std::move(all).result(); });
-    while (registered.load() < 4) {
-        std::this_thread::yield();
-    }
+    EXPECT_EQ(woken.load(), 0);
+
     cv.notify_all();
-    runner.join();
-    EXPECT_EQ(woken.load(), 4);
+    EXPECT_EQ(woken.load(), 4) << "notify_all left a waiter that was already queued behind";
 }
 
 TEST(AsyncConditionVariableTest, NotifyOneWakesSingleWaiter)
 {
     async::AsyncMutex             mutex;
     async::AsyncConditionVariable cv;
-    std::atomic<int>              registered{ 0 };
     std::atomic<int>              woken{ 0 };
 
-    std::vector<async::Task<void>> tasks;
     for (int i = 0; i < 3; ++i) {
-        tasks.push_back(cvWaiterCount(mutex, cv, registered, woken));
-    }
-    auto        all = async::whenAll(std::move(tasks));
-    std::thread runner([&all, &registered] { std::move(all).result(); });
-    while (registered.load() < 3) {
-        std::this_thread::yield();
+        cvWaitCount(mutex, cv, woken);
     }
 
-    cv.notify_one(); // Wakes exactly one waiter.
-    for (int i = 0; i < 1000 && woken.load() < 1; ++i) {
-        std::this_thread::yield();
-    }
-    EXPECT_EQ(woken.load(), 1);
+    cv.notify_one(); // Resumes the head waiter inline, on this thread.
+    EXPECT_EQ(woken.load(), 1) << "notify_one released more than one waiter";
 
     cv.notify_all(); // Release the rest so the test can finish.
-    runner.join();
     EXPECT_EQ(woken.load(), 3);
 }
 
@@ -2327,6 +2453,47 @@ TEST(AsyncConditionVariableTest, SingleNotifyNoLostWakeup)
         waiter.join();
         EXPECT_TRUE(woken.load());
     }
+}
+
+TEST(AsyncConditionVariableTest, NotifyAllReleasesOnlyTheGenerationItWasCalledWith)
+{
+    // Regression: notify_all() ended its release loop when the waiter list was empty, so a resumed
+    // predicate loop that registered again was handed straight back to the same call - forever, and
+    // the notifying thread never returned. The boundary is a generation number now (AsyncEvent::set()
+    // bounds itself the same way): the waiters queued when the call started are released, and one
+    // that registers during the call waits for the next notification.
+    async::AsyncMutex             mutex;
+    async::AsyncConditionVariable cv;
+    std::atomic<bool>             ready{ false };
+    std::atomic<int>              wakes{ 0 };
+    std::atomic<bool>             finished{ false };
+    std::atomic<bool>             notifier_returned{ false };
+
+    // DetachedTask is eager: the waiter has registered and parked by the time this returns.
+    cvWaitWhileFalse(mutex, cv, ready, wakes, finished);
+    ASSERT_EQ(wakes.load(), 0);
+
+    std::thread notifier([&cv, &notifier_returned] {
+        cv.notify_all();
+        notifier_returned.store(true, std::memory_order_release);
+    });
+
+    // Escape hatch: a notifier that has not returned has already failed the check below - it is
+    // still releasing the waiter this very call re-registered. Letting the predicate pass makes the
+    // waiter leave its loop, so notify_all finds an empty list and returns, and the failure is
+    // reported instead of hanging the test.
+    if (!waitForFlag(notifier_returned, std::chrono::milliseconds(500))) {
+        ready.store(true, std::memory_order_release);
+    }
+    EXPECT_TRUE(waitForFlag(notifier_returned, std::chrono::milliseconds(2000)))
+        << "notify_all released the waiter it had already released in the same call";
+
+    EXPECT_EQ(wakes.load(), 1) << "one notify_all released more than the generation it was called with";
+
+    ready.store(true, std::memory_order_release);
+    cv.notify_all();
+    ASSERT_TRUE(waitForFlag(finished, std::chrono::milliseconds(2000))) << "the waiter never left its loop";
+    notifier.join();
 }
 
 TEST(TaskCombinatorTest, TransformMapsResult)
@@ -2922,6 +3089,16 @@ TEST(AsyncDefectRegressionTest, ThrowingGeneratorInvalidatesIterator)
 
     EXPECT_THROW(++it, std::runtime_error);
     EXPECT_TRUE(it == gen.end());
+}
+
+TEST(GeneratorTest, AnEmptyGeneratorReportsAnEmptyRangeEveryTime)
+{
+    // An empty body's frame is parked at final_suspend from the first resume on; reporting end()
+    // every time is what keeps a second begin() from resuming a done coroutine.
+    auto gen = genEmpty();
+    EXPECT_TRUE(gen.begin() == gen.end());
+    EXPECT_TRUE(gen.begin() == gen.end());
+    EXPECT_EQ(std::ranges::distance(gen), 0);
 }
 
 TEST(AsyncDefectRegressionTest, YieldLoopStackIsConstant)
@@ -3771,6 +3948,51 @@ TEST(AsyncQueueTest, PopSupportsAMoveOnlyTypeWithoutDefaultConstruction)
     EXPECT_EQ(queue.pop().result().value, 7);
 }
 
+TEST(AsyncQueueTest, TryPopReportsWhatItTook)
+{
+    async::AsyncQueue<int> queue;
+    EXPECT_FALSE(queue.tryPop().has_value()) << "an empty queue handed out an item";
+
+    ASSERT_TRUE(queue.tryPush(1));
+    std::optional<int> value = queue.tryPop();
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(*value, 1);
+    EXPECT_FALSE(queue.tryPop().has_value());
+
+    queue.close();
+    EXPECT_FALSE(queue.tryPop().has_value()) << "a closed, drained queue has nothing to take - not an error";
+}
+
+TEST(AsyncQueueTest, TryPopSupportsAMoveOnlyTypeWithoutDefaultConstruction)
+{
+    // The bool/out-parameter form needed T to be default-constructible and move-assignable, neither
+    // of which the queue's contract stated. Returning the item narrows it to what pop() already
+    // needs: move-construction.
+    async::AsyncQueue<MoveOnlyValue> queue;
+    ASSERT_TRUE(queue.tryPush(MoveOnlyValue{ 9 }));
+
+    std::optional<MoveOnlyValue> value = queue.tryPop();
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(value->value, 9);
+    EXPECT_FALSE(queue.tryPop().has_value());
+}
+
+TEST(AsyncQueueTest, ATryPopWhoseMoveThrowsPropagatesInsteadOfReportingEmpty)
+{
+    // The queue can still lose an element whose move throws - nothing makes that safe - but the
+    // failure may no longer be disguised as "the queue was empty", which is what the swallowed
+    // exception of the bool/out-parameter form reported.
+    ThrowingMove::s_moves    = 0;
+    ThrowingMove::s_throw_on = 0;
+    async::AsyncQueue<ThrowingMove> queue;
+    ASSERT_TRUE(queue.tryPush(ThrowingMove{}));
+
+    ThrowingMove::s_moves    = 0;
+    ThrowingMove::s_throw_on = 1; // the first move is popOne()'s out of the deque
+    EXPECT_THROW((void)queue.tryPop(), std::runtime_error);
+    ThrowingMove::s_throw_on = 0;
+}
+
 TEST(AsyncQueueTest, AThrowingMoveFailsThePushInsteadOfTerminating)
 {
     // The enqueue moves T into the frame, into the awaiter and into the deque; starting with the
@@ -3851,6 +4073,22 @@ TEST(ThreadPoolSchedulerTest, RunOnMovesMoveOnlyArgumentsIntoTheCallable)
     auto           value = std::make_unique<int>(41);
     auto           task  = async::runOn(pool, [](std::unique_ptr<int> p) { return *p + 1; }, std::move(value));
     EXPECT_EQ(std::move(task).result(), 42);
+}
+
+TEST(ThreadPoolSchedulerTest, SchedulingOnAStoppedPoolThrowsInsteadOfHanging)
+{
+    // A stopped pool used to drop the queued resume silently, parking the coroutine - and every
+    // operation chained after the hop - forever. The refusal is reported now: the awaiter keeps its
+    // only promise (the thread it lands on) instead of resuming somewhere else.
+    vn::ThreadPool              pool(1);
+    async::ThreadPoolScheduler scheduler(pool);
+    pool.stop();
+
+    bool ran = false;
+    EXPECT_THROW(resumeOnPoolTask(scheduler, ran).result(), std::logic_error);
+    EXPECT_FALSE(ran) << "the coroutine ran although the hop it awaited was refused";
+
+    EXPECT_THROW(async::runOn(pool, [] { return 1; }).result(), std::logic_error);
 }
 
 TEST(TaskCompletionSourceTest, EveryValueTaskReceivesItsOwnCopy)

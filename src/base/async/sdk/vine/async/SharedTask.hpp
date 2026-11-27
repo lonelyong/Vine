@@ -186,7 +186,8 @@ class SharedTaskAwaiter {
     /**
      * @brief Yields the cached result or rethrows the recorded exception.
      *
-     * @return The shared result (const reference), or void for a void task.
+     * @return The shared result (const reference), valid while some SharedTask for this computation
+     *         is alive; void for a void task.
      */
     decltype(auto) await_resume()
     {
@@ -225,6 +226,11 @@ class SharedTaskAwaiter {
  * abandoned await is safe; but a coroutine suspended here must not be destroyed
  * concurrently by another thread while the source is completing (see the
  * framework contract in async_global.hpp).
+ *
+ * The cached value is handed out as a const reference and never copied, so it stays valid while at
+ * least one SharedTask for that computation is alive. Awaiting a temporary dangles the reference it
+ * yields: `const T& v = co_await sharedTask(t);` outlives the temporary at the end of that
+ * full-expression, while `auto v = co_await sharedTask(t);` copies safely.
  *
  * @tparam T Result type; void for a result-less shared task. Must be storable
  *           (see StorableValue).
@@ -273,8 +279,11 @@ class SharedTask {
      *   cached value: this reports that as std::logic_error instead of reading an empty slot.
      * - isReady() is the cheap question ("may I call this now"); calling it first keeps the
      *   normal path from paying for the exception.
+     * - The reference points into the cached state and is valid while this SharedTask is alive;
+     *   a copy of the result has to be made before the last SharedTask handle goes away.
      *
-     * @return The shared result (const reference).
+     * @return The shared result (const reference), valid as long as a SharedTask for this
+     *         computation is alive.
      */
     [[nodiscard]]
     decltype(auto) result() const requires(!std::is_void_v<T>)
@@ -294,6 +303,14 @@ class SharedTask {
 
     /**
      * @brief Awaits the shared computation; yields the cached result.
+     *
+     * @details
+     * - The result is a const reference into the cached state, valid only while some SharedTask for
+     *   this computation is still alive. Awaiting a temporary and binding the reference -
+     *   `const T& v = co_await sharedTask(t);` - leaves it dangling once that statement ends;
+     *   `auto v = ...` copies, and `co_await t` on a named SharedTask is safe.
+     *
+     * @return An awaiter yielding the cached result.
      */
     [[nodiscard]]
     detail::SharedTaskAwaiter<T> operator co_await() const
