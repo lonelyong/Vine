@@ -287,6 +287,27 @@ makeQuad(float x0, float x1, float z)
     return map;
 }
 
+/**
+ * @brief States the engine's DEPTH-ONLY program on @p pass: what a map pass draws with, in this fixture and in the chain.
+ *
+ * @details
+ * - ONE STATEMENT FOR EVERY MAP PASS HERE, because the two mistakes are both silent. Omitting it makes the pass draw the
+ *   content's program, whose fragment stage writes location 0 into a target that has no colour attachment - the
+ *   validation layer reports exactly that at every draw ("writes to output Location 0 but there is no
+ *   VkRenderingInfo::pColorAttachments[0]"), and the picture looks unchanged because the write is discarded. Stating a
+ *   DIFFERENT program (a position-only stage, say) would place geometry with a second copy of the transform.
+ * - It is the same pair `ChainBuilder::buildShadowPass` states (`PassDesc::program_override`), so a case here draws a
+ *   depth map the way a host's shadow chain does.
+ *
+ * @param pass The map pass whose program is stated (borrowed; its target is a depth-only render target).
+ */
+void useDepthProgram(PassDraw& pass)
+{
+    const intrusive_ptr<ShaderProgram> depth_program = vn::graphics::depthOnlyProgram();
+    pass.program_override                            = depth_program;
+    pass.program_override_description                = depth_program->description();
+}
+
 /// @brief One DEPTH-ONLY pass: @p commands into @p map, through the engine's depth program, under @p selection.
 [[nodiscard]] FrameDescription depthFrame(vn::graphics::RenderPass* pass, RenderTarget* map, std::vector<DrawItem> commands, PassSelection selection)
 {
@@ -295,7 +316,6 @@ makeQuad(float x0, float x1, float z)
     entry.pass  = pass;
     entry.order = 0;
 
-    const intrusive_ptr<ShaderProgram> depth_program = vn::graphics::depthOnlyProgram();
     PassDraw                           draw;
     draw.target                       = map;
     draw.attachment_policy            = AttachmentPolicy{}; // clears the depth (the only attachment)
@@ -303,8 +323,7 @@ makeQuad(float x0, float x1, float z)
     draw.selection                    = selection;
     // THE PASS OVERRIDE the chain states too (see ChainBuilder::buildShadowPass): a depth map has no colour
     // attachment, so the content's own program is not what this pass draws with.
-    draw.program_override             = depth_program;
-    draw.program_override_description = depth_program->description();
+    useDepthProgram(draw);
     draw.packets.push_back(sceneDraw(std::make_shared<const std::vector<DrawItem>>(std::move(commands))));
     entry.draw = std::move(draw);
     frame.passes.push_back(std::move(entry));
@@ -376,6 +395,10 @@ struct Scene {
     shadow_pass.target = scene.map.get();
     shadow_pass.attachment_policy = AttachmentPolicy{}; // clears the depth (the only attachment)
     shadow_pass.state.depth = DepthPolicy::TestAndWrite;
+    // THE PASS' PROGRAM IS THE ENGINE'S DEPTH ONE, exactly as `ChainBuilder::buildShadowPass` states it (see
+    // `useDepthProgram`): a map has no colour attachment, so the content's own program - whose fragment stage writes
+    // location 0 - describes a write nobody receives, and the layer says so at every draw.
+    useDepthProgram(shadow_pass);
     shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
@@ -459,14 +482,14 @@ TEST(VkShadowTest, TheMapDarkensWhatTheCasterBlocks)
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U)
         << "the depth-only pipeline and the shadow ABI have to compile here";
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
-    // NO ERROR FROM THE DRIVER: a validation ERROR here is an illegal barrier, layout or render pass - not a picture
-    // that merely looks odd. A WARNING is expected and tolerated: the depth-only pass still draws with the program its
-    // content declared, whose fragment stage writes a colour attachment this target does not have (the write is
-    // discarded, and dropping the stage instead would change what a program that writes gl_FragDepth rasterises).
+    // NOTHING FROM THE DRIVER, WARNING OR ERROR: the frame is legal Vulkan, and this suite treats a layer message as a
+    // defect on the frame's side (R1 / T5). The one shape it used to produce - the depth-only pass drawing the content's
+    // colour-writing program because the FIXTURE omitted the engine's override - is gone: the pass now states
+    // `depthOnlyProgram()`, whose fragment stage declares no output (see `shadowFrame`).
     for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
-        EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
-            << "the driver rejected a shadow-pass object: "
-            << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
+        ADD_FAILURE() << "the driver said something about the shadow frame (severity "
+                      << static_cast<int>(message.severity) << "): "
+                      << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
     }
 
     backend->shutdown();
@@ -593,6 +616,7 @@ void main()
     shadow_pass.target      = scene.map.get();
     shadow_pass.attachment_policy = AttachmentPolicy{};
     shadow_pass.state.depth = DepthPolicy::TestAndWrite;
+    useDepthProgram(shadow_pass);
     shadow_pass.packets.push_back(sceneDraw(caster_list));
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
