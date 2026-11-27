@@ -485,7 +485,7 @@ object, which the comment already says), then add `VN_ASAN_TARGET=test_graphics`
 **Fixed 2026-11-27, at the cause instead of at the guard.** The guard would have left the SAME defect on Windows - a
 second copy of every private class beside the DLL's, invisible instead of absent - so the module now compiles once
 into an object set and hands it to its own test: `vn_add_library(... OBJECT_TARGET GraphicsObjects)` makes the shared
-library a shell around those objects, `test_graphics` links `vn::GraphicsObjects` and no longer names a private
+library a shell around those objects, `test_graphics` links `GraphicsObjects` and no longer names a private
 source, and the export table is untouched. Measured: `test_graphics` 687/687 in the normal tree, `ldd
 build/bin/test_graphics` names no graphics library, `VN_ASAN_TARGET=test_graphics VN_ASAN_FILTER='*'
 scripts/asan_check.sh` → `RESULT: PASS` (687 cases, no ODR report), `scripts/tsan_check.sh` → 687/687 with 0 warnings.

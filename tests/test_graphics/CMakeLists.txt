@@ -41,8 +41,9 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # shared library while compiling its translation units in (the old, Windows-shaped workaround) defined every private
 # class twice; AddressSanitizer reports that as an out-of-line ODR violation before the first case runs. The object
 # set is the module's, built once for both images (src/viz/graphics/CMakeLists.txt), and it brings the module's own
-# dependencies with it - so this target never loads libvnGraphics at all, on any platform.
-target_link_libraries(${TEST_NAME} vn::GraphicsObjects vn::Geom vn::Models)
+# dependencies with it - so this target never loads libvnGraphics at all, on any platform. The name carries no
+# `vn::`: that namespace is the installed package, and this target is a build-tree fact.
+target_link_libraries(${TEST_NAME} GraphicsObjects vn::Geom vn::Models)
 # The render-world test drives the library's internal draw-list table (src/, not the SDK): that table is where both
 # producers of a draw list meet, so the test has to see it.
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src/viz/graphics/src)

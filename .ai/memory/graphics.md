@@ -2957,9 +2957,10 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   vn::graphics::detail::SnapshotSource'` - one copy in `bin/test_graphics`, one in `libvnGraphicsd.so` - and the
   process aborts at LOAD, before a case runs. This retires the earlier note that "ASan on `test_graphics` is NOT
   runnable in this tree, so TSan carried the concurrency evidence" (2026-11-26): ASan runs now.
-- **The rule, not the list.** `vn_add_library(<var> <ShortName> OBJECT_TARGET <Objects>)` compiles the module's sources
-  once into an object set and makes the shared library a shell that links it PRIVATE, publishing
-  `vn::<ShortName>Objects`. `tests/test_graphics` links `vn::GraphicsObjects` and names no file: the module's own test
+- **The rule, not the list.** `vn_add_library(<var> <ShortName> OBJECT_TARGET <objects_var>)` compiles the module's
+  sources once into an object set named `<ShortName>Objects` and makes the shared library a shell that links it
+  PRIVATE; `<objects_var>` receives the name. `tests/test_graphics` links `GraphicsObjects` (no `vn::` - that namespace
+  is the installed package) and names no file: the module's own test
   is INSIDE the module, so one definition per process holds on every platform. `ADR-2026-11-27-a-module-test-links-the-
   modules-objects`; `graphics-architecture.md` 2.19 / C6 / D9.
 - **Trap (measured).** An object set that feeds a shared object must be PIC:
@@ -2967,7 +2968,9 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   helper now sets `POSITION_INDEPENDENT_CODE ON` on the object target (a shared library would have implied it).
 - **Trap (cache).** The module's compile-time configuration must reach the OBJECT target, not only the shell: the object
   set is what compiles. `src/viz/graphics/CMakeLists.txt` sets `VN_GRAPHICS_VERSION` and the link libraries in one
-  `foreach` over both images, and wires `vn_use_embedded_shaders` to the object set.
+  `foreach` over both images, and wires `vn_use_embedded_shaders` to the object set. `vn_add_library` now checks it at
+  the end of the module's directory (a setting only the shell carries stops the configure), so the rule no longer
+  depends on a reader remembering the loop.
 - **Evidence.** `test_graphics` 687/687 in `build/`; `ldd build/bin/test_graphics` names no graphics library;
   `VN_ASAN_TARGET=test_graphics VN_ASAN_FILTER='*' scripts/asan_check.sh` → `RESULT: PASS` (687 cases);
   `scripts/tsan_check.sh` → 687/687, 0 warnings; `ctest -R 'test_graphics|test_vk'` 2/2 green.

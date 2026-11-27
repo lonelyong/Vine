@@ -37,9 +37,14 @@ visibility in the other - and both answers put two definitions of one class in o
 
 ## Decision
 
-Option D. `vn_add_library(<var> <ShortName> OBJECT_TARGET <Objects>)` compiles the module's sources once as an object
-library, makes the shared library a shell that links it PRIVATE, and publishes `vn::<ShortName>Objects` for the
-module's own tests. `tests/test_graphics` links that object set instead of the library plus twelve sources.
+Option D. `vn_add_library(<target_var> <ShortName> OBJECT_TARGET <objects_var>)` compiles the module's sources once
+as an object library named `<ShortName>Objects`, makes the shared library a shell that links it PRIVATE, and hands that
+name back through `<objects_var>`. `tests/test_graphics` links `GraphicsObjects` instead of the library plus twelve
+sources. The name carries no `vn::` prefix and the target is never installed or exported: that namespace is the
+installed package, and a name there that `find_package` cannot resolve is a promise the build cannot keep. The helper
+also compares the two images at the end of the module's directory - every compile definition, compile option and link
+library the shell states must be stated on the object set, or the configure stops - because a shell that carries a
+setting and compiles nothing is exactly the difference this rule exists to remove.
 
 ## Consequences
 
@@ -63,5 +68,9 @@ module's own tests. `tests/test_graphics` links that object set instead of the l
   incompatible with -shared` (measured here, 2026-11-27).
 - `src/viz/graphics/CMakeLists.txt` - the one loop over both images, and the generated shader header wired to the
   object set (that is the target that compiles the includers).
+- The configure-time guard, measured by mutation (2026-11-27): adding `target_compile_definitions(Graphics PRIVATE
+  VN_MUTATION_PROBE=1)` - a setting only the shipping image carries - stops the configure with
+  `Graphics states VN_MUTATION_PROBE=1 (COMPILE_DEFINITIONS), which GraphicsObjects does not.`; removing it configures
+  clean.
 - `VN_ASAN_TARGET=test_graphics VN_ASAN_FILTER='*' scripts/asan_check.sh` → `RESULT: PASS`, 687 cases.
 - `scripts/tsan_check.sh` → 687/687, 0 ThreadSanitizer warnings.

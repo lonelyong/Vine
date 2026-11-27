@@ -7,11 +7,14 @@
 # is an out-of-line ODR violation that AddressSanitizer reports before a case runs. One set of objects, one
 # definition per process, on every platform. See vn_add_library's note and
 # ADR-2026-11-27-a-module-test-links-the-modules-objects.
-set(GRAPHICS_OBJECTS GraphicsObjects)
-vn_add_library(GRAPHICS_TARGET_NAME Graphics OBJECT_TARGET ${GRAPHICS_OBJECTS})
+#
+# ${GRAPHICS_OBJECTS} is the helper's name for that set (`GraphicsObjects`): a build-tree target, not installed, not
+# exported, and deliberately not spelled `vn::...` - that namespace is the installed package.
+vn_add_library(GRAPHICS_TARGET_NAME Graphics OBJECT_TARGET GRAPHICS_OBJECTS)
 
 # WHAT THE MODULE'S SOURCES ARE COMPILED AGAINST BELONGS TO BOTH IMAGES: the object set compiles, and the shared
-# library has to state the same facts to its consumers. One loop, so the two cannot drift.
+# library has to state the same facts to its consumers. One loop, so the two cannot drift - and vn_add_library checks
+# it at the end of this file, so a setting that reaches only one of them stops the configure.
 foreach(vn_image ${GRAPHICS_TARGET_NAME} ${GRAPHICS_OBJECTS})
     # The version a backend module reports as "built against" (RenderBackendAbi::sdk_version).
     # PUBLIC: a backend's own translation unit expands VN_DECLARE_RENDER_BACKEND_ABI(), and what it must report is the SDK

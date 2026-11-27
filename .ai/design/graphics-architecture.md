@@ -287,7 +287,8 @@ removing an unregistered pass and removing an already removed pass are the same 
     Boundary: the EXPORT TABLE does not change - the private half is still exported by nothing and declared in no
     installed header (`check_export_annotations.py`'s law), because the test's view of it is a BUILD fact, not an API.
     `cmake/VineLibraryHelper.cmake`'s `OBJECT_TARGET` owns the rule; a test that wants the private half names
-    `vn::GraphicsObjects`, never a file list
+    `GraphicsObjects` (a build-tree target, never installed, never `vn::`), never a file list, and the helper stops the
+    configure if a setting on the shipping image is missing from the compiling one
     ([ADR-2026-11-27](../decisions/ADR-2026-11-27-a-module-test-links-the-modules-objects.md)).
 
 ## 3. Features
@@ -405,7 +406,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | C3 | Scheduling is in the engine only; the backend only materialises `FrameDescription.passes`. |
 | C4 | A public SDK header states the CONTRACT, not the survey: it names no concrete backend (`check_vk_exposure.py` V5) and no unit a plugin keeps in its own `internal/` (V6) - the id's meaning is the contract, the table that answers it is that plugin's. The one exception is a diagnostic code, whose prefix is an identity a host matches. |
 | C5 | A backend module states its SDK ABI revision once (`VN_DECLARE_RENDER_BACKEND_ABI()`), and the registry refuses another revision before it calls into the module. A virtual set or a value type that crosses the boundary changes ⇒ `VN_RENDER_BACKEND_ABI_VERSION` is bumped in the same change, and a new virtual ships a default implementation. |
-| C6 | A module's test links the module's OBJECT SET (`vn::<ShortName>Objects`), never its shared library plus copies of its sources: one definition per process, on every platform (`cmake/VineLibraryHelper.cmake`'s `OBJECT_TARGET`, 2.19). |
+| C6 | A module's test links the module's OBJECT SET (`<ShortName>Objects`, a build-tree target), never its shared library plus copies of its sources: one definition per process, on every platform (`cmake/VineLibraryHelper.cmake`'s `OBJECT_TARGET`, 2.19). |
 
 ### 5.2 Requirements (R#)
 

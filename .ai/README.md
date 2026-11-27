@@ -101,7 +101,8 @@ keeps the old argument.
 
 - `ADR-2026-11-27-a-module-test-links-the-modules-objects.md` — **a module's test links the module's objects, not its
   DLL**: `vn_add_library(... OBJECT_TARGET ...)` compiles the module once and makes the shared library a shell around
-  the object set, so `test_graphics` links `vn::GraphicsObjects` instead of the library plus twelve copied translation
+  the object set, so `test_graphics` links `GraphicsObjects` (a build-tree target, not `vn::`) instead of the library plus
+  twelve copied translation
   units - two definitions of one private class in one process is an ODR violation ASan reports at load, and the
   `if(WIN32)` guard and a second export macro are rejected (the first leaves Windows holding the duplicate, the second
   puts `src/` types on the export table).
