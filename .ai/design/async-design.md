@@ -129,10 +129,14 @@ Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acqui
   worker of this pool”, and there is no honest fallback: resuming inline silently moves the coroutine onto a thread the caller did not ask
   for, and returning without scheduling parks it forever. A throw is the module's existing answer to a programming error (awaiting an empty
   `Task`, `SharedTask::result()` before completion).
-- `ThreadPool::enqueue` keeps its `future` shape and reports the refusal through it: the abandoned `packaged_task` leaves
-  `broken_promise`, so `get()` throws instead of blocking.
+- `ThreadPool::enqueue` refuses the same pool state at the call, with `std::logic_error`: a caller holding a `future` therefore
+  holds a task that will run, and nothing has to be decoded from a `broken_promise` later.
+- Both forms are templates over the callable and funnel into one private `pushTask(std::function<void()>)`, so the queue's type
+  erasure happens once and the pair differs only in what it answers with.
 
-Serves G4 (the failure mode is in the signature and the doc) and G11 (a teardown race produces an exception at a known point, not a hang).
+Serves G4 (the failure mode is in the signature and the doc), G6 (the `try*` pair means here what `setResult`/`trySetResult` and
+`push`/`tryPush` mean), G10 (one type-erased entry point, one allocation policy) and G11 (a teardown race produces an exception at
+a known point, not a hang).
 
 ### 2.8 `try*` reports what it did
 
@@ -366,7 +370,7 @@ Serves G4 (the position rule is stated and enforced) and G12 (the constraint nam
 | T5 | a mutation counter-check: reverting to the old spelling must turn it red | `git checkout -- <header>` → rebuild → run the target cases |
 | T6 | a destroyed park leaves no handle behind | `WhenLifetimeTest.ADestroyedParkWithdrawsItsHandle` |
 | T7 | `notify_all` releases one generation only, and returns | `AsyncConditionVariableTest.NotifyAllReleasesOnlyTheGenerationItWasCalledWith` |
-| T8 | a refused hop is an exception, not a hang | `ThreadPoolSchedulerTest.ASchedulingRequestOnAStoppedPoolThrows`, `ThreadPoolTest.TryEnqueueReportsAStoppedPool` |
+| T8 | a refused hop is an exception, not a hang | `ThreadPoolSchedulerTest.ASchedulingRequestOnAStoppedPoolThrows`, `ThreadPoolTest.TryEnqueueReportsAStoppedPool`, `ThreadPoolTest.EnqueueOnAStoppedPoolThrows` |
 | T9 | the generator's position rule and its constraint | `GeneratorTest.YieldsSequence`, `GeneratorTest.SecondBeginReportsTheCurrentPosition`, the `ProducedValue` `static_assert`s |
 
 ## 9. Status and Evolution

@@ -43,7 +43,6 @@ src/base/async/sdk/vine/async/SharedTask.hpp	brief|SharedTaskAwaiter::SharedTask
 src/base/async/sdk/vine/async/SharedTask.hpp	param|SharedTask::decltype/1
 src/base/async/sdk/vine/async/SharedTask.hpp	param|SharedTaskAwaiter::SharedTaskAwaiter/1
 src/base/async/sdk/vine/async/SharedTask.hpp	param|SharedTaskAwaiter::decltype/1
-src/base/async/sdk/vine/async/SharedTask.hpp	return|SharedTask::co_await
 src/base/async/sdk/vine/async/Sleep.hpp	brief|SleepAwaiter::SleepAwaiter
 src/base/async/sdk/vine/async/Sleep.hpp	param|SleepAwaiter::SleepAwaiter/2
 src/base/async/sdk/vine/async/Task.hpp	brief|Awaiter::Awaiter

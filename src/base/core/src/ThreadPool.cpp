@@ -87,7 +87,7 @@ void ThreadPool::stop()
     d->workers.clear();
 }
 
-bool ThreadPool::tryEnqueue(std::function<void()> task)
+bool ThreadPool::pushTask(std::function<void()> task)
 {
     {
         std::lock_guard<std::mutex> lock(d->mutex);

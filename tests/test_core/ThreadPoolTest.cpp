@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -28,12 +29,21 @@ TEST(ThreadPoolTest, TryEnqueueReportsAStoppedPool)
     EXPECT_FALSE(pool.tryEnqueue([] {})) << "a stopped pool took a task it will never run";
 }
 
-TEST(ThreadPoolTest, EnqueuingOnAStoppedPoolFailsTheFuture)
+TEST(ThreadPoolTest, TryEnqueueRunsTheTask)
 {
+    ThreadPool         pool(1);
+    std::promise<void> done;
+    auto               future = done.get_future();
+    ASSERT_TRUE(pool.tryEnqueue([&done] { done.set_value(); }));
+    EXPECT_EQ(future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+}
+
+TEST(ThreadPoolTest, EnqueueOnAStoppedPoolThrows)
+{
+    // enqueue() is the try* pair's throwing sibling: a caller that got a future back has a task that will run.
     ThreadPool pool(2);
     pool.stop();
-    auto future = pool.enqueue([] { return 1; });
-    EXPECT_THROW(future.get(), std::future_error) << "the caller waited for a task the pool never ran";
+    EXPECT_THROW(pool.enqueue([] { return 1; }), std::logic_error) << "the caller was handed a future for a task the pool will never run";
 }
 
 TEST(ThreadPoolTest, ExecutesAllTasks)
