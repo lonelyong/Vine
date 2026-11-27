@@ -41,8 +41,10 @@ SceneView::~SceneView()
     // Drop the pipeline this view adopted, DIRECTLY: dropping needs no geometry pass, and this body must not depend on
     // `setChain`'s policy for that (it applies geometry only when a chain is ADOPTED). Then the rows a chain stated IN
     // THIS VIEW'S SCOPE (see PassChain::build(engine, desc, owner)): a rebuilt chain leaves its rows to the scope, so
-    // the view is what takes them back. The lease answers "gone" when the engine went first, so this never reaches into
-    // freed memory.
+    // the view is what takes them back. THE TAKE-BACK IS NEVER REFUSED (graphics-threading.md 2.19): asked while a frame
+    // records, the engine holds it until the next frame head instead of dropping it, so a view destroyed with a frame in
+    // flight does not leave its rows behind. The lease answers "gone" when the engine went first, so this never reaches
+    // into freed memory.
     pipeline_ = nullptr;
     if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
         engine->passes().clearOwnedBy(this);

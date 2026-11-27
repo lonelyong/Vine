@@ -106,6 +106,10 @@ void SessionShape::compile(EngineFrame& frame, RenderBackend* device)
     // is released through. Neither outlives the call (see the class note).
     frame_  = &frame;
     device_ = device;
+    // A TAKE-BACK THAT MET A FRAME LANDS HERE (see deferTakeBack): the engine holds the interval and the previous
+    // frame is answered, so this is the first instant the table is nobody's to walk - and draining before
+    // compileFrame() means the frame being built no longer announces the rows a dead owner left behind.
+    applyDeferredTakeBacks(device);
     compileFrame();
     // The problems the compile found are reported once per episode: what the previous compile already found is not
     // said again, and what is gone is forgotten (see reportPlanProblems).

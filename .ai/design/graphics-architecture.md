@@ -42,6 +42,8 @@ Why: a pass is one declaration (`RenderPass.hpp`'s "ONE FACT, ONE STORAGE"), the
 would immediately become two writable values. Boundary: the same pass instance registered with two engines shares its content — a direct consequence of "one declaration"; for two pictures use two passes.
 `applyPlan(plan, owner)` only writes declarations; clearing uses `bindPassContent(pass, nullptr)` (or the plan no longer names that row) -
 and both doors take the same gate, because the declaration is what a compile walks (see `graphics-threading.md` 2.18 / C20).
+The TAKE-BACK is the one ask that gate never refuses: `removePassesOwnedBy` is reached from a destructor, which cannot
+retry, so a take-back that meets a frame is applied at the next frame head instead (`graphics-threading.md` 2.19 / C24).
 It satisfies `G1` / `G4`; for `G1` it gives up "one instance, several contents".
 
 2.7 **A change that can fail is visible from the return value**: `applyPlan` returns the three-state `PlanResult` (`Applied` / `Invalid` + problems /
@@ -50,7 +52,9 @@ refused while a frame records - the same gate `applyPlan` takes, see `graphics-t
 `frame()`'s `FrameCallOutcome` answers only Ran / Submitted (`NotReady` + `EngineNotReadyReason` is a precondition, not a frame ending),
 `prepare()` reuses the same `EngineNotReadyReason`.
 Why: a silent no-op lets the host take "did not take effect" for "took effect"; the return value is the only answer the call site can judge by. Boundary: `removePass` stays idempotent and returns nothing —
-removing an unregistered pass and removing an already removed pass are the same result. It satisfies `G4` / `G6`; the price is one ignorable return value per call site.
+removing an unregistered pass and removing an already removed pass are the same result. The take-back answers nothing either, and it NEVER fails: a
+take-back that meets a recording frame is accepted and deferred (`graphics-threading.md` 2.19 / C24), because its caller
+is a destructor and a refusal would be a silent drop. It satisfies `G4` / `G6`; the price is one ignorable return value per call site.
 
 2.8 **`RenderEngine` is the composition root, not a home for features**: it owns and composes three mechanisms — the frame pump (`detail::FramePump`: frame number, one frame in flight,
     `waitForFrame`, `presentRecord`), the session shape (`detail::SessionShape`: pass declarations, `plan` / `applyPlan`, frame compilation and wiring checks),

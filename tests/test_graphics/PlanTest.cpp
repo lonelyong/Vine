@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <mutex>
@@ -84,9 +85,18 @@ class HeadlessBackend : public RenderBackend {
         return Capabilities{ .render_targets = true };
     }
 
-    bool                            up     = true;
-    int                             frames = 0;
-    raw_ptr<const FrameDescription> last   = nullptr;
+    // Counted so a case can prove a REMOVED pass still reached the device (see the take-back cases): the release is
+    // the half of a removal that a refusal used to skip in silence.
+    void releasePass(raw_ptr<const RenderPass> pass) override
+    {
+        ++released;
+        RenderDevice::releasePass(pass);
+    }
+
+    bool                            up       = true;
+    int                             frames   = 0;
+    int                             released = 0;
+    raw_ptr<const FrameDescription> last     = nullptr;
 };
 
 /**
@@ -799,6 +809,191 @@ TEST(PlanTest, TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt)
 
     // The LATEST publisher serves the name for the rest of the frame (the rule the table states).
     EXPECT_EQ(engine->resolve(u8"SceneColor"), engine->pass(u8"writer_b")->renderTarget());
+}
+
+/*
+ * @brief A take-back asked from inside a frame is ACCEPTED and lands at the next frame head (review 19 Z22).
+ *
+ * The one shape change whose caller cannot retry is the take-back (`~PassChain` / `~SceneView`), so it may not be
+ * refused: a destructor asks once, and "refused" would mean the rows stay in the frame with a dead owner and the
+ * per-pass backend release never runs. It is deferred instead - the row a compile is walking is untouched, the next
+ * frame no longer announces it - and `engine.pass.changed_during_frame` is not reported, because its advice ("wait,
+ * or change between frames") is exactly what a destructor cannot do.
+ */
+TEST(PlanTest, ATakeBackAskedInsideAFrameLandsOnTheNextFrame)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+    // NEVER PUBLISHED, so this frame's compile reports it - and the sink below runs INSIDE that compile.
+    auto scene  = vn::make_intrusive<Scene>();
+
+    int  scope = 0; // stands in for the owner a chain / a view passes as "my rows"
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape, &scope).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), scene).bound());
+    ASSERT_EQ(engine->passCount(), 1U);
+
+    std::size_t after_ask = 0;
+    bool        asked     = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (asked) {
+            return; // later reports of the same frame are not this case's business
+        }
+        asked = true;
+        engine->passes().clearOwnedBy(&scope);
+        after_ask = engine->passCount();
+    });
+
+    const FrameCallOutcome outcome = engine->frame();
+    EXPECT_TRUE(outcome.ran()) << "inline, the frame is answered before frame() returns";
+    ASSERT_TRUE(asked) << "the case rests on the compile reporting from inside its own build";
+    EXPECT_EQ(after_ask, 1U) << "the take-back waits: it mutates nothing a compile is walking";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 0U)
+        << "an accepted take-back is not the 'wait for the frame' refusal";
+
+    engine->frame(); // the head of this frame is where the waiting rows leave
+    EXPECT_EQ(engine->passCount(), 0U);
+    EXPECT_EQ(engine->pass(u8"main"), nullptr);
+    EXPECT_EQ(backend->released, 1) << "the deferral still runs removePass' backend release";
+}
+
+/*
+ * @brief A take-back that waited removes the rows its owner had when it asked - never a row a later object registers.
+ *
+ * An owner is a raw address, and `operator new` hands the next view the address the last one freed. So a deferred
+ * take-back keyed by the address alone would delete the rows of the object that asked SECOND; it carries the
+ * registration ticket of the instant it was asked instead.
+ */
+TEST(PlanTest, ATakeBackThatWaitedLeavesRowsRegisteredAfterTheAskAlone)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+    auto scene  = vn::make_intrusive<Scene>();
+
+    int  scope = 0;
+    Plan first;
+    first.passes.push_back(namedPass(u8"left", colourTarget(), 0, camera));
+    first.passes.push_back(namedPass(u8"right", colourTarget(), 10, camera));
+    ASSERT_TRUE(engine->applyPlan(first, &scope).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"left"), scene).bound());
+
+    bool        asked = false;
+    std::size_t seen  = 0;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (asked) {
+            return;
+        }
+        asked = true;
+        engine->passes().clearOwnedBy(&scope);
+        seen = engine->passCount();
+    });
+    engine->frame();
+    ASSERT_TRUE(asked);
+    ASSERT_EQ(seen, 2U) << "both rows wait";
+
+    // THE ADDRESS IS REUSED: a host that destroys a view and builds the next one may land on the same memory.
+    Plan second;
+    second.passes.push_back(namedPass(u8"fresh", colourTarget(), 20, camera));
+    ASSERT_TRUE(engine->applyPlan(second, &scope).applied());
+
+    engine->frame(); // the head drains what the first owner asked for, and only that
+    EXPECT_EQ(engine->pass(u8"left"), nullptr);
+    EXPECT_EQ(engine->pass(u8"right"), nullptr);
+    EXPECT_NE(engine->pass(u8"fresh"), nullptr) << "a row registered after the ask is the second object's";
+    EXPECT_EQ(engine->passCount(), 1U);
+
+    engine->passes().clearOwnedBy(&scope); // between frames the same call is immediate
+    EXPECT_EQ(engine->passCount(), 0U);
+}
+
+/*
+ * @brief A take-back still waiting when the engine stops is applied by shutdown, not dropped with the pump.
+ *
+ * Nothing will compile after `shutdown()`, so a waiting take-back would never land - and the device it should tell
+ * about the release is exactly the object the host may destroy next.
+ */
+TEST(PlanTest, ATakeBackStillWaitingWhenTheEngineStopsIsApplied)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+    auto scene  = vn::make_intrusive<Scene>();
+
+    int  scope = 0;
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape, &scope).applied());
+    ASSERT_TRUE(engine->bindPassContent(engine->pass(u8"main"), scene).bound());
+
+    bool asked = false;
+    engine->setDiagnosticSink([&](const RenderDiagnostic&) {
+        if (asked) {
+            return;
+        }
+        asked = true;
+        engine->passes().clearOwnedBy(&scope);
+    });
+    engine->frame();
+    ASSERT_TRUE(asked);
+    ASSERT_EQ(engine->passCount(), 1U) << "still waiting for a frame head";
+
+    engine->shutdown();
+    EXPECT_EQ(engine->passCount(), 0U) << "a take-back never outlives the engine that held it";
+    EXPECT_EQ(backend->released, 1);
+}
+
+/*
+ * @brief The shipped host's own order: the view is destroyed while the engine half still answers the frame.
+ *
+ * In threaded mode `frame()` returns as soon as the job is submitted, and `SurfaceWindow`'s teardown destroys the view
+ * immediately before the engine that stops the frame thread - so the take-back lands while `answering_` is true. It must
+ * be recorded (not dropped) and applied at the next frame head, which is the same repair the inline case proves from
+ * inside the compile.
+ */
+TEST(PlanTest, ATakeBackWhileAFrameIsAnsweredWaitsForTheNextHead)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+    engine->setFrameThreading(FrameThreading::EngineThread);
+
+    auto camera = vn::make_intrusive<Camera>();
+
+    int  scope = 0;
+    Plan shape;
+    shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(shape, &scope).applied());
+    ASSERT_EQ(engine->passCount(), 1U);
+
+    // THE ENGINE HALF IS HELD INSIDE THE DEVICE CALL: `recording()` is true for the whole time it answers.
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered();
+
+    // The host's destructor, mid-answer: it cannot wait and cannot retry, so this is the call that used to be dropped.
+    engine->passes().clearOwnedBy(&scope);
+    EXPECT_EQ(engine->passCount(), 1U) << "the frame being answered keeps the shape it compiled";
+
+    backend->release();
+    ASSERT_TRUE(engine->waitForFrame(std::chrono::milliseconds(2000)));
+    EXPECT_EQ(engine->passCount(), 1U) << "still waiting: the next frame head is where a take-back lands";
+
+    engine->frame();
+    EXPECT_EQ(engine->passCount(), 0U);
+    EXPECT_EQ(backend->released, 1) << "the deferred take-back still reached the device";
 }
 
 /*

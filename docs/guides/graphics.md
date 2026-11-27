@@ -1241,6 +1241,9 @@ if (converted.root != nullptr) {
 `applyPlan` 是**唯一的注册入口**（顺序、owner 与资源都在引擎的槽位表里；内容属于 pass 的声明 `PassDesc::content`），
 而"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表：**作用域就是注册范围** ——
 `applyPlan(plan, owner)` 把 owner 记在它声明的每一行上，`PassRegistry::clearOwnedBy(owner)` 一次交还它声明过的全部 pass。
+**交还绝不落空**：它由析构函数发起（没有"稍后再试"），所以即使交还那一刻有一帧正在构建或绘制，引擎也只
+会把它**记下来**、在下一帧开头撤掉（连同每个 pass 的后端释放）；析构函数既不用等待、也不会收到"被拒绝"
+（规则见 `.ai/design/graphics-threading.md` 2.19 / C24）。
 
 ```cpp
 {

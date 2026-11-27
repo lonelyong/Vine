@@ -92,13 +92,19 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (103)
+## decisions/ — decision records (ADRs) (104)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-take-back-is-accepted-never-refused.md` — **a take-back is accepted, never refused**: the one
+  shape change whose caller is a destructor (`~PassChain` / `~SceneView` → `removePassesOwnedBy`) cannot retry, so
+  inside a frame it is DEFERRED to the next compile head (and applied by `shutdown()` when no frame comes) instead of
+  being dropped with a dead owner's rows - keyed by the registration ticket current at the ask, so a recycled owner
+  address cannot take a new object's rows (review 19 `Z22`), with the rejected "defer by address", "wait in the
+  destructor", "retry from the host" and "capture the passes at the ask" shapes.
 - `ADR-2026-11-27-a-door-is-gated-or-locked.md` — **a door into the engine's shared state is gated or locked, never
   neither**: the image tables (`detail::FrameResources`: standing bindings, the frame's publications, its transients)
   take one lock in every verb a host can reach and the frame head takes the host's bindings as a value, while the

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <span>
@@ -83,6 +84,9 @@ class SessionShape {
         /// The object that registered this pass and takes it back when it dies (null = registered without an owner,
         /// e.g. straight on the engine). Opaque on purpose: the engine never calls into it, only compares it.
         const void* owner{ nullptr };
+        /// Monotonic ticket taken when the row was inserted: a take-back that had to wait removes only the rows that
+        /// were already here when it was asked for, so an address a later object reuses keeps its own rows.
+        std::uint64_t registration{ 0 };
         /// The role that owner gave this pass (empty = anonymous).
         String role;
         /// The transient the compile allocated for this pass (null when it declares none).
@@ -164,8 +168,51 @@ class SessionShape {
     /** @brief Gets the content scene a registered pass renders, or null. */
     [[nodiscard]] raw_ptr<Scene> contentOf(raw_ptr<RenderPass> pass) const;
 
-    /** @brief Removes every pass whose slot is owned by @p owner (each one as removePass). */
+    /**
+     * @brief Removes every pass whose slot is owned by @p owner (each one as removePass).
+     *
+     * @details
+     * - Ownership is ONE SLOT TABLE with an owner pointer per row (see PassChain): a row is removed by its own name
+     *   inside that owner's scope, and taking a whole owner back is one walk.
+     * - THE CALLER HOLDS THE INTERVAL: this mutates the table a compile walks, so when it may run is the ENGINE's
+     *   decision (`RenderEngine::removePassesOwnedBy`); a take-back that meets a frame is accepted through
+     *   `deferTakeBack` instead of being refused (see `graphics-threading.md` 2.19).
+     *
+     * @param owner  Owner whose passes are taken back (null is a no-op: unowned passes belong to whoever added them).
+     * @param device Device to tell about the state the removed passes retained (may be null).
+     */
     void removePassesOwnedBy(const void* owner, RenderBackend* device) noexcept;
+
+    /**
+     * @brief Accepts a take-back the frame interval would not allow now, to be applied at the next frame head.
+     *
+     * @details
+     * - A TAKE-BACK IS NEVER REFUSED (see `graphics-threading.md` 2.19): its caller is a destructor (`~PassChain`,
+     *   `~SceneView`) and has no later call to retry with, so a refusal would mean silently dropping the rows - and
+     *   the backend release each removal performs with them.
+     * - THE REQUEST NAMES ITS ROWS BY THE TICKET OF THIS INSTANT. The owner address alone is not an identity across
+     *   time (a host may destroy a view and get the same address back for the next one), so the record keeps the
+     *   current ticket and `applyDeferredTakeBacks` removes only the rows registered before it.
+     * - Called with the engine's phase gate held - the same gate every registration takes - so the ticket it reads
+     *   cannot move under it, and no row can slip between the refusal and this record.
+     *
+     * @param owner The scope whose rows are taken back (null is a no-op, as removePassesOwnedBy).
+     */
+    void deferTakeBack(const void* owner) noexcept;
+
+    /**
+     * @brief Applies every take-back `deferTakeBack` accepted, then forgets them.
+     *
+     * @details
+     * - CALLED WHERE NOTHING RECORDS: the head of a compile (the engine holds the interval and the previous frame is
+     *   answered) and `RenderEngine::shutdown` after the pump stopped. Each removal runs the same walk an immediate
+     *   take-back uses, so the backend release is not skipped by the deferral.
+     * - A ROW ANOTHER CONTRIBUTOR REGISTERED AFTER THE ASK IS LEFT ALONE (see deferTakeBack): the ticket decides, not
+     *   the address.
+     *
+     * @param device Device to tell about the state the removed passes retained (may be null).
+     */
+    void applyDeferredTakeBacks(RenderBackend* device);
 
     /** @brief Gets the first enabled pass that names a render target, or null (the engine's capability check). */
     [[nodiscard]] raw_ptr<const RenderPass> firstEnabledPassWithATarget() const noexcept;
@@ -187,6 +234,12 @@ class SessionShape {
     void compile(EngineFrame& frame, RenderBackend* device);
 
   private:
+    /** @brief One take-back that met a recording frame: whose rows, and the ticket that was current when it asked. */
+    struct DeferredTakeBack {
+        const void*   owner{ nullptr };
+        std::uint64_t registration{ 0 };
+    };
+
     /** @brief One row of the compiled frame: what a pass will do, decided before the frame runs. */
     struct PlanRow {
         raw_ptr<RenderPass> pass{ nullptr };
@@ -275,6 +328,9 @@ class SessionShape {
     /** @brief Drops one registered pass and releases what the backend retained for it. */
     void removePass(raw_ptr<RenderPass> pass, RenderBackend* device);
 
+    /** @brief Removes every row @p owner registered before ticket @p before (the one walk both take-back forms use). */
+    void removeOwnedRows(const void* owner, std::uint64_t before, RenderBackend* device) noexcept;
+
   private:
     Diagnostics&       diagnostics_;
     PublicationStore&  publications_;
@@ -286,6 +342,16 @@ class SessionShape {
     RenderBackend* device_{ nullptr };
 
     std::vector<Slot> slots_; // uniform ordered pass registry
+
+    /// The ticket the next inserted row takes. Monotonic, and moved only under the engine's phase gate (a
+    /// registration is a shape change), which is why a take-back may read it there.
+    std::uint64_t next_registration_{ 1 };
+
+    /// Take-backs that met a recording frame, in the order they were asked (see deferTakeBack).
+    std::vector<DeferredTakeBack> deferred_take_backs_;
+    /// The queue's own leaf lock: an asker reaches it from a destructor on any thread, and the drain runs inside a
+    /// frame where the phase gate is not this thread's to take. Nothing is called while it is held beyond the vector.
+    std::mutex deferred_mutex_;
 
     /// The wiring checks' tables and their lookups (see WiringReport), cleared every compile.
     WiringReport wiring_;

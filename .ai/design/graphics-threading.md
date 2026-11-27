@@ -435,6 +435,49 @@ There is exactly one answer to "when does this copy expire": the publication val
   accuse the wrong cause.
 - **Acceptance**: T42 (the image tables), T43 (the shape's second door).
 
+### 2.19 A take-back is accepted, never refused (`G4` / `G7` / `G10`)
+
+- **What it is**: the shape changes a host can ask for divide by ONE question - *can the caller try again?* - and the two
+  sides get different answers:
+
+  | Ask | Caller | Answer while a frame records |
+  |---|---|---|
+  | `applyPlan`, `bindPassContent` (widening or rewriting the shape) | a host call, retryable | **refused** with a value + one report (`beginShapeChange`, 2.18) |
+  | the take-back `removePassesOwnedBy` (from `~PassChain` / `~SceneView`) | a destructor, NOT retryable | **accepted and deferred** to the next frame head |
+
+  A take-back between frames is applied at once, `removePass`'s backend release included. Asked inside one it is
+  recorded (`detail::SessionShape::deferTakeBack`) and applied at the head of the next compile - the first instant the
+  table is nobody's to walk - and by `shutdown()` after the pump stopped, so it never outlives the engine that held it.
+- **Why**: the interval (C20) exists to keep a change out of a compile that is walking the table, and a refusal is the
+  right answer only if the caller can act on it. `~PassChain` and `~SceneView` cannot: a destructor has no later call,
+  and waiting is a deadlock when the frame being destroyed is the one destroying it. Refusing there meant the rows
+  stayed in the frame with a **dead owner** and a chain already dropped, and the per-pass backend release never ran -
+  reachable from the shipped host, which destroys the view immediately before the engine that stops the frame thread
+  (review 19 `Z22`).
+- **What a deferred take-back does NOT damage**: the frame already built or being answered keeps the shape it compiled,
+  and the rows are self-sufficient - a `RenderPass` holds its camera, content, program and target by strong reference
+  (`PassDesc`), so a dead owner's pass is drawn once more at most and the next frame no longer announces it. The drain
+  runs after `beginFrame`'s `waitIdle`, so no compiled frame still names a row it removes.
+- **The owner address is not an identity across time** (`G10`): `operator new` hands the next view the memory the last
+  one freed, so a deferred request keyed by the address alone would delete the rows of the object that asked second.
+  The record carries the **registration ticket** current at the instant it was asked (`Slot::registration`, a monotonic
+  number stamped by `insertSlot`), and the drain removes only the rows older than it. The ticket is read under the same
+  `phaseGate` every registration takes, which is why "the refusal and the ticket" cannot be split by a registration.
+  One consequence, stated: a row the SAME address updates in place after asking is still older than the ask and goes
+  with it - a live owner asking to be taken back and then re-declaring is a contradiction, not a case to serve.
+- **No report**: `engine.pass.changed_during_frame` is the refusal's sentence and it tells the caller to wait or to
+  change between frames - advice a destructor cannot take. The accepted-and-deferred answer is the whole answer.
+- **The queue's own lock** (`G10` / `G11`): `deferred_take_backs_` is written from a destructor on any thread and read
+  by a drain that runs inside a frame, so it has a leaf `std::mutex` - the phase gate is already held by the asker and is
+  NOT this thread's to take in the drain. Lock order: `phaseGate` then `deferred_mutex_` (append), never the reverse;
+  the drain holds it only across the swap and releases backend state after it, as `FrameResources` releases a transient
+  after `tables_mutex_`.
+- **Cost**: one lock-guarded vector append per dead owner (2.8 ns uncontended, the same plain mutex C22 / C23 use) and
+  one `swap` per frame, empty in the steady state.
+- **Boundary**: `applyPlan` and `bindPassContent` stay refusals - they are retryable, and the refusal is what tells the
+  host to wait. Nothing ELSE becomes deferred: the take-back is the only ask whose caller is a destructor.
+- **Acceptance**: T44.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -557,10 +600,11 @@ There is exactly one answer to "when does this copy expire": the publication val
 | C17 | A surface event is applied once at the frame head; the swap chain is rebuilt on the engine thread only; the UI side writes no engine-side state. |
 | C18 | The version does not advance inside a batch: after `beginEdit()` and before the outermost `endEdit()`, publication stays where it is — a frame landing mid-batch **publishes nothing** and draws the state at the batch's start; the whole batch lands as **one** publication on the frame after `endEdit()`. |
 | C19 | Material crosses the frame as a **value**: a command carries a `MaterialDescriptionPtr` (`revision` + resolved parameters), and the engine side reads the value only, not `Material::resolved()`. The values are taken on the content side, and not inside a batch. |
-| C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: while this engine is BUILDING a frame (its content half - hooks, publication, `compileFrame`) or ANSWERING one (its engine half), and while a `prepare()` compiles, EVERY mutator of it is refused - `applyPlan` (in any form) answers `PlanResult::Refused` + `PlanRefusal::Busy`, `bindPassContent` / `PassRegistry::bindContent` answer `ContentBindOutcome::Status::Refused`, `removePassesOwnedBy` takes the same gate and drops the take-back - and each reports **one** `PassProtocolViolation` per episode. The gate is `detail::FramePump::recording()`, and the decision plus the change are ONE critical section (`RenderEngine::beginShapeChange` holds `FramePump::phaseGate()`, the same lock a build is entered under) - so a change seen as allowed cannot be applied into a compile that started in between, and inline counts exactly like threaded. |
+| C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: while this engine is BUILDING a frame (its content half - hooks, publication, `compileFrame`) or ANSWERING one (its engine half), and while a `prepare()` compiles, every mutator of it that EXPANDS or REWRITES the shape is refused - `applyPlan` (in any form) answers `PlanResult::Refused` + `PlanRefusal::Busy`, `bindPassContent` / `PassRegistry::bindContent` answer `ContentBindOutcome::Status::Refused` - and each reports **one** `PassProtocolViolation` per episode. The ONE exception is the take-back `removePassesOwnedBy`, whose caller cannot retry: it takes the same gate but is **never refused** - accepted and applied at the next frame head (C24, 2.19). The gate is `detail::FramePump::recording()`, and the decision plus the change are ONE critical section (`RenderEngine::beginShapeChange` holds `FramePump::phaseGate()`, the same lock a build is entered under) - so a change seen as allowed cannot be applied into a compile that started in between, and inline counts exactly like threaded. |
 | C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time. Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused rather than waiting for itself** (`vk.device.reentry`; a readback inside a frame answers `InsideFrame`), and the refusal comes from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's descriptions are safe for concurrent readers through one cache type (C22); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way every run). |
 | C22 | **A content description is built once per revision and shared by every reader, under one lock**: `Geometry::description()`, `MaterialValues::description()` and `ShaderProgram::description()` are one verb on one type (`detail::DescriptionCache`), which measures the source's revision, compares it with the cached value's and builds on a miss in ONE critical section — so several threads describing one object (two engines publishing one scene) get the same identity and no second value for one revision. The key is measured INSIDE the lock because a material instance's `revision()` resolves on read, and the lock is the plain kind (2.8 ns uncontended against 13.2 ns for the shared lock it replaced, measured 2026-11-27). An EDIT is still the owning thread's act: the cache makes readers safe, not a concurrent edit. |
-| C23 | **A door is gated or locked, never neither: the two families a host can reach while a frame records each have ONE rule, enforced by the type that owns the state** (`G1` / `G4` / `G6`). The session shape's mutators all take `RenderEngine::beginShapeChange` (C20). The image tables (`detail::FrameResources`: the standing bindings, the frame's publications, the transients) take `tables_mutex_` in every verb a host can reach - `publish` / `unpublish` / `resolve` / `transientTarget` / `transientCount` may run during a frame and never tear - and the frame head copies the host's bindings (`beginFrame`), so the seeding, the wiring checks and the input resolution of one frame answer ONE set, while the host's own `resolve` still answers the live table (the compile resolves through `resolveForFrame`). The lock covers a lookup, an insert or an eviction, never a device call; it makes READERS safe, not a concurrent edit (as C22 does for descriptions), and a borrowed answer (`raw_ptr`) means "the instance that was live at this instant", not "it survives". |
+| C23 | **A door is gated or locked, never neither: the two families a host can reach while a frame records each have ONE rule, enforced by the type that owns the state** (`G1` / `G4` / `G6`). The session shape's mutators all take `RenderEngine::beginShapeChange` (C20) - except the take-back, which takes the same gate and is deferred instead of refused (C24). The image tables (`detail::FrameResources`: the standing bindings, the frame's publications, the transients) take `tables_mutex_` in every verb a host can reach - `publish` / `unpublish` / `resolve` / `transientTarget` / `transientCount` may run during a frame and never tear - and the frame head copies the host's bindings (`beginFrame`), so the seeding, the wiring checks and the input resolution of one frame answer ONE set, while the host's own `resolve` still answers the live table (the compile resolves through `resolveForFrame`). The lock covers a lookup, an insert or an eviction, never a device call; it makes READERS safe, not a concurrent edit (as C22 does for descriptions), and a borrowed answer (`raw_ptr`) means "the instance that was live at this instant", not "it survives". |
+| C24 | **A take-back is accepted, never refused, and it names the rows its owner had when it asked** (`G4` / `G7` / `G10`). `RenderEngine::removePassesOwnedBy` (reached from `~PassChain`, `PassRegistry::clearOwnedBy`, `~SceneView`) is the one shape change whose caller is a destructor and cannot retry: between frames it is applied at once (backend release included), and while a frame records it is recorded and applied at the **next compile head** - and by `shutdown()` after the pump stopped, so it never outlives the engine. It does NOT report `engine.pass.changed_during_frame`, because that sentence asks for a retry a destructor cannot make. The record carries the registration ticket current when it was asked (`Slot::registration`, stamped by `insertSlot` under the same `phaseGate`), so the drain removes the rows that existed THEN and never a row a new object at a recycled address registered meanwhile; a frame already built keeps the shape it compiled, and a drained removal runs the same `removePass` walk (and release) an immediate one does. `applyPlan` / `bindPassContent` stay refusals (C20) - they are retryable, and the refusal is the whole answer to a caller that can wait. |
 ### 5.2 Requirements (R#)
 
 | # | Requirement |
@@ -696,6 +740,7 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T41 | a description is one value per revision under concurrent readers: several threads describing one program, one material and one geometry get one identity each, a new revision is a new value, and `peek` never builds | `DescriptionCacheTest.OneBuilderAnswersEveryConcurrentReaderTheSameValue` / `DescriptionCacheTest.ANewRevisionIsANewValueAndTheOldOneKeepsItsRevision` / `DescriptionCacheTest.PeekNeverBuildsAndAnswersNullForAMovedRevision` / `DescriptionCacheTest.ThreadsDescribingOneProgramOneMaterialAndOneGeometryShareOneValue` + `scripts/tsan_check.sh` | implemented |
 | T42 | the image tables are gated by one lock and one frame-head value: a host publishing, withdrawing, resolving and reading transients while a frame compiles never tears the table, and one frame answers the bindings its head took | `FrameResourcesTest.AHostSwappingBindingsWhileAFrameCompilesNeverTearsTheTables` / `FrameResourcesTest.TheFrameAnswersTheBindingsItsHeadTook` + `scripts/tsan_check.sh` | implemented |
 | T43 | a content bind is a shape change: refused from inside a compile (the declaration unchanged, one report), accepted between frames, and two passes serving one name from different targets are reported once | `PlanTest.AFrameRefusesAContentBindFromInsideItsOwnCompile` / `PlanTest.TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt` | implemented |
+| T44 | a take-back is never refused: asked from inside a compile it leaves the row the compile walks, reports no refusal, lands at the next frame head with its backend release, removes only the rows that existed when it asked (a row a later object registers at the same address survives), applies at once between frames, is applied by `shutdown()` when no frame came, and WAITS while the engine half answers a frame (the shipped host's order) | `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` / `PlanTest.ATakeBackThatWaitedLeavesRowsRegisteredAfterTheAskAlone` / `PlanTest.ATakeBackStillWaitingWhenTheEngineStopsIsApplied` / `PlanTest.ATakeBackWhileAFrameIsAnsweredWaitsForTheNextHead` | implemented |
 
 ## 9. Status and Evolution
 
@@ -735,6 +780,7 @@ This file describes the **present**, not the target. The target shape and its re
 - `src/viz/graphics/src/FrameExpand.{hpp,cpp}` (`bindSceneDraws` / `expandPass` / `expandFrame`)
 - `src/viz/graphics/src/FrameRunner.{hpp,cpp}` (the engine thread)
 - `src/viz/graphics/src/EngineCompile.cpp` (the content half: hooks / publication / describe / the engine half's entry)
+- `src/viz/graphics/src/SessionShape.{hpp,cpp}` (the slot table: the registration ticket, `deferTakeBack` / `applyDeferredTakeBacks` - C24)
 - `src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp` (`bindSnapshot` / `setFrameThreading` / `waitForFrame` /
   `presentRecord` / `presentedCamera`)
 - `src/viz/graphics/src/DrawListMemo.{hpp,cpp}` (per-view list reuse and its two atomic counters)
@@ -748,6 +794,7 @@ This file describes the **present**, not the target. The target shape and its re
 - `tests/test_graphics/SnapshotShadowTest.cpp` (T3 / T17 / T34)
 - `tests/test_graphics/DescriptionCacheTest.cpp` (T41: one build per revision, one identity for every concurrent reader)
 - `tests/test_graphics/FrameResourcesTest.cpp` (T42: the head's value, the collision answer, and the lock under two threads)
+- `tests/test_graphics/PlanTest.cpp` (T36 / T43 / T44: the gate's refusals and the take-back that is never refused)
 - `tests/test_graphics/HeadlessBackendTest.cpp` (the two halves and the warm-up)
 - `tests/test_graphics/GraphicsTest.cpp` (memo reuse and T9's surface size)
 
@@ -759,6 +806,9 @@ This file describes the **present**, not the target. The target shape and its re
   rejected per-class copies / shared-lock / lock-free shapes)
 - `../decisions/ADR-2026-11-27-a-door-is-gated-or-locked.md` (C23 / C20: the two families of shared state, why one
   door was locked and the other gated, and the rejected "copy Geometry's answer" / "state the rule in five docs" shapes)
+- `../decisions/ADR-2026-11-27-a-take-back-is-accepted-never-refused.md` (C24: why a destructor's ask cannot be a
+  refusal, the deferred removal at the frame head, the registration ticket that survives an address reuse, and the
+  rejected "wait in the destructor" / "order the view's death behind the frame" / "retry from the host" shapes)
 - `../decisions/ADR-2026-11-10-render-world-mirrors-content.md` (**history**: the original mirror-shape decision, superseded by the two above)
 - `graphics-frame-pipeline.md` (the target shape and the step-by-step migration in §9.3)
 - `vk-backend.md` (backend implementation and synchronisation details)

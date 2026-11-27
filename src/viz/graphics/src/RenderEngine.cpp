@@ -243,6 +243,10 @@ void RenderEngine::shutdown()
     // joined, never detached) and the pump is left inline - a frame still executing while this call hands the device
     // back would touch objects its creator may already own (design F10 / N11).
     pump_->stop();
+    // A TAKE-BACK THAT WAS WAITING FOR A FRAME LANDS NOW: nothing records after the pump stopped, and the rows' backend
+    // state belongs to a device this engine is about to stop naming - leaving them for a frame that will never come
+    // would lose the release exactly the way the refusal did (review 19 Z22).
+    shape_->applyDeferredTakeBacks(device_.get());
     // THE TRANSIENT TARGETS THIS ENGINE DECLARED GO BACK TOO. The device owns their GPU storage and may outlive this
     // engine (it is borrowed, and one device may serve several engines), so a table dropped in silence would leave
     // the device holding storage for targets nothing will ever ask about again - and `releaseAll` is the
@@ -766,13 +770,25 @@ std::optional<std::unique_lock<std::mutex>> RenderEngine::beginShapeChange(const
 
 void RenderEngine::removePassesOwnedBy(const void* owner) noexcept
 {
-    // The rule is the engine's (the pump owns the phase, and the gate makes the decision and the take-back one step);
-    // taking the rows back is the shape's.
-    std::optional<std::unique_lock<std::mutex>> allowed = beginShapeChange("removePass");
-    if (!allowed.has_value()) {
+    // A TAKE-BACK IS THE ONE SHAPE CHANGE ITS CALLER CANNOT RETRY (review 19 Z22): a destructor asks for it
+    // (`~PassChain`, `~SceneView`) and there is no later call. So it is never REFUSED - between frames it is applied
+    // now, and inside one it is DEFERRED to the next frame head (see SessionShape::deferTakeBack). The gate's
+    // refusal used to mean "dropped", which left the rows in the frame with a dead owner and skipped the backend
+    // release `removePass` performs.
+    //
+    // THE DECISION AND THE TICKET ARE ONE CRITICAL SECTION: the ask records the registration count under the gate a
+    // registration takes, so the drain later removes the rows this owner had NOW and never a row a new object at the
+    // same address registers in between.
+    std::unique_lock<std::mutex> gate = pump_->phaseGate();
+    if (!pump_->recording()) {
+        // The gate stays held across the change, as it does for a plan (see beginShapeChange): the table a frame
+        // would walk must not start being walked between the decision and the walk.
+        shape_->removePassesOwnedBy(owner, device_.get());
         return;
     }
-    shape_->removePassesOwnedBy(owner, device_.get());
+    // NO REPORT: `engine.pass.changed_during_frame` tells a caller to wait or to change between frames, and a
+    // destructor can do neither - the accepted-and-deferred answer is the whole answer (graphics-threading.md 2.19).
+    shape_->deferTakeBack(owner);
 }
 
 PlanResult RenderEngine::applyPlan(const Plan& plan)

@@ -290,6 +290,39 @@ raw_ptr<Scene> SessionShape::contentOf(raw_ptr<RenderPass> pass) const
 
 void SessionShape::removePassesOwnedBy(const void* owner, RenderBackend* device) noexcept
 {
+    // EVERY row of that owner: the bound is the ticket not handed out yet, so every row that exists now is inside
+    // it. (A deferred take-back passes the ticket it recorded when it was asked, see applyDeferredTakeBacks.)
+    removeOwnedRows(owner, next_registration_, device);
+}
+
+void SessionShape::deferTakeBack(const void* owner) noexcept
+{
+    if (owner == nullptr) {
+        return; // unowned passes belong to whoever added them; no chain can take them back
+    }
+    // THE TICKET IS TAKEN NOW, WITH THE ENGINE'S PHASE GATE HELD (see the header): every row that exists at this
+    // instant has a smaller one, and every row a later object registers at the same address gets a larger one - so
+    // the drain can tell the requester's rows from a stranger's, which the address alone no longer can.
+    const std::lock_guard<std::mutex> lock(deferred_mutex_);
+    deferred_take_backs_.push_back(DeferredTakeBack{ owner, next_registration_ });
+}
+
+void SessionShape::applyDeferredTakeBacks(RenderBackend* device)
+{
+    // THE LIST IS TAKEN, NOT WALKED UNDER THE LOCK: an asker on another thread appends here, and `removePass`
+    // releases backend state (a device call) - neither may happen while the other holds the queue's lock.
+    std::vector<DeferredTakeBack> asked;
+    {
+        const std::lock_guard<std::mutex> lock(deferred_mutex_);
+        asked.swap(deferred_take_backs_);
+    }
+    for (const DeferredTakeBack& request : asked) {
+        removeOwnedRows(request.owner, request.registration, device);
+    }
+}
+
+void SessionShape::removeOwnedRows(const void* owner, std::uint64_t before, RenderBackend* device) noexcept
+{
     if (owner == nullptr) {
         return; // unowned passes belong to whoever added them; no chain can take them back
     }
@@ -297,7 +330,7 @@ void SessionShape::removePassesOwnedBy(const void* owner, RenderBackend* device)
     // target) must run once per pass - which is exactly what removePass does for a handle.
     std::vector<raw_ptr<RenderPass>> doomed;
     for (const Slot& slot : slots_) {
-        if (slot.owner == owner && slot.pass != nullptr) {
+        if (slot.owner == owner && slot.pass != nullptr && slot.registration < before) {
             doomed.push_back(slot.pass.get());
         }
     }
@@ -328,6 +361,9 @@ intrusive_ptr<RenderPass> SessionShape::insertSlot(Slot slot)
             return nullptr;
         }
     }
+    // THE TICKET (see deferTakeBack): insertion is the only place a row joins the table, so it is the only place one
+    // takes a number - and it happens under the engine's phase gate, the same one a take-back reads the count under.
+    slot.registration = next_registration_++;
     // Keep the slots ascending by order; equal orders preserve insertion order (stable), so ties are resolved
     // by the order a plan states.
     const int  order      = slot.order;

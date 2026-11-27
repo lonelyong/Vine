@@ -1144,10 +1144,18 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     friend class PassRegistry;
 
-    /** @brief Removes every pass whose slot is owned by @p owner (each one as removePass).
+    /** @brief Removes every pass whose slot is owned by @p owner, or records the take-back for the next frame head.
      *
      * @details
      * - Ownership is ONE SLOT TABLE with an owner pointer per row (see PassChain): a row is removed by its own name inside that owner's scope, and taking a whole owner back is one walk.
+     *
+     * - THE ONE SHAPE CHANGE THAT IS NEVER REFUSED (see `graphics-threading.md` 2.19): its caller is a destructor
+     *   (`~PassChain`, `~SceneView`) and cannot retry, so between frames it is applied now and inside one it is
+     *   DEFERRED to the next frame head - the first moment the table is nobody's to walk. A deferred take-back removes
+     *   the rows that existed when it was asked for, never a row a new object at the same address registers meanwhile.
+     * - A frame already built or being answered keeps the shape it compiled: the rows hold their camera, content,
+     *   program and target by strong reference, so a dead owner's passes are drawn once more at most - and the next
+     *   frame no longer announces them.
      *
      * @param owner Owner whose passes are taken back (null is a no-op: unowned passes belong to whoever added them).
      */

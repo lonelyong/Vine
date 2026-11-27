@@ -1245,6 +1245,17 @@ the next frame start (a deferred removal, the shape `RetirementQueue` already us
 destruction is ordered behind the frame the way its surface handlers already are - but "ask, be refused, and drop it" is
 the one answer the tree does not already have an idiom for.
 
+**Fixed 2026-11-27, at the rule.** The take-back is now the one shape change the gate never refuses: applied at once
+between frames, and DEFERRED to the next compile head (and by `shutdown()`) inside one, so the ask cannot be dropped and
+the backend release it performs is not skipped. The difference from this section's first suggestion is where it is
+keyed: the request carries the REGISTRATION TICKET current at the instant it was asked (`Slot::registration`), not the
+owner address - `operator new` hands the next view the memory the last one freed, so an address-keyed record that
+outlives its address by one frame would delete the rows of the object that registered second, which is the defect fixed
+by introducing another one. The "order the view's death behind the frame" option was rejected too: a destructor cannot
+wait when the frame is the one destroying it, and handing a host object to the engine inverts ownership. Rule stated in
+`../design/graphics-threading.md` 2.19 / C24, argument in
+`../decisions/ADR-2026-11-27-a-take-back-is-accepted-never-refused.md`, acceptance in T44.
+
 ### 25.4 Two caveats
 
 - **`~Viewer` leaves the declaration behind, on purpose.** The header states it ("a viewer owns a request, not a
@@ -1286,7 +1297,9 @@ between them:
   directly. A test that made a real window frame's fence fail would have caught it (the seam exists:
   `Device::refuseNextSubmit`).
 - `Z21` - no test calls `engine->shutdown()` from a frame-thread sink, so the zombie runner is unobserved.
-- `Z22` - no test destroys a view while a frame is answered.
+- `Z22` - no test destroys a view while a frame is answered (**since 2026-11-27** the RULE has a case -
+  `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` drives the take-back from inside the compile through the
+  engine's public door; the appfw composition itself, `~SceneView` with a frame in flight, still has no case).
 - `Z17`/`Z18` - `TheViewReceivesInputAndADragKeepsSteeringIt` covers a release that ARRIVES; the release that never
   arrives is the untested half.
 
@@ -1326,7 +1339,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z19` | R20 | medium-low | a window frame whose submit or fence failed answers `Skipped`, never `Lost`: `rewindUnrunFrame` clears `window_acquired` before the present block reads it, so the `Lost` branch is dead - and the swapchain repair and the lost-picture line both key on `Lost` | `Device.cpp:1889-1893`, `:2291`, `:2302-2305`; `RenderEngine.cpp:620-622`; `SurfaceWindow.cpp:941-957` |
 | `Z20` | R20 | low | a frame that did not complete answers with the PREVIOUS sampled frame's GPU time and per-pass costs: every `books.timing` reset sits inside `if (completed)`, and `books` is cleared only by `FrameDriver::destroy()` | `Device.cpp:2222-2271`, `:1431-1457`, `:2565-2580`, `:1398`; `FrameReport.hpp:57-58` |
 | `Z21` | R21 | medium-low | `RenderEngine::shutdown()` takes no interval, so a call from the frame thread (a diagnostic sink) half-stops the pump: `FrameRunner::stop()` cannot join itself and leaves `live_` true, the pump returns before clearing `runner_`, and the next frame is handed to a runner whose loop has exited - it never runs, and the frame after blocks for ever in `waitIdle()` | `RenderEngine.cpp:235-255`; `FramePump.cpp:295-318`; `FrameRunner.cpp:94-116`, `:140-168` |
-| `Z22` | R22 | medium | `SceneView::~SceneView` asks for a SHAPE CHANGE (`clearOwnedBy`) that `beginShapeChange` refuses while a frame is answered - and a destructor can neither wait nor retry, so the view's rows stay in the engine's table with a dead owner and a dropped chain, and `removePass`'s backend release never runs | `SceneView.cpp:27-50`; `RenderEngine.cpp:767-776`, `:757-765`; `SurfaceWindow.cpp:226-231`, `:338`; `RenderEngine.cpp:60` |
+| `Z22` | R22 | medium | `SceneView::~SceneView` asks for a SHAPE CHANGE (`clearOwnedBy`) that `beginShapeChange` refuses while a frame is answered - and a destructor can neither wait nor retry, so the view's rows stay in the engine's table with a dead owner and a dropped chain, and `removePass`'s backend release never runs (**fixed 2026-11-27**: a take-back is never refused - deferred to the next compile head, keyed by the registration ticket; C24 / 2.19) | `SceneView.cpp:27-50`; `RenderEngine.cpp:767-776`, `:757-765`; `SurfaceWindow.cpp:226-231`, `:338`; `RenderEngine.cpp:60` |
 
 ### 27.2 Proposed order (for the owner; no backlog entry added by this round)
 
@@ -1338,10 +1351,13 @@ unobserved, and it is recorded here so the next round starts from it rather than
    the two call sites: the image tables take one lock in every verb a host can reach AND the frame head takes the host's
    bindings as a value (C23), the content bind takes the shape's gate and answers the three-state
    `ContentBindOutcome`; the rejected shapes are in `ADR-2026-11-27-a-door-is-gated-or-locked.md`.
-3. **`Z22`** - the third door, and the only one whose failure is a stale row in the frame: the take-back a destructor
+3. ~~**`Z22`** - the third door, and the only one whose failure is a stale row in the frame: the take-back a destructor
    asks for has to survive the refusal, so it becomes a deferred removal (the `RetirementQueue` shape) or the view's
    death is ordered behind the frame. It is ahead of the picture findings because it leaves a pass nobody owns in a
-   frame that still runs.
+   frame that still runs.~~ **Done 2026-11-27**, at the rule: a take-back is ACCEPTED, never refused - applied at once
+   between frames, deferred to the next compile head (and by `shutdown()`) inside one, keyed by the registration ticket
+   so a recycled owner address cannot take a new object's rows (C24 / 2.19; `ADR-2026-11-27-a-take-back-is-accepted-
+   never-refused.md`). The review's first suggestion (defer by owner address) was rejected as the next defect.
 4. **`Z21`** - the engine's shutdown takes the interval every other host verb takes, and the runner stops advertising a
    thread the moment its loop can no longer run a job. It is the only finding whose failure is a permanently wedged
    engine.

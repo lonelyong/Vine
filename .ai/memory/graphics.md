@@ -3031,3 +3031,40 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   `test_graphics` 695/695; `scripts/tsan_check.sh` 695/695 with 0 warnings; ASan `RESULT: PASS`.
   `ADR-2026-11-27-a-door-is-gated-or-locked`; `graphics-threading.md` 2.16 / 2.18 / C20 / C23 / T42 / T43;
   `graphics-architecture.md` 2.7 (the three-state answer).
+
+## 2026-11-27 - Z22: a take-back is accepted, never refused
+
+- **The defect.** `SceneView::~SceneView` (and `~PassChain` for a one-off chain) ends by asking the engine to take back
+  its rows (`clearOwnedBy` → `removePassesOwnedBy`), and that ask took the shape gate and was REFUSED while a frame
+  records - with a diagnostic telling the caller to wait or to change passes between frames. A destructor can do
+  neither: no later call, and waiting is a deadlock when the frame it is inside is the one destroying it. So the rows
+  stayed with a dead `owner` and a dropped chain, and `removePass`'s per-pass backend release never ran. Reachable from
+  the shipped host: threaded `SurfaceWindow` destroys the view right before the engine whose destructor stops the frame
+  thread - closing a window during a frame is enough (review 19 `Z22`).
+- **The rule (C24, 2.19).** A shape change divides by "can the caller retry?". `applyPlan` / `bindPassContent` are
+  retryable → refused with a value + one report. `removePassesOwnedBy` is not → NEVER refused: between frames applied at
+  once, while a frame records RECORDED (`SessionShape::deferTakeBack`) and applied at the head of the next compile
+  (before `compileFrame()` reads `slots_`), and by `shutdown()` after the pump stopped so it never outlives the engine.
+  No `engine.pass.changed_during_frame` for this path - that sentence asks for a retry a destructor cannot make.
+- **Trap (the patch that looks like the fix).** Deferring keyed by the OWNER ADDRESS is a new defect: `operator new`
+  hands the next view the memory the last one freed, so a record that outlives its address by one frame deletes the
+  rows of the object that registered second. `Slot::registration` (monotonic, stamped by `insertSlot`, the only place a
+  row joins the table) + `next_registration_` read under the same `phaseGate` a registration takes → the drain removes
+  only rows older than the ask. Capturing the doomed passes AT the ask is impossible (reading the table there is the
+  very race the gate prevents).
+- **Trap (the queue's lock).** `deferred_take_backs_` is appended from a destructor on any thread and swapped by a drain
+  inside a frame, so it has a leaf `std::mutex`; order `phaseGate` → `deferred_mutex_` on the append path, never the
+  reverse; the drain holds it only across the swap and releases backend state after it.
+- **What it costs nobody.** A frame already built keeps the shape it compiled (a pass holds camera/content/program/
+  target by `intrusive_ptr`), so the dead owner's pass is drawn once more at most; the drain runs after `beginFrame`'s
+  `waitIdle`, so no compiled frame still holds a `raw_ptr` to a removed row. Cost: one vector append per dead owner
+  (2.8 ns plain mutex) + one `swap` per frame.
+- **Caveat, stated.** A row the SAME address updates IN PLACE after asking is still older than the ask and goes with it
+  (a live owner that asks to be taken back and then re-declares is a contradiction, not a case).
+- **Evidence.** `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` (deferred, no refusal report, backend release
+  at the next head), `PlanTest.ATakeBackThatWaitedLeavesRowsRegisteredAfterTheAskAlone` (the recycled address),
+  `PlanTest.ATakeBackStillWaitingWhenTheEngineStopsIsApplied` (shutdown drains),
+  `PlanTest.ATakeBackWhileAFrameIsAnsweredWaitsForTheNextHead` (threaded, the shipped host's order); `test_graphics`
+  699/699; `scripts/tsan_check.sh` 699/699 with 0 warnings; ASan `RESULT: PASS`.
+  `ADR-2026-11-27-a-take-back-is-accepted-never-refused`; `graphics-threading.md` 2.19 / C20 / C24 / T44;
+  `graphics-architecture.md` 2.6 / 2.7.

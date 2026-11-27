@@ -182,6 +182,11 @@ class VN_GRAPHICS_API PassRegistry {
      * @details
      * - A contributor's rows leave with the contributor (see RenderEngine::applyPlan(plan, owner)): a view drops its
      *   chain, a chain that owns its own scope drops itself.
+     * - IT NEVER FAILS AND IT NEVER WAITS (see `graphics-threading.md` 2.19): a teardown runs from a destructor, which
+     *   can neither retry nor block, so a take-back that meets a frame is accepted and applied at the next frame head -
+     *   removing the rows the owner had when it asked, not the rows of a later object at the same address.
+     * - A frame that is already built keeps the passes it compiled; the release runs with the take-back, whenever that
+     *   lands (`RenderEngine::shutdown` lands it too, so it never outlives the engine).
      *
      * @param owner The scope whose rows are removed (an identity).
      */
