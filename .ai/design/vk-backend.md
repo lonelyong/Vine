@@ -579,6 +579,70 @@ and every cache has a witness a test can read.**
   `VkContentDrawTest.AFragmentOnlyProgramIsAWholeFullScreenProgram`,
   `VkContentDrawTest.AComputeStageIsRefusedRatherThanDropped` (§8 T12).
 
+### 2.23 An upload is prepared, then recorded (`G3` / `G4` / `G10`)
+
+- **What it was**: `ContentImages`' texture upload was ONE function that both allocated and recorded. Each layer's
+  staging buffer was created inside the copy loop, so the first faces were already recorded when a later allocation
+  failed - and the failure path then ran `destroyEntry`, an immediate `vkDestroyImage`, while the caller's command buffer
+  held the barrier into `TRANSFER_DST` and the copies of the faces built so far. The frame went on to submit that
+  command buffer, which names a destroyed image (review 19 `Z15`). `ensureFallback` had the same shape one step further
+  along: its `vkCreateImageView` ran AFTER the barrier and the copy, so a refused view destroyed the image those
+  commands named.
+- **What it is**: two halves with different contracts. The **prepare** half builds every object the copy names - the
+  image, its memory, its view, ONE host-visible staging buffer holding every layer and mip, and the region array that
+  reads it - and may fail: it records no command, so its failure path destroys what it built and leaves the caller's
+  command buffer exactly as it found it. The **record** half states `UNDEFINED -> TRANSFER_DST`, one
+  `vkCmdCopyBufferToImage` carrying every region, `TRANSFER_DST -> SHADER_READ_ONLY`, hands the staging buffer to the
+  batch, and ANSWERS NOTHING. The stand-in takes the same order (image, memory, view, 4-byte buffer, then the record
+  verb), so there is one copy path rather than a second one for the 1x1.
+- **Why**: `G3` (prepare -> record -> commit reads in one pass) + `G4` (the SIGNATURE carries the rule: the record half
+  has no failure to report, so no caller can believe it may "undo" a recorded command) + `G10` (one allocation, one
+  mapping and one copy command per upload instead of one per layer). The alternative the review offered - park the
+  failed entry against the batch instead of destroying it - buys a correct destroy for a state that should not exist,
+  and leaves a batch holding staging for a copy whose destination nobody publishes (`D13`).
+- **Boundary**: the split is the rule for anything this backend records from host bytes; a new fill (an array texture, a
+  compute writeback) is prepared first and recorded second. A destroy that follows a recorded command is a RELEASE
+  through the batch's books (`batchAbandoned`) or the park queue (`releaseLater`), never an immediate `vkDestroy*` -
+  which is what those books exist for (`P17`, `P19`).
+- **A witness, not a comment**: the upload's barriers carry the frame's `RecordingTally` like every other frame-path
+  barrier, so "a refused upload records nothing" is a number `Device::recordingNumbers()` answers. Before this the
+  upload was the one recording path whose barriers no report counted.
+- **Cases**: `VkResidencyTest.ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage` (§8 T15).
+
+### 2.24 A frame answers for the picture it promised (`G1` / `G3` / `G4`)
+
+- **What it was**: two answers a frame that did not run gave were not its own. A window frame whose submit or fence
+  failed answered `Skipped`: `rewindUnrunFrame` gave the acquired image back (clearing `window_acquired`) before the
+  present block read that same flag, so the `Lost` branch was UNREACHABLE - and the two consumers that act only on `Lost`
+  (the engine's size re-announcement, the surface's lost-picture line) never ran for the one failure a host must act on
+  (review 19 `Z19`). And a frame that did not complete answered with the PREVIOUS sampled frame's GPU time and per-pass
+  costs: every `books.timing` reset sat inside `if (completed)`, so the failing path carried the last number forward
+  (review 19 `Z20` - which `N7` already forbade, so the second was code behind its own contract).
+- **What it is**: a frame keeps the two facts apart and answers from the right one. `FrameRecording::window_acquired` is
+  the HOLD - "the presentation engine's image is still owed back" - and the one give-back act clears it
+  (`FrameRecording::giveBackWindowImage`, which also replaced the copy of that act `claimPasses` kept).
+  `FrameRecording::picture_owed` is the PROMISE - "this frame took the surface's image, so a picture is coming" - set
+  with the acquire and cleared only by the next frame's `clear()`. The answer is `FrameRecording::unrunOutcome()`: `Lost`
+  when the promise was made, `Skipped` when there was no surface or nothing to present. And the books OPEN DISENGAGED:
+  `books.timing.reset()` sits at the frame's start, beside the frame's own state reset, so a read of THIS frame's pair is
+  the only thing that can engage the device time.
+- **Why**: `G1` (one name, one meaning - a bool that answered both "is the image held" and "was a picture promised" is
+  what let the give-back erase the answer) + `G3` (the answer is computed once instead of re-derived at each failing
+  exit) + `G4` (`unrunOutcome` names a QUESTION, so the three exits that do not present - the buffer that will not
+  begin, the buffer that will not end, the submission the fence never confirmed - all read the same statement). The
+  timing half is the same rule on a different field: an answer that only its own measurement can engage cannot inherit
+  its predecessor's, whatever path the frame leaves by.
+- **Boundary**: `Skipped` keeps two jobs, both "there was nothing to present" - a frame with no presenter at all (an
+  off-screen target), and one whose walk claimed no pass: there the walk withdraws the promise when it gives the image
+  back, because no picture was ever recorded and a swapchain rebuild cannot fix a refused pass (answering `Lost` would
+  buy a device wait per frame for a content defect). A frame that failed BEFORE the acquire (`Refused`, a device that is
+  not up, a lost device) never made a promise and keeps its own answer, and a frame that did run keeps the platform's
+  answer from `WindowTarget::present` - a third fact, unchanged.
+- **Cases**: `VkWindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` (§8 T16) - the assertion
+  used to read `Skipped`, which is the defect itself - and `VkDeviceClockTest.AFrameReportsItsDeviceTime` (§8 T16).
+  Both mutations are recorded: answering from `window_acquired` again turns the first red, and putting the timing resets
+  back inside `if (completed)` turns only the second's new assertion red.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -893,10 +957,18 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **C15 A graphics pipeline states no stage without a module**: no `VkShaderModule` handed to
   `vkCreateGraphicsPipelines` is `VK_NULL_HANDLE` - `buildPipeline` refuses the pair and names the stage that is absent,
   and the refusal is reported as a program fault, never as a state the driver refused (§2.22).
+- **C16 An upload is prepared before it is recorded**: a command that names an object is recorded only after every
+  object it names exists. The prepare half may fail and answers what it built (no command names it, so it dies at
+  once); the record half answers nothing at all. Nothing a recorded command names is destroyed before its submission -
+  such an object is released through the batch's books or the park queue (§2.23).
+- **C17 A frame's answer describes that frame**: a frame that owed the surface a picture and did not present answers
+  `Lost` (`FrameRecording::unrunOutcome`), never `Skipped` - the give-back returns the image, not the promise; and a
+  frame that did not measure its device time answers it ABSENT, never the previous frame's number (§2.24, `N7`).
 
 ### 5.2 Requirements (R#)
 
-- **R1** The validation layer is silent: neither `test_vk` nor a real host produces a VUID.
+- **R1** The validation layer is silent: neither `test_vk` nor a real host produces a VUID - measured 2026-11-27 with
+  `VK_LAYER_KHRONOS_validation` 1.4.341: `test_vk` 237/237 and **0** driver messages (warning or error) across the suite.
 - **R2** The rendered region is read back and compared exactly: a frame's pixels are the ones the recorded commands promise (`Probe` cases), not "something was drawn".
 - **R3** One report per episode: every "cannot" has one `ReportOnce`, and when the condition ends `rearm` happens where it ended.
 - **R4** The witnesses are readable numbers: every conclusion about the cost model and the caches has a number on `Device`, and a test reads it instead of counting
@@ -914,7 +986,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **N5** A cache file is either read back whole (magic / version / key / length all match) or refused; there is no half parse.
 - **N6** After a device loss `initialized()` is false, frames are skipped and one report is made — **`VK_ERROR_DEVICE_LOST` on the allocation path takes the same route as
   on the submission path** (`noteDeviceLost`, §2.12).
-- **N7** A frame's `FrameReport.timing` either belongs to that frame or is absent; the previous frame's value is never reused.
+- **N7** A frame's `FrameReport.timing` either belongs to that frame or is absent; the previous frame's value is never
+  reused - **by construction**: the books open disengaged at the frame's start and only a read of that frame's own
+  timestamp pair engages them, so no exit has to remember to clear it (`VkDeviceClockTest.AFrameReportsItsDeviceTime`
+  drives a refused submit between two frames; review 19 `Z20`, §2.24).
 - **N8 One pass, one dependency**: a pass' entry states every attachment barrier in one `VkDependencyInfo`, so
   `RecordingNumbers::barrier_dependencies` grows by one per pass entry while `barriers` grows by the attachment count
   (`VkContentDrawTest.APassEntryIsOneDependencyWhateverItWrites`).
@@ -1135,6 +1210,40 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   DRAW with `vk.content.program_stage_missing`, and nothing about stage completeness is cached on `ProgramEntry`
   (`VkContentDrawTest.AFragmentOnlyProgramIsAWholeFullScreenProgram`).
 
+### 6.21 P21 A recorded command is a lifetime, not a step
+
+- How it fails: an image destroyed while the command buffer that copies into it is still to be submitted. The call is
+  legal to the API - the image is no longer in use by a SUBMITTED command buffer - and invalid to the submission: this
+  is `VUID-vkDestroyImage-image-01000`, and a driver that does not check reads freed memory when the barrier and the
+  copies execute. The form review 19 found: a staging allocation inside the recording loop, so the failure came AFTER
+  the transition had been recorded, and the failure path destroyed the image that transition named.
+- How to detect it: NOT by the validation layer, measured - with `VK_LAYER_KHRONOS_validation` 1.4.341 installed the
+  `Z15` shape produces no message at all, because the destroy happens before the submission and the layer's in-use
+  check sees only submitted references. The ordering is pinned by numbers instead: `Device::recordingNumbers()` across a
+  frame whose upload is refused must spend exactly what a frame with no upload spends
+  (`VkResidencyTest.ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage`).
+- How to prevent it: the two halves of §2.23 - prepare (fallible, records nothing) then record (records, fails nowhere) -
+  and the rule that a destroy after a recorded command is a RELEASE through the batch's books or the park queue, never
+  an immediate `vkDestroy*`. The failure has to be injected to be reached at all (`vkAllocateMemory` does not fail on a
+  healthy machine): `Device::setMemoryBlockCreator` plus a texture whose staging exceeds the first host-visible block
+  while its image still fits the first device-local one refuses the staging and nothing else.
+
+### 6.22 P22 A give-back must not erase the answer
+
+- How it fails: the acquisition is two facts stated in one flag. `window_acquired` answers "the presentation engine's
+  image is still owed back" and, in the same bool, "this frame promised the surface a picture". A failure path MUST give
+  the image back, so it clears the flag - and the answer that asks "did this frame promise a picture" then reads false
+  on exactly the paths it exists for. Nothing crashes and no VUID fires: the frame answers `Skipped`, the host reads it
+  as "nothing to present", and neither the size re-announcement nor the lost-picture line runs for a picture that really
+  was lost (review 19 `Z19`).
+- How to detect it: a real window frame whose submit is refused (`Device::refuseNextSubmit`) must answer `Lost`, and
+  `VkWindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` read `Skipped` for as long as the
+  defect lived. The shape to watch for is a comment that states the intended answer directly above an assertion pinning
+  the actual one; reading the branch shows nothing, because the branch is well formed and UNREACHABLE.
+- How to prevent it: the fact that must survive an act is a field beside the one the act clears (`picture_owed` /
+  `window_acquired`), the answer is one function every non-presenting exit calls (`unrunOutcome`), and the give-back is
+  one method on the value that owns both facts - so no call site can return the image while dropping the promise.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -1151,16 +1260,18 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | D10 | ending an unheld entry by a TTL, an LRU or a byte cap | `G1`: the SDK states the opposite rule (`graphics-content-lifecycle.md` 2.3: no cap, no LRU, no pressure eviction), and "the host stopped holding it" is already observable exactly - the cache's share is the last one | `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` |
 | D11 | retrying a refused instance upload every frame (the report saved by the episode rule) | `G11` / `G10`: the message was deduplicated but the allocation, the copy and the refusal were not - a broken stream would ask the pool for a block every frame. `Z13` closed it with the flag the other two fills already carry | — |
 | D12 | reporting an unready presenter as `vk.window.presenter_missing` | `G4`: a code is an identity a host matches, and the second condition is not the first fact - the window's own state was never said. `Z14` split the codes and made the window answer `presentationState()` | — |
+| D13 | PARKING a texture entry whose upload was refused, instead of removing the failure from the recording phase | `G1` / `G3`: the interleaving was the defect. Parking keeps a reader of `recordUpload` believing it may fail halfway, and leaves the batch's staging describing a copy whose destination nobody publishes - two answers for "what this batch recorded". One staging buffer per upload plus a prepare/record split removes the state instead (§2.23) | `../decisions/ADR-2026-11-27-an-upload-is-prepared-then-recorded.md` |
+| D14 | answering `Lost` from a local captured at the failure site, or resetting `books.timing` on the failure path | `G1` / `G3`: a local in `executeFrame` is not reachable from `claimPasses`, which is where the walk gives the image back, so the two answers would drift apart again; and "reset the device time where the frame failed" is one more exit to remember - the exit that was forgotten IS `Z20`. One field beside the hold, one answer function, and one reset before any exit can return (§2.24) | — |
 
 ## 8. Tests and Acceptance
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 197 cases / 44 suites on 2026-11-24); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 237 cases / 47 suites on 2026-11-27); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
-| T5 | validation is silent | in those runs `diagnosticCount(InitFailed)` and the layer count are 0 |
+| T5 | validation is silent | in those runs `diagnosticCount(InitFailed)` is 0, and with the layer installed the whole suite produces **0** driver messages (warning or error) - measured 2026-11-27, `VK_LAYER_KHRONOS_validation` 1.4.341 |
 | T6 | a real host | `VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=48 ./Vine --open demo`: median ≈ 8.2 ms, 11 passes / 10 draws, no `vk:` diagnostic |
 | T7 | documentation and gates | `python3 scripts/check_ai_docs.py --strict` + §5.2 R5's scripts |
 | T8 | mutations are load-bearing | recorded in `../memory/graphics.md`: the ring / set, pool and cache-file mutations each turn only their own cases red |
@@ -1170,6 +1281,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T12 | a pipeline never states a stage without a module, and an incomplete program is reported as a program fault (never as a state the driver refused) | `VkContentDrawTest.AProgramWithNoVertexStageIsRefusedAsAProgramFault` (the code, the sentence naming the stage, the clear picture), `AComputeStageIsRefusedRatherThanDropped`, `AFragmentOnlyProgramIsAWholeFullScreenProgram` (the same program is complete for a full-screen pass - §2.22) |
 | T13 | a refused fill is not retried | `VkResidenceWireTest.ARefusedInstanceUploadIsRememberedInsteadOfRetriedEveryFrame` (with block creation refused, the second frame does not reach `vkAllocateMemory`, and a new revision retries) |
 | T14 | an unready presenter names its own cause | `VkWindowPresentTest.ADetachedPresenterAnswersItsOwnReasonInsteadOfAccusingTheHost` (`presentationState() == Detached`; the frame reports `vk.window.not_ready`, never `presenter_missing`) |
+| T15 | an upload records nothing when it is refused, and everything it names outlives the recording | `VkResidencyTest.ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage` (a staging block refused through `Device::setMemoryBlockCreator`: the frame spends exactly what an upload-free frame spends - `Device::recordingNumbers()` - the picture is the stand-in, and the frame after it uploads and samples the texture; the mutation that records the transition before the allocation turns those numbers red - §2.23, §6.21) |
+| T16 | a frame that did not run answers for itself: `Lost` when it owed the surface a picture, and no device time | `VkWindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` (a refused submit through `Device::refuseNextSubmit` on a real window: `Lost`, the image given back, and the NEXT frame presents - the mutation that answers from `window_acquired` again turns it red) and `VkDeviceClockTest.AFrameReportsItsDeviceTime` (a refused submit between two frames answers DISENGAGED, not the sampled frame's number; the mutation that puts the timing resets back inside `if (completed)` turns it red - §2.24, §6.22, `N7`) |
 
 ## 9. Status and Evolution
 
@@ -1178,10 +1291,18 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **236 cases / 47 suites**, `test_graphics` **710 / 87** (2026-11-27, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **237 cases / 47 suites**, `test_graphics` **710 / 87** (2026-11-27, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).
+- **The validation layer runs here since 2026-11-27** (`vulkan-validationlayers` 1.4.341, installed user-locally under
+  `~/.local/share/vulkan`): `validation=on`, `test_vk` 237/237 with the `VK_EXT_debug_utils` case no longer skipping, and
+  **0 driver messages** (warning or error) across the suite - which is `R1` / `T5` measured rather than asserted. What it
+  found was a FIXTURE defect, not a backend one: `VkShadowTest`'s map passes built their `PassDraw` without
+  `PassDraw::program_override`, so a depth-only pass drew the content's colour-writing program (23 layer warnings, one
+  per draw). The product states the override (`ChainBuilder::buildShadowPass`); the fixture now does too, through one
+  helper (`ShadowTest::useDepthProgram`), and the case that collects driver messages asserts none arrive instead of
+  tolerating warnings.
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
   8.16–8.30 ms).
 - **Host allocations, measured once and kept apart** (2026-11-18, Debug + lavapipe, `operator new` counted for one measurement): the backend's
@@ -1221,6 +1342,10 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   residency at the next frame end (§2.5), where it previously stayed for the session. Nothing about the API changed, and a host that
   keeps the buffer and calls `releaseContent` sees exactly what it saw before.
 - **Cache file**: format version `1`; a mismatched version is refused (no migration, no guessing).
+- **Texture uploads are internal**: `ContentImages::viewFor` / `ensureFallback` and `ContentCaches::resolveTextures` take
+  an optional `RecordingTally*` so a refused upload is observable as a number (§2.23). The headers are `internal/`, which
+  promises no stability; nothing a host sees changed, and the sentence a refused staging reports is the one it reported
+  before.
 - **Codes**: `vk.content.program_stage_missing` is new. No code was renamed or reused: a program whose stage list cannot
   fill a graphics pipeline keeps its own cause, and the pipeline codes keep meaning "the driver refused this state".
 - **Device requirements**: a Vulkan **1.3** device (step 2 of `T60`'s batch, `ADR-2026-11-23` D4) with the

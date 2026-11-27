@@ -890,6 +890,23 @@ The failure needs an allocation refusal, which is why it is a defect of the fail
 why it is cheap in the two ways the file already shows: create every layer's staging buffer BEFORE recording any copy,
 or park the entry against the batch (`releaseLater`) instead of destroying it.
 
+**Fixed 2026-11-27, at the cause rather than at either branch.** The interleaving WAS the defect, so the upload now has
+two halves with opposite contracts: `Impl::prepareUpload` builds the image's bytes - ONE host-visible buffer holding
+every layer and mip plus the region array, one allocation and one mapping - and records nothing, so its refusal destroys
+what it built and leaves the caller's command buffer untouched; `Impl::recordUpload` states the two transitions and ONE
+`vkCmdCopyBufferToImage` carrying every region, hands the staging buffer to the batch, and answers `void`, because a
+command the driver already holds cannot be taken back. The stand-in takes the same road (its view is created BEFORE the
+copy, which is legal because a view does not need content), so the second half of the finding - a refused
+`vkCreateImageView` destroying the image the three recorded commands name - is gone with the first.
+
+The review's parking branch was rejected as the next defect: it keeps `recordUpload` reading as "may fail halfway" and
+leaves the batch holding staging for a copy whose destination nobody publishes (`D13`). The upload's barriers also carry
+the frame's `RecordingTally` now, which is what lets the case read "a refused upload records nothing" as a number rather
+than as a comment. The validation layer turned out not to be the witness either: installed later the same day
+(1.4.341), the mutation produces no message at all - the destroy precedes the submission, and the layer checks only
+submitted references. Rule: `vk-backend.md` 2.23 / C16 / P21 / T15;
+`ADR-2026-11-27-an-upload-is-prepared-then-recorded.md`.
+
 ### 17.4 No second finding, one caveat
 
 - `samplers` (`:758-797`) has no eviction: one `VkSampler` per distinct `Sampler` value, kept for the cache's life. A
@@ -1054,6 +1071,9 @@ says "a view that never saw its release would keep steering its camera on pure h
 only covers a release that ARRIVES. The fix is a synthesised release for every held button on the two transitions the
 surface already handles - `handleDestroyed`, and a focus-out / deactivate case in `event()`.
 
+**Declined 2026-11-27** by the owner: not taken (see §27.2 item 14). The finding stands as described below; what changes
+is that the round does not act on it.
+
 ### 20.3 Z18 (low) - three application-thread waits, and only one of them is bounded
 
 `SceneView::applySurfaceGeometry` bounds its wait at 250 ms (`SceneView.cpp:163`) and states why: "this runs on the
@@ -1063,6 +1083,9 @@ The same thread waits with no bound at `SurfaceWindow.cpp:744` (attach) and `:91
 discarded with `(void)` and both taking the default 5000 ms (`RenderEngine.hpp:543`, `:550`). A hung device or a wedged
 frame thread therefore freezes the GUI for five seconds per attach and per first frame, and the `(void)` hides it - the
 one rule the view states is not taken by the two sites that run most often.
+
+**Declined 2026-11-27** by the owner: not taken (see §27.2 item 14). The finding stands as described; the design page
+no longer generalises the bound, so the corpus stops claiming a rule these two sites never took.
 
 ### 20.4 What the host already gets right
 
@@ -1419,7 +1442,9 @@ between them:
 
 - `Z19` - the vk backend's decision about when to answer `Lost` is asserted nowhere; the GUI test feeds the answer
   directly. A test that made a real window frame's fence fail would have caught it (the seam exists:
-  `Device::refuseNextSubmit`).
+  `Device::refuseNextSubmit`). (**since 2026-11-27** that case exists -
+  `WindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` refuses the submit of a real window
+  frame and requires `Lost`; it read `Skipped` - the defect - until then.)
 - `Z21` - no test calls `engine->shutdown()` from a frame-thread sink, so the zombie runner is unobserved (**since
   2026-11-27** `RenderEngineTest.AShutdownFromTheFrameThreadIsRefusedAndTheEngineKeepsRunning` makes the backend report
   from its frame body - the frame-thread sink - and requires the next frame to be answered, and
@@ -1428,7 +1453,8 @@ between them:
   `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` drives the take-back from inside the compile through the
   engine's public door; the appfw composition itself, `~SceneView` with a frame in flight, still has no case).
 - `Z17`/`Z18` - `TheViewReceivesInputAndADragKeepsSteeringIt` covers a release that ARRIVES; the release that never
-  arrives is the untested half.
+  arrives is the untested half (**declined 2026-11-27**: the half stays untested because neither fix is being taken -
+  and the attach-side waits have no seam a test could make time out at all).
 
 So the residue is not "the corpus is thin" - it is that the three mechanisms with a seam are proven and the ones without
 one are read-only. That is a statement about which seams to add next, not about how many tests to write.
@@ -1459,12 +1485,12 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z13` | R13 | low | two of the three fills remember a refusal; an instance upload retries, allocates and copies again on every frame (**fixed 2026-11-27**: `InstanceStream::failed` + the revision it failed at, a new revision retries - §2.5) | `ContentCaches.cpp:371-430`, `:494-497` vs `:318-350` |
 | `Z14` | R14 | low | `vk.window.presenter_missing` accuses the host of a foreign presenter when the window merely has no live chain - and the window's own reason is never reported there (**fixed 2026-11-27**: `WindowTarget::presentationState()` + `vk.window.not_ready`; `presenter_missing` keeps its one meaning) | `Device.cpp:1550-1560`; `WindowTarget.cpp:494-497` |
 
-| `Z15` | R15 | medium | a texture upload that fails mid-record destroys the image the caller's recording command buffer already holds copies and a barrier for, and the frame then submits that command buffer | `ContentImages.cpp:731-733`, `:903`; `:372-373`, `:421`, `:878-891` |
+| `Z15` | R15 | medium | a texture upload that fails mid-record destroys the image the caller's recording command buffer already holds copies and a barrier for, and the frame then submits that command buffer (**fixed 2026-11-27**: an upload is PREPARED then RECORDED - one staging buffer holding every layer and mip, built before the first command, and a record half that answers nothing - `vk-backend.md` 2.23 / C16 / P21) | `ContentImages.cpp:731-733`, `:903`; `:372-373`, `:421`, `:878-891` |
 | `Z16` | R17 | medium-low | a program with no vertex and no fragment module (empty, fragment-only or compute-only) is cached as successfully compiled, and the pipeline build hands `VK_NULL_HANDLE` to `vkCreateGraphicsPipelines` (**fixed 2026-11-27**, and the finding's second half did not hold: both `ensure*Pipeline` refused a moduless pair before the review - the live defects were the wrong code, the requirement stated twice and nowhere at the builder, and a compute stage dropped in silence - `vk-backend.md` 2.22 / C15 / P20) | `ContentCaches.cpp:383-386`, `:424-429`, `:852`, `:856`; `ShaderProgram.cpp:77-81` |
-| `Z17` | R18 | medium-low | a mouse release the surface never sees (window deactivated, platform window recreated mid-drag) leaves the button held and the manipulator dragging, so every later hover steers the camera and repaints | `SurfaceWindow.cpp:566-571`, `:586-596`, `:616`, `:998-1024`; `OrbitCameraManipulator.cpp:424-430`, `:469-473`; `InputRouter.cpp:13-15` |
-| `Z18` | R18 | low | three waits on the application thread, and only one is bounded: `SceneView` takes 250 ms and states why, the attach and first-picture waits take the default 5000 ms and discard the answer | `SceneView.cpp:163`; `SurfaceWindow.cpp:744`, `:915`; `RenderEngine.hpp:543`, `:550` |
-| `Z19` | R20 | medium-low | a window frame whose submit or fence failed answers `Skipped`, never `Lost`: `rewindUnrunFrame` clears `window_acquired` before the present block reads it, so the `Lost` branch is dead - and the swapchain repair and the lost-picture line both key on `Lost` | `Device.cpp:1889-1893`, `:2291`, `:2302-2305`; `RenderEngine.cpp:620-622`; `SurfaceWindow.cpp:941-957` |
-| `Z20` | R20 | low | a frame that did not complete answers with the PREVIOUS sampled frame's GPU time and per-pass costs: every `books.timing` reset sits inside `if (completed)`, and `books` is cleared only by `FrameDriver::destroy()` | `Device.cpp:2222-2271`, `:1431-1457`, `:2565-2580`, `:1398`; `FrameReport.hpp:57-58` |
+| `Z17` | R18 | medium-low | a mouse release the surface never sees (window deactivated, platform window recreated mid-drag) leaves the button held and the manipulator dragging, so every later hover steers the camera and repaints (**declined 2026-11-27** by the owner: not taken) | `SurfaceWindow.cpp:566-571`, `:586-596`, `:616`, `:998-1024`; `OrbitCameraManipulator.cpp:424-430`, `:469-473`; `InputRouter.cpp:13-15` |
+| `Z18` | R18 | low | three waits on the application thread, and only one is bounded: `SceneView` takes 250 ms and states why, the attach and first-picture waits take the default 5000 ms and discard the answer (**declined 2026-11-27** by the owner: not taken; the design page now names the attach-side default instead of generalising the bound) | `SceneView.cpp:163`; `SurfaceWindow.cpp:744`, `:915`; `RenderEngine.hpp:543`, `:550` |
+| `Z19` | R20 | medium-low | a window frame whose submit or fence failed answers `Skipped`, never `Lost`: `rewindUnrunFrame` clears `window_acquired` before the present block reads it, so the `Lost` branch is dead - and the swapchain repair and the lost-picture line both key on `Lost` (**fixed 2026-11-27**: the hold and the promise are two fields, the give-back clears only the hold, and every non-presenting exit reads `unrunOutcome()` - which also gave the end-of-buffer failure the answer it never had - `vk-backend.md` 2.24 / C17 / P22) | `Device.cpp:1889-1893`, `:2291`, `:2302-2305`; `RenderEngine.cpp:620-622`; `SurfaceWindow.cpp:941-957` |
+| `Z20` | R20 | low | a frame that did not complete answers with the PREVIOUS sampled frame's GPU time and per-pass costs: every `books.timing` reset sits inside `if (completed)`, and `books` is cleared only by `FrameDriver::destroy()` (**fixed 2026-11-27**: the books open disengaged at the frame's start, so only a read of that frame's own pair engages them - `N7` by construction - `vk-backend.md` 2.24 / C17) | `Device.cpp:2222-2271`, `:1431-1457`, `:2565-2580`, `:1398`; `FrameReport.hpp:57-58` |
 | `Z21` | R21 | medium-low | `RenderEngine::shutdown()` takes no interval, so a call from the frame thread (a diagnostic sink) half-stops the pump: `FrameRunner::stop()` cannot join itself and leaves `live_` true, the pump returns before clearing `runner_`, and the next frame is handed to a runner whose loop has exited - it never runs, and the frame after blocks for ever in `waitIdle()` (**fixed 2026-11-27**: a teardown is an interval entry that refuses from a frame body, and the runner has one "will this job run" fact the pump publishes; C25 / 2.20) | `RenderEngine.cpp:235-255`; `FramePump.cpp:295-318`; `FrameRunner.cpp:94-116`, `:140-168` |
 | `Z22` | R22 | medium | `SceneView::~SceneView` asks for a SHAPE CHANGE (`clearOwnedBy`) that `beginShapeChange` refuses while a frame is answered - and a destructor can neither wait nor retry, so the view's rows stay in the engine's table with a dead owner and a dropped chain, and `removePass`'s backend release never runs (**fixed 2026-11-27**: a take-back is never refused - deferred to the next compile head, keyed by the registration ticket; C24 / 2.19) | `SceneView.cpp:27-50`; `RenderEngine.cpp:767-776`, `:757-765`; `SurfaceWindow.cpp:226-231`, `:338`; `RenderEngine.cpp:60` |
 
@@ -1540,19 +1566,35 @@ unobserved, and it is recorded here so the next round starts from it rather than
     `RowOwn::Fold` whole while a placement keeps its identity until the node changes (F1 / `D14` / `T37`;
     `ADR-2026-11-27-a-share-compares-the-input-the-select-reads.md`). The review's bare pointer comparison for `Z5` was
     rejected: with a fresh object per read it would stop billboard chunks sharing for no change at all.
-12. **`Z15`** - the failure path stops destroying what the command buffer names: build every layer's staging buffer
-    before recording, or park the entry against the batch the way every other release in the cache does.
-13. **`Z19` + `Z20`** - the failed frame's answer: capture that a picture was expected before the give-back erases it,
-    and disengage the device time the frame did not produce. Both are the `!completed` path in one function.
-14. **`Z17` + `Z18`** - the host half: one synthesised release on the transitions the surface already handles, and one
-    bounded wait wherever the application thread waits.
+12. ~~**`Z15`** - the failure path stops destroying what the command buffer names: build every layer's staging buffer
+    before recording, or park the entry against the batch the way every other release in the cache does.~~ **Done
+    2026-11-27**, at the rule and not at either branch: an upload is PREPARED (fallible, records no command) then
+    RECORDED (`void`, one copy command carrying every region), with ONE staging buffer per upload - so the failure that
+    used to arrive mid-record no longer exists, and the stand-in creates its view before its copy. The review's parking
+    branch was rejected (`D13`); the upload's barriers now carry the tally, which is what makes the property a number
+    (`2.23` / C16 / P21 / T15; `ADR-2026-11-27-an-upload-is-prepared-then-recorded.md`).
+13. ~~**`Z19` + `Z20`** - the failed frame's answer: capture that a picture was expected before the give-back erases it,
+    and disengage the device time the frame did not produce. Both are the `!completed` path in one function.~~ **Done
+    2026-11-27**, at the rule instead of the two branches: the frame's HOLD on the image and its PROMISE to the surface
+    are two fields (`window_acquired` / `picture_owed`), the give-back is one method that clears only the first, and
+    every exit that does not present reads one answer function (`unrunOutcome`) - which also made the end-of-buffer
+    failure answer `Lost`, a third unreachable branch the review did not name. The device time needed no failure path
+    at all: the books OPEN disengaged, so `N7` holds by construction. Both assertions are mutation-proven (`2.24` /
+    C17 / P22 / N7 / D14 / T16).
+14. ~~**`Z17` + `Z18`** - the host half: one synthesised release on the transitions the surface already handles, and one
+    bounded wait wherever the application thread waits.~~ **Declined 2026-11-27** by the owner: not taken. Both findings
+    stand as described and neither is withdrawn - what changes is that the round does not act on them, and that the
+    design page's "who waits, and where" no longer claims the 250 ms bound for the two attach-side waits (same file,
+    §3.6), which is the one corpus defect the finding exposed on its own.
 
 Backlog candidates (**not added**): `Z1`, `Z2`, `Z6`, `Z9`, `Z11`, `Z12`, `Z15`, `Z16`, `Z17` are present defects (no
 trigger needed); `Z7` is latent with a named trigger (a host that shares a program or a material between two engines -
 which the design already promises). `Z12` names its own trigger for a host that drops a `Buffer` without
 `releaseContent`, but the entry it leaves behind is also an unbounded allocation, so it is a defect rather than a
-trigger. `Z18` is one rule that one site takes and two do not. The image cache's sampler table has its own trigger (a
-host that animates a sampler's lod bias); it is recorded in §17.4, not here.
+trigger. `Z18` is one rule that one site takes and two do not. Both `Z17` and `Z18` are **declined** (§27.2 item 14), so
+neither is a backlog candidate: a trigger is what turns a latent item into work, and these two are present defects the
+owner has chosen not to take. The image cache's sampler table has its own trigger (a host that animates a sampler's lod
+bias); it is recorded in §17.4, not here.
 
 The five new ones, the same way: `Z19`, `Z21` and `Z22` are present defects (no trigger needed) - `Z19` needs only a
 device that dies under a fence, `Z21` only a host that shuts its engine down from a diagnostic sink, `Z22` only a window

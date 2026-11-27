@@ -3263,3 +3263,104 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   red; builder guard removed -> the null handle reaches the driver and the draw is reported as a pipeline refusal.
   `ADR-2026-11-27-a-graphics-pipeline-states-two-stages`; `vk-backend.md` 2.22 / C15 / P20 / T12 / 9.3;
   `graphics-rendering.md` F20.
+
+## 2026-11-27 - Z15: an upload is prepared, then recorded
+
+- **The finding.** `ContentImages::recordUpload` recorded the `TRANSFER_DST` barrier FIRST and created one staging
+  buffer per layer inside the copy loop, so a refusal on a later layer returned with the barrier and the earlier copies
+  already recorded - and `viewFor`'s failure path then ran `destroyEntry` (an immediate `vkDestroyImage`) while the
+  caller's command buffer named that image. The frame went on to SUBMIT it (`VUID-vkDestroyImage-image-01000`, or a
+  use-after-free on a driver that does not check). `ensureFallback` had the same shape one step later: `vkCreateImageView`
+  ran after the barrier, the copy and the second barrier.
+- **The rule (2.23 / C16 / P21).** A command the driver already holds cannot be taken back, so the failure is removed
+  from the recording phase instead of being paid for there. PREPARE (`prepareUpload`: one host-visible buffer holding
+  every layer and mip + the region array; may fail, records nothing) then RECORD (`recordUpload`: two transitions, ONE
+  `vkCmdCopyBufferToImage` carrying every region, `void` - nothing left to refuse). The stand-in creates its image,
+  memory and VIEW before its copy (a view does not need content) and calls the same record verb.
+- **Rejected.** Parking the failed entry through `releaseLater` (keeps "may fail halfway" as the function's contract and
+  leaves a batch holding staging for a copy whose destination nobody publishes - D13); a per-upload secondary command
+  buffer (a second object, and it cannot be un-recorded either); one staging buffer per layer built up front (N
+  allocations, N mappings, N copy commands); a validate-then-allocate probe (still fails between the two walks).
+- **The witness had to be a number.** This machine had no validation layer when the case was written, and a mutation
+  recording the transition before the allocation left the first version of the case GREEN - the submitted destroyed image
+  bothered nobody. Fix: the upload's barriers now carry the frame's `RecordingTally` (they were the one frame-path
+  recorder no report counted), so `Device::recordingNumbers()` answers "a refused upload records nothing". Case reads a
+  baseline frame with no upload and requires the refused frame to spend exactly the same; mutation -> red (one
+  dependency, one barrier more). **Correction, measured after installing the layer** (`vulkan-validationlayers`
+  1.4.341, user-local `~/.local/share/vulkan/explicit_layer.d`, 2026-11-27): the layer says NOTHING about this shape -
+  the destroy precedes the submission, so its in-use check never sees the reference. Ordering defects of this kind have
+  to be pinned by counters, not by the layer.
+- **Evidence.** `VkResidencyTest.ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage` (21 MiB texture: its
+  image fits the first 64 MiB device-local block, its staging exceeds the first 16 MiB host-visible one, so the refusal
+  lands on the staging and nothing else). `test_vk` 236 passed / 1 skipped (no `VK_EXT_debug_utils`), 237 cases / 47
+  suites. `ADR-2026-11-27-an-upload-is-prepared-then-recorded`; `vk-backend.md` 2.23 / C16 / P21 / T15 / D13 / 9.3.
+- **Trap.** A texture's staging request is written for the whole upload now, so a cube map asks the pool for one block
+  sized to the request instead of six small ones - the cost model is unchanged in bytes, and `MemoryTest` is where a
+  future block-policy change would show it.
+
+## 2026-11-27 - the validation layer runs here, and the first thing it found was a fixture
+
+- **Installed user-locally** (no root): `vulkan-validationlayers` 1.4.341 unpacked to
+  `~/.local/share/vulkan/{layers,explicit_layer.d}` with the manifest's `library_path` made absolute; the loader searches
+  `$XDG_DATA_HOME/vulkan`, so no environment variable is needed. `VkBackendTest` prints `validation=on`, `test_vk` is
+  237/237 (the `VK_EXT_debug_utils` case stopped skipping), and the suite is now a real R1/T5 gate.
+- **23 WARNINGs, one shape, all from `VkShadowTest`**: "vkCmdDraw(): Inside the fragment shader, it writes to output
+  Location 0 but there is no VkRenderingInfo::pColorAttachments[0]". The PRODUCT was right - `ChainBuilder::buildShadowPass`
+  states `PassDraw::program_override = depthOnlyProgram()` (a fragment stage that declares no output) - and the FIXTURE was
+  wrong: `shadowFrame` and the full-screen case built their map pass without the override, so a depth-only pass drew the
+  content's colour-writing program, the write was discarded, and the picture looked unchanged. Fixed by one fixture helper
+  (`ShadowTest::useDepthProgram`) used by all three map-pass sites, and the case that collects driver messages now
+  asserts NONE arrive instead of tolerating warnings. Measured after: **0 layer messages across the suite**.
+- **Lesson.** A validation message about a pass' PROGRAM is usually a statement about the frame, not the backend: ask
+  which program the pass actually bound before touching the backend. And a tolerance comment ("a WARNING is expected
+  here") is a defect marker - if it is expected, the fixture is modelling a shape the product never produces.
+
+## 2026-11-27 - Z19 + Z20: a failed frame answers for itself
+
+- **The finding.** Two answers a frame that did not run gave were not its own. `rewindUnrunFrame` gave the acquired
+  image back (clearing `recording.window_acquired`) BEFORE the present block read that same flag, so the
+  `completed ? present() : PresentOutcome::Lost` branch was unreachable and every failed window frame answered
+  `Skipped` - the answer for "there was nothing to present". And every `books.timing` reset sat inside
+  `if (completed)`, so a frame whose submit or fence failed reported the PREVIOUS sampled frame's GPU time and
+  per-pass costs. The second was a code path behind its own written contract (`N7`).
+- **The rule (2.24 / C17 / P22 / N7 / D14).** One flag was answering two questions - "is the presentation engine's
+  image still owed back" (the HOLD) and "did this frame promise the surface a picture" (the PROMISE) - and the failure
+  path has to clear the first. Split: `window_acquired` (cleared by the give-back) and `picture_owed` (set with the
+  acquire, cleared only by the next frame's `clear()`). The answer is ONE function both non-presenting exits call,
+  `FrameRecording::unrunOutcome()` -> `Lost` when the promise was made, else `Skipped`; the give-back became one method
+  on the same value (`FrameRecording::giveBackWindowImage`), which also absorbed the copy `claimPasses` kept. The device
+  time needed no failure path: `books.timing.reset()` moved to the frame's START, so `N7` holds by construction and the
+  two inner resets were deleted.
+- **A third branch the review did not name.** With the answer read from the promise, the `vkBeginCommandBuffer` and
+  `vkEndCommandBuffer` failure paths - which returned `Skipped` - answer `Lost` too, because they hold the image and the
+  picture never arrived. `Skipped` is left to a frame with no presenter, and to a walk that claimed no pass (there the
+  give-back WITHDRAWS the promise: answering `Lost` would buy a device wait per frame for a content defect a rebuild
+  cannot fix).
+- **Evidence.** `VkWindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` (its assertion read
+  `Skipped` - the defect itself, under a comment that already said `Lost`) and `VkDeviceClockTest.AFrameReportsItsDeviceTime`
+  (a `Device::refuseNextSubmit` frame between two frames: the refused one answers DISENGAGED). Mutations, both run:
+  reading `window_acquired` again -> first case red (0x01 Skipped instead of 0x02 Lost); resets back inside
+  `if (completed)` -> only the new timing assertion red. `test_vk` 237/237, `test_graphics` 710/710, 0 driver messages.
+- **Trap.** A comment that states the intended answer immediately above an assertion that pins the actual one is the
+  signature of this class: the branch reads correctly because it is well formed and UNREACHABLE. And "clear the flag
+  where you return the resource" is only safe when the flag answers the resource question alone.
+
+## 2026-11-27 - review 19's host half (`Z17` + `Z18`) is DECLINED, not pending
+
+- **The decision.** The owner declined both, so the review's proposed order is complete: nothing in
+  `research/graphics-2026-11-27-review-19.md` is waiting for a batch. Do not re-open either without an owner decision -
+  they are known, named and costed, not oversights, and a later round that "finds" them again has found nothing new.
+- **What stays true in the tree.** A release the surface never sees (window deactivated mid-drag, a platform window
+  recreated through `setWindowHandle`) leaves `held_buttons` set and the manipulator's `drag_` non-None, so every later
+  hover steers the camera and repaints: `handleDestroyed` clears no capture, `event()`'s switch has no focus-out case,
+  and `InputRouter` sends every button-less event to `onMouseMove` whatever the manipulator believes. And
+  `SurfaceWindow`'s attach wait (`:744`) and first-picture wait (`:915`) keep the engine's default five seconds with a
+  `(void)`: a hung device freezes the GUI once per attach and once per first frame.
+- **What the corpus now says.** `graphics-frame-pipeline.md` 3.6 states the 250 ms bound as
+  `SceneView::applySurfaceGeometry`'s ALONE - it is the one application-thread wait with a continuation (the next
+  surface event re-applies the resize), while an attach cannot proceed past its wait without doing what the wait exists
+  to prevent. The sentence used to claim the bound for all three sites, which the tree never did: that over-claim, not
+  the missing timeout, is what a declined `Z18` still had to fix.
+- **Symptom -> cause map for the next reader.** A camera that turns on pure hover after a window loses focus, or after
+  the dock reparents itself, is `Z17` (a press whose release never arrived), not a manipulator bug and not a routing
+  bug.
