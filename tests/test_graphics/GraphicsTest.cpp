@@ -7887,10 +7887,11 @@ TEST(PassChainTest, AFullscreenPassKeepsImportedTextureInputsForItsProgram)
     source->attachColor(RenderTarget::ColorFormat::RGBA8);
 
     PassDesc producer;
-    producer.name   = u8"producer";
-    producer.kind   = DrawKind::Scene;
-    producer.camera = camera;
-    producer.target = vn::graphics::Target::explicitTarget(source);
+    producer.name    = u8"producer";
+    producer.kind    = DrawKind::Scene;
+    producer.camera  = camera;
+    producer.content = vn::test::emptySceneForTest();
+    producer.target  = vn::graphics::Target::explicitTarget(source);
     vn::test::registerPassForTest(*engine, producer);
 
     const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
@@ -13720,8 +13721,19 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     EXPECT_EQ(scene_pass.program_override.get(), override_program.get()) << "the pass states the override once, and the backend draws its commands with it";
     EXPECT_NE(scene_pass.packets[0].commands->front().program.get(), override_program.get()) << "the shared command list is never rewritten";
 
+    // ③ BEFORE ②: a pass with no camera issues no DRAW, but the clear it announces IS its effect on the target - it is
+    // a writer (see RenderPass::writesTarget), so the pass that samples that target runs after it. Announced at 2 and
+    // 1, run at 1 and 2 (review 19 Z11).
+    const FrameDescription::Pass& no_view = value.passes[1];
+    ASSERT_TRUE(no_view.draw.has_value());
+    EXPECT_EQ(no_view.pass->name(), u8"nofview");
+    EXPECT_EQ(no_view.draw->target, target.get());
+    EXPECT_TRUE(no_view.draw->packets.empty()) << "no camera ⇒ no draw, not a draw of nothing";
+    ASSERT_TRUE(no_view.draw->attachment_policy.has_value()) << "and the clear it announces is what makes it a producer";
+    EXPECT_EQ(backend->render_cameras.size(), 1u) << "the backend was handed no second draw packet";
+
     // ② the full-screen pass: a full-screen draw with its source and program, and the input it resolved.
-    const FrameDescription::Pass& screen_entry = value.passes[1];
+    const FrameDescription::Pass& screen_entry = value.passes[2];
     ASSERT_EQ(screen_entry.inputs.size(), 1u);
     EXPECT_TRUE(screen_entry.inputs[0].isProduced());
     EXPECT_EQ(screen_entry.inputs[0].target, target.get()) << "what its declared input resolved to this frame";
@@ -13733,15 +13745,8 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     EXPECT_EQ(screen_pass.packets[0].program.get(), backend->last_program);
     EXPECT_EQ(backend->program_draws, 1);
 
-    // ③ a pass with no camera: an entry that says where and with what, and draws nothing.
-    const FrameDescription::Pass& no_view = value.passes[2];
-    ASSERT_TRUE(no_view.draw.has_value());
-    EXPECT_EQ(no_view.draw->target, target.get());
-    EXPECT_TRUE(no_view.draw->packets.empty()) << "no camera ⇒ no draw, not a draw of nothing";
-    EXPECT_EQ(backend->render_cameras.size(), 1u) << "and the backend was handed no second draw packet";
-
     // ④ a pass with no content: an entry with NO description - nothing at all was announced for it, which is a
-    // different fact from ③ (where the target and the state were announced).
+    // different fact from ③ (where the target and the clear were announced).
     EXPECT_FALSE(value.passes[3].draw.has_value()) << "a scene pass with no scene issues nothing at all, and the value says exactly that";
 
     // The number of draw packets the value claims is the number the backend was handed.
@@ -14914,6 +14919,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     PassDesc producer_desc;
     producer_desc.name         = u8"gbuffer";
     producer_desc.camera       = camera;
+    producer_desc.content      = vn::test::emptySceneForTest(); // a pass with no content announces nothing, so it writes nothing
     producer_desc.target       = Target::explicitTarget(source);
     producer_desc.output.image = image;
     const auto producer        = vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
@@ -14966,6 +14972,7 @@ TEST(RenderEngineTest, AProducerRegisteredLaterIsScheduledFirstAndAWholeMissingP
     PassDesc producer_desc;
     producer_desc.name         = u8"gbuffer";
     producer_desc.camera       = camera;
+    producer_desc.content      = vn::test::emptySceneForTest();
     producer_desc.target       = Target::explicitTarget(source);
     producer_desc.output.image = image;
     const auto producer        = vn::test::applyPassForTest(*engine, std::move(producer_desc), 5);
@@ -15129,6 +15136,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     PassDesc producer_desc;
     producer_desc.name                = u8"gbuffer_pass";
     producer_desc.camera              = camera;
+    producer_desc.content             = vn::test::emptySceneForTest();
     producer_desc.target              = Target::explicitTarget(gbuffer);
     producer_desc.output.whole_target = true;
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -3);
@@ -15195,10 +15203,11 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
 
     // A writer appears (it fills the target; no promise needed): the read is answered.
     PassDesc producer_desc;
-    producer_desc.name   = u8"fill";
-    producer_desc.camera = camera;
-    producer_desc.target = Target::explicitTarget(orphan);
-    const auto producer  = vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
+    producer_desc.name    = u8"fill";
+    producer_desc.camera  = camera;
+    producer_desc.content = vn::test::emptySceneForTest();
+    producer_desc.target  = Target::explicitTarget(orphan);
+    const auto producer   = vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
@@ -15232,9 +15241,10 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     color_only->attachColor(RenderTarget::ColorFormat::RGBA8);
 
     PassDesc producer_desc;
-    producer_desc.name   = u8"light";
-    producer_desc.camera = camera;
-    producer_desc.target = Target::explicitTarget(color_only); // fills the target, but it has no depth
+    producer_desc.name    = u8"light";
+    producer_desc.camera  = camera;
+    producer_desc.content = vn::test::emptySceneForTest();
+    producer_desc.target  = Target::explicitTarget(color_only); // fills the target, but it has no depth
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
 
     auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.depth", ImageRef::Kind::Depth));
@@ -15287,6 +15297,7 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     PassDesc producer_desc;
     producer_desc.name         = u8"scene";
     producer_desc.camera       = camera;
+    producer_desc.content      = vn::test::emptySceneForTest();
     producer_desc.target       = Target::explicitTarget(target);
     producer_desc.output.image = unbound; // declared, but never bound to that target
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
@@ -15352,9 +15363,10 @@ TEST(RenderEngineTest, FullscreenPassWithoutAProgramIsReportedAndDrawsNothing)
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
     target->attachDepth(RenderTarget::DepthFormat::D24);
     PassDesc producer_desc;
-    producer_desc.name   = u8"light";
-    producer_desc.camera = camera;
-    producer_desc.target = Target::explicitTarget(target);
+    producer_desc.name    = u8"light";
+    producer_desc.camera  = camera;
+    producer_desc.content = vn::test::emptySceneForTest();
+    producer_desc.target  = Target::explicitTarget(target);
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
 
     auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.depth", ImageRef::Kind::Depth));
@@ -15517,6 +15529,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     PassDesc producer_desc;
     producer_desc.name                = u8"gbuffer_pass";
     producer_desc.camera              = camera;
+    producer_desc.content             = vn::test::emptySceneForTest();
     producer_desc.target              = Target::explicitTarget(source);
     producer_desc.output.whole_target = true;
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -3);
@@ -15565,9 +15578,10 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
     baked->attachColor(RenderTarget::ColorFormat::RGBA8);
 
     PassDesc producer_desc;
-    producer_desc.name   = u8"bake";
-    producer_desc.camera = camera;
-    producer_desc.target = Target::explicitTarget(baked);
+    producer_desc.name    = u8"bake";
+    producer_desc.camera  = camera;
+    producer_desc.content = vn::test::emptySceneForTest();
+    producer_desc.target  = Target::explicitTarget(baked);
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);
 
     PassDesc pip_desc;
@@ -15609,6 +15623,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     PassDesc producer_desc;
     producer_desc.name                = u8"gbuffer_pass";
     producer_desc.camera              = camera;
+    producer_desc.content             = vn::test::emptySceneForTest();
     producer_desc.target              = Target::explicitTarget(source);
     producer_desc.output.whole_target = true;
     const auto producer               = vn::test::applyPassForTest(*engine, std::move(producer_desc), -3);
@@ -15676,6 +15691,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     PassDesc producer_desc;
     producer_desc.name                = u8"gbuffer_pass";
     producer_desc.camera              = camera;
+    producer_desc.content             = vn::test::emptySceneForTest();
     producer_desc.target              = Target::explicitTarget(source);
     producer_desc.output.name         = u8"GBuffer";
     producer_desc.output.whole_target = true;
@@ -15946,6 +15962,7 @@ TEST(RenderEngineTest, FullscreenPassWithoutAnyInputIsReportedOnce)
     PassDesc producer_desc;
     producer_desc.name         = u8"fill";
     producer_desc.camera       = camera;
+    producer_desc.content      = vn::test::emptySceneForTest();
     producer_desc.target       = Target::explicitTarget(source);
     producer_desc.output.image = image;
     (void)vn::test::applyPassForTest(*engine, std::move(producer_desc), -1);

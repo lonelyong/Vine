@@ -76,6 +76,19 @@ class VN_GRAPHICS_API FullscreenPass : public RenderPass {
      */
     bool describe(raw_ptr<Scene> scene, PassDraw& out) override;
 
+    /** @brief Answers whether the entry describe() will announce changes this pass' target (see RenderPass).
+     *
+     * @details
+     * - The same gate, one step earlier: a full-screen pass announces nothing until an input it could sample EXISTS,
+     *   and an imported texture is never a source (resolveInputTextures keeps only the produced ones), so a
+     *   declaration whose inputs are all textures writes nothing.
+     * - Past that gate the pass writes when a program AND a camera make its packet, or when it states a policy -
+     *   the depth clear a HUD owns inside its own rectangle is the one a full-screen pass states.
+     *
+     * @return true when the pass draws through its program, or announces an attachment policy.
+     */
+    bool writesTarget() const noexcept override;
+
   private:
     /// Source texture sampled by this pass (borrowed; the engine registry keeps it alive).
     raw_ptr<RenderTarget> source_ = nullptr;

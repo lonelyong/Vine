@@ -158,9 +158,10 @@ PassDesc namedPass(const char8_t* name, intrusive_ptr<RenderTarget> target, int 
     desc.name   = name;
     desc.stage  = PassStage::Shading;
     desc.order  = order;
-    desc.kind   = DrawKind::Scene;
-    desc.camera = std::move(camera);
-    desc.target = vn::graphics::Target::explicitTarget(std::move(target));
+    desc.kind    = DrawKind::Scene;
+    desc.camera  = std::move(camera);
+    desc.content = vn::test::emptySceneForTest();
+    desc.target  = vn::graphics::Target::explicitTarget(std::move(target));
     return desc;
 }
 
@@ -809,6 +810,56 @@ TEST(PlanTest, TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt)
 
     // The LATEST publisher serves the name for the rest of the frame (the rule the table states).
     EXPECT_EQ(engine->resolve(u8"SceneColor"), engine->pass(u8"writer_b")->renderTarget());
+}
+
+/*
+ * @brief A pass that announces NOTHING does not fill the target it names, so its reader is reported (review 19 Z11).
+ *
+ * "Who fills this target" has to be one answer: the scheduler orders by it, the produced table resolves a declared
+ * input by it, and the wiring check reports a wire nobody serves by it. A declared target is not a written one - a
+ * Scene pass with no scene announces nothing at all (see RenderPass::describe) - and the old filler rule ("a pass with
+ * a target fills it") silently told a reader it had content, so the wrong picture arrived with no report at all.
+ */
+TEST(PlanTest, APassThatAnnouncesNothingDoesNotFillItsTarget)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+
+    // The declared "writer": a camera and the target, and no content - so it issues nothing at all.
+    PassDesc silent = namedPass(u8"silent", colourTarget(), -1, camera);
+    auto     orphan = silent.target.target;
+    silent.content  = nullptr;
+    // The reader samples that target.
+    PassDesc reader = namedPass(u8"reader", colourTarget(), 10, camera);
+    reader.inputs   = { ImageInput::byTarget(orphan) };
+    ASSERT_NE(vn::test::applyPassForTest(*engine, std::move(silent)), nullptr);
+    ASSERT_NE(vn::test::applyPassForTest(*engine, std::move(reader)), nullptr);
+
+    engine->frame();
+
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u)
+        << "nobody fills the target, so the reader is told once";
+    const FrameDescription& frame = engine->frameDescription();
+    ASSERT_EQ(frame.passes.size(), 2u);
+    ASSERT_EQ(frame.passes[1].inputs.size(), 1u);
+    EXPECT_FALSE(frame.passes[1].inputs[0].isProduced()) << "the producer never wrote it, so the input resolved to nothing";
+
+    // The same declaration PLUS content: now it draws, and the wire is served.
+    const auto filled = vn::test::updatePassForTest(*engine, engine->pass(u8"silent"), [](PassDesc& stated) {
+        stated.content = vn::test::emptySceneForTest();
+    });
+    ASSERT_NE(filled, nullptr);
+    engine->frame();
+
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u) << "one more frame, nothing more to say";
+    const FrameDescription& served = engine->frameDescription();
+    ASSERT_EQ(served.passes.size(), 2u);
+    ASSERT_EQ(served.passes[1].inputs.size(), 1u);
+    EXPECT_TRUE(served.passes[1].inputs[0].isProduced()) << "a pass that draws fills the target it draws into";
 }
 
 /*

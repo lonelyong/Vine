@@ -185,9 +185,11 @@ void SessionShape::compileFrame()
         // What it publishes: the name serves the rest of the frame (the latest publisher wins the name, as the
         // per-frame registry did).
         publishRowOutput(pass);
-        // What it fills: drawing into a target fills every image it has, which is what an object-typed declared
-        // input is answered from. Linear and idempotent - several passes may fill one target.
-        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
+        // What it fills: a pass that WRITES its target fills every image it has, which is what an object-typed
+        // declared input is answered from. Linear and idempotent - several passes may fill one target. The predicate
+        // is the pass' own (see RenderPass::writesTarget), so a target a pass merely NAMES is not a target this frame
+        // holds: a consumer of it is reported instead of reading whatever the last frame left there.
+        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr && pass->writesTarget()) {
             resources_.recordProduced(drawn_into);
         }
     }
@@ -223,17 +225,12 @@ void SessionShape::scheduleRows()
         }
     }
 
-    // "A pass writes its target" is the producer half. It is judged from the DECLARATION (the resolution runs after
-    // this order is known), and it mirrors what the backend counts as a write: a pass that can issue a draw. A pass
-    // that merely names a target (no camera, no program) writes nothing and orders nothing - a clear is part of a
-    // draw, not a substitute for one.
-    const auto writes = [](const RenderPass& pass) -> bool {
-        if (const auto* screen = obj_cast<FullscreenPass>(&pass)) {
-            return screen->program() != nullptr && !pass.inputs().empty();
-        }
-        return pass.camera() != nullptr && (pass.content() != nullptr || pass.isClearEnabled());
-    };
-    const auto add_edges = [this, count, &writes](std::uint32_t consumer, const RenderTarget* target) {
+    // "A pass writes its target" is the producer half, and it is NOT answered here: the pass announces it (see
+    // RenderPass::writesTarget), so the edge, the produced table below and the wiring's filler check cannot disagree
+    // about who produces what. The camera-less case is why: a pass that issues no draw still CLEARS the target it
+    // states, so the old rule here ("a clear is part of a draw") let a consumer run before the clear - a wrong
+    // picture with nothing reported, because the other two answers already counted the target as filled.
+    const auto add_edges = [this, count](std::uint32_t consumer, const RenderTarget* target) {
         if (target == nullptr) {
             return;
         }
@@ -242,7 +239,7 @@ void SessionShape::scheduleRows()
                 continue; // sampling what this pass itself writes is the feedback pattern, not a cycle
             }
             RenderPass* const writer = plan_rows_[producer].pass;
-            if (writer != nullptr && writer->isEnabled() && writer->renderTarget() == target && writes(*writer)) {
+            if (writer != nullptr && writer->isEnabled() && writer->renderTarget() == target && writer->writesTarget()) {
                 scheduler_->addEdge(producer, consumer);
             }
         }
@@ -268,7 +265,7 @@ void SessionShape::scheduleRows()
                 for (std::uint32_t producer = 0; producer < count; ++producer) {
                     RenderPass* const writer = plan_rows_[producer].pass;
                     if (producer != consumer && writer != nullptr && writer->isEnabled() && writer->renderTarget() != nullptr &&
-                        writer->outputName() == input.name() && writes(*writer))
+                        writer->outputName() == input.name() && writer->writesTarget())
                     {
                         scheduler_->addEdge(producer, consumer);
                     }
@@ -421,8 +418,9 @@ void SessionShape::collectPictureShapeMismatches()
     //   * a FullscreenPass, whose full-screen triangle is built in clip space and reads no projection (see
     //     BuiltinShaders::fullscreenVertexProgram): its camera states the view the lighting is computed in, so the
     //     rectangle cannot stretch what it draws;
-    //   * a pass that is disabled (it draws nothing), has no camera (it draws nothing - see RenderPass::describe),
-    //     or has no content (a scene pass with no scene issues nothing at all);
+    //   * a pass that is disabled (it draws nothing), has no camera (it issues no draw - see RenderPass::describe;
+    //     the clear such a pass may state is not a picture), or has no content (a scene pass with no scene issues
+    //     nothing at all);
     //   * an orthographic camera only in the sense that its SHAPE is its window's, not its aspect (see Camera):
     //     the window is what the picture is projected for, so that is what the rectangle is measured against.
     shape_mismatches_this_frame_.clear();
@@ -883,8 +881,9 @@ void SessionShape::collectPlanProblems()
 
 void SessionShape::collectOutputClaims()
 {
-    // PHASE 1: WHO FILLS AND WHO CLAIMS. Drawing into a target fills every attachment it has, and a promise claims
-    // the image (or images) it names. The fillers come from ALL passes (a declaration is a declaration), the claims
+    // PHASE 1: WHO FILLS AND WHO CLAIMS. A pass that WRITES its target fills every attachment it has (see
+    // RenderPass::writesTarget - the declaration's own answer, where a clear counts as much as a draw), and a promise
+    // claims the image (or images) it names. The fillers come from ALL passes (a declaration is a declaration), the claims
     // from the ENABLED ones only — what the collision report is about is "whoever runs last silently wins", and a
     // disabled pass runs nothing.
     //
@@ -921,9 +920,11 @@ void SessionShape::collectOutputClaims()
                                        reportedPassName(pass)));
         }
 
-        // Drawing into a target fills it: every attachment it has holds this pass' content
-        // afterwards. This is the physical fact the input rules below are answered from.
-        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
+        // A pass that WRITES its target fills it: every attachment it has holds this pass' content afterwards
+        // (a clear is one of the ways it writes - see RenderPass::writesTarget, the ONE predicate this check, the
+        // scheduler and the produced table share). This is the physical fact the input rules below are answered
+        // from, so a pass that announces nothing does not make its declared target a filled one.
+        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr && pass->writesTarget()) {
             wiring_.noteFilled(Declaration{ nullptr, drawn_into, pass, index });
         }
 

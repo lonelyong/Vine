@@ -348,6 +348,34 @@ invariants between the two halves.
   chain's (stage `Transparent`, one order step earlier than any other pass of it). A host drawing its own background
   uses the pair and states its own placement. `D17` records the rejected alternatives.
 
+2.16 **A pass' announcement says whether it writes its target** (`G1` / `G4` / `G11`; review 19 `Z11`):
+
+The producer half of the frame's wiring is one question - "does this pass change the target it draws into" - and it used
+to be answered in three places with two different rules. `scheduleRows`' `writes` lambda said "a clear is part of a
+draw, not a substitute for one", so a camera-less pass added no edge while the backend recorded its clear; the produced
+table and the wiring's filler check said "a pass with a target fills it", so a pass that announces nothing at all had
+its target counted as filled. The first made a consumer run before the clear it reads with NOTHING reported (the other
+two had already declared the target filled), and the second silenced a report a reader should have received.
+
+- **One answer, on the pass**: `RenderPass::writesTarget()` is true when the entry the pass announces changes its
+  target - a draw packet, or an announced attachment policy. A CLEAR IS A WRITE: the backend opens the pass' own load
+  ops over the target even when no packet draws, which is what makes a camera-less pass a clear-only pass rather than a
+  pass that does nothing.
+- **The value side is the same rule**: `describe()` fills the `PassDraw`, and `passHasEffect(const PassDraw&)` asks the
+  announcement the identical question. The declaration-time form exists because the ORDER is compiled before any pass is
+  described - the order is what makes a description's inputs resolvable - so the pair is compared shape by shape in
+  `PassScheduleTest.TheWriterPredicateIsTheShapeOfTheAnnouncement` and a drift between them is a test failure.
+- **Three readers, one predicate**: `scheduleRows`' producer edges, `FrameResources::recordProduced` (what a later pass
+  may resolve) and the wiring's filler check (`engine.pass.input_*_not_produced`) all call `writesTarget()`. A pass
+  cannot be a producer in one and a non-producer in another.
+- **A pass that announces nothing writes nothing**: a Scene pass with no scene and a full-screen pass with no source
+  announce nothing at all, so a target a pass merely NAMES is not a written target, and its reader is reported.
+- Boundary: what a pass announces is the pass' own fact, so a subclass that overrides `describe()` overrides
+  `writesTarget()` with it (the two built-in pairs sit beside each other); `writesTarget()` says nothing about whether
+  the engine RUNS the pass - a disabled pass writes nothing and the caller decides (the scheduler excludes it, while the
+  wiring check reads declarations even for a row that does not run, so an untested shape is still reported). The
+  full-screen gate is a PREDICTION about a source that has not resolved yet; `N15` states what it can and cannot know.
+
 ## 3. Features
 
 ### 3.1 Targets
@@ -380,6 +408,7 @@ invariants between the two halves.
 | F14 | Full-screen ABI | Source colour attachments occupy 0..C-1, depth follows, imported sources fill the remaining bindings in declaration order. |
 | F15 | Sampler | min/mag, mipmap, address, border, anisotropy, lod bias, LOD range; cached by value. |
 | F27 | One input list | `PassDesc::inputs`: one `ImageInput` per declaration, each naming one identity (`byImage` / `byTarget` / `byName` / `byTexture`); resolution, edges, wiring checks, the frame table and `Plan::describe` read that one list in declaration order (2.13). |
+| F31 | One writer predicate | `RenderPass::writesTarget()`: the pass changes its target when it issues a packet or announces an attachment policy (a clear is a write). The scheduler's producer edges, the produced table and the wiring's filler check read that one answer (2.16). |
 
 ### 3.4 Colour
 
@@ -463,6 +492,7 @@ invariants between the two halves.
 | C6 | A format is a target only when the device backs colour attachment, sampling AND transfer-source for it; a target asking for anything less is refused by name, never attempted. |
 | C7 | A pass' inputs are ONE ordered list of `ImageInput`; each entry names one identity, and every reader (resolution, edges, wiring checks, frame table, plan description) reads that list in declaration order. |
 | C8 | A background is NOT content: the chain draws it from a scene of its own, and no pass that walks the picture's content (G-buffer, shadow, content bounds) sees it. |
+| C9 | "A pass writes its target" is `RenderPass::writesTarget()` alone: a draw packet or an attachment policy, never a re-derived rule. The scheduler's edge, the produced table and the wiring's filler check read it, so they cannot disagree (2.16). |
 
 ### 5.2 Requirements (R#)
 
@@ -492,6 +522,7 @@ invariants between the two halves.
 | N12 | A shader writes `vec4` into any colour format; the attachment keeps its own channels and drops the rest, so a value added to the vocabulary needs no second fragment-output contract - and a product narrower than four channels is a mask, not a picture with empty channels (`P4`). |
 | N13 | `validatePlan` judges only `ImageInput::byName` entries (a plan has no frame); a target/image identity is judged by the compile that resolves it. Both walk the same `PassDesc::inputs` list, so no input is invisible to one reader and visible to another. |
 | N14 | A background fragment's depth IS the cleared value (`kFarClipZ`) and it writes none: it therefore passes exactly where an empty pixel is still stored, whatever the scene's size or the camera's far plane. |
+| N15 | No declaration-time answer can see a resolved input. A full-screen pass whose declared input a producer does not fill this frame is a writer on paper and announces nothing in fact: the graph carries one superfluous edge (harmless for the picture, and `writesTarget` is never allowed to UNDER-count) while the reader of its target goes unreported. That is the price of deciding an order before any input exists (2.16). |
 
 ## 6. Caveats and Traps
 
@@ -584,6 +615,7 @@ invariants between the two halves.
 | T7 | Every colour format: `VkContentTargetTest.AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack` (agreement between the device mask and the build path, plus the 8-bit readback values), `VkBackendTest.AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse` (mapping, names, all-or-nothing feature rule), `CoreReadbackTest.TheTablesAnswerATexelWidthOrNothingAndCoverBothSides`, `RenderTargetTest.MultipleColorAttachments`. |
 | T8 | One input list: `PlanTest.TheDescriptionSpellsEveryDeclaredInput` (every identity spelled in one order), `RenderTest.NamedOutputAndInputSlots` (an empty name declares nothing), `RenderPassTest.ObjectTypedOutputAndInputImages` (kinds and declaration order), `OwnedFrameTest.TheOwnedFrameKeepsWhatItsProducersReleased` (a whole target resolves like an imported texture does), `PassChainTest.AShadowThisChainCannotShadeIsReported` (the shadow map appears in the frame table), `PassScheduleTest.AProducerRunsBeforeAConsumerAnnouncedEarlier` (the edge comes from a target identity). |
 | T9 | The background: `VkBackgroundTest.TheBackgroundFollowsTheCameraAndHoldsTheFarPlane` (content 50 units away beats a unit box, and the frame is the map five units from the box's origin), `VkBackgroundTest.AnOrthographicViewKeepsTheShellItsRaysLeaveThrough` (an identity camera never samples the antipodal face), `PassChainTest.ABackgroundIsAChainOwnedPassAboveTheShading` (own scene, own state, row order in the frame table, published by the chain), `PassChainTest.ABackgroundMakesTheDeferredChainCompositeAndInstallsItsMap` (the composite, the borrowed depth, the live map switch, the refusal). |
+| T10 | One writer predicate: `PassScheduleTest.TheWriterPredicateIsTheShapeOfTheAnnouncement` (seven pass shapes, `writesTarget()` equals "the announced entry changes its target" including the camera-less clear and the announces-nothing shapes), `PassScheduleTest.AClearOnlyPassRunsBeforeTheConsumerThatSamplesItsTarget` (the order and the resolved wire), `PlanTest.APassThatAnnouncesNothingDoesNotFillItsTarget` (a declared target is not a filled one, and content makes it one), `RenderEngineTest.TheFrameValueIsEveryPassAndEveryDrawTheFrameRan` (a camera-less pass clearing the target a composite samples is ordered first). |
 
 ## 9. Status and Evolution
 

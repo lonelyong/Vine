@@ -1,3 +1,4 @@
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
@@ -8,6 +9,7 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/Texture.hpp>
 #include <vine/graphics/WindowPresentTarget.hpp>
 
 #include <vine/intrusive_ptr.hpp>
@@ -90,6 +92,7 @@ PassDesc writingPass(const char8_t* name, intrusive_ptr<RenderTarget> target, in
     desc.order         = order;
     desc.kind          = DrawKind::Scene;
     desc.camera        = std::move(camera);
+    desc.content       = vn::test::emptySceneForTest();
     desc.target        = vn::graphics::Target::explicitTarget(std::move(target));
     desc.clear_enabled = true;
     return desc;
@@ -264,4 +267,141 @@ TEST(PassScheduleTest, ATargetsSampleCountTravelsWithItAndDefaultsToOne)
     const FrameDescription& frame = engine->frameDescription();
     ASSERT_EQ(frame.passes.size(), 1u);
     EXPECT_EQ(target->samples(), 4u) << "a frame does not consume the count: the target keeps saying it";
+}
+
+/*
+ * @brief A pass with no camera still CLEARS what it targets, so it is a producer: the consumer that samples that
+ * target runs after it (review 19 Z11).
+ *
+ * The frame's schedule is decided before any pass is described, so "does this pass write its target" is asked of the
+ * DECLARATION. The old answer here was "a clear is part of a draw, not a substitute for one", which let a composite
+ * run before the clear it reads - and nothing was reported, because the other two answers (the produced table and the
+ * wiring's filler check) already counted the camera-less pass' target as filled. The wrong picture was the only
+ * symptom, which is why this case pins the ORDER and the resolved wire, not a sentence.
+ */
+TEST(PassScheduleTest, AClearOnlyPassRunsBeforeTheConsumerThatSamplesItsTarget)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera  = vn::make_intrusive<Camera>();
+    auto cleared = colourTarget();
+
+    // The reader is announced first AND stacks first: only the producer edge can put the clear ahead of it.
+    PassDesc composite   = writingPass(u8"composite", colourTarget(), -100, camera);
+    composite.kind       = DrawKind::Fullscreen;
+    composite.program    = vn::graphics::fullscreenCopyProgram();
+    composite.inputs     = { ImageInput::byTarget(cleared) };
+    vn::test::registerPassForTest(*engine, composite);
+    // The writer draws nothing at all: no camera, so its only effect is the clear it announces.
+    vn::test::registerPassForTest(*engine, writingPass(u8"clear", cleared, 100, nullptr));
+
+    engine->frame();
+
+    const FrameDescription& frame = engine->frameDescription();
+    ASSERT_EQ(frame.passes.size(), 2u);
+    EXPECT_EQ(frame.passes[0].pass->name(), u8"clear") << "the clear is a write, so it is ordered first";
+    EXPECT_EQ(frame.passes[1].pass->name(), u8"composite");
+    ASSERT_TRUE(frame.passes[0].draw.has_value());
+    EXPECT_TRUE(frame.passes[0].draw->packets.empty()) << "and the order came from the clear, not from a draw";
+    EXPECT_TRUE(frame.passes[0].draw->attachment_policy.has_value());
+
+    ASSERT_EQ(frame.passes[1].inputs.size(), 1u);
+    EXPECT_EQ(frame.passes[1].inputs[0].target, cleared.get()) << "the composite samples what the clear wrote this frame";
+}
+
+/*
+ * @brief ONE PREDICATE, checked against the announcement itself: `writesTarget()` equals "the entry this pass
+ * announces changes its target", shape by shape (review 19 Z11).
+ *
+ * The question is asked twice by construction - of the declaration, because the order is decided before any
+ * description exists, and of the value, which is what the backend records - so the two answers are compared here for
+ * every shape a built-in kind can take. A drift between them is a wrong picture: the schedule orders (or does not
+ * order) a reader by an answer the frame then contradicts.
+ */
+TEST(PassScheduleTest, TheWriterPredicateIsTheShapeOfTheAnnouncement)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera  = vn::make_intrusive<Camera>();
+    auto content = vn::test::emptySceneForTest();
+    auto sampled = colourTarget();
+    auto texture = intrusive_ptr<Texture2D>(new Texture2D(4, 4, vn::imaging::PixelFormat::Rgba8Unorm));
+
+    struct Shape
+    {
+        PassDesc                  desc;
+        std::vector<ImageSource>  resolved; // what the engine would hand resolveInputTextures
+        const char*               what;
+        bool                      writes;
+    };
+
+    std::vector<Shape> shapes;
+
+    // ① a scene pass that draws: a camera is a packet.
+    PassDesc drawing = writingPass(u8"drawing", colourTarget(), 0, camera);
+    drawing.content  = content;
+    shapes.push_back({ std::move(drawing), {}, "scene pass with a camera draws", true });
+
+    // ② the case this batch is about: no camera, so no packet - and the clear it announces is its whole effect.
+    PassDesc clearing = writingPass(u8"clearing", colourTarget(), 0, nullptr);
+    clearing.content  = content;
+    shapes.push_back({ std::move(clearing), {}, "a camera-less pass clears what it targets", true });
+
+    // ③ no camera and no clear: the pass announces where it is and changes nothing.
+    PassDesc naming        = writingPass(u8"naming", colourTarget(), 0, nullptr);
+    naming.content         = content;
+    naming.clear_enabled   = false;
+    naming.clear_depth     = false;
+    shapes.push_back({ std::move(naming), {}, "a pass that states neither a draw nor a clear writes nothing", false });
+
+    // ④ no scene: the pass announces nothing at all, so its declared target is not a written target.
+    PassDesc contentless = writingPass(u8"contentless", colourTarget(), 0, camera);
+    contentless.content  = nullptr;
+    shapes.push_back({ std::move(contentless), {}, "a scene pass with no scene announces nothing", false });
+
+    // ⑤ a full-screen pass drawing through its program over a resolved produced source.
+    PassDesc drawn_screen = writingPass(u8"drawn_screen", colourTarget(), 0, camera);
+    drawn_screen.kind     = DrawKind::Fullscreen;
+    drawn_screen.program  = vn::graphics::fullscreenCopyProgram();
+    drawn_screen.inputs   = { ImageInput::byTarget(sampled) };
+    shapes.push_back({ std::move(drawn_screen), { ImageSource::producedTarget(sampled.get()) }, "a full-screen pass with a program draws", true });
+
+    // ⑥ a full-screen pass whose only input is an imported texture: nothing can ever resolve to be its source.
+    PassDesc textured  = writingPass(u8"textured", colourTarget(), 0, camera);
+    textured.kind      = DrawKind::Fullscreen;
+    textured.program   = vn::graphics::fullscreenCopyProgram(1);
+    textured.inputs    = { ImageInput::byTexture(texture) };
+    shapes.push_back({ std::move(textured), { ImageSource::imported(texture.get()) }, "a full-screen pass with no produced input announces nothing", false });
+
+    // ⑦ no program, no packet - and the depth clear a HUD owns inside its own rectangle is still a write.
+    PassDesc hud       = writingPass(u8"hud", colourTarget(), 0, camera);
+    hud.kind           = DrawKind::Fullscreen;
+    hud.inputs         = { ImageInput::byTarget(sampled) };
+    hud.clear_depth    = true;
+    shapes.push_back({ std::move(hud), { ImageSource::producedTarget(sampled.get()) }, "a full-screen pass that states a clear writes", true });
+
+    for (std::size_t index = 0; index < shapes.size(); ++index) {
+        // One pass at a time: an engine whose plan holds only this shape, so describe() sees exactly one declaration.
+        vn::test::clearPassesForTest(*engine);
+        std::vector<ImageSource> resolved = shapes[index].resolved;
+        const auto               pass     = vn::test::applyPassForTest(*engine, shapes[index].desc);
+        ASSERT_NE(pass, nullptr) << shapes[index].what;
+        pass->resolveInputTextures(resolved);
+
+        PassDraw   draw;
+        const bool announced = pass->describe(pass->content(), draw);
+        const bool effect    = announced && passHasEffect(draw);
+
+        EXPECT_EQ(pass->writesTarget(), shapes[index].writes) << shapes[index].what;
+        EXPECT_EQ(pass->writesTarget(), effect) << "the declaration's answer IS the announcement's: " << shapes[index].what;
+        if (pass->writesTarget()) {
+            EXPECT_TRUE(announced) << "a pass that writes always announces something: " << shapes[index].what;
+        }
+    }
 }

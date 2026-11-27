@@ -58,9 +58,11 @@ struct VN_GRAPHICS_API PassDesc {
     /// How this pass executes (see DrawKind).
     DrawKind kind{ DrawKind::Scene };
 
-    /// View the pass draws through (held; null draws nothing, as any pass without a camera does).
+    /// View the pass draws through (held; null issues NO DRAW - a Scene pass with content then announces its clear and
+    /// nothing else, so it is a clear-only pass, not a pass that does nothing - see RenderPass::writesTarget).
     intrusive_ptr<Camera> camera{ nullptr };
-    /// Content a Scene pass draws (held). Null draws nothing; an overlay pass may own its own scene.
+    /// Content a Scene pass draws (held). Null announces nothing at all, not even the target (see RenderPass::describe);
+    /// an overlay pass may own its own scene.
     intrusive_ptr<Scene> content{ nullptr };
 
     /// WHERE this pass draws: the window, an explicit target, or a transient declared by identity (see Target).

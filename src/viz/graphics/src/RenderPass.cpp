@@ -143,6 +143,19 @@ void RenderPass::fillPassFacts(PassDraw& out)
     out.packets.clear();
 }
 
+bool RenderPass::writesTarget() const noexcept
+{
+    // THE SAME TWO FACTS describe() BRANCHES ON, asked before a description exists (the graph is compiled first):
+    // the announcement happens at all, and inside it either a camera makes a packet or the attachment policy makes
+    // the pass' own effect. A CAMERA-LESS PASS IS A WRITER: its clear is what the backend records for it (see
+    // Device's claimPasses - "a clear is the pass' own load-op, so a clear-only pass is a real pass with no draws"),
+    // so "it draws nothing" is a statement about packets, not about the target.
+    if (content() == nullptr) {
+        return false; // a Scene pass with no scene announces nothing at all - not even a target (see describe)
+    }
+    return desc_.camera != nullptr || attachmentPolicy().has_value();
+}
+
 bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
 {
     if (scene == nullptr) {
@@ -152,7 +165,8 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     }
     fillPassFacts(out);
     if (desc_.camera == nullptr) {
-        // No view to build: the pass announces what it is and where, and issues no draw.
+        // No view to build: the pass announces what it is and where, and issues no draw. THE CLEAR IT ANNOUNCED IS
+        // ITS WHOLE EFFECT, which is what makes it a producer for the frame (see writesTarget).
         return true;
     }
     DrawPacket draw;

@@ -41,6 +41,31 @@ void FullscreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
     }
 }
 
+bool FullscreenPass::writesTarget() const noexcept
+{
+    // THE SAME GATE describe() APPLIES, one step earlier (the graph is compiled before any input resolves).
+    // describe() answers false while `source_` is null, and resolveInputTextures() only ever keeps a PRODUCED input,
+    // so a declaration whose inputs are all imported textures has nothing to sample and writes nothing.
+    const auto names_a_produced_input = [](const std::vector<ImageInput>& inputs) {
+        for (const ImageInput& input : inputs) {
+            switch (input.kind()) {
+            case ImageInput::Kind::Image:
+            case ImageInput::Kind::Target:
+            case ImageInput::Kind::Name: return true; // a producer may fill one of these
+            case ImageInput::Kind::Texture:
+            case ImageInput::Kind::None: break; // the host owns a texture: it is never this pass' source
+            }
+        }
+        return false;
+    };
+    if (!names_a_produced_input(desc_.inputs)) {
+        return false;
+    }
+    // Past the gate: a packet needs a program AND a camera (describe pushes no other), and what a pass without one
+    // may still change is the attachments it stated a policy for.
+    return (desc_.program != nullptr && desc_.camera != nullptr) || attachmentPolicy().has_value();
+}
+
 bool FullscreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
 {
     if (source_ == nullptr) {

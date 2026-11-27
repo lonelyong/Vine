@@ -92,13 +92,21 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (105)
+## decisions/ — decision records (ADRs) (106)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target.md` — **a pass says whether it writes its target**: the
+  producer half of the frame ("does this pass change the target it draws into") had three answers and two of them were
+  wrong - the scheduler's rule said a clear is not a substitute for a draw (so a consumer could run before a camera-less
+  pass' clear with NOTHING reported), and the fill checks said a pass with a target fills it (so a pass that announces
+  nothing silenced its reader's report). The pass now owns the answer (`RenderPass::writesTarget()`: a draw packet OR an
+  attachment policy, the same rule `passHasEffect` asks of the announcement), and the scheduler's edge, the produced
+  table and the wiring's filler check all call it - review 19 `Z11`, with the rejected "a camera-less pass announces
+  nothing", "keep the three answers", "describe first and order from the value" and "merge onto the filler rule" shapes.
 - `ADR-2026-11-27-a-teardown-is-an-interval-entry.md` — **a teardown is an interval entry**: `RenderEngine::shutdown()`
   takes the lease `prepare()` takes and holds it across the whole teardown, so a call from a frame body (a diagnostic
   sink on the frame thread - where the vk backend reports a lost device) or from another host thread mid-build is

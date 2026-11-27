@@ -95,7 +95,11 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /**
      * @brief Gets the content scene this pass draws.
      *
-     * @return The scene (null draws nothing, which is how a content-less pass states itself).
+     * @details
+     * - Null is how a content-less Scene pass states itself, and it announces NOTHING at all - not even the target
+     *   it declared (see describe), so it writes nothing either (see writesTarget).
+     *
+     * @return The scene (null announces nothing).
      */
     [[nodiscard]] raw_ptr<Scene> content() const noexcept
     {
@@ -129,7 +133,12 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /**
      * @brief Gets the camera this pass draws through.
      *
-     * @return The camera (null draws nothing).
+     * @details
+     * - A camera is the view a draw packet needs, so without one the pass issues NO draw - and a Scene pass with
+     *   content and a target still announces its clear, which makes it a clear-only pass rather than a pass that does
+     *   nothing (see writesTarget).
+     *
+     * @return The camera (null issues no draw).
      */
     [[nodiscard]] raw_ptr<Camera> camera() const noexcept
     {
@@ -358,6 +367,33 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
+     * @brief Returns whether this pass changes the target it draws into this frame.
+     *
+     * @details
+     * - THE DECLARATION-TIME FORM OF ONE QUESTION: does the entry this pass announces touch its target? True when it
+     *   issues at least one draw packet, or when it announces an attachment policy - a CLEAR IS A WRITE, because the
+     *   backend opens the pass' own load ops over the target even when no packet draws.
+     * - ONE ANSWER, THREE READERS: the frame's scheduler orders a consumer after every writer this is true for, the
+     *   produced table makes the target available to a later pass, and the wiring checks count the pass as a filler.
+     *   Those three used to answer the question separately, and the one that answered "a camera-less pass writes
+     *   nothing" silently let a consumer run before a clear (`G1` / `G11`).
+     * - A PASS THAT ANNOUNCES NOTHING WRITES NOTHING: false for a Scene pass with no scene and for a full-screen
+     *   pass with no source (see describe), so a target a pass merely NAMES is not a written target.
+     *
+     * @note
+     * - What a pass announces is its own fact, so a subclass overrides this TOGETHER with describe(): a kind that
+     *   states one without the other is a kind whose graph and whose picture disagree (`G12`).
+     * - The answer is about the pass' OWN content - the scene the engine hands describe() - because a frame compiles
+     *   its graph from declarations. `execute(scene)` takes a scene the caller chooses and reads no graph, so it asks
+     *   nothing of this.
+     * - Whether the engine RUNS the pass is not part of the answer: the scheduler excludes a disabled pass itself, and
+     *   the wiring check reads the declaration even for a row that does not run.
+     *
+     * @return true when the pass' announcement changes the target (it draws, or its policy touches the attachments).
+     */
+    [[nodiscard]] virtual bool writesTarget() const noexcept;
+
+    /**
      * @brief Describes what this pass issues this frame: its target, its state and its draw packets.
      *
      * @details
@@ -369,6 +405,8 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * - A pass that issues NOTHING this frame answers false (a scene pass with no scene, a full-screen pass with no
      *   resolved source): nothing is announced at all, which keeps "this pass is not running" distinguishable from
      *   "this pass has no picture" (an empty PassDraw::packets).
+     * - THE FRAME'S ORDER IS DECIDED FROM writesTarget(), NOT FROM THIS CALL: an override states that answer beside
+     *   this one, because the graph is compiled before any description is filled.
      *
      * @param scene Content scene to draw (a scene pass with none issues nothing; a content-agnostic pass ignores it).
      * @param out   Receives the description; untouched when this returns false.
@@ -412,6 +450,20 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void fillPassFacts(PassDraw& out);
 
+    /**
+     * @brief The attachment policy this pass announces, or nothing when it states neither a clear nor an op.
+     *
+     * @details
+     * - THE ONE RULE for both spellings: the group flags answer every attachment, and a stated per-attachment op
+     *   overrides its own attachment. A pass that only states ops ("load both, discard one") still announces a policy,
+     *   because that statement is what a backend must receive.
+     * - PROTECTED BECAUSE THE ANNOUNCEMENT IS THE SUBCLASS' TOO (see describe / writesTarget): a kind that states its
+     *   own description answers "does this pass clear, and how" from this rule instead of restating it.
+     *
+     * @return The policy, or nullopt when this pass clears nothing and states no per-attachment op.
+     */
+    [[nodiscard]] std::optional<AttachmentPolicy> attachmentPolicy() const;
+
     /// The declaration this pass IS: one storage for every fact the pass states.
     ///
     /// Protected because a subclass that states something of its own (FullscreenPass names the program it draws through)
@@ -420,18 +472,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
 
   private:
     friend struct detail::PassNode;
-
-    /**
-     * @brief The attachment policy this pass announces, or nothing when it states neither a clear nor an op.
-     *
-     * @details
-     * - THE ONE RULE for both spellings: the group flags answer every attachment, and a stated per-attachment op
-     *   overrides its own attachment. A pass that only states ops ("load both, discard one") still announces a policy,
-     *   because that statement is what a backend must receive.
-     *
-     * @return The policy, or nullopt when this pass clears nothing and states no per-attachment op.
-     */
-    [[nodiscard]] std::optional<AttachmentPolicy> attachmentPolicy() const;
 
     /**
      * @brief Adopts @p desc as this pass' whole declaration (see detail::PassNode).

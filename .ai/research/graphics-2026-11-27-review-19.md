@@ -572,7 +572,7 @@ over the run order that resolves each row's inputs and publishes its output name
 publishes a scene (`buildFrameValue`'s note), so a publication that lands after the frame was built cannot change what
 it draws - the property `Z7` and `Z2` depend on holding.
 
-### 13.2 Z11 (medium-high) - "does this pass write its target" has three answers, and two of them are wrong
+### 13.2 Z11 (medium-high) - "does this pass write its target" has three answers, and two of them are wrong (**fixed 2026-11-27**: `RenderPass::writesTarget()` is the one answer, read by the scheduler, the produced table and the wiring's filler check; a clear is a write - 2.16 / C9 / `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target.md`)
 
 The same question is asked in three places, and only one of them is the physical fact:
 
@@ -597,6 +597,13 @@ target, content and no camera clears with the **default** clear colour, because 
 Three fixes are each self-consistent and only one is true; the honest one is to make `writes` the announcement's
 predicate (`describe` returns `true`) and to keep the clearing statement where it already is - or to make a camera-less
 pass announce nothing, which changes `RenderPass::describe` and the SDK sentence together.
+
+**Fixed 2026-11-27.** The announcement IS the physical fact, so it won: `RenderPass::writesTarget()` answers "does the
+entry this pass announces change its target" for the declaration (a draw packet, or an announced attachment policy),
+`passHasEffect` answered the same question of the value all along, and the two are compared shape by shape
+(`PassScheduleTest.TheWriterPredicateIsTheShapeOfTheAnnouncement`). The scheduler's lambda and the fill checks'
+`renderTarget() != nullptr` shortcut are deleted; a pass that announces nothing no longer fills its declared target, so
+its reader is reported instead of reading last frame's picture.
 
 ### 13.3 Verified in this round
 
@@ -1342,7 +1349,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z8` | R4 | medium | the first-person keyboard look still calls `orbit()` (the eye arcs); the mouse look does not; `F5` says the arrows travel | `OrbitCameraManipulator.cpp:449-463`; `graphics-navigation.md:123` |
 | `Z9` | R9 | medium | `test_graphics` compiles twelve private TUs unconditionally, so the engine's suite cannot run under ASan on Linux - the ownership graph has no address-safety witness (**fixed 2026-11-27**: the module's object set is now linked instead, `graphics-architecture.md` 2.19) | `tests/test_graphics/CMakeLists.txt:38-59`; `.ai/memory/graphics.md` |
 | `Z10` | R10 | low | the navigation page's `F5` sentence is `Z8`'s defect on the corpus side | `graphics-navigation.md:123` |
-| `Z11` | R11 | medium-high | "does this pass write its target" is answered three ways and the scheduler's answer is false for a camera-less clearing pass, so a consumer may be ordered before the clear | `RenderPass.cpp:146-158`; `Device.cpp:1524-1530`, `:2063`; `EngineCompile.cpp:226-231`; `EngineCompile.cpp:925` |
+| `Z11` | R11 | medium-high | "does this pass write its target" is answered three ways and the scheduler's answer is false for a camera-less clearing pass, so a consumer may be ordered before the clear (**fixed 2026-11-27**: `RenderPass::writesTarget()` is the one answer - a draw packet or an attachment policy - read by the scheduler, the produced table and the wiring's filler check, `graphics-rendering.md` 2.16 / C9) | `RenderPass.cpp:146-158`; `Device.cpp:1524-1530`, `:2063`; `EngineCompile.cpp:226-231`; `EngineCompile.cpp:925` |
 | `Z12` | R13 | medium | an instance stream is keyed by a borrowed `Buffer` address with no keep-alive and no identity, and its version (`revision`, starting at 0) is not unique across objects: a recycled address inherits the previous object's bytes | `ContentCaches.hpp:155-163`; `ContentCaches.cpp:318-350`; `Buffer.hpp:385` |
 | `Z13` | R13 | low | two of the three fills remember a refusal; an instance upload retries, allocates and copies again on every frame | `ContentCaches.cpp:371-430`, `:494-497` vs `:318-350` |
 | `Z14` | R14 | low | `vk.window.presenter_missing` accuses the host of a foreign presenter when the window merely has no live chain - and the window's own reason is never reported there | `Device.cpp:1550-1560`; `WindowTarget.cpp:494-497` |
@@ -1381,8 +1388,13 @@ unobserved, and it is recorded here so the next round starts from it rather than
    thread makes the runner inline BEFORE it returns (C25 / 2.20; `ADR-2026-11-27-a-teardown-is-an-interval-entry.md`).
    The review's two statements were rejected: clearing the "live" flag early also makes `wait`/`waitIdle` answer idle
    while the last job runs, and clearing `runner_` loses the only handle that can join the thread.
-5. **`Z11`** - the same family as 2 and the only finding whose wrong answer is a picture: settle the predicate once
-   (what `describe` announces) and let the scheduler, `recordProduced` and the SDK sentence read it from there.
+5. ~~**`Z11`** - the same family as 2 and the only finding whose wrong answer is a picture: settle the predicate once
+   (what `describe` announces) and let the scheduler, `recordProduced` and the SDK sentence read it from there.~~
+   **Done 2026-11-27**, at the rule: the pass owns the answer (`RenderPass::writesTarget()` - a draw packet OR an
+   attachment policy, so a camera-less pass' clear is a write), the same rule the SDK already asked of the value
+   (`passHasEffect`), and the scheduler's edge / the produced table / the wiring's filler check all call it (2.16 /
+   C9 / N15 / T10; `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target.md`). The review's "make a camera-less
+   pass announce nothing" alternative was rejected: it deletes the clear-only pass the backend already records.
 6. **`Z12`** - the instance stream's key: hold the `Buffer` it was built from (the geometry path's own shape) so the
    address cannot be recycled underneath it, and withdraw the entry when the buffer's last reference goes.
 7. **`Z6`** - the override's withdrawal (one verb, plus the binding key).

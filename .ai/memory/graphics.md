@@ -3095,3 +3095,35 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   703/703 with 0 warnings; ASan `RESULT: PASS`; `ctest` 31/31.
   `ADR-2026-11-27-a-teardown-is-an-interval-entry`; `graphics-threading.md` 2.17 / 2.20 / C25 / T45 / F10;
   `scripts/diagnostic_codes.txt` (two new codes).
+
+## 2026-11-27 - Z11: a pass says whether it writes its target
+
+- **The defect.** "Does this pass change the target it draws into" was answered three times by two rules. `scheduleRows`'
+  `writes` lambda said `camera != nullptr && (content != nullptr || isClearEnabled())` with the comment "a clear is part of
+  a draw, not a substitute for one", so a camera-less pass added NO producer edge while the backend recorded its clear
+  (`target.begin` with its load ops); `recordProduced` and the wiring's `noteFilled` said
+  `renderTarget() != nullptr`, i.e. a pass with a target fills it. A consumer of a camera-less clearing pass' target
+  could therefore be ordered BEFORE the clear with nothing reported (the fill checks had already called the target
+  filled), while a pass that announces nothing at all silenced its reader's `engine.pass.input_target_not_produced`.
+- **The rule (2.16 / C9).** `RenderPass::writesTarget()` is the ONE answer: true when the entry the pass announces changes
+  its target - a draw packet, OR an announced attachment policy (a clear is a write: the backend opens the pass' own load
+  ops even with no packet). `describe()` fills the value and `passHasEffect(const PassDraw&)` already asked the same rule
+  of it; the pair is pinned shape by shape. The scheduler's edge, `FrameResources::recordProduced` and the wiring's filler
+  check all call `writesTarget()`; the `obj_cast<FullscreenPass>` branch and the `renderTarget() != nullptr` shortcut are
+  deleted. `FullscreenPass` overrides it beside its `describe()`: no produced input in the declaration = nothing can
+  resolve to be its source; past that gate, program AND camera, or a stated policy. `attachmentPolicy()` widened from
+  private to protected so a subclass answers from the same rule.
+- **Residual (N15).** The full-screen gate is a PREDICTION (the order is compiled before any input resolves): a
+  full-screen pass whose declared input a producer does not fill this frame is a writer on paper and announces nothing -
+  a superfluous edge (harmless) but the reader of its target goes unreported. `writesTarget()` may over-count, never
+  under-count: an under-count is the wrong picture.
+- **Test-shape consequence.** Every test that modeled "a writer" as `camera + target` now names content
+  (`vn::test::emptySceneForTest()` in `tests/PlanTestSupport.hpp`): that shape announces nothing, which is what the
+  corrected rule says. `RenderEngineTest.TheFrameValueIsEveryPassAndEveryDrawTheFrameRan` re-derives its run order -
+  the camera-less pass it already contained now clears the target its composite samples, so it runs first.
+- **Evidence.** `PassScheduleTest.TheWriterPredicateIsTheShapeOfTheAnnouncement` (7 shapes, declaration == announcement),
+  `PassScheduleTest.AClearOnlyPassRunsBeforeTheConsumerThatSamplesItsTarget` (fails on the old lambda),
+  `PlanTest.APassThatAnnouncesNothingDoesNotFillItsTarget` (fails on the old fill rule); `test_graphics` 706/706;
+  `scripts/tsan_check.sh` 706/706 with 0 warnings; ASan `RESULT: PASS`; `ctest` 31/31.
+  `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target`; `graphics-rendering.md` 2.16 / C9 / N15 / F31 / T10;
+  `graphics-architecture.md` 2.5.

@@ -66,6 +66,29 @@ inline vn::raw_ptr<const vn::graphics::RenderPass> framePassForTest()
 }
 
 /**
+ * @brief The content a test pass draws: one published, empty scene.
+ *
+ * @details
+ * - A SCENE PASS WITH NO SCENE ANNOUNCES NOTHING AT ALL - not even the target it declares (see RenderPass::describe),
+ *   so it writes nothing (RenderPass::writesTarget). A case that stands a pass in for "the writer of this target"
+ *   therefore has to give it content, and publishing it is what keeps the compile from reporting
+ *   `engine.compile.unpublished_scene` (a frame draws only from a publication).
+ * - ONE SCENE FOR THE WHOLE PROCESS: "a picture with nothing in it" is the same value everywhere, and a scene nobody
+ *   mutates cannot carry state from one case into the next.
+ *
+ * @return The scene (shared; it outlives every case).
+ */
+inline vn::intrusive_ptr<vn::graphics::Scene> emptySceneForTest()
+{
+    static const vn::intrusive_ptr<vn::graphics::Scene> s_scene = [] {
+        vn::intrusive_ptr<vn::graphics::Scene> scene(new vn::graphics::Scene());
+        scene->publish(); // a frame draws only from a publication (see Scene::publish)
+        return scene;
+    }();
+    return s_scene;
+}
+
+/**
  * @brief States one declaration and answers the registered node.
  *
  * @details

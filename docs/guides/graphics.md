@@ -153,7 +153,12 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
     写在 `describe`（引擎编译这一帧时调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）；要"先做什么"
     （写内容，比如 HUD 自更新）是对象自己的 `FrameUpdate::onFrame()`（链/宿主在帧之前调用，见 §3.6）。**`execute()` 不是扩展点**（2026-10-19 起它不再是
     `virtual`）：它是"宿主自己驱动一条 pass"（或测试）时的拼写，内部就是"描述 → 把只含这一条 pass 的帧值交给
-    后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。子类想改变画什么，覆写 `describe()`。
+    后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。子类想改变画什么，覆写 `describe()`；
+    它宣告的"写不写自己的 target"同理由 pass 自己回答（`writesTarget()`，见 `.ai/design/graphics-rendering.md` §2.16）。
+  - **没有相机 = 不发绘制，但清屏照旧发生**：一条有 content、有 target、没有相机的 Scene pass 是一条
+    **clear-only pass** —— 它宣告的清屏就是它对 target 的全部作用，所以它仍算**写入者**：读这个 target 的
+    pass 会被排在它之后。反过来，**没有 content 的 Scene pass 什么都不宣告**（连 target 都不宣告），
+    读它 target 的 pass 会收到"没人写它"的接线报告。
 - `FullscreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
   隐式拷贝）：
   - 把源的**每一张**彩色附件按 binding 0..N-1 绑成采样纹理，用它画一个全屏三角形；想读哪张附件，
