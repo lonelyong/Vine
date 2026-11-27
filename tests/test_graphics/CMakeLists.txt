@@ -35,28 +35,17 @@ set(SRC_FILE_LIST
         GuideExamplePasses.cpp)
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
-target_link_libraries(${TEST_NAME} vn::Graphics vn::Geom vn::Models)
+# THE MODULE'S OBJECTS, NOT ITS DLL. This suite drives libGraphics' PRIVATE half - the draw-list table where both
+# producers of a draw list meet, the publication store, the frame mechanisms, the scene rows - so it has to call
+# those definitions, and those definitions may exist only ONCE in the process: here, in this binary. Linking the
+# shared library while compiling its translation units in (the old, Windows-shaped workaround) defined every private
+# class twice; AddressSanitizer reports that as an out-of-line ODR violation before the first case runs. The object
+# set is the module's, built once for both images (src/viz/graphics/CMakeLists.txt), and it brings the module's own
+# dependencies with it - so this target never loads libvnGraphics at all, on any platform.
+target_link_libraries(${TEST_NAME} vn::GraphicsObjects vn::Geom vn::Models)
 # The render-world test drives the library's internal draw-list table (src/, not the SDK): that table is where both
 # producers of a draw list meet, so the test has to see it.
 target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src/viz/graphics/src)
-# The table, the publication and the frame mechanisms live in libGraphics' private half. On Linux the shared object
-# exports them, so the cases can link them from there; on Windows a DLL exports only what the SDK declares, so the
-# private translation units that answer those calls are compiled INTO this binary - the same treatment a backend's
-# device-free half needs. Only translation units that define private types belong here: a public symbol would
-# have to come from the library instead (see check_export_annotations.py).
-target_sources(${TEST_NAME} PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/DrawListBake.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/DrawListDiff.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/DrawListMemo.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/FrameExpand.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/FramePump.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/FrameRunner.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/PublicationStore.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/ResidencyTable.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/ScenePublisher.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/SceneRows.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/SceneSnapshot.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/viz/graphics/src/SnapshotSource.cpp)
 # The embedded-shader test includes the generated SDK shader header; wire the
 # rule so the header exists before this target compiles (cmake/VineShaders.cmake).
 vn_use_embedded_shaders(${TEST_NAME} OUTPUT vine/graphics/EmbeddedShaders.hpp SOURCES)

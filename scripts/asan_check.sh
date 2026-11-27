@@ -23,6 +23,10 @@
 # Wider runs:
 #   VN_ASAN_FILTER='*' scripts/asan_check.sh              # whole test_gui suite
 #   VN_ASAN_TARGET=test_core VN_ASAN_FILTER='*' scripts/asan_check.sh
+#   VN_ASAN_TARGET=test_graphics VN_ASAN_FILTER='*' scripts/asan_check.sh
+#       (the engine's own suite. It links the module's OBJECT SET rather than the shared library, so one definition
+#        exists per process and no ODR report is possible; before 2026-11-27 the target compiled a dozen of the
+#        library's translation units into itself and ASan aborted at load. Measured 2026-11-27: 687 cases, PASS.)
 #   VN_ASAN_LEAKS=1 scripts/asan_check.sh                 # + LeakSanitizer
 #
 # PLUGIN LOADING, under STRICT leak judging. What a report may still contain,

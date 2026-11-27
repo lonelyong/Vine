@@ -92,13 +92,19 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (96)
+## decisions/ — decision records (ADRs) (101)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-module-test-links-the-modules-objects.md` — **a module's test links the module's objects, not its
+  DLL**: `vn_add_library(... OBJECT_TARGET ...)` compiles the module once and makes the shared library a shell around
+  the object set, so `test_graphics` links `vn::GraphicsObjects` instead of the library plus twelve copied translation
+  units - two definitions of one private class in one process is an ODR violation ASan reports at load, and the
+  `if(WIN32)` guard and a second export macro are rejected (the first leaves Windows holding the duplicate, the second
+  puts `src/` types on the export table).
 - `ADR-2026-11-26-host-program-contract-is-the-push-range.md` — **the host-program contract is the push range, stated
   in the SDK**: `VinePushRange` (128 B: the folded projection and `view * model`) declares what a host-authored stage
   receives and which clip convention the projection carries, while the unbound `VineViewBlock` (288 B, uploaded by no
@@ -400,7 +406,40 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   world-sized box with no depth contract; a first-person look is an orbit and two of four modes are compared nowhere.
   Also derives the front-face constant from `VkFrontFace`, so the follow-up's measurement and the specification agree,
   and lists the sentences the landings left behind. Adds no backlog entry.
-(The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
+- `graphics-2026-11-27-review-19.md` — the nineteenth pass: **the machinery rounds and the picture half**, twenty-three
+  object families with one question each (the plan is §1 and is the page's own deliverable; §13-§16 are the four machinery
+  objects the plan deferred, §17-§20 the four picture-half ones - the image cache's table and staging batches, dynamic
+  rendering and the target record, shader reflection, and the host's paint loop - and §22-§26 the five areas those named
+  next: the backend's memory tier and its eight small private units, `Device.cpp` outside the pass walk, the engine's
+  threading half, the appfw surface above the paint loop, and the tests as oracles - all read line by line). Reads what
+  review 18 says it did not walk - the frame
+  machinery, the threading model, the backend's memory tiers - plus a re-read of the navigation landings and the tests
+  that prove them. Twenty-two findings - the describe-once cache is guarded in `Geometry` and unguarded in `ShaderProgram`
+  and `MaterialValues`, while the threading design cites `Geometry`'s lock as the reason shared content is thread-safe
+  (highest value: one pattern, applied twice); `publish` / `unpublish` / `resolve` / `transientTarget` touch
+  `FrameResources`, whose own contract says "no synchronisation is needed"; `bindPassContent` rewrites the storage
+  `applyPlan` gates, without the gate; "does this pass write its target" is answered three ways and the scheduler's
+  answer is false for a camera-less clearing pass, so a consumer can be ordered before the clear; `bindSnapshot` is
+  permanent, its "empty handle clears the binding" means "draw nothing", and a binding is keyed by a scene address it
+  outlives; an instance stream is keyed by a borrowed `Buffer` address with a restarting revision, so a recycled address
+  inherits the previous object's bytes; the first-person keyboard look still orbits the eye while the mouse look does
+  not, and the navigation page says the arrows travel; `test_graphics` compiles twelve private TUs unconditionally, so
+  the engine's suite cannot run under ASan on Linux; a texture upload that fails mid-record destroys the image the
+  caller's recording command buffer already names, and the frame submits that command buffer; a program with no vertex
+  and no fragment module is cached as compiled and hands `vkCreateGraphicsPipelines` a null module; a mouse release the
+  surface never sees leaves a button held, so every later hover steers the camera and repaints; a window frame whose
+  submit or fence failed answers `Skipped` instead of `Lost`, because the give-back clears `window_acquired` before the
+  present block reads it, so the swapchain repair never runs for the one failure a host must act on; that same path
+  leaves the previous sampled frame's GPU time in the failed frame's answer; an engine shut down from its own frame
+  thread (a diagnostic sink) leaves the pump pointing at a runner whose loop has exited, which accepts work and never
+  runs it; and a `SceneView` destroyed while a frame is answered asks for a shape change the gate refuses, which a
+  destructor can neither wait for nor retry, so its passes stay in the frame with a dead owner. Also records the
+  ownership-vocabulary audit (no fifth spelling on the public surface), the corpus baseline, and the three rounds whose
+  only finding is a sentence (`vk.window.
+  presenter_missing` names the wrong cause; the third fill forgets a refusal the other two remember; one wait on the
+  application thread is bounded at 250 ms and two take the five-second default). Adds no backlog
+  entry; §27 lists the order.
+  (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
 

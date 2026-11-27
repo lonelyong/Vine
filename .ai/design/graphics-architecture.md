@@ -1,7 +1,7 @@
 # graphics architecture: device, engine, chain, one frame
 
 > **Status**: current
-> **Last verified**: 2026-11-25
+> **Last verified**: 2026-11-27
 > **Scope**: the layering of device/window/area/view/engine, and one frame's compilation and scheduling.
 > **Sources**: `RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsHandle.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`.
@@ -277,6 +277,18 @@ removing an unregistered pass and removing an already removed pass are the same 
     to live in a header named after the resolved `ImageSource` (`BC-44` moved it).
     Boundary: no umbrella header and no reorganisation of existing headers - moving 101 files is churn (`G8`), and the
     reader-facing index is `docs/guides/graphics.md` §5.1's translation table.
+2.19 **A module's own test is INSIDE the module and holds no second definition of it** (`G1` / `G10` / `G12`): the
+    module's sources compile once into an OBJECT SET; the shared library is the image its clients link, and the module's
+    test links the object set instead. Why: the suite drives the private half (the frame pump, the publication store,
+    the scene rows, the draw-list table), so it must call those definitions - but a binary that both loads the library
+    and compiles the module's translation units holds two definitions of every private class, an out-of-line ODR
+    violation that AddressSanitizer reports before the first case runs (measured 2026-11-27: `odr-violation ...
+    typeinfo name for vn::graphics::detail::SnapshotSource`, one copy in `bin/test_graphics`, one in `libvnGraphics`).
+    Boundary: the EXPORT TABLE does not change - the private half is still exported by nothing and declared in no
+    installed header (`check_export_annotations.py`'s law), because the test's view of it is a BUILD fact, not an API.
+    `cmake/VineLibraryHelper.cmake`'s `OBJECT_TARGET` owns the rule; a test that wants the private half names
+    `vn::GraphicsObjects`, never a file list
+    ([ADR-2026-11-27](../decisions/ADR-2026-11-27-a-module-test-links-the-modules-objects.md)).
 
 ## 3. Features
 
@@ -393,6 +405,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | C3 | Scheduling is in the engine only; the backend only materialises `FrameDescription.passes`. |
 | C4 | A public SDK header states the CONTRACT, not the survey: it names no concrete backend (`check_vk_exposure.py` V5) and no unit a plugin keeps in its own `internal/` (V6) - the id's meaning is the contract, the table that answers it is that plugin's. The one exception is a diagnostic code, whose prefix is an identity a host matches. |
 | C5 | A backend module states its SDK ABI revision once (`VN_DECLARE_RENDER_BACKEND_ABI()`), and the registry refuses another revision before it calls into the module. A virtual set or a value type that crosses the boundary changes ⇒ `VN_RENDER_BACKEND_ABI_VERSION` is bumped in the same change, and a new virtual ships a default implementation. |
+| C6 | A module's test links the module's OBJECT SET (`vn::<ShortName>Objects`), never its shared library plus copies of its sources: one definition per process, on every platform (`cmake/VineLibraryHelper.cmake`'s `OBJECT_TARGET`, 2.19). |
 
 ### 5.2 Requirements (R#)
 
@@ -437,6 +450,17 @@ removing an unregistered pass and removing an already removed pass are the same 
   a backend that is absent from `entries()` although its plugin reports a successful load.
 - How to prevent it: rebuild the module against this SDK. Do NOT "fix" it by reading `RenderBackendInfo` first - that read is
   the crash the refusal exists to avoid, and it is why the refusal carries no backend name.
+
+### 6.4 A test that compiles a module it also links
+
+- How it fails: the binary holds a second definition of every class it compiles in, beside the library's. Nothing warns
+  at build time; under AddressSanitizer the process aborts at LOAD (`odr-violation` on a `typeinfo name`), and without a
+  sanitizer the suite silently drives the copies the library's own objects never see - a `static` or a `thread_local`
+  in the test's copy is not the library's.
+- How to detect it: `ldd bin/<test>` names the module although the target also lists its sources; ASan's report names
+  the same file once per image.
+- How to prevent it: link the module's object set (C6, 2.19) and write no source list in `tests/`; a module whose
+  private half a test needs is the module's own to hand out, never the test's to recompile.
 ## 7. Rejected Options
 
 | # | Rejected | Reason |
@@ -449,6 +473,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | D6 | A `FrameBorrowed<T>` marker type on `FrameDescription` | The answer to borrowing is already "own it if you keep it" (`OwnedFrame`); a borrowed window is only one `executeFrame` call wide, and a marker type would pierce `FrameDescription` / `PassDraw` / `ImageSource` and could be bypassed by `auto` (`G8` / `G10`). |
 | D7 | A public GPU resource type, or a polymorphic resource table | A host never names a GPU object, so the type would have no consumer at any backend count; a base class would be a forwarding layer over whichever library creates the object (`G7`), and it would need a device reference on the resource (`G2`). See 2.15 and [ADR-2026-11-10](../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md) option D. |
 | D8 | Reporting the ABI through a virtual (`RenderBackendFactory::abi()`) or a field of `RenderBackendInfo` | Both are reads through the object the check has not vouched for yet: a stale module's vtable or layout makes the report itself the crash. The handshake is a C entry point returning a standard-layout value (`BackendAbi.hpp`, 2.16). |
+| D9 | Guard the test's private `target_sources` with `if(WIN32)`, or export the private half with a second export macro | The guard leaves the SAME duplicate definition on Windows - the platform it was written for - so it hides the cause instead of removing it; an export macro puts `src/` types on the export table, contradicting "`sdk/` is everything exported" and the gate rule that a declaration crossing the DLL boundary lives in the installed API root. See [`ADR-2026-11-27`](../decisions/ADR-2026-11-27-a-module-test-links-the-modules-objects.md). |
 
 ## 8. Tests and Acceptance
 
@@ -458,6 +483,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | T2 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_public_docs.py` 0 findings. |
 | T3 | `test_vk` on the lavapipe + validation device: 0 VUID, no skipped device case, and the window pixels asserted through `TestHostWindow.hpp`. |
 | T4 | The ABI gate: `test_graphics`'s `RenderBackendRegistryTest` covers equality, both refusals and the report on the route; `test_vk` passes with the plugin's own `vineRenderBackendAbi()` (a module that states nothing cannot register). |
+| T5 | `test_graphics` runs its whole suite under AddressSanitizer with no ODR report, and its binary references no graphics library | `VN_ASAN_TARGET=test_graphics VN_ASAN_FILTER='*' scripts/asan_check.sh` → `RESULT: PASS`; `ldd bin/test_graphics` names no `libvnGraphics` (C6, 2.19) |
 
 ## 9. Status and Evolution
 
@@ -481,4 +507,5 @@ Old names/paths appear only in §7's rejected options or in git history; new cod
 
 `graphics-scene.md` · `graphics-geometry.md` · `graphics-rendering.md` ·
 `graphics-content-lifecycle.md` · `vsg-backend.md` (the retired backend's record) · `../backlog/graphics.md` ·
-`../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` (the seam's promise rule and the retirement's terms)
+`../decisions/ADR-2026-11-23-retiring-the-reference-backend.md` (the seam's promise rule and the retirement's terms) ·
+`../decisions/ADR-2026-11-27-a-module-test-links-the-modules-objects.md` (the test binary as a second image of the module's objects)

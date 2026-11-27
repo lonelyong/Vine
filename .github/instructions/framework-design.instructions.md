@@ -31,6 +31,11 @@ file does not repeat the table.
 - **Violations are allowed, unstated ones are not.** If a deadline, an ABI constraint or a
   measured cost wins over a principle, write the number and the reason where the code lives
   or in the ADR.
+- **Fix the cause, not the symptom.** A finding whose cause is a rule the framework owns (a build
+  helper, an export boundary, a gate, a lifetime protocol) is closed by redesigning that rule ONCE
+  and deleting the workaround; a platform guard that leaves the same defect on the other platform is
+  a patch, and a redesign names its rejected alternatives (`G1` / `G10`). See "Fixing a Finding" in
+  `.github/copilot-instructions.md`.
 - **One fact one home.** Do not restate a header contract, a test or a principle body in a
   design doc; cite the `G#`, the header or the test name.
 

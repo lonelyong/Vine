@@ -1,5 +1,23 @@
+# vn_add_library — one module, one set of objects, one or two images.
+#
+# The shared library is the module's image for its CLIENTS: it exports the SDK and nothing else. A module's own
+# test that drives the PRIVATE half is not such a client - it has to call the same definitions, and it may not
+# hold a second copy of them: two definitions of one class in one process is an out-of-line ODR violation, and
+# AddressSanitizer aborts on the duplicate typeinfo before a single case runs.
+#
+# `OBJECT_TARGET <name>` answers that need once, at the module: the translation units are compiled into an object
+# set, and the shared library is built from it. The module's test then links the object set (no file list in
+# tests/, no source compiled twice) and does not load the library, so exactly one definition exists per process on
+# every platform. Without the keyword the function behaves as before (the shared target compiles its own sources).
+#
+# A caller that asks for it owns the consequences: the object set is now what COMPILES the module, so the module's
+# compile-time configuration (its public definitions and its link libraries, the dependencies' include directories)
+# has to be applied to the object target as well as to the shared one - see src/viz/graphics/CMakeLists.txt for the
+# one-loop form. The shared target stays the module's public name (`vn::<ShortName>`) and the only installed one.
+#
+# Rationale and the rejected alternatives: ADR-2026-11-27-a-module-test-links-the-modules-objects.
 function(vn_add_library target_name_var short_name)
-    cmake_parse_arguments(VN_LIB "" "" "" ${ARGN})
+    cmake_parse_arguments(VN_LIB "" "OBJECT_TARGET" "" ${ARGN})
     # CMAKE_SOURCE_DIR顶级当前CMakeLists.txt文件所在目录
     # CMAKE_CURRENT_SOURCE_DIR 当前CMakeLists.txt所在目录
     # file(RELATIVE_PATH src_rel_dir ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
@@ -28,8 +46,24 @@ function(vn_add_library target_name_var short_name)
 
     # 创建目标
     if(src_file_list)
-        add_library(${target_name} SHARED ${sdk_file_list} ${header_file_list} ${src_file_list} ${rc_file_list})
+        if(VN_LIB_OBJECT_TARGET)
+            # THE SOURCES ARE THE MODULE'S OBJECTS; THE SHARED LIBRARY IS ONE IMAGE OF THEM (see the note above).
+            set(compile_target ${VN_LIB_OBJECT_TARGET})
+            add_library(${compile_target} OBJECT ${sdk_file_list} ${header_file_list} ${src_file_list} ${rc_file_list})
+            # PIC is not implied for an object set (a shared library would imply it for its own compilation), and
+            # these objects go into one: a non-PIC object with a local-exec TLS reference cannot be linked into a
+            # shared object at all.
+            set_target_properties(${compile_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            add_library(${target_name} SHARED)
+            # PRIVATE: the objects are part of this image, not of the library's interface - an exported target may
+            # not name a target that is never installed, and a test that wants the objects asks for them by name.
+            target_link_libraries(${target_name} PRIVATE ${compile_target})
+        else()
+            set(compile_target ${target_name})
+            add_library(${target_name} SHARED ${sdk_file_list} ${header_file_list} ${src_file_list} ${rc_file_list})
+        endif()
     else()
+        set(compile_target "")
         add_library(${target_name} INTERFACE ${sdk_file_list} ${header_file_list} ${src_file_list} ${rc_file_list})
     endif()
 
@@ -39,7 +73,7 @@ function(vn_add_library target_name_var short_name)
     # with /utf-8). UTF-8 sources, C++ exceptions, conforming preprocessor for
     # __VA_OPT__ macros, and the real __cplusplus value.
     if(src_file_list AND MSVC)
-        target_compile_options(${target_name}
+        target_compile_options(${compile_target}
             PRIVATE /utf-8 /EHsc /Zc:preprocessor /Zc:__cplusplus)
     endif()
     # 设置目标别名，仅影响build阶段，不影响install
@@ -56,6 +90,12 @@ function(vn_add_library target_name_var short_name)
         set(target_folder "vine/${group_level}")
     endif()
     set_target_properties(${target_name} PROPERTIES FOLDER ${target_folder})
+    if(VN_LIB_OBJECT_TARGET)
+        # The object set is where the code now lives, so it is also the module's public name for the images that
+        # compile it in (its own tests); the shelves follow it in the IDE.
+        set_target_properties(${compile_target} PROPERTIES FOLDER ${target_folder})
+        add_library(${VN_SHARED_LIBRARY_PREFIX}::${short_name}Objects ALIAS ${compile_target})
+    endif()
 
     set_target_properties(${target_name} PROPERTIES PREFIX "")
     # 设置源文件分组
@@ -67,15 +107,23 @@ function(vn_add_library target_name_var short_name)
     string(TOUPPER VN_${short_name}_LIB lib_compile_def)
 
     if(src_file_list)
-        target_compile_definitions(${target_name} PRIVATE ${lib_compile_def})
         # PRIVATE   仅作用与目标自身
         # PUBLIC    同时作用于目标自身与依赖该目标的目标
         # INTERFACE 仅作用于依赖该目标的目标
-        target_include_directories(${target_name}
+        target_compile_definitions(${compile_target} PRIVATE ${lib_compile_def})
+        target_include_directories(${compile_target}
             PUBLIC
             "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>"
-            "$<INSTALL_INTERFACE:include>")
+            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>")
+        if(NOT "${compile_target}" STREQUAL "${target_name}")
+            # The shell states the same build-tree roots for its consumers, because it does not compile and so
+            # cannot forward the object set's requirements (its link to them is PRIVATE).
+            target_include_directories(${target_name}
+                PUBLIC
+                "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+                "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>")
+        endif()
+        target_include_directories(${target_name} PUBLIC "$<INSTALL_INTERFACE:include>")
 
     else()
         target_include_directories(${target_name}

@@ -27,7 +27,31 @@ from review comments instead of restating the principle.
 is **not** subject to the "no consumer today" test: a misplaced capability is moved to the
 side that owns it wherever it is found, even when nothing new is being built. `G13` never
 adds a capability, and `G8` never justifies leaving one in the wrong place.
+## Fixing a Finding: the Cause, Not the Symptom
 
+A finding is closed where it comes from, not where it showed up.
+
+1. **A defect of one implementation** — fix the implementation.
+2. **A defect of a rule the framework owns** (a build helper, an export boundary, a gate, a lifetime
+   protocol) — redesign that rule so the defect cannot be expressed, and delete whatever worked
+   around it. This is the default answer when two platforms, two modules or two call sites already
+   answer the same fact differently: the duplicated answer IS the finding, and the reported symptom
+   is only where one of the copies surfaces.
+3. **A capability the framework must grow** — add it once, where the rule lives, with the consumer
+   that exists today.
+
+A platform guard, a special case or a retry that leaves the cause standing somewhere else is a
+**patch**: it hides the symptom on the path that reported it while the other path keeps the defect
+(`G1` / `G10` call that two answers to one question). Do not close a finding that way. If the cause
+genuinely cannot be fixed — an ABI promised to an out-of-tree module, a third-party behaviour —
+write the residual cost at the point of violation and name the platform or module that still carries
+it.
+
+A fix that changes a rule is a **redesign**: state the rule where it is enforced (the helper's note,
+the design doc, or an ADR with the rejected options), and leave a gate or a test that catches the
+defect's return. Worked example: `.ai/design/graphics-architecture.md` 2.19 /
+`ADR-2026-11-27-a-module-test-links-the-modules-objects` (the test binary's duplicate definitions
+fixed in `vn_add_library`, not with an `if(WIN32)` at the call site).
 How a design point, a rejected option or a review cites a `G#` — and when a violation is
 acceptable — is in `.github/instructions/framework-design.instructions.md`.
 
