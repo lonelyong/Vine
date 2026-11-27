@@ -12,6 +12,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "ContentId.hpp"
+#include "DescriptionCache.hpp"
 #include "Sampler.hpp"
 #include "Texture.hpp"
 
@@ -400,10 +401,10 @@ class VN_GRAPHICS_API MaterialValues : public Object, public RefCounted<Material
     MaterialId id_;
     String     name_;
 
-    /// The one value per revision (see description()); written on the content side only.
-    mutable MaterialDescriptionPtr description_;
-    mutable std::uint64_t          described_revision_{ 0 };
-    mutable bool                   described_{ false };
+    /// The one value per revision (see description()). Several threads may describe one material at the same time and
+    /// get ONE value, and an instance's revision is measured inside the same lock because resolving it writes
+    /// (detail::DescriptionCache).
+    mutable detail::DescriptionCache<MaterialDescription> description_;
 };
 
 using MaterialValuesPtr = intrusive_ptr<MaterialValues>;

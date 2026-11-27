@@ -297,10 +297,12 @@ symptom `Geometry`'s comment describes). TSan has already reported a `ShaderProg
 dismissed as a test artifact (`.ai/memory/graphics.md`, 2026-11-24 entry) - this is the reading that dismissal may have
 hidden.
 
-**Choice.** Copy `Geometry`'s shape verbatim into both (`shared_mutex` for the cache, `std::atomic<std::uint64_t>` for
+**Choice (as proposed).** Copy `Geometry`'s shape verbatim into both (`shared_mutex` for the cache, `std::atomic<std::uint64_t>` for
 `revision_` as `Buffer` / `Texture` already do), and make §2.16 name the rule instead of one example. **code + doc + test**
-(two engines, one program and one material, TSan). This is the round's highest-value fix: it is one pattern applied
-twice, and it closes the gap between what 2.16 claims and what the tree does.
+(two engines, one program and one material, TSan).
+
+**Fixed 2026-11-27, at the cause instead of at the copies.** "Copy the shape verbatim into both" IS the defect: a rule written
+three times is three chances to write it wrong, and two of the three already were. The rule now has one owner - `vn::graphics::detail::DescriptionCache<Description>` - with `get(measure, build)` doing measure + compare + build in ONE critical section and `peek(measure)` as the read-only face; `Geometry`'s `shared_mutex` pair and `MaterialValues`' `described_`/`described_revision_` trio are deleted, and `ShaderProgram`'s cache is the same object. Two refinements the proposal above did not have: the key is measured INSIDE the lock (a material instance's `revision()` resolves, so a shared fast path would race two readers inside `resolved()`), and the lock is the PLAIN kind - 2.8 ns uncontended against 13.2 ns for a shared lock (measured 2026-11-27), so the geometry cache got cheaper. Making `revision_` atomic instead (the proposal's other half) would have fixed the key and left both buckets writing concurrently - rejected. `graphics-threading.md` 2.4 / 2.14 / 2.16 / C22 / T41; `ADR-2026-11-27-a-description-is-built-once-behind-one-lock`; `DescriptionCacheTest` (4 cases, 691/691, TSan 0 warnings, ASan PASS).
 
 ### 4.3 R3 verdict
 
@@ -1288,7 +1290,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z4` | R1 | low | `frameContext()` says "the same answer all frame" and then reads three fields live | `RenderEngine.hpp`; `RenderEngine.cpp:445-456` |
 | `Z5` | R2 | low | the chunk-share test compares the fold's output; the select also reads `own.fold.placement`, which no comparison covers - the epoch is the only guard, and the epoch's list omits placements | `SceneSnapshot.cpp:55-68`; `DrawListBake.hpp:549-566`; `Node.hpp:296` |
 | `Z6` | R2 | medium | `bindSnapshot` is permanent (no withdraw), "empty clears the binding" means "draw nothing", and the binding is keyed by a scene address it outlives | `PublicationStore.cpp:15-41`; `RenderEngine.hpp` `bindSnapshot` |
-| `Z7` | R3 | high (latent) | the describe-once cache is unguarded in `ShaderProgram` and `MaterialValues`, guarded in `Geometry` - and the design cites `Geometry`'s lock as why shared content is thread-safe | `ShaderProgram.cpp:45-54`; `Material.cpp:39-52`; `Geometry.cpp:425-450`; `graphics-sessions.md:18` |
+| `Z7` | R3 | high (latent) | the describe-once cache is unguarded in `ShaderProgram` and `MaterialValues`, guarded in `Geometry` - and the design cites `Geometry`'s lock as why shared content is thread-safe (**fixed 2026-11-27**: one `detail::DescriptionCache` behind all three, `graphics-threading.md` C22) | `ShaderProgram.cpp:45-54`; `Material.cpp:39-52`; `Geometry.cpp:425-450`; `graphics-sessions.md:18` |
 | `Z8` | R4 | medium | the first-person keyboard look still calls `orbit()` (the eye arcs); the mouse look does not; `F5` says the arrows travel | `OrbitCameraManipulator.cpp:449-463`; `graphics-navigation.md:123` |
 | `Z9` | R9 | medium | `test_graphics` compiles twelve private TUs unconditionally, so the engine's suite cannot run under ASan on Linux - the ownership graph has no address-safety witness (**fixed 2026-11-27**: the module's object set is now linked instead, `graphics-architecture.md` 2.19) | `tests/test_graphics/CMakeLists.txt:38-59`; `.ai/memory/graphics.md` |
 | `Z10` | R10 | low | the navigation page's `F5` sentence is `Z8`'s defect on the corpus side | `graphics-navigation.md:123` |
@@ -1308,8 +1310,9 @@ unobserved, and it is recorded here so the next round starts from it rather than
 
 ### 27.2 Proposed order (for the owner; no backlog entry added by this round)
 
-1. **`Z7`** - one pattern applied twice, and it closes the gap between `graphics-threading.md` 2.16's claim and the tree.
-   The only finding where the design's own promise is what fails.
+1. ~~**`Z7`** - one pattern applied twice, and it closes the gap between `graphics-threading.md` 2.16's claim and the tree.
+   The only finding where the design's own promise is what fails.~~ **Done 2026-11-27**, at the cause: the rule got one owner
+   type (`detail::DescriptionCache`) instead of two more hand-written copies, and 2.16 now names the rule (C22).
 2. **`Z1` + `Z2`** - one batch named "the doors that missed the rule": a mutex for `FrameResources` (the shape
    `PublicationStore` already uses) and the gate for `bindPassContent`.
 3. **`Z22`** - the third door, and the only one whose failure is a stale row in the frame: the take-back a destructor

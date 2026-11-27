@@ -4,7 +4,7 @@
 > "an immutable snapshot produced by one publication" and "two atomic revisions". The history (why it used to be that way, which option was rejected) is in
 > `../decisions/ADR-2026-11-12-adopt-graphics-next.md`, `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`
 > and git history; the `C1–C15` and `N1–N14` entries that only served the deleted mechanism are retired, and their numbers are not reused (see §5.1, §5.3).
-> **Last verified**: 2026-11-26
+> **Last verified**: 2026-11-27
 > **Scope**: who owns what of one frame's work on each of the two threads — what the content side and the engine side own, which values may cross the seam, who owns the surface and the swap chain,
 > where parallelism sits, and how shutdown finishes.
 > **Excludes** appfw's general async (`appfw-startup-phases.md`, `async-design.md`) and the Vulkan synchronisation details (`vk-backend.md`).
@@ -97,8 +97,9 @@ There is exactly one answer to "when does this copy expire": the publication val
   residency key).
 - **Where the synchronisation is**: `Buffer::revision` and `Texture::revision` are `std::atomic<std::uint64_t>` — the writer (the `Edit` scope
   ending / `setRevision` / one fill) releases, the reader (`revision()`) acquires, so "observing the new revision" means "seeing the bytes written before
-  the revision". `Geometry` / `ShaderProgram` / `Material` revisions need not be atomic: the frame side reads the published
-  description value (`GeometryDescription` / `ShaderProgramDescription` / `MaterialDescription`), not the live object.
+  the revision". `Geometry` / `ShaderProgram` / `Material` revisions stay plain numbers: the frame side reads the published description value
+  (`GeometryDescription` / `ShaderProgramDescription` / `MaterialDescription`), not the live object — and the one verb another thread does reach,
+  `X::description()`, measures that number inside `detail::DescriptionCache`'s lock, which is the C22 rule (§2.16).
 - **Why keep polling**: turning every `Buffer::edit()` into a publication would couple "edit" and "frame" tightly, and a publication would have to carry thousands per frame.
 - **Boundary**: the atomic covers only "the counter + the bytes before it"; a host that keeps writing the same bytes **after** announcing (without a new revision) is still outside the contract —
   the frame reads what was written. The frame payload's **content** (shape, material values, program text, lights) does not use this channel; it is all §2.14's values.
@@ -265,7 +266,8 @@ There is exactly one answer to "when does this copy expire": the publication val
 
 - **What it is**: content objects each have a "value half" that crosses with their identity:
   - `GeometryDescription` (shape), `MaterialDescription` (material values), `ShaderProgramDescription` (program text + id + revision,
-    new); all three are immutable values **cached by revision** (`X::description()`).
+    new); all three are immutable values **cached by revision** through ONE type (`detail::DescriptionCache`, C22: several threads
+    describing one object share one value).
   - `ContentRef` (`id + revision`) is the fact tables' key: a `DrawItem` carries `geometry_ref` / `material_ref`, and `program_description`
     carries its own id+revision.
   - `LightValue` (new) is the light's value half; when a pass describes itself (`RenderPass::describe` / `FullscreenPass::describe`) it snapshots the scene's lights into
@@ -311,8 +313,9 @@ There is exactly one answer to "when does this copy expire": the publication val
 - **What it is** (today's three facts, each with something checkable behind it):
   - **content sharing already holds**: one `RenderDevice` can be borrowed by several `RenderEngine`s (`setDevice`'s contract: the engine does not
     `initialize` / does not `shutdown` the device), and residency is cached by **identity** (geometry = `GeometryDescription`'s address + revision),
-    so two engines drawing the same geometry is **the same key**. `Geometry::description()`'s lazy cache is safe for concurrent readers (a shared lock;
-    found and fixed by TSan).
+    so two engines drawing the same geometry is **the same key**. **Every content description is safe for concurrent readers through one cache
+    type** (`detail::DescriptionCache`, C22): several threads may describe one geometry, material or program at once and all get the same value —
+    a rule the tree used to spell three times, twice without a lock (review 19 `Z7`).
   - **targets are not shared**: one window, one target (`createSurfaceTarget`'s `WindowOccupied`), and an image has only
     one layout at any instant; an engine's transient is owned by compile and private by nature. Offscreen targets are governed by a **target claim**: one holder per frame,
     and a conflict only skips that pass and reports once.
@@ -514,7 +517,8 @@ There is exactly one answer to "when does this copy expire": the publication val
 | C18 | The version does not advance inside a batch: after `beginEdit()` and before the outermost `endEdit()`, publication stays where it is — a frame landing mid-batch **publishes nothing** and draws the state at the batch's start; the whole batch lands as **one** publication on the frame after `endEdit()`. |
 | C19 | Material crosses the frame as a **value**: a command carries a `MaterialDescriptionPtr` (`revision` + resolved parameters), and the engine side reads the value only, not `Material::resolved()`. The values are taken on the content side, and not inside a batch. |
 | C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: while this engine is BUILDING a frame (its content half - hooks, publication, `compileFrame`) or ANSWERING one (its engine half), and while a `prepare()` compiles, `applyPlan` (in any form) and `removePassesOwnedBy` always answer `PlanResult::Refused` + `PlanRefusal::Busy`, and report **one** `PassProtocolViolation` per episode. The gate is `detail::FramePump::recording()`, and the decision plus the change are ONE critical section (`RenderEngine::beginShapeChange` holds `FramePump::phaseGate()`, the same lock a build is entered under) - so a change seen as allowed cannot be applied into a compile that started in between, and inline counts exactly like threaded. |
-| C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time. Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused rather than waiting for itself** (`vk.device.reentry`; a readback inside a frame answers `InsideFrame`), and the refusal comes from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's `Geometry::description()` cache is safe for concurrent readers (found and fixed by TSan); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way every run). |
+| C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time. Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused rather than waiting for itself** (`vk.device.reentry`; a readback inside a frame answers `InsideFrame`), and the refusal comes from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's descriptions are safe for concurrent readers through one cache type (C22); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way every run). |
+| C22 | **A content description is built once per revision and shared by every reader, under one lock**: `Geometry::description()`, `MaterialValues::description()` and `ShaderProgram::description()` are one verb on one type (`detail::DescriptionCache`), which measures the source's revision, compares it with the cached value's and builds on a miss in ONE critical section — so several threads describing one object (two engines publishing one scene) get the same identity and no second value for one revision. The key is measured INSIDE the lock because a material instance's `revision()` resolves on read, and the lock is the plain kind (2.8 ns uncontended against 13.2 ns for the shared lock it replaced, measured 2026-11-27). An EDIT is still the owning thread's act: the cache makes readers safe, not a concurrent edit. |
 ### 5.2 Requirements (R#)
 
 | # | Requirement |
@@ -647,6 +651,7 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T38 | a second entry into the interval is a value, not a race: the other host thread gets `Concurrent`, the same thread gets `Reentrant`, and both take no frame number | `RenderEngineTest.AFrameFromASecondHostThreadIsRefusedInsteadOfRacingTheCompile` | implemented |
 | T39 | two host threads DRIVE IN TURN: every frame is numbered once, a prepare from the second thread is refused while the first builds, and several threads waiting for one frame are all answered | `FramePumpTest.TheIntervalAnswersWhyASecondEntryWasRefused` / `FramePumpTest.TwoHostThreadsDriveThePumpInTurnAndNumberEveryFrameOnce` / `RenderEngineTest.APrepareFromInsideAPreparesCompileIsRefusedInsteadOfWaitingForItself` / `RenderEngineTest.TwoHostThreadsPreparingAtOnceLeaveOneAnswered` / `RenderEngineTest.ASecondHostThreadDrivesTheNextFrameOnceTheIntervalIsFree` / `RenderEngineTest.TwoThreadsWaitingForOneFrameAreBothAnswered` | implemented |
 | T40 | a mode change is an interval verb: refused by the same two reasons while a build holds it (the cause reported once), applied between frames, the mode unchanged - it WAITS for an answer already in flight instead, and a build that leaves by an exception leaves the interval free for another thread | `FramePumpTest.AThreadModeChangeIsAnIntervalVerb` / `FramePumpTest.ABuildThatLeavesByAnExceptionLeavesTheIntervalFree` / `FramePumpTest.OneThreadMayHoldTwoPumpsAndEachKeepsItsOwnInterval` / `RenderEngineTest.ASecondThreadCannotChangeTheFrameThreadWhileAFrameIsInFlight` / `RenderEngineTest.SwitchingBackToInlineWaitsForAnAnswerInsteadOfRefusingIt` / `RenderEngineTest.ASinkDrivingAnotherEngineLeavesTheFirstOneWhole` | implemented |
+| T41 | a description is one value per revision under concurrent readers: several threads describing one program, one material and one geometry get one identity each, a new revision is a new value, and `peek` never builds | `DescriptionCacheTest.OneBuilderAnswersEveryConcurrentReaderTheSameValue` / `DescriptionCacheTest.ANewRevisionIsANewValueAndTheOldOneKeepsItsRevision` / `DescriptionCacheTest.PeekNeverBuildsAndAnswersNullForAMovedRevision` / `DescriptionCacheTest.ThreadsDescribingOneProgramOneMaterialAndOneGeometryShareOneValue` + `scripts/tsan_check.sh` | implemented |
 
 ## 9. Status and Evolution
 
@@ -675,6 +680,8 @@ This file describes the **present**, not the target. The target shape and its re
 - `src/viz/graphics/sdk/vine/graphics/Scene.hpp` / `src/viz/graphics/src/Scene.cpp` (`publish` / batches / the published value)
 - `src/viz/graphics/sdk/vine/graphics/SceneSnapshotRef.hpp` / `src/viz/graphics/src/SceneSnapshotRef.cpp` (the snapshot handle)
 - `src/viz/graphics/src/SceneSnapshot.{hpp,cpp}` (the snapshot value, chunking, `selectSnapshot`)
+- `src/viz/graphics/sdk/vine/graphics/DescriptionCache.hpp` (the one cache behind `Geometry::description()` /
+  `MaterialValues::description()` / `ShaderProgram::description()`: C22's rule, and `peek` for a reader that must not build)
 - `src/viz/graphics/src/ScenePublisher.{hpp,cpp}` (the scene's derivation side: baked rows, per-view memo, the published value)
 - `src/viz/graphics/src/SceneRows.{hpp,cpp}` (`SceneBake` → the single gate into a snapshot)
 - `src/viz/graphics/src/SnapshotSource.{hpp,cpp}` (the snapshot's `DrawListSource` face)
@@ -693,6 +700,7 @@ This file describes the **present**, not the target. The target shape and its re
 - `tests/test_graphics/FrameExpandTest.cpp` (T34 / T35: the frame-level seam, a bound publication is the truth, no publication draws nothing)
 - `tests/test_graphics/FrameRunnerTest.cpp` (T10 / T12 / T16)
 - `tests/test_graphics/SnapshotShadowTest.cpp` (T3 / T17 / T34)
+- `tests/test_graphics/DescriptionCacheTest.cpp` (T41: one build per revision, one identity for every concurrent reader)
 - `tests/test_graphics/HeadlessBackendTest.cpp` (the two halves and the warm-up)
 - `tests/test_graphics/GraphicsTest.cpp` (memo reuse and T9's surface size)
 
@@ -700,6 +708,8 @@ This file describes the **present**, not the target. The target shape and its re
 
 - `../decisions/ADR-2026-11-12-adopt-graphics-next.md` (four layers / three verbs / invariants; this file is its threading layer)
 - `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md` (the split and order of the snapshot taking over collection)
+- `../decisions/ADR-2026-11-27-a-description-is-built-once-behind-one-lock.md` (C22: one cache type, one lock, and the
+  rejected per-class copies / shared-lock / lock-free shapes)
 - `../decisions/ADR-2026-11-10-render-world-mirrors-content.md` (**history**: the original mirror-shape decision, superseded by the two above)
 - `graphics-frame-pipeline.md` (the target shape and the step-by-step migration in §9.3)
 - `vk-backend.md` (backend implementation and synchronisation details)

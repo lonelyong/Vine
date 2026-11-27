@@ -92,13 +92,18 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (101)
+## decisions/ — decision records (ADRs) (102)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-description-is-built-once-behind-one-lock.md` — **a content description is built once per revision,
+  behind one lock**: `detail::DescriptionCache` now holds the rule that `Geometry` / `MaterialValues` / `ShaderProgram`
+  used to spell three times by hand, only one of them with a lock - `get` measures the revision, compares it and builds
+  inside ONE critical section (a material instance's `revision()` resolves, so the key cannot be measured outside),
+  and the rejected shapes are the per-class copies, the atomic-revision-only fix and the lock-free pointer swap.
 - `ADR-2026-11-27-a-module-test-links-the-modules-objects.md` — **a module's test links the module's objects, not its
   DLL**: `vn_add_library(... OBJECT_TARGET ...)` compiles the module once and makes the shared library a shell around
   the object set, so `test_graphics` links `GraphicsObjects` (a build-tree target, not `vn::`) instead of the library plus

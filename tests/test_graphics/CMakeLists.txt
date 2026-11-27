@@ -22,6 +22,7 @@ set(SRC_FILE_LIST
 	ContentRegistryTest.cpp
 	RenderWorldTest.cpp
 	ReportOnceTest.cpp
+	DescriptionCacheTest.cpp
 	SelectTest.cpp
 	SnapshotShadowTest.cpp
 	PublicationStoreTest.cpp

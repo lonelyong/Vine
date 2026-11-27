@@ -38,25 +38,18 @@ bool MaterialDescription::isTransparent(float opacity) const noexcept
 
 MaterialDescriptionPtr MaterialValues::description() const
 {
-    const std::uint64_t revision = this->revision();
-    if (described_ && described_revision_ == revision && description_ != nullptr) {
-        return description_;
-    }
-    // The revision IS the value's identity (see revision()): a description is
-    // built once per revision and then shared, so a steady frame compares an
-    // integer and a backend row keyed on the value stays put.
-    description_        = intrusive_ptr<const MaterialDescription>(new MaterialDescription(revision, resolved()));
-    described_revision_ = revision;
-    described_          = true;
-    return description_;
+    // The revision IS the value's identity (see revision()): a description is built once per revision and then shared,
+    // so a steady frame compares an integer and a backend row keyed on the value stays put. It is MEASURED INSIDE the
+    // cache's lock because an instance's revision() resolves its parent's values - that read writes, so two engines
+    // describing one instance must not measure it concurrently either (see detail::DescriptionCache).
+    return description_.get(
+        [this] { return revision(); },
+        [this](const std::uint64_t revision) { return new MaterialDescription(revision, resolved()); });
 }
 
 MaterialDescriptionPtr MaterialValues::cachedDescription() const noexcept
 {
-    if (!described_ || described_revision_ != revision()) {
-        return nullptr;
-    }
-    return description_;
+    return description_.peek([this] { return revision(); });
 }
 
 Material::Material() = default;

@@ -2974,3 +2974,29 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
 - **Evidence.** `test_graphics` 687/687 in `build/`; `ldd build/bin/test_graphics` names no graphics library;
   `VN_ASAN_TARGET=test_graphics VN_ASAN_FILTER='*' scripts/asan_check.sh` → `RESULT: PASS` (687 cases);
   `scripts/tsan_check.sh` → 687/687, 0 warnings; `ctest -R 'test_graphics|test_vk'` 2/2 green.
+
+## 2026-11-27 - Z7: a description is built once per revision, behind one lock
+
+- **The defect.** `Geometry::description()` / `MaterialValues::description()` / `ShaderProgram::description()` were the
+  same rule written three times by hand, and only the geometry copy had a lock (its comment records the 2026-11-16 TSan
+  find). The other two compared and wrote `mutable` members raw, so two engines describing one program or one material
+  could tear the cache member or build TWO values for one revision - two identities for one `(id, revision)`, which is
+  the key the backend's tables use. TSan had named `ShaderProgram::description()` on 2026-11-24 and the reading then was
+  "a race in the test"; it was the cache.
+- **The rule (C22).** One type, `vn::graphics::detail::DescriptionCache<Description>` (SDK header, `detail` namespace -
+  it is a private member of three public classes, not new vocabulary). `get(measure, build)` measures the source's
+  revision, compares it with the cached value's own `revision()` and builds on a miss, ALL inside one `std::mutex`;
+  `build` receives the measured revision, so the value's revision and the key cannot disagree. `peek(measure)` never
+  builds. `Geometry`'s `shared_mutex` pair and `MaterialValues`' `described_`/`described_revision_` trio are deleted.
+- **Trap.** The key must be measured INSIDE the lock: `MaterialInstance::revision()` resolves its parent's values on
+  first read, so it WRITES. Measuring outside (the tempting shared fast path) races two readers inside `resolved()`
+  before the cache is consulted. `MaterialInstance::parent_` is an `intrusive_ptr<Material>` (an asset), so the resolve
+  chain is one level and never cycles.
+- **Cost (measured).** Uncontended lock/unlock: `std::mutex` 2.8 ns vs `std::shared_mutex` shared 13.2 ns (20 M rounds,
+  clang-23 -O2, 2026-11-27). The plain mutex is CHEAPER than the shared lock Geometry used, so the change is not a
+  regression on the steady path; a describe happens per row at publication (`DrawListBake::refreshValues`), not per
+  draw per frame.
+- **Evidence.** `DescriptionCacheTest` (4 cases) - one build for 8 concurrent readers, a new revision is a new value,
+  `peek` never builds, and one program + one material + one geometry described from 8 threads all give one identity;
+  `test_graphics` 691/691; `scripts/tsan_check.sh` 691/691 with 0 warnings; ASan on `test_graphics` `RESULT: PASS`.
+  `ADR-2026-11-27-a-description-is-built-once-behind-one-lock`; `graphics-threading.md` 2.4 / 2.14 / 2.16 / C22 / T41.

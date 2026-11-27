@@ -13,6 +13,7 @@
 #include <vine/intrusive_ptr.hpp>
 
 #include "ContentId.hpp"
+#include "DescriptionCache.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -218,8 +219,9 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
     String                   name_;
     std::vector<ShaderStage> stages_;
     std::uint64_t            revision_ = 0;
-    /// The text as a value, rebuilt only when revision_ moves (see description()).
-    mutable ShaderProgramDescriptionPtr description_;
+    /// The text as a value, rebuilt only when revision_ moves (see description()); several threads may describe one
+    /// program at the same time and get ONE value (detail::DescriptionCache).
+    mutable detail::DescriptionCache<ShaderProgramDescription> description_;
 };
 
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;

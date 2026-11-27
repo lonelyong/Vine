@@ -44,13 +44,12 @@ std::span<const ShaderStage> ShaderProgramDescription::stages() const noexcept
 
 ShaderProgramDescriptionPtr ShaderProgram::description() const
 {
-    // The cache key IS the revision (see Geometry::description): a stage edit is the only thing that moves it, and a
-    // frame in flight keeps the value it was published with.
-    if (description_ != nullptr && description_->revision() == revision_) {
-        return description_;
-    }
-    description_ = ShaderProgramDescriptionPtr(new ShaderProgramDescription(id_, revision_, name_, stages_));
-    return description_;
+    // The cache key IS the revision: a stage edit is the only thing that moves it, and a frame in flight keeps the
+    // value it was published with. Several threads may describe one program at once and share one value (see
+    // detail::DescriptionCache); a stage edit is still the owning thread's act (graphics-threading.md C22).
+    return description_.get(
+        [this] { return revision_; },
+        [this](const std::uint64_t revision) { return new ShaderProgramDescription(id_, revision, name_, stages_); });
 }
 
 ProgramId ShaderProgram::id() const noexcept

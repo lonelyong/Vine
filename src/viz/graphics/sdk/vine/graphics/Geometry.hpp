@@ -6,9 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <span>
 #include <utility>
 #include <vector>
@@ -22,6 +20,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "DescriptionCache.hpp"
 #include "Node.hpp"
 #include "Primitive.hpp"
 #include "ShaderAbi.hpp"
@@ -1157,12 +1156,11 @@ class VN_GRAPHICS_API Geometry : public Node {
     mutable LocalBoundsCache local_bounds_;
     mutable std::uint64_t    local_bounds_computations_ = 0;
     /// The shape as a shared immutable value, rebuilt only when revision_ moves (see description()). Mutable for the
-    /// same reason as local_bounds_: reading a derived value while keeping it is not a write to the geometry.
-    mutable GeometryDescriptionPtr description_;
-    /// Guards @ref description_ for CONCURRENT READERS: shared for the cached answer, unique for the single builder
-    /// (two engines may describe one geometry at the same time; the TSan gate found the unguarded cache). It does NOT
-    /// guard the authored content - shape edits remain the owning thread's act (see description()).
-    mutable std::shared_mutex description_mutex_;
+    /// same reason as local_bounds_: reading a derived value while keeping it is not a write to the geometry. The
+    /// cache is what lets two engines describe one geometry at the same time and get ONE value (see
+    /// detail::DescriptionCache); it does not guard the authored content - a shape edit remains the owning thread's
+    /// act (graphics-threading.md C22).
+    mutable detail::DescriptionCache<GeometryDescription> description_;
 };
 
 using GeometryPtr = intrusive_ptr<Geometry>;
