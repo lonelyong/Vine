@@ -496,6 +496,20 @@ bool WindowTarget::ready() const noexcept
     return impl != nullptr && impl->attached && !impl->detached && impl->swapchain != VK_NULL_HANDLE && impl->depth_view != VK_NULL_HANDLE;
 }
 
+WindowTarget::PresentationState WindowTarget::presentationState() const noexcept
+{
+    // THE FACTS IN THE ORDER THAT DECIDES THE SENTENCE (see the header): no window at all, a window this target was
+    // never attached to, then the swapchain the (re)build leaves behind. `detached` with a live handle means a move to
+    // a new handle could not be rebuilt, which is the same answer to the pass as "there is no window".
+    if (impl == nullptr || impl->handle == nullptr || impl->detached) {
+        return PresentationState::Detached;
+    }
+    if (!impl->attached) {
+        return PresentationState::NotAttached;
+    }
+    return ready() ? PresentationState::Ready : PresentationState::NoSwapchain;
+}
+
 bool WindowTarget::deviceLost() const noexcept
 {
     return impl != nullptr && impl->device_lost;

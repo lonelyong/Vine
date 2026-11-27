@@ -928,6 +928,10 @@ struct Device::Impl {
         vn::graphics::ReportOnce occupied;
         /// A window pass named no presenter this device handed out.
         vn::graphics::ReportOnce presenter;
+        /// A window pass named THIS device's presenter, but the window cannot present right now (see
+        /// WindowTarget::presentationState). Its own code, because the repair is the window's and the sentence used to
+        /// accuse the host of a foreign presenter (review 19 `Z14`).
+        vn::graphics::ReportOnce not_ready;
         /// The window's next image could not be acquired.
         vn::graphics::ReportOnce acquire;
 
@@ -955,6 +959,7 @@ struct Device::Impl {
             rearmCreation();
             occupied.rearm();
             presenter.rearm();
+            not_ready.rearm();
             acquire.rearm();
         }
     };
@@ -1547,7 +1552,10 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
         };
 
         if (draw.target == nullptr) {
-            if (recording.window == nullptr || !recording.window->ready()) {
+            // ONE QUESTION, THREE ANSWERS (`G4`, review 19 Z14): "no presenter this device handed out", "the presenter
+            // has no live swapchain" and "the presenter is fine" used to be two answers, and the second was reported as
+            // the first - so a host whose own window lost its chain was told it had passed a foreign presenter.
+            if (recording.window == nullptr) {
                 if (owner.window_reports.presenter.shouldReport()) {
                     owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
                                                   DiagnosticCategory::UnsupportedRequest,
@@ -1557,7 +1565,30 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
                 recording.refused_pass = true;
                 continue;
             }
+            if (!recording.window->ready()) {
+                if (owner.window_reports.not_ready.shouldReport()) {
+                    // THE WINDOW'S OWN STATE IN THE SENTENCE: the target knows which of its facts stopped the pass, and
+                    // the failure that produced the state (if any) was reported when it happened.
+                    const WindowTarget::PresentationState state = recording.window->presentationState();
+                    owner.report(deviceDiagnostic(
+                        DiagnosticSeverity::Warning,
+                        DiagnosticCategory::UnsupportedRequest,
+                        u8"vk.window.not_ready",
+                        state == WindowTarget::PresentationState::Detached
+                            ? vn::String(u8"vk: a window pass names this device's presenter, but the window is detached (its host window "
+                                         u8"is gone, or the move to a new handle could not be rebuilt); the pass was left out")
+                        : state == WindowTarget::PresentationState::NotAttached
+                            ? vn::String(u8"vk: a window pass names this device's presenter, but it was never attached to this device "
+                                         u8"(or its attach was refused); the pass was left out")
+                            : vn::String(u8"vk: a window pass names this device's presenter, but it has no live swapchain - the last "
+                                         u8"(re)build produced none, and its own refusal was reported when it happened; the pass was "
+                                         u8"left out")));
+                }
+                recording.refused_pass = true;
+                continue;
+            }
             owner.window_reports.presenter.rearm(); // the pass named a presenter this device handed out
+            owner.window_reports.not_ready.rearm(); // and that presenter has a live swapchain again
             // THE WINDOW'S IMAGE IS TAKEN FOR A RECORDED FRAME ONLY: a warm-up acquires and presents nothing (P11).
             if (mode == PassMode::Record && !recording.window_acquired) {
                 vn::String why;

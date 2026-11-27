@@ -56,14 +56,19 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
         for (std::size_t index = first; share && index < last; ++index) {
             const Row& current = rows.rows[index];
             const Row& prior   = previous->row(index);
-            // TWO QUESTIONS, BECAUSE THEY SEE DIFFERENT CHANGES. The epoch moved when the row's OWN facts announced
-            // (a mutator on that node); the resolved serial moved when the FOLD wrote a different answer into the
-            // row - which is what an edit does to the whole subtree BELOW the edited node, whose own epochs stay
-            // where they were (`Node::announceContentChange` climbs to the ancestors, never down). Without the
-            // serial, a chunk holding only descendants of an edited node would be served from the previous
-            // publication, and the picture would draw a moved subtree where it used to be.
+            // THREE QUESTIONS, BECAUSE THE SELECT READS THREE KINDS OF FACT. The epoch moved when the row's OWN facts
+            // announced (a mutator on that node); the FOLD group is compared whole because the select reads it directly
+            // (`local` for a view-independent row, `placement` for a per-view one) and the resolved side does not carry
+            // the placement - two placements can fold to the same box, so the serial alone would serve the previous
+            // placement (review 19 `Z5`); the resolved serial moved when the FOLD wrote a different answer into the
+            // row, which is what an edit does to the whole subtree BELOW the edited node, whose own epochs stay where
+            // they were (`Node::announceContentChange` climbs to the ancestors, never down). Without the serial, a
+            // chunk holding only descendants of an edited node would be served from the previous publication, and the
+            // picture would draw a moved subtree where it used to be. `RowOwn::Body` is deliberately not compared: a
+            // body change rebuilds the table (fresh serials, `RowRefresh::RebuildTable`), so it can never reach a
+            // shared chunk.
             share = current.identity == prior.identity && current.links == prior.links &&
-                    snapshot->node_epochs[index] == previous->node_epochs[index] &&
+                    snapshot->node_epochs[index] == previous->node_epochs[index] && current.own.fold == prior.own.fold &&
                     current.resolved_serial == prior.resolved_serial;
         }
         if (share) {

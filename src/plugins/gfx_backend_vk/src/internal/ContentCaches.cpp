@@ -320,6 +320,11 @@ struct ContentCaches::Impl {
      *   can never be allocated at a key this table still holds, and the revision below is read from the very object
      *   the bytes came from (`ADR-2026-11-09-address-keys-hold-the-object`). A command's instance data is announced
      *   through the buffer, not through a geometry revision.
+     * - A REFUSED UPLOAD IS REMEMBERED (`G11`, review 19 `Z13`): an empty view or a refused allocation marks the
+     *   entry with the revision it failed at, so the next frames answer null without allocating, copying or reporting
+     *   again - the rule `ensureProgram` and `ensureGeometry` already apply, and the reason the report's episode is
+     *   not the whole answer (a saved report still paid a failed allocation per frame). A NEW revision is new bytes,
+     *   so it retries.
      * - The bytes are the WHOLE buffer: `first_instance` / `instance_count` are DRAW parameters, so one upload
      *   serves every draw that reads the same buffer.
      *
@@ -336,6 +341,11 @@ struct ContentCaches::Impl {
             slot->source = transforms.values; // THE KEY, HELD (see the type's note): the address stays ours
         }
         const std::uint64_t revision = slot->source->revision();
+        if (slot->failed && slot->revision == revision) {
+            // THE REFUSAL WAS REPORTED WHEN IT HAPPENED (see ProgramEntry / GeometryEntry): this answers null without an
+            // allocation, a copy or a second message, and the caller's generic sentence covers the empty reason.
+            return nullptr;
+        }
         if (slot->buffer != VK_NULL_HANDLE && slot->revision == revision) {
             return slot;
         }
@@ -349,6 +359,9 @@ struct ContentCaches::Impl {
             const std::weak_ptr<const void> named    = previous;
             releaseLater(named, [target = this, entry = std::move(previous)]() mutable { target->destroyBuffer(entry->buffer, entry->memory); });
         }
+        // A FAILED ENTRY WHOSE REVISION MOVED RETRIES on the new bytes (see the struct's `failed`): the flag describes
+        // the revision it was set with, never the buffer in general.
+        slot->failed = false;
         // THE BYTES ARE THE BUFFER'S, READ WHERE THEY ARE: `Buffer` is single-writer and holds no lock (`G10`, see
         // `Edit`'s note and ADR-2026-11-26). What makes this upload coherent is the caller's rule - a writer rewrites
         // the same elements and announces, and does not grow the storage while a frame that reads it is in flight - so
@@ -356,11 +369,15 @@ struct ContentCaches::Impl {
         const std::span<const float> floats = transforms.values->view();
         if (floats.empty()) {
             why = vn::String(u8"vk: an instance stream carries no transforms");
+            slot->failed   = true;
+            slot->revision = revision;
             return nullptr;
         }
         const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(floats.data()), floats.size() * sizeof(float));
         if (!upload(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, slot->buffer, slot->memory)) {
             why = vn::String(u8"vk: an instance stream could not be uploaded");
+            slot->failed   = true;
+            slot->revision = revision;
             return nullptr;
         }
         slot->bytes    = bytes.size();

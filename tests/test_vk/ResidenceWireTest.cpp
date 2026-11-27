@@ -544,3 +544,73 @@ TEST(VkResidenceWireTest, AVertexBufferThatAnnouncesANewRevisionIsUploadedAgain)
 
     backend->shutdown();
 }
+
+TEST(VkResidenceWireTest, ARefusedInstanceUploadIsRememberedInsteadOfRetriedEveryFrame)
+{
+    // REVIEW 19 / Z13. `ensureProgram` and `ensureGeometry` remember a refusal; the instance stream's fill did not, so
+    // a broken upload paid an allocation, a copy and a refusal on EVERY frame that drew the command - the report was
+    // saved by the episode rule, but the WORK was not. The witness is the pool: with block creation refused, a second
+    // frame drawing the same command must not reach vkAllocateMemory at all.
+    auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(u8"instance_refused");
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+
+    const auto instancedFrame = [&](const intrusive_ptr<vn::Buffer<float>>& instances, const std::uint32_t instance_count) {
+        DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+        command.program             = program;
+        command.program_description = program->description();
+        command.instance_transforms = vn::BufferSlice<float>::whole(instances);
+        command.first_instance      = 0U;
+        command.instance_count      = instance_count;
+
+        DrawPacket draw;
+        draw.kind        = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands    = std::make_shared<std::vector<DrawItem>>(std::vector<DrawItem>{ std::move(command) });
+        return drawingFrame(target.get(), std::move(draw));
+    };
+
+    // THE RING, THE TARGET, THE PROGRAM AND THE INSTANCED VARIANT COME FIRST: one small instanced frame builds all of
+    // them, so what the frames below measure is the instance stream's own allocation and nothing else.
+    const auto warmup = intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(16U, 0.0F)));
+    (void)backend->executeFrame(instancedFrame(warmup, 1U), nullptr);
+    ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+
+    // A STREAM BIGGER THAN THE POOL'S FIRST FILL, so its upload really asks the device for a block the injected creator
+    // can refuse (the same 20 MiB lever the refused-geometry case above uses).
+    constexpr std::size_t kBigBytes = 20U * 1024U * 1024U;
+    const auto big = intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(kBigBytes / sizeof(float), 0.0F)));
+    const std::uint32_t big_count = static_cast<std::uint32_t>(kBigBytes / (16U * sizeof(float)));
+
+    int refusals = 0;
+    device->setMemoryBlockCreator([&refusals](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        ++refusals;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    });
+    (void)backend->executeFrame(instancedFrame(big, big_count), nullptr);
+    EXPECT_GT(refusals, 0) << "the injection was never reached: the case proved nothing";
+    const std::size_t reported = backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped);
+    EXPECT_EQ(reported, 1U) << "the refused instance stream was not reported once";
+
+    const int after_first = refusals;
+    (void)backend->executeFrame(instancedFrame(big, big_count), nullptr);
+    EXPECT_EQ(refusals, after_first) << "the refused instance upload was retried: the pool was asked for a block again (Z13)";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), reported)
+        << "only the episode rule was doing the work, while the allocation and the copy were repeated";
+
+    // A NEW REVISION IS NEW BYTES, so the refusal describes the old ones and the upload is attempted again.
+    big->bumpRevision();
+    (void)backend->executeFrame(instancedFrame(big, big_count), nullptr);
+    EXPECT_GT(refusals, after_first) << "a new revision kept the previous revision's refusal";
+
+    device->setMemoryBlockCreator({});
+    backend->shutdown();
+}

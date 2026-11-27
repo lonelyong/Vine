@@ -403,7 +403,7 @@ void AutoTransform::setAxis(const Vec3d& axis)
         normal = (std::abs(axis_.z) < 0.9 ? Vec3d(0.0, 0.0, 1.0) : Vec3d(1.0, 0.0, 0.0)).cross(axis_);
     }
     normal_ = normal.normalized();
-    invalidateBounds();
+    recompose();
 }
 
 Vec3d AutoTransform::normal() const
@@ -418,7 +418,7 @@ void AutoTransform::setNormal(const Vec3d& normal)
         return; // zero or parallel to the axis: no in-plane direction to turn toward
     }
     normal_ = flat.normalized();
-    invalidateBounds();
+    recompose();
 }
 
 bool AutoTransform::autoScaleToScreen() const
@@ -432,8 +432,9 @@ void AutoTransform::setAutoScaleToScreen(bool enabled)
         return;
     }
     auto_scale_to_screen_ = enabled;
-    // The view-independent matrix is unchanged, but the per-view one and the conservative bound are not.
-    invalidateBounds();
+    // The view-independent matrix is unchanged, but the per-view one and the conservative bound are not - recompose()
+    // is what keeps the cached placement's identity tied to the facts it carries (see viewPlacement).
+    recompose();
 }
 
 double AutoTransform::minimumScale() const
@@ -447,7 +448,7 @@ void AutoTransform::setMinimumScale(double scale)
     if (maximum_scale_ < minimum_scale_) {
         maximum_scale_ = minimum_scale_;
     }
-    invalidateBounds();
+    recompose();
 }
 
 double AutoTransform::maximumScale() const
@@ -461,7 +462,7 @@ void AutoTransform::setMaximumScale(double scale)
     if (minimum_scale_ > maximum_scale_) {
         minimum_scale_ = maximum_scale_;
     }
-    invalidateBounds();
+    recompose();
 }
 
 Mat4d AutoTransform::matrix() const
@@ -476,20 +477,12 @@ Mat4d AutoTransform::localTransformMatrix() const
 
 ViewPlacementPtr AutoTransform::viewPlacement() const
 {
-    if (mode_ == AutoRotateMode::NoRotation && !auto_scale_to_screen_) {
-        return {}; // the view-independent placement: localTransformMatrix() answers for every camera
-    }
-    // A snapshot of this node's switches and numbers: the value carries no node, so a row can resolve it without one.
-    return ViewPlacementPtr(new AutoTransformPlacement(mode_,
-                                                       auto_scale_to_screen_,
-                                                       position_,
-                                                       rotation_,
-                                                       scale_,
-                                                       pivot_,
-                                                       axis_,
-                                                       normal_,
-                                                       minimum_scale_,
-                                                       maximum_scale_));
+    // THE CACHED VALUE, REBUILT BY recompose() (review 19 Z5): every mutator of a fact this value carries goes through
+    // recompose, so an unchanged node answers the SAME object every call - the identity a publication compares to know
+    // nothing moved (`RowOwn::Fold`) - and a changed node answers a fresh value holding the new facts. Building one per
+    // call made every bake look like a new placement, which is what made the placement lie outside the share test's
+    // reach (its equality saw only the fold's answer, and two placements can fold to the same answer).
+    return placement_;
 }
 
 Aabbd AutoTransform::boundingBox() const
@@ -538,6 +531,23 @@ void AutoTransform::recompose()
 {
     matrix_ = vn::math::translate(Vec3d(position_.x, position_.y, position_.z)) * vn::math::rotate(rotation_) * vn::math::scale(scale_) *
               vn::math::translate(Vec3d(-pivot_.x, -pivot_.y, -pivot_.z));
+    // THE PER-VIEW PLACEMENT IS PART OF THE NODE'S OWN FACTS: rebuilt here so its identity moves exactly when one of
+    // the numbers it carries does (see viewPlacement). NoRotation without auto-scale has no per-view placement at all.
+    if (mode_ == AutoRotateMode::NoRotation && !auto_scale_to_screen_) {
+        placement_.reset();
+    }
+    else {
+        placement_ = ViewPlacementPtr(new AutoTransformPlacement(mode_,
+                                                                 auto_scale_to_screen_,
+                                                                 position_,
+                                                                 rotation_,
+                                                                 scale_,
+                                                                 pivot_,
+                                                                 axis_,
+                                                                 normal_,
+                                                                 minimum_scale_,
+                                                                 maximum_scale_));
+    }
     // The placement changed: every box above is stale and every collected command would say a different
     // matrix (see Node::invalidateBounds).
     invalidateBounds();

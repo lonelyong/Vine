@@ -3152,6 +3152,34 @@ TEST(AutoTransformTest, NoRotationIsThePlainPlacement)
     EXPECT_EQ(billboard.viewPlacement(), nullptr) << "NoRotation must leave the view-independent path alone";
 }
 
+TEST(AutoTransformTest, ThePlacementKeepsItsIdentityUntilItsOwnFactsChange)
+{
+    // REVIEW 19 / Z5. A bake takes the placement once per build and a publication compares two rows by the value's
+    // IDENTITY (`RowOwn::Fold`) to know the select would read the same placement. That is only meaningful if an
+    // unchanged node answers the same object and a changed one answers a fresh value whose facts are the new ones.
+    AutoTransform billboard;
+    EXPECT_EQ(billboard.viewPlacement(), nullptr) << "NoRotation without auto-scale has no per-view placement";
+
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::RotateToScreen);
+    const ViewPlacementPtr first = billboard.viewPlacement();
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(billboard.viewPlacement().get(), first.get()) << "an unchanged node rebuilt its placement";
+    EXPECT_EQ(billboard.viewPlacement().get(), first.get()) << "and it answers the same object every time, not a copy";
+
+    billboard.setPosition(Point3d(1, 0, 0));
+    const ViewPlacementPtr moved = billboard.viewPlacement();
+    ASSERT_NE(moved, nullptr);
+    EXPECT_NE(moved.get(), first.get()) << "a moved node kept the previous placement value";
+
+    // A FACT THE MATRIX DOES NOT HOLD IS ONE OF ITS FACTS TOO: the axis is part of the value, so it must move with it.
+    billboard.setAxis(Vec3d(1, 0, 0));
+    EXPECT_NE(billboard.viewPlacement().get(), moved.get()) << "an axis edit left the cached placement standing";
+
+    // Back to a view-independent mode answers null, never the stale value.
+    billboard.setAutoRotateMode(AutoTransform::AutoRotateMode::NoRotation);
+    EXPECT_EQ(billboard.viewPlacement(), nullptr);
+}
+
 TEST(AutoTransformTest, RotateToScreenCancelsTheCameraRotation)
 {
     AutoTransform billboard;

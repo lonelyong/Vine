@@ -177,7 +177,10 @@ struct RowOwn {
         /// The per-view half of the placement, or null when the row is placed by `local` alone.
         ///
         /// A VALUE (see ViewPlacement): the select resolves it from the view it is drawing, which is what lets a side
-        /// that owns no node draw a billboard without a graph walk.
+        /// that owns no node draw a billboard without a graph walk. ITS IDENTITY IS PART OF THIS GROUP'S EQUALITY (`G4`,
+        /// review 19 `Z5`): an unchanged node answers the same object (see Node::viewPlacement), so two rows comparing
+        /// equal here would read the same placement from the select - which the fold's own answer cannot say, because
+        /// two placements can fold to the same box.
         ViewPlacementPtr placement{};
 
         [[nodiscard]] bool operator==(const Fold& other) const = default;

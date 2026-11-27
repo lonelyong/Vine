@@ -277,9 +277,12 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *   world's rows, or a side that takes a draw list across a thread - resolves it from the view alone.
      * - The default answers null: the node is placed by localTransformMatrix(). `AutoTransform` answers a value whose
      *   declaredDependence() is View or ViewAndViewport depending on its configuration.
-     * - Taken when the CALLER asks (a bake takes it once per build), so a node whose parameters changed returns a
-     *   fresh value; the returned object itself never changes. Resolving it for a view is `localToWorldForView`
-     *   (see ViewPlacement.hpp), which reads nothing but the value.
+     * - IT KEEPS ITS IDENTITY UNTIL THIS NODE'S OWN FACTS CHANGE (`G4`, review 19 `Z5`): an implementation answers the
+     *   SAME object while what the value carries is unchanged, so a publication can compare two rows' placements by
+     *   identity (`RowOwn::Fold`) - the fold's answer cannot stand in for it, because two placements can fold to the
+     *   same box. The value itself never changes, and a mutator that changes those facts rebuilds it AND announces
+     *   (`invalidateBounds()` / `announceContentChange()`), which is what re-reads the row. Resolving it for a view is
+     *   `localToWorldForView` (see ViewPlacement.hpp), which reads nothing but the value.
      *
      * @return The placement value, or null for a view-independent placement.
      */
@@ -304,7 +307,8 @@ class VN_GRAPHICS_API Node : public Object, public RefCounted<Node> {
      *
      * @details
      * - A collected command list is a pure function of the graph (transforms, visibility, layers, opacity, draw order,
-     *   material, program, state), so reusing one across frames is only sound while nothing changed.
+     *   per-view placements, material, program, state), so reusing one across frames is only sound while nothing
+     *   changed.
      * - Nodes cannot reach their Scene (there is no back-pointer, deliberately), so the announcement climbs the PARENT
      *   CHAIN: this node and every ancestor increment their subtree epoch, which makes the ROOT answer "something
      *   below me changed". A Scene reads its own root's value (see Scene), so the announcement is scoped to the tree

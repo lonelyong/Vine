@@ -40,6 +40,7 @@
 #include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
@@ -482,6 +483,69 @@ TEST(VkWindowPresentTest, AWindowHandleMovesWithoutRebuildingTheDevice)
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
         << "validation reported something on the move path";
 
+    backend->shutdown();
+#endif
+}
+
+TEST(VkWindowPresentTest, ADetachedPresenterAnswersItsOwnReasonInsteadOfAccusingTheHost)
+{
+#if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
+    GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
+#else
+    // REVIEW 19 / Z14. `vk.window.presenter_missing` is the answer for "the host named no presenter this device handed
+    // out". A target whose own swapchain went away is NOT that: it is the device's own presenter, and the window knows
+    // why it cannot run (detached / never attached / rebuild failed). The old check folded both into one sentence and
+    // accused the host of a foreign presenter - this pins the split.
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
+    }
+    TestHostWindow window(display, kWindowWidth, kWindowHeight);
+    if (window.handle() == nullptr) {
+        GTEST_SKIP() << "a host window could not be created on this desktop";
+    }
+
+    const DeviceDesc desc{ DevicePresentation::Handle, window.handle() };
+    auto             backend = RenderBackendRegistry::instance().create(u8"vk", desc);
+    ASSERT_NE(backend, nullptr) << "the factory did not answer the vk backend";
+
+    SurfaceTargetResult result = SurfaceTargetResult::NoPresentation;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(window.handle(), &result);
+    ASSERT_NE(target, nullptr) << "createSurfaceTarget answered " << static_cast<int>(result);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    ASSERT_TRUE(backend->capabilities().presentation);
+
+    const FrameDescription frame = windowFrame();
+    EXPECT_EQ(presentUntilReady(*backend, frame, target, 40), PresentOutcome::Presented);
+
+    // THE WINDOW GOES AWAY UNDER THE TARGET: a state the target owns and can name, and a frame that must report it under
+    // its own code instead of `presenter_missing`.
+    target->setWindowHandle(nullptr);
+    auto* window_target = dynamic_cast<vn::backend_vk::WindowTarget*>(target);
+    ASSERT_NE(window_target, nullptr);
+    EXPECT_EQ(window_target->presentationState(), vn::backend_vk::WindowTarget::PresentationState::Detached)
+        << "the target cannot say it has no window";
+    EXPECT_FALSE(window_target->ready());
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+    const std::size_t before = backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest);
+    (void)backend->executeFrame(frame, target);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), before + 1U)
+        << "the refused window pass was not reported";
+
+    bool missing   = false;
+    bool not_ready = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        missing |= diagnostic.code == u8"vk.window.presenter_missing";
+        not_ready |= diagnostic.code == u8"vk.window.not_ready";
+    }
+    EXPECT_FALSE(missing) << "a detached presenter was reported as one the host never named";
+    EXPECT_TRUE(not_ready) << "the window's own refusal was not reported";
+
+    backend->setDiagnosticSink({});
     backend->shutdown();
 #endif
 }

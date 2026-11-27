@@ -56,6 +56,16 @@ struct WindowDevice {
  */
 class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentTarget {
   public:
+    /** @brief Why this target cannot present right now (see @ref presentationState). */
+    enum class PresentationState : std::uint8_t
+    {
+        Ready,       // A swapchain and the depth image it draws with exist.
+        Detached,    // No live host window: setWindowHandle(nullptr), or the move to a new handle could not be rebuilt.
+        NotAttached, // attach() was never called, or it was refused.
+        NoSwapchain, // Attached, but the last swapchain (re)build produced none.
+    };
+
+  public:
     /**
      * @brief Creates a target for @p native_handle, without a surface yet (see @ref attach).
      *
@@ -91,6 +101,20 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
 
     /** @brief Answers whether a swapchain and its images currently exist. */
     [[nodiscard]] bool ready() const noexcept;
+
+    /**
+     * @brief Gets why @ref ready() answers what it does: the window's own state, as a value.
+     *
+     * @details
+     * - THE WINDOW KNOWS WHY ITS PASSES CANNOT RUN; the device owns the report (`vk.window.not_ready`).
+     *   "Detached", "never attached" and "the last swapchain build produced none" all leave @ref ready false, and a
+     *   host reading a missing picture had no way to tell them apart from the sentence that used to accuse it of
+     *   naming a foreign presenter (review 19 `Z14`).
+     * - IT READS, IT DOES NOT ASK THE DEVICE: every fact it names is state this target already holds.
+     *
+     * @return #PresentationState::Ready when @ref ready() is true; otherwise the fact that stops it.
+     */
+    [[nodiscard]] PresentationState presentationState() const noexcept;
 
     /**
      * @brief Answers whether the device was lost through this window (an acquire or present answered so).

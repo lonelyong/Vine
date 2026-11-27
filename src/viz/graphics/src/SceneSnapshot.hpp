@@ -23,9 +23,10 @@ namespace detail
  *   mutable table while the content thread edits it, so a publication hands out THIS value: rows are copied into
  *   fixed-size chunks, the `nodes` bookkeeping is dropped, and the result is only read afterwards.
  * - STRUCTURE SHARING. A new snapshot reuses the previous snapshot's chunk when no row in it moved: its identity and
- *   structure are the same, its node's own facts did not announce (the content epoch), and the FOLD's answer for it
- *   did not change (`Row::resolved_serial`). An edit therefore copies the chunks it touches - including those below
- *   the edited node, whose epochs do not move but whose resolved facts do - and shares the rest.
+ *   structure are the same, its node's own facts did not announce (the content epoch), its own FOLD input did not move
+ *   (`RowOwn::Fold`, which carries the per-view placement's identity - a fact the fold's answer cannot state), and the
+ *   FOLD's answer for it did not change (`Row::resolved_serial`). An edit therefore copies the chunks it touches -
+ *   including those below the edited node, whose epochs do not move but whose resolved facts do - and shares the rest.
  * - IT IS STILL A BRIDGE. The row layout is today's `Row`; the hot/cold `ContentRef` layout is the next step. This
  *   value exists to make the snapshot boundary and chunk sharing measurable without changing the row fields.
  * - CONTENT VALUES TRAVEL IN THE ROWS. `Row::description` / `material_description` are immutable values carrying

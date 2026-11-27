@@ -434,33 +434,39 @@ FrameCallOutcome RenderEngine::frame()
     return FrameCallOutcome{ FrameCallOutcome::Status::Submitted };
 }
 
-void RenderEngine::setFrameThreading(FrameThreading mode)
+FrameThreadingOutcome RenderEngine::setFrameThreading(FrameThreading mode)
 {
     // A SWITCH IS AN ENTRY LIKE A FRAME'S (see FramePump::setThreaded): it takes the same interval and answers the same
     // two refusals, because it changes the fact a frame asks before it builds and ends by joining the thread an answer
-    // runs on.
+    // runs on. THE ANSWER LEAVES AS A VALUE, ALWAYS (`G4`, review 19 Z3): the pump's refusal used to be reported only
+    // as a diagnostic, so a host had to poll frameThreading() and correlate a string to learn that nothing moved.
     const detail::FramePump::Build::Refusal refusal = pump_->setThreaded(mode == FrameThreading::EngineThread);
     if (refusal == detail::FramePump::Build::Refusal::None) {
         frame_thread_change_episode_.rearm();
-        return;
+        return FrameThreadingOutcome{ FrameThreadingOutcome::Status::Applied };
     }
-    // SAID ONCE PER EPISODE, WITH THE CAUSE (`G4`): "asked from inside the frame that is running" and "asked while
-    // another host thread is building one" are two different mistakes, and a host can only act on them as values.
-    if (!frame_thread_change_episode_.shouldReport()) {
-        return;
+    // SAID ONCE PER EPISODE, WITH THE CAUSE: "asked from inside the frame that is running" and "asked while another
+    // host thread is building one" are two different mistakes with two different repairs. The episode governs the
+    // REPORT; the value below answers every call, because a caller that made the mistake twice still needs it once.
+    const FrameThreadingOutcome::Status status = refusal == detail::FramePump::Build::Refusal::Reentrant
+                                                     ? FrameThreadingOutcome::Status::RefusedFromFrame
+                                                     : FrameThreadingOutcome::Status::RefusedInFlight;
+    if (frame_thread_change_episode_.shouldReport()) {
+        if (refusal == detail::FramePump::Build::Refusal::Reentrant) {
+            reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_from_frame",
+                                                      DiagnosticCategory::PassProtocolViolation,
+                                                      u8"setFrameThreading() was called from this engine's own frame thread; the mode a "
+                                                      u8"frame is running under cannot be changed from inside it - ask between frames"));
+        }
+        else {
+            reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_in_flight",
+                                                      DiagnosticCategory::PassProtocolViolation,
+                                                      u8"setFrameThreading() was called from another host thread while a frame was being "
+                                                      u8"built; switching the mode ends by joining the frame thread, so it is an entry that "
+                                                      u8"belongs between frames - the frame in flight was left alone"));
+        }
     }
-    if (refusal == detail::FramePump::Build::Refusal::Reentrant) {
-        reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_from_frame",
-                                                  DiagnosticCategory::PassProtocolViolation,
-                                                  u8"setFrameThreading() was called from this engine's own frame thread; the mode a "
-                                                  u8"frame is running under cannot be changed from inside it - ask between frames"));
-        return;
-    }
-    reportEngineProblem(detail::engineProblem(u8"engine.threading.refused_in_flight",
-                                              DiagnosticCategory::PassProtocolViolation,
-                                              u8"setFrameThreading() was called from another host thread while a frame was being "
-                                              u8"built; switching the mode ends by joining the frame thread, so it is an entry that "
-                                              u8"belongs between frames - the frame in flight was left alone"));
+    return FrameThreadingOutcome{ status };
 }
 
 FrameThreading RenderEngine::frameThreading() const noexcept
@@ -489,9 +495,10 @@ void RenderEngine::advanceFrameClock() noexcept
 
 FrameContext RenderEngine::frameContext() const noexcept
 {
-    // THE FACTS ARE READ LIVE, the time is the head of the last frame: a host that asks twice gets the same answer,
-    // and the size it sees is the one the passes are laid out on right now rather than the one the previous frame
-    // used.
+    // THE THREE FACTS ARE READ LIVE AND THE TIME IS THE HEAD OF THE LAST FRAME: the size is the one the passes are
+    // laid out on right now rather than the one the previous frame used, and the frame id names the frame a frame()
+    // call would build next. Two calls are therefore NOT promised the same answer across a frame or a resize - the
+    // guarantee is that a host takes ONE value per frame and hands it to the whole update (review 19 Z4).
     FrameContext context = frame_context_;
     context.frame_number = frameNumber() + 1;
     context.area_width   = areaWidth();

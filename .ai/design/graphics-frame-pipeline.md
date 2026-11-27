@@ -214,6 +214,13 @@
   node's own facts announce" — and an edit bumps the edited node's and its ANCESTORS' counters, never its descendants'. The row's **fold serial** (`Row::resolved_serial`,
   moved only by the one function that stores the fold's answer) answers "did the fold write something else into this row" — which is what an edit does to the whole subtree
   below it. A chunk is shared only when no row in it is new on either count.
+- **And one input the fold's answer cannot state** (`G4`, review 19 `Z5`): the select reads each row's own FOLD group
+  directly - `local` for a view-independent row, `placement` for a per-view one - while the fold's answer records only
+  `view_dependent` plus a conservative box, so two placements can fold to the same answer. The share test therefore
+  compares `RowOwn::Fold` whole beside the epoch and the serial, and a per-view placement keeps its IDENTITY while the
+  node's own facts are unchanged (`Node::viewPlacement`, `AutoTransform::recompose`), which is what makes that
+  comparison mean "the select would read the same placement". `RowOwn::Body` is deliberately not compared: a body
+  change rebuilds the table (fresh serials, `RowRefresh::RebuildTable`).
 - **Constraints** (`C1` / `C2`): anything the content side changes after publication leaves in-flight frames untouched.
 - **Requirements** (`R9` / `R10` / `R13`): one atomic pointer swap; cost O(changed chunks + changed material values); the snapshot can be exported as a text summary.
 - **Acceptance** (`T1` / `T2` / `T3`): `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` - an edit is a new publication that shares every 32-row chunk but the one it
@@ -584,6 +591,7 @@
 | D11 | implementing preparation as "run a frame without submitting" | a window frame's `beginFrame` acquires an image: without a submission it starves, with one it is not preparation; and a pass drawing into a window cannot even be covered (`P11`) | ADR-2026-11-12 |
 | D12 | one engine driving several Surfaces (graphics-next F8) | no consumer (`G8`); `FrameResult` / `PresentRecord` would change to per-surface right after landing (`G10`); appfw ownership would have to be rewritten; consistent with architecture D2 | [ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md) |
 | D13 | adding a second entry point to preparation (`flushUploads()` / `uploadNow()`) | two entry points answer the same question ("build what this frame needs") and the caller still has to know when to call them: complexity moved to the caller (`G1` / `G7`), and no consumer today asks to split building from transferring (`G8`) | [ADR-2026-11-14](ADR-2026-11-14-prepare-may-submit-transfers.md) |
+| D14 | Comparing only the fold's output, with the node epoch as the placement's only guard | `G4` / `G11`: the list a node author is told to follow (`Node::announceContentChange`) did not name placements, and the next node type that answers a placement without announcing would serve a stale chunk - review 6's `P0-1` shape one level down. Comparing a FRESH placement object instead would stop every chunk holding a billboard from sharing for no change at all (`G10`), so the value got an identity and the share test reads it (`Z5`) | `../decisions/ADR-2026-11-27-a-share-compares-the-input-the-select-reads.md` |
 
 ## 8. Tests and Acceptance
 
@@ -624,6 +632,7 @@
 | T34 | the snapshot source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` (600 frames, transform / opacity / material / placement edits, diffed item by item) + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` (the frame-level seam after binding) | implemented |
 | T36 | the frame result is that frame's value | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered` (snapshot / camera / counts / diagnostics / present; a publication landing between frames does not change the answered frame) | implemented |
 | T35 | preparation's upload batch is a real upload and is not a frame | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (preparation reports 2 streams + 1 texture; the following `executeFrame`'s `stream_uploads` / `texture_uploads` are both 0 and the pixel is the texture's colour) + `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` (`uploads == 0`, `progress->submitted` / `presented` do not move) | implemented |
+| T37 | a placement that moved outside the fold is not shared | `SnapshotTest.APlacementThatMovedOutsideTheFoldIsNotShared` (a hand-built bake whose placement is swapped without moving the fold's answer: the chunk is copied, the untouched chunk is shared) + `AutoTransformTest.ThePlacementKeepsItsIdentityUntilItsOwnFactsChange` (the same object while unchanged, a fresh one after a fact moves, null under NoRotation) | implemented |
 
 ### 8.1 Kill thresholds (`K#`)
 

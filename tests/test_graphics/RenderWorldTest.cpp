@@ -26,6 +26,8 @@
 #include <vine/graphics/DrawItem.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/StateNode.hpp>
+#include <vine/graphics/AutoTransform.hpp>
+#include <vine/graphics/ViewPlacement.hpp>
 
 #include "DrawListBake.hpp"
 #include "SceneRows.hpp"
@@ -272,6 +274,73 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
     EXPECT_NE(latest_snapshot.get(), warm_snapshot.get()) << "an edit is a new publication, never the cached value";
     EXPECT_EQ(shared_chunks, warm_snapshot->chunks.size() - 1U)
         << "one edit must share every chunk but the one it touched; K1 is that stopping, i.e. the whole table copied";
+}
+
+TEST(SnapshotTest, APlacementThatMovedOutsideTheFoldIsNotShared)
+{
+    // REVIEW 19 / Z5. A chunk is shared only while the select would read the same row: the fold's answer deliberately
+    // does not carry the per-view placement, because two placement values can fold to the same box - so the share test
+    // compares the row's own Fold input beside it. This case builds a bake by hand, swaps ONE row's placement WITHOUT
+    // moving its folded answer (what a node that forgot to announce would look like), and asks for a publication: the
+    // chunk must be copied, not served from the previous one.
+    class IdlePlacement final : public vn::graphics::ViewPlacement
+    {
+      public:
+        ~IdlePlacement() override = default;
+
+        vn::graphics::ViewDependence declaredDependence() const noexcept override
+        {
+            return vn::graphics::ViewDependence::None;
+        }
+        vn::graphics::ViewDependence dependence(const View&) const noexcept override
+        {
+            return vn::graphics::ViewDependence::None;
+        }
+        vn::math::Mat4d localMatrix(const vn::math::Mat4d&, const View&) const override
+        {
+            return vn::math::Mat4d{};
+        }
+        Aabbd conservativeParentBox(const Aabbd& own_box) const override
+        {
+            return own_box;
+        }
+        bool isBounded() const noexcept override
+        {
+            return true;
+        }
+    };
+
+    auto billboard = intrusive_ptr<vn::graphics::AutoTransform>(new vn::graphics::AutoTransform());
+    billboard->setAutoRotateMode(vn::graphics::AutoTransform::AutoRotateMode::RotateToScreen);
+    billboard->setPosition(vn::math::Point3d(0.0, 0.0, -3.0));
+    billboard->addChild(triangle());
+
+    auto root = intrusive_ptr<Group>(new Group());
+    root->addChild(billboard);
+    for (int index = 0; index < 40; ++index) {
+        root->addChild(triangle());
+    }
+
+    SceneBake bake;
+    buildRows(*root, bake);
+    const auto first = vn::graphics::detail::makeSceneSnapshot(bake, 1U, 0U, 0U, nullptr);
+    ASSERT_GE(first->chunks.size(), 2U) << "the fixture must span several chunks, or sharing says nothing";
+
+    std::size_t billboard_row = 0U;
+    for (; billboard_row < bake.rows.size(); ++billboard_row) {
+        if (bake.rows[billboard_row].own.fold.placement != nullptr) {
+            break;
+        }
+    }
+    ASSERT_LT(billboard_row, bake.rows.size()) << "the bake read no per-view placement at all";
+    ASSERT_LT(billboard_row, vn::graphics::detail::SceneSnapshot::kRowsPerChunk) << "the fixture puts the billboard in the first chunk";
+
+    bake.rows[billboard_row].own.fold.placement = vn::graphics::ViewPlacementPtr(new IdlePlacement());
+    const auto second = vn::graphics::detail::makeSceneSnapshot(bake, 2U, 0U, 0U, first);
+
+    EXPECT_EQ(second->row(billboard_row).own.fold.placement.get(), bake.rows[billboard_row].own.fold.placement.get())
+        << "the publication shared a chunk whose select input moved: it would draw the previous placement";
+    EXPECT_EQ(second->chunks.back(), first->chunks.back()) << "a chunk whose rows did not move is still shared";
 }
 
 TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)

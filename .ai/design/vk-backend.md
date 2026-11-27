@@ -120,6 +120,9 @@ and every cache has a witness a test can read.**
   this table serves - a host that rebuilds its instance buffer per frame - has no way to announce a buffer it no longer holds, and because a share kept
   for the session's life would trade a stale `VkBuffer` for a stale `VkBuffer` **plus** the host's bytes (`G10`). Cost: one walk of the instance-stream
   table per frame, O(entries), under the lock `endFrame` already takes (`../decisions/ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md`).
+- **A refused fill is remembered** (`G11`, review 19 `Z13`): `InstanceStream::failed` records the revision an upload failed
+  at, so a broken stream answers null from then on - one report, no second allocation or copy - exactly as
+  `ProgramEntry::failed` and `GeometryEntry::failed` already behave. A NEW revision is new bytes, so it retries there.
 
 ### 2.6 Shape vs extent: a resize does not recompile a pipeline
 
@@ -625,6 +628,10 @@ and every cache has a witness a test can read.**
 - **Behaviour**: `WindowSystem` creates the surface (X11 / xcb); the swap chain is FIFO with `minImageCount + 1`, `currentTransform`, a composite-alpha fallback, and
   prefers BGRA8 / RGBA8 sRGB; **one present-wait semaphore per swap-chain image**; `vkAcquireNextImageKHR` has a 1 s timeout, and a timeout skips "this frame got no
   image" and reports once per episode; `OUT_OF_DATE` / `SUBOPTIMAL` rebuild.
+- **An unready presenter names its own cause** (`G4`, review 19 `Z14`): a window pass whose presenter exists but has no
+  live swapchain answers `vk.window.not_ready` with the window's own state (`WindowTarget::presentationState`:
+  `Detached` / `NotAttached` / `NoSwapchain`), while `vk.window.presenter_missing` is kept for "no presenter this device
+  handed out" - the sentence used to accuse the host of a foreign presenter when the target's own rebuild had failed.
 - **Constraints**: `C1`, `C2`, `R3`.
 - **Acceptance**: `WindowPresentTest`, `ProbeTest`; `T6` (a real host).
 - **Caveat**: `P13` (suspect the environment first when a window test goes red; the swap-chain semaphores are one per image and cannot be shared).
@@ -790,6 +797,9 @@ and every cache has a witness a test can read.**
 - **Frozen code spellings** (`BC-40`): the four `vk.content.screen_*` codes keep the word `screen` although the
   internal vocabulary says `Fullscreen` since `T57`. A code is what a HOST matches, so it keeps the spelling it
   shipped with; only the enumerator (`ContentRefusalCause::Fullscreen*`) is internal and renamable.
+- **Two window codes, two facts** (`BC-40`): `vk.window.presenter_missing` means exactly "the pass named no presenter
+  this device handed out"; an unready presenter has `vk.window.not_ready` (F3), so a host that matches a code is not
+  sent to the wrong repair (review 19 `Z14`).
 - **Constraints**: `R3`, `R4`.
 - **Acceptance**: `BackendTest`, `ContentDrawTest`'s diagnostic-count assertions.
 - **Caveat**: `P8` (a report field must not live in an object that gets destroyed).
@@ -1139,6 +1149,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | D8 | an attachment-set base class for `TargetObjects` / `WindowTarget` | `G10` / `G12`: a vtable in a value type, and one header that would have to know both; a `PassTarget` VALUE (owner pointer + four answers) gives the frame body one shape without either cost (§2.20) | — |
 | D9 | giving `Buffer` a unique id, or a weak handle, so an entry can outlive its key's address | `G10` / `G1`: a weak handle needs a control block beside `RefCounted`'s in-object counter - a redesign of the primitive every holder uses, for one table - and an id neither ends the entry nor answers the multi-session case (two caches would hold it for ever) | `../decisions/ADR-2026-11-09-address-keys-hold-the-object.md` (option B, rejected there) / `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` |
 | D10 | ending an unheld entry by a TTL, an LRU or a byte cap | `G1`: the SDK states the opposite rule (`graphics-content-lifecycle.md` 2.3: no cap, no LRU, no pressure eviction), and "the host stopped holding it" is already observable exactly - the cache's share is the last one | `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` |
+| D11 | retrying a refused instance upload every frame (the report saved by the episode rule) | `G11` / `G10`: the message was deduplicated but the allocation, the copy and the refusal were not - a broken stream would ask the pool for a block every frame. `Z13` closed it with the flag the other two fills already carry | — |
+| D12 | reporting an unready presenter as `vk.window.presenter_missing` | `G4`: a code is an identity a host matches, and the second condition is not the first fact - the window's own state was never said. `Z14` split the codes and made the window answer `presentationState()` | — |
 
 ## 8. Tests and Acceptance
 
@@ -1156,6 +1168,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T10 | content is resident only when its fill is proven | `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` (a refused submit through `Device::refuseNextSubmit`; the mutation that publishes at record time turns it red - §2.21, §6.19) |
 | T11 | a table entry holds its key and ends when nobody else holds it | `VkBuiltinProgramTest.AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes` (the cache's share shows in `useCount`; the stream leaves at a frame end with no announcement) and `ARecycledAddressDoesNotInheritThePreviousInstanceBytes` (the picture is the fresh buffer's; under the old rule the previous matrices were drawn at the previous position - verified by reverting the share and the sweep) |
 | T12 | a pipeline never states a stage without a module, and an incomplete program is reported as a program fault (never as a state the driver refused) | `VkContentDrawTest.AProgramWithNoVertexStageIsRefusedAsAProgramFault` (the code, the sentence naming the stage, the clear picture), `AComputeStageIsRefusedRatherThanDropped`, `AFragmentOnlyProgramIsAWholeFullScreenProgram` (the same program is complete for a full-screen pass - §2.22) |
+| T13 | a refused fill is not retried | `VkResidenceWireTest.ARefusedInstanceUploadIsRememberedInsteadOfRetriedEveryFrame` (with block creation refused, the second frame does not reach `vkAllocateMemory`, and a new revision retries) |
+| T14 | an unready presenter names its own cause | `VkWindowPresentTest.ADetachedPresenterAnswersItsOwnReasonInsteadOfAccusingTheHost` (`presentationState() == Detached`; the frame reports `vk.window.not_ready`, never `presenter_missing`) |
 
 ## 9. Status and Evolution
 
@@ -1164,7 +1178,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **234 cases / 47 suites**, `test_graphics` **708 / 87** (2026-11-27, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **236 cases / 47 suites**, `test_graphics` **710 / 87** (2026-11-27, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).

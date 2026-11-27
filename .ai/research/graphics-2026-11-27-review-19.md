@@ -174,6 +174,14 @@ resolved by waiting arrives as a VALUE instead of a race" (`frame()`'s doc).
 **Choice.** Return the same `Build::Refusal` shape (or a small `ThreadingResult`) and keep the episode for the log.
 **code + doc.**
 
+**Fixed 2026-11-27, as the small result the review named.** `setFrameThreading` answers `FrameThreadingOutcome` -
+`Applied` / `RefusedFromFrame` / `RefusedInFlight` - and the episode still governs the report, so a caller that made the
+mistake twice still gets its one answer per call. The two rejected shapes are `D14` in `graphics-threading.md`: a `bool`
+folds the two mistakes into one answer, and `EngineNotReadyReason` means "this engine cannot drive a frame" (it carries
+`NoDevice` / `NotInitialized`, which a mode change cannot produce). The appfw convenience verb keeps forwarding and
+returning nothing - a control without an engine has no mode to state, and a fourth state would put a GUI concern in the
+SDK's enum. Rule: 2.17 / `D14` / `T40`; `ADR-2026-11-27-the-last-interval-verb-answers-a-value.md`.
+
 ### 2.5 Z4 (documentation / low): `frameContext()` claims one answer per frame and reads three fields live
 
 **Evidence.** The header says "A PURE READ, AND THE SAME ANSWER ALL FRAME: the frame id, the announced size and the
@@ -187,6 +195,12 @@ the value.
 
 **Choice.** Say which is which: "the three facts are the engine's current ones; take the value once per frame" - or
 return the frame's own context (the one `buildContentHalf` hands the passes). **doc.**
+
+**Fixed 2026-11-27, as a sentence that states what the call does.** The three facts are named as the engine's CURRENT
+ones (`frameNumber() + 1`, the announced size, the ratio), and the guarantee is moved to the place it actually holds:
+a host asks once at the head of its update and hands that one value to the whole update. `elapsed_seconds` remains the
+one field the frame clock moves, once per `frame()`. The implementation was already what this sentence says; the review's
+second branch (return the frame's own context) would have made a cheap read carry state a query does not own.
 
 ### 2.6 R1 verdict
 
@@ -244,6 +258,17 @@ placements - is a silently stale chunk, i.e. exactly review 6's `P0-1` shape one
 
 **Choice.** Add `placement` to the sentence (and to the share test, by comparing the `ViewPlacementPtr` in `own` - one
 pointer comparison per row, and then the epoch is a second line of defence rather than the only one). **doc (+ code).**
+
+**Fixed 2026-11-27, at the identity the comparison needs.** `AutoTransform` caches its placement and rebuilds it in the one
+`recompose()` every mutator of a carried fact reaches, so an unchanged node answers the SAME object and a changed one a
+fresh value; `Node::viewPlacement` states that contract and `Node::announceContentChange`'s dependency list now names
+per-view placements. The share test compares `RowOwn::Fold` whole beside identity, links, epoch and serial (the whole
+group, with its defaulted equality, rather than a hand-written pointer field); `RowOwn::Body` is deliberately not
+compared - a body change rebuilds the table. The review's first answer (a bare pointer comparison) was rejected on its
+own: with a fresh object per read it would stop every billboard chunk sharing for no change (`D14` in
+`graphics-frame-pipeline.md`). Cases: `SnapshotTest.APlacementThatMovedOutsideTheFoldIsNotShared` (red under the old
+test) and `AutoTransformTest.ThePlacementKeepsItsIdentityUntilItsOwnFactsChange`;
+`ADR-2026-11-27-a-share-compares-the-input-the-select-reads.md`.
 
 ### 3.3 Z6 (API semantics / medium): `bindSnapshot` cannot be withdrawn, and its "empty handle" reads as a withdrawal
 but means "draw nothing" - so a host that binds once never sees the scene's later publications again
@@ -750,6 +775,13 @@ one report and no second attempt; `ensureInstanceStream` (`:318-350`) keeps noth
 attempted - allocation, copy and refusal - on every frame that draws the command, and the report is only saved by the
 episode rule at the device. Same question, two spellings.
 
+**Fixed 2026-11-27, by making the third fill the same as the other two.** `InstanceStream::failed` records the revision
+an upload failed at, so a broken stream answers null from then on - one report, no second allocation or copy - and a NEW
+revision clears the flag because the bytes that failed are no longer the bytes under the key. The empty-view refusal is
+remembered the same way. Case: `VkResidenceWireTest.ARefusedInstanceUploadIsRememberedInsteadOfRetriedEveryFrame` (with
+block creation refused, the second frame does not reach `vkAllocateMemory`; a bumped revision retries); rule: 2.5 /
+`D11` / `T13` in `../design/vk-backend.md`.
+
 ### 15.4 R13 verdict
 
 The residency machinery is the most carefully argued part of the backend and the three answers survive reading line by
@@ -787,6 +819,14 @@ the target itself failed to rebuild (a zero-extent surface, a refused `vkCreateS
 while the presenter is exactly the one the device handed out (`WindowTarget.cpp:494-497`). The window's own `why` is
 never reported on this path - `acquire` is not even attempted - so a host is told it passed a foreign presenter when the
 picture is missing for a reason the target knows and does not say.
+
+**Fixed 2026-11-27, by making the window answer its own state.** `WindowTarget::presentationState()` is the window's own
+value (`Ready` / `Detached` / `NotAttached` / `NoSwapchain`), and the frame's window branch has three answers instead of
+two: no presenter keeps `vk.window.presenter_missing`, an unready presenter reports `vk.window.not_ready` with the state
+it names, and a live chain re-arms both episodes. The cause of the missing chain (if any) was already reported where it
+happened (`attach_failed` / `acquire_failed`), so the new sentence says so instead of repeating it. Case:
+`VkWindowPresentTest.ADetachedPresenterAnswersItsOwnReasonInsteadOfAccusingTheHost` (a detached target reports
+`not_ready`, never `presenter_missing`); rule: F3 / F14 / `D12` / `T14` in `../design/vk-backend.md`.
 
 ### 16.3 R14 verdict
 
@@ -1406,9 +1446,9 @@ unobserved, and it is recorded here so the next round starts from it rather than
 |---|---|---|---|---|
 | `Z1` | R1 | high | `publish` / `unpublish` / `resolve` / `transientTarget` touch `FrameResources`, which says "no synchronisation is needed" because one thread calls it - and the public docs state no thread rule (**fixed 2026-11-27**: one lock over every table a host can reach, the frame head takes the bindings as a value, the public docs state the rule - `graphics-threading.md` C23) | `RenderEngine.cpp:851-913`; `FrameResources.hpp:47-48` |
 | `Z2` | R1 | medium-high | `bindPassContent` rewrites "the same one storage a plan writes and the compile reads" without the gate `applyPlan` takes (**fixed 2026-11-27**: the same `beginShapeChange` gate, answering `ContentBindOutcome::Status::Refused` - `graphics-threading.md` C20) | `RenderEngine.cpp:821-824`; `SessionShape.cpp:262-273`; `RenderEngine.cpp:740-796` |
-| `Z3` | R1 | medium-low | `setFrameThreading` is the only interval verb that answers `void`; its three siblings answer the same refusal as a value | `RenderEngine.hpp`; `RenderEngine.cpp:392-419` |
-| `Z4` | R1 | low | `frameContext()` says "the same answer all frame" and then reads three fields live | `RenderEngine.hpp`; `RenderEngine.cpp:445-456` |
-| `Z5` | R2 | low | the chunk-share test compares the fold's output; the select also reads `own.fold.placement`, which no comparison covers - the epoch is the only guard, and the epoch's list omits placements | `SceneSnapshot.cpp:55-68`; `DrawListBake.hpp:549-566`; `Node.hpp:296` |
+| `Z3` | R1 | medium-low | `setFrameThreading` is the only interval verb that answers `void`; its three siblings answer the same refusal as a value (**fixed 2026-11-27**: `FrameThreadingOutcome` - `Applied` / `RefusedFromFrame` / `RefusedInFlight` - with the episode as the log half) | `RenderEngine.hpp`; `RenderEngine.cpp:392-419` |
+| `Z4` | R1 | low | `frameContext()` says "the same answer all frame" and then reads three fields live (**fixed 2026-11-27**: the sentence states the current facts and moves the guarantee to "take the value once per frame") | `RenderEngine.hpp`; `RenderEngine.cpp:445-456` |
+| `Z5` | R2 | low | the chunk-share test compares the fold's output; the select also reads `own.fold.placement`, which no comparison covers - the epoch is the only guard, and the epoch's list omits placements (**fixed 2026-11-27**: `RowOwn::Fold` compared whole, the placement keeps its identity until the node changes, the announcement list names placements) | `SceneSnapshot.cpp:55-68`; `DrawListBake.hpp:549-566`; `Node.hpp:296` |
 | `Z6` | R2 | medium | `bindSnapshot` is permanent (no withdraw), "empty clears the binding" means "draw nothing", and the binding is keyed by a scene address it outlives (**fixed 2026-11-27**: `Scene` carries a `SceneId`, every row of the publication channel keys by it, `unbindSnapshot` is the withdrawal and the empty handle keeps meaning "an empty picture" - `graphics-threading.md` 2.13 / N19) | `PublicationStore.cpp:15-41`; `RenderEngine.hpp` `bindSnapshot` |
 | `Z7` | R3 | high (latent) | the describe-once cache is unguarded in `ShaderProgram` and `MaterialValues`, guarded in `Geometry` - and the design cites `Geometry`'s lock as why shared content is thread-safe (**fixed 2026-11-27**: one `detail::DescriptionCache` behind all three, `graphics-threading.md` C22) | `ShaderProgram.cpp:45-54`; `Material.cpp:39-52`; `Geometry.cpp:425-450`; `graphics-sessions.md:18` |
 | `Z8` | R4 | medium | the first-person keyboard look still calls `orbit()` (the eye arcs); the mouse look does not; `F5` says the arrows travel (**fixed 2026-11-27**: the gaze has one implementation, `OrbitCameraManipulator::look()`, and each device only converts its own units into it - `graphics-navigation.md` 2.10 / R5 / P7) | `OrbitCameraManipulator.cpp:449-463`; `graphics-navigation.md:123` |
@@ -1416,8 +1456,8 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z10` | R10 | low | the navigation page's `F5` sentence is `Z8`'s defect on the corpus side (**fixed 2026-11-27**: `F2` states the look's devices and `F5` the travel keys, each key set once) | `graphics-navigation.md:123` |
 | `Z11` | R11 | medium-high | "does this pass write its target" is answered three ways and the scheduler's answer is false for a camera-less clearing pass, so a consumer may be ordered before the clear (**fixed 2026-11-27**: `RenderPass::writesTarget()` is the one answer - a draw packet or an attachment policy - read by the scheduler, the produced table and the wiring's filler check, `graphics-rendering.md` 2.16 / C9) | `RenderPass.cpp:146-158`; `Device.cpp:1524-1530`, `:2063`; `EngineCompile.cpp:226-231`; `EngineCompile.cpp:925` |
 | `Z12` | R13 | medium | an instance stream is keyed by a borrowed `Buffer` address with no keep-alive and no identity, and its version (`revision`, starting at 0) is not unique across objects: a recycled address inherits the previous object's bytes (**fixed 2026-11-27**: the entry holds the `Buffer` its key names, and is withdrawn at the frame end where that share is the last one - `vk-backend.md` 2.5 / N11) | `ContentCaches.hpp:155-163`; `ContentCaches.cpp:318-350`; `Buffer.hpp:385` |
-| `Z13` | R13 | low | two of the three fills remember a refusal; an instance upload retries, allocates and copies again on every frame | `ContentCaches.cpp:371-430`, `:494-497` vs `:318-350` |
-| `Z14` | R14 | low | `vk.window.presenter_missing` accuses the host of a foreign presenter when the window merely has no live chain - and the window's own reason is never reported there | `Device.cpp:1550-1560`; `WindowTarget.cpp:494-497` |
+| `Z13` | R13 | low | two of the three fills remember a refusal; an instance upload retries, allocates and copies again on every frame (**fixed 2026-11-27**: `InstanceStream::failed` + the revision it failed at, a new revision retries - §2.5) | `ContentCaches.cpp:371-430`, `:494-497` vs `:318-350` |
+| `Z14` | R14 | low | `vk.window.presenter_missing` accuses the host of a foreign presenter when the window merely has no live chain - and the window's own reason is never reported there (**fixed 2026-11-27**: `WindowTarget::presentationState()` + `vk.window.not_ready`; `presenter_missing` keeps its one meaning) | `Device.cpp:1550-1560`; `WindowTarget.cpp:494-497` |
 
 | `Z15` | R15 | medium | a texture upload that fails mid-record destroys the image the caller's recording command buffer already holds copies and a barrier for, and the frame then submits that command buffer | `ContentImages.cpp:731-733`, `:903`; `:372-373`, `:421`, `:878-891` |
 | `Z16` | R17 | medium-low | a program with no vertex and no fragment module (empty, fragment-only or compute-only) is cached as successfully compiled, and the pipeline build hands `VK_NULL_HANDLE` to `vkCreateGraphicsPipelines` (**fixed 2026-11-27**, and the finding's second half did not hold: both `ensure*Pipeline` refused a moduless pair before the review - the live defects were the wrong code, the requirement stated twice and nowhere at the builder, and a compute stage dropped in silence - `vk-backend.md` 2.22 / C15 / P20) | `ContentCaches.cpp:383-386`, `:424-429`, `:852`, `:856`; `ShaderProgram.cpp:77-81` |
@@ -1488,9 +1528,18 @@ unobserved, and it is recorded here so the next round starts from it rather than
     legal full-screen draw. The requirement moved to `buildPipeline` - the one place that states modules to the driver -
     with its own code (`vk.content.program_stage_missing`) and a compute stage refused instead of dropped (2.22 / C15 /
     P20 / T12; `ADR-2026-11-27-a-graphics-pipeline-states-two-stages.md`).
-11. **`Z13`** + **`Z14`** + **`Z3`** + **`Z4`** + **`Z5`** - the vocabulary round: the third fill remembers its refusal, the
+11. ~~**`Z13`** + **`Z14`** + **`Z3`** + **`Z4`** + **`Z5`** - the vocabulary round: the third fill remembers its refusal, the
     presenter's sentence names the window's cause, one refusal shape for the last verb, one true sentence about
-    `frameContext`, and the placement in the share argument.
+    `frameContext`, and the placement in the share argument.~~ **Done 2026-11-27**, with one answer per item at the rule
+    rather than at the call site: `InstanceStream::failed` records the revision (a new revision retries) and the empty-view
+    refusal is remembered the same way (2.5 / `D11` / `T13`); the window answers `presentationState()` and the frame
+    reports `vk.window.not_ready` for an unready presenter, keeping `presenter_missing` for "no presenter this device
+    handed out" (F3 / F14 / `D12` / `T14`); `setFrameThreading` answers `FrameThreadingOutcome` with the episode as the
+    log half (`D14` / `T40`; `ADR-2026-11-27-the-last-interval-verb-answers-a-value.md`); `frameContext`'s sentence now
+    states the current facts and moves the guarantee to "take the value once per frame"; and the share test compares
+    `RowOwn::Fold` whole while a placement keeps its identity until the node changes (F1 / `D14` / `T37`;
+    `ADR-2026-11-27-a-share-compares-the-input-the-select-reads.md`). The review's bare pointer comparison for `Z5` was
+    rejected: with a fresh object per read it would stop billboard chunks sharing for no change at all.
 12. **`Z15`** - the failure path stops destroying what the command buffer names: build every layer's staging buffer
     before recording, or park the entry against the batch the way every other release in the cache does.
 13. **`Z19` + `Z20`** - the failed frame's answer: capture that a picture was expected before the give-back erases it,

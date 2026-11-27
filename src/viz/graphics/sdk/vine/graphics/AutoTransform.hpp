@@ -233,6 +233,9 @@ class VN_GRAPHICS_API AutoTransform : public Group {
      *   cancelled by it and a parent scale is inherited (see the class note).
      * - With autoScaleToScreen() the scale is uniform and derived from the viewport; otherwise the authored scale()
      *   is used. A view without a viewport keeps the authored scale.
+     * - IT KEEPS ITS IDENTITY UNTIL THE NODE CHANGES (`G4`, review 19 `Z5`): every mutator of a fact this value carries
+     *   rebuilds it, so an unchanged node answers the SAME object on every call - which is what lets a publication
+     *   compare two rows' placements by identity instead of re-reading the node. The value itself never changes.
      *
      * @return The placement value, or null when neither automatic mode nor screen-space scaling is on.
      */
@@ -266,6 +269,8 @@ class VN_GRAPHICS_API AutoTransform : public Group {
     double         minimum_scale_{ 0.0 };
     double         maximum_scale_{ std::numeric_limits<double>::max() };
     Mat4d          matrix_;
+    /// The placement of the CURRENT own facts (null under NoRotation without auto-scale); rebuilt by recompose().
+    ViewPlacementPtr placement_;
 };
 
 using AutoTransformPtr = intrusive_ptr<AutoTransform>;

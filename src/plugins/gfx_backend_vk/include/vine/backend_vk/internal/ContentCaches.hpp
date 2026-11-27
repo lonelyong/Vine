@@ -188,6 +188,10 @@ class VN_BACKEND_VK_API ContentCaches final {
         MemorySlice   memory{};
         std::uint64_t bytes{ 0 };    // Bytes copied in (the entry's residency weight).
         std::uint64_t revision{ 0 }; // The `source` revision the bytes came from.
+        /// Whether this (source, revision) was REFUSED, remembered like `ProgramEntry::failed` / `GeometryEntry::failed`
+        /// so a broken upload costs one report and no second attempt (review 19 `Z13`). A NEW revision clears it: the
+        /// bytes that failed are no longer the bytes under the key, so retrying is the honest answer then.
+        bool          failed{ false };
     };
 
     /// @brief One built pipeline, held as a share so a frame that resolved it can keep it alive (see `borrow`).

@@ -153,6 +153,21 @@ keeps the old argument.
   second door onto a pass' declaration (`bindPassContent`) takes the shape gate `applyPlan` takes and answers the
   three-state `ContentBindOutcome` - review 19 `Z1` / `Z2`, with the rejected "lock four methods", "refuse the host
   verbs outside the interval" and "one lock per table" shapes.
+- `ADR-2026-11-27-the-last-interval-verb-answers-a-value.md` — **the last interval verb answers a value**:
+  `setFrameThreading` was the one entry of the frame-interval family that returned `void`, so its two refusals existed
+  only as `engine.threading.refused_from_frame` / `refused_in_flight`, and a host that started a frame thread to decouple
+  its UI had to poll `frameThreading()` and correlate a string. It now answers `FrameThreadingOutcome` (`Applied` /
+  `RefusedFromFrame` / `RefusedInFlight`), with the episode kept as the report half so every call still gets its value.
+  Rejected: a `bool` (folds the two mistakes into one answer) and `EngineNotReadyReason` (carries states a mode change
+  cannot produce); the appfw convenience verb keeps forwarding - review 19 `Z3`, `D14` in `graphics-threading.md`.
+- `ADR-2026-11-27-a-share-compares-the-input-the-select-reads.md` — **a share test compares the input the select
+  reads**: a chunk was shared on identity, links, the node epoch and the FOLD's serial, while the select also reads the
+  row's own placement - which the fold's answer cannot carry, because two placements can fold to the same box. A node's
+  per-view placement now keeps its identity while its own facts are unchanged (`AutoTransform` caches it behind the one
+  `recompose()` every mutator reaches; `Node::viewPlacement` states the contract and `announceContentChange`'s list
+  names placements), and `makeSceneSnapshot` compares `RowOwn::Fold` whole beside the serial. Rejected: the bare pointer
+  comparison (a fresh object per read would stop every billboard chunk sharing for no change) and moving the placement
+  into `ResolvedRow` (an input is not the fold's output) - review 19 `Z5`, `D14` in `graphics-frame-pipeline.md`.
 - `ADR-2026-11-27-a-description-is-built-once-behind-one-lock.md` — **a content description is built once per revision,
   behind one lock**: `detail::DescriptionCache` now holds the rule that `Geometry` / `MaterialValues` / `ShaderProgram`
   used to spell three times by hand, only one of them with a lock - `get` measures the revision, compares it and builds
@@ -361,7 +376,7 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (10)
+## research/ — research and proposals (11)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
@@ -502,6 +517,19 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
+- `async-2026-11-27-review-1.md` — the first async pass: **what `Destroy` assumes, who owns a completion, and which thread
+  the continuation runs on** (the 28 headers read line by line against the design page's contracts; the suite read by its
+  index, 183 green; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -
+  `CancelPolicy::Destroy` destroys a child that is not suspended on a withdrawable awaiter: the default
+  `withTimeout(runOn(pool, f), d)` frees the frame from the timer thread while `f` still runs on the worker (measured:
+  heap-use-after-free write), a pool hop is the one awaiter that publishes its handle and cannot withdraw it (measured:
+  the worker resumes a freed frame), and `StopAndWait` cannot bound a callable, so neither policy bounds pool work;
+  `resumeWaitersOneByOne` loops on a reference to the `TaskCompletionSource`'s own member, so a waiter that closes its
+  source inside the resume is a use-after-free (measured), with the latch and the condition variable of the same shape;
+  the timer thread runs the caller's continuation after every sleep, cancelled composition and queue hand-off (measured),
+  so thread affinity changes silently and one long continuation delays every timer in the process; `whenAny` on an empty
+  list returns for the void overload and throws for the typed one (measured); `retry` retries cancellation and takes no
+  token; four small rows. Lists what was checked and cleared. Adds no backlog entry; §6 lists the order.
 
 ## backlog/ — open work (16)
 

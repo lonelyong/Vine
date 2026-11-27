@@ -132,6 +132,56 @@ struct VN_GRAPHICS_API FrameCallOutcome {
 };
 
 /**
+ * @brief What one RenderEngine::setFrameThreading() call answered: the mode is the one asked for, or a frame refused the switch.
+ *
+ * @details
+ * - THREE MUTUALLY EXCLUSIVE ANSWERS (`G4`), because the negatives ask for different moves: #Status::RefusedFromFrame
+ *   is a call made ON this engine's frame thread (a hook or a diagnostic sink driving the same engine, which cannot end
+ *   the mode it is running under - ask between frames from the host thread), while #Status::RefusedInFlight is a call
+ *   from ANOTHER host thread while a frame is being built (retry between frames).
+ * - #Status::Applied means the mode is NOW the one the call asked for; it is also the answer when it already was,
+ *   because the caller's statement ("run the engine half here") holds either way. Whether it moved is readable from
+ *   frameThreading(), and the two are deliberately not folded into one value: a host that cares about the transition
+ *   asks, and a host that only needs the mode does not.
+ * - A refusal still reports ONE PassProtocolViolation per episode (`engine.threading.refused_from_frame` /
+ *   `refused_in_flight`); this value is the programmatic half of the same fact, so a host does not have to read a
+ *   diagnostic to learn that its frames did not move (review 19 `Z3`).
+ * - No `operator bool`: a refusal is an ordinary answer here, and the conversion would let a caller read it as "nothing
+ *   happened" without deciding whether to retry - the same reasoning `ContentBindOutcome` carries.
+ */
+struct VN_GRAPHICS_API FrameThreadingOutcome {
+    /// What became of the call (see the struct's own note).
+    enum class Status : std::uint8_t
+    {
+        Applied,          // The mode is the one asked for (it changed, or it already was that).
+        RefusedFromFrame, // Called on this engine's own frame thread: the running mode cannot end itself.
+        RefusedInFlight,  // Another host thread is building a frame: a switch is an entry between frames.
+    };
+
+    Status status{ Status::Applied }; ///< Which answer this is.
+
+    /**
+     * @brief Gets whether the mode is the one the call asked for.
+     *
+     * @return true when @ref status is #Status::Applied (changed or already there).
+     */
+    [[nodiscard]] bool applied() const noexcept
+    {
+        return status == Status::Applied;
+    }
+
+    /**
+     * @brief Gets whether a frame refused the switch (either reason; @ref status names which).
+     *
+     * @return true when @ref status is #Status::RefusedFromFrame or #Status::RefusedInFlight.
+     */
+    [[nodiscard]] bool refused() const noexcept
+    {
+        return status != Status::Applied;
+    }
+};
+
+/**
  * @brief Where the engine half of a frame runs (see frame(); the content half always runs on the caller's thread).
  *
  * @details
@@ -525,9 +575,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   Inline stops and joins it. The switch takes the frame interval first, and joining still waits for an answer
      *   that is already in flight, so a host may switch between frames (not from inside a FrameUpdate::onFrame() call).
      * - A CALL MADE FROM THE ENGINE'S OWN FRAME THREAD CHANGES NOTHING, because the mode that thread is running under
-     *   cannot be ended from inside it (`FrameRunner::stop` answers the same) - and it SAYS SO: the refusal is reported
-     *   once per episode (`engine.threading.refused_from_frame`), so a host that asked for a thread is not left
-     *   believing its frames moved.
+     *   cannot be ended from inside it (`FrameRunner::stop` answers the same) - and it SAYS SO TWICE: the refusal is
+     *   reported once per episode (`engine.threading.refused_from_frame`) and answered as
+     *   FrameThreadingOutcome::Status::RefusedFromFrame, so a host that asked for a thread is not left believing its
+     *   frames moved.
      * - A CALL FROM ANOTHER HOST THREAD WHILE A FRAME IS BEING BUILT IS REFUSED TOO (`engine.threading.refused_in_flight`,
      *   once per episode, the mode unchanged): a switch ends by joining the frame thread, so it is an entry that
      *   belongs between frames - the same interval `frame()` and `prepare()` claim, with the same two refusals
@@ -537,8 +588,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   and only the publications, the surface's window half and the device are touched on the other side.
      *
      * @param mode Where to run the engine half.
+     * @return Which of the three answers this call got (see FrameThreadingOutcome): the mode is the one asked for, or
+     *         a frame refused the switch and @ref status names the reason (`G4`).
      */
-    void setFrameThreading(FrameThreading mode);
+    FrameThreadingOutcome setFrameThreading(FrameThreading mode);
 
     /** @brief Gets where the engine half of a frame runs (Inline until setFrameThreading says otherwise). */
     [[nodiscard]] FrameThreading frameThreading() const noexcept;
@@ -668,8 +721,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - THE ONE VALUE THE PER-FRAME WORK SHARES: the host composes nothing, it asks once and hands the answer to
      *   `SceneView::update` / `PassChain::update`, which pass the same value to every object of that frame
      *   (`FrameUpdate::onFrame`).
-     * - A PURE READ, AND THE SAME ANSWER ALL FRAME: the frame id, the announced size and the ratio are read live, so
-     *   a host that asks twice gets the same context; only `elapsed_seconds` advances, once per `frame()`.
+     * - A PURE READ OF THE ENGINE'S CURRENT FACTS, TAKEN ONCE PER FRAME: the frame id is `frameNumber() + 1` (the
+     *   frame a `frame()` call would build next), and the size and ratio are the ones the surface states right now -
+     *   so two calls separated by a `frame()` or a resize CAN answer differently. What a host relies on is the other
+     *   half: it asks once at the head of its per-frame update and hands that ONE value to `SceneView::update` /
+     *   `PassChain::update`, which is what makes every object of one frame see the same context. Only
+     *   `elapsed_seconds` moves with the frame clock, once per `frame()` (review 19 `Z4`: the sentence here used to
+     *   say "the same answer all frame" while the fields were read live).
      * - THE TIME IS ONE FRAME BEHIND: it is the interval between the two most recent frames, measured at the head of
      *   `frame()` - the value a consumer of "how fast is the loop running" wants, and the price of keeping this call
      *   free of side effects. It is wall-clock; a host that needs a fixed step keeps its own clock.
