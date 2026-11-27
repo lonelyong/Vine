@@ -294,14 +294,14 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (9)
+## research/ — research and proposals (10)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
 which exist because the third-round audit's open items were left with no home when its page was
 deleted (git is still the archive for the page itself), because a review's findings and deferred
-proposals are a working record for the batch that follows them, and because the fifth, the eighth to eleventh and
-the seventeenth reviews compare against the peer engines at a level a design page cannot carry.
+proposals are a working record for the batch that follows them, and because the fifth, the eighth to eleventh,
+the seventeenth and the eighteenth reviews compare against the peer engines at a level a design page cannot carry.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
@@ -384,6 +384,21 @@ the seventeenth reviews compare against the peer engines at a level a design pag
   attribute are a closed boundary nobody wrote down; a depth-only clear is not "inside the pass' viewport"; the
   opacity setters clamp nothing and zero still draws and picks. Verified that review 11's `V2` / `V3` / `V4` / `V10`
   are still in the tree. Adds no backlog entry.
+- `graphics-2026-11-27-review-18.md` — the eighteenth pass: a re-review of reviews 11 and 17 on the tree that landed
+  them, and the one three-dimensional surface neither had opened, NAVIGATION (the wheel, the orthographic picture, the
+  first-person mode). Twelve findings - `W3`'s back-face normal made a MIRRORED subtree shade from behind with culling
+  off, so review 11 `V3`'s recorded limit and trigger no longer describe when it fires; in an orthographic picture the
+  wheel moves the eye and changes nothing the picture shows until the eye reaches the scene box, after which each notch
+  zooms OUT (the orthographic wheel in three.js is a zoom); the wheel's step is a constant world length although its
+  comment and the demo say it is proportional; `setDollyToCursor` has no reader on the wheel path and the wheel path
+  has no test; the orthographic scale has no name (it is `distance * tan(fieldOfView / 2)`, a parameter documented
+  "perspective only") and the manipulator overwrites the off-centre window the camera keeps whole; Z-up is the
+  convention by five defaults and one private constant and is declared nowhere a host reads (`V1` sharpened, and
+  review 11's "implies Y-up" was the wrong inference); the shadow pass reads neither the alpha mode nor the opacity, so
+  a Mask caster casts its quad; the draw block's `model` is written for every draw and read by no stage; the sky is a
+  world-sized box with no depth contract; a first-person look is an orbit and two of four modes are compared nowhere.
+  Also derives the front-face constant from `VkFrontFace`, so the follow-up's measurement and the specification agree,
+  and lists the sentences the landings left behind. Adds no backlog entry.
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
