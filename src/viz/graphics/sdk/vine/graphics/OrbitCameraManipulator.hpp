@@ -29,16 +29,19 @@ class Scene;
  *   camera's window, because a parallel picture does not depend on where the eye sits along the view axis. With
  *   `setDollyToCursor(true)` (the default) the picked point under the cursor keeps its picture position: the orbit
  *   centre slides for a perspective picture, the window slides for a parallel one.
- * - TRAVEL IS A VERB OF ITS OWN: `moveForward` / `moveRight` / `moveUp` (and WASD in FirstPerson) move the rig without
- *   changing the picture's scale. The wheel does not fly through the scene - it stops at the surface it is aiming at,
- *   which is what lets the next rotation orbit the region just approached.
+ * - TRAVEL IS A VERB OF ITS OWN: `moveForward` / `moveRight` / `moveUp` (WASD, and Q/E for up/down, in FirstPerson) move
+ *   the rig without changing the picture's scale. The wheel does not fly through the scene - it stops at the surface it
+ *   is aiming at, which is what lets the next rotation orbit the region just approached.
+ * - A LOOK IS THE OTHER VERB, AND IT IS ONE VERB: `look` turns the view about the EYE and leaves the eye where it is.
+ *   The left-drag in FirstPerson and the arrow keys both ask for it and neither implements it - a device only converts
+ *   its own units into a `look()` step, so two devices in one mode cannot disagree about what looking means.
  * - On every button press / scroll the manipulator ray-picks the scene under the POINTER THE EVENT NAMES. A model hit
  *   becomes the anchor (the rotate pivot, the pan depth reference and the zoom target); nothing hit falls back to the
  *   scene bounding-box centre, or to the world origin when there is no scene.
- * - A rotate press never applies the pivot (no jump). Away from a drag, pan / zoom and the keyboard orbit are expressed
- *   as a level spherical orbit (yaw / pitch / roll about the orbit centre) so programmatic motion stays stable and
- *   level. The world is right-handed and Z-up (`kWorldUp`), and the manipulator's horizon is that axis; the world unit
- *   is the content's.
+ * - A rotate press never applies the pivot (no jump). Away from a drag, `orbit()` and pan / zoom are expressed as a
+ *   level spherical orbit (yaw / pitch / roll about the orbit centre) so programmatic motion stays stable and level.
+ *   The world is right-handed and Z-up (`kWorldUp`), and the manipulator's horizon is that axis; the world unit is the
+ *   content's.
  */
 class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
   public:
@@ -60,10 +63,38 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
   public:
     /** @brief Orbits the camera around the current centre (yaw/pitch).
      *
-     * @param deltaYaw   Yaw angle change in radians.
-     * @param deltaPitch Pitch angle change in radians.
+     * @details
+     * - This is the TURNTABLE's verb: the eye travels along the orbit sphere, so the picture swings about the centre.
+     *   A first-person gaze is `look()`, which leaves the eye where it is; a caller that wants to turn the view about
+     *   the eye must not reach for this one.
+     *
+     * @param deltaYaw   Yaw angle change of the EYE about the centre, in radians.
+     * @param deltaPitch Pitch angle change of the eye about the centre, in radians.
      */
     void orbit(double deltaYaw, double deltaPitch);
+
+    /** @brief Turns the view about the EYE: one look, whichever device asks for it, and the eye never moves.
+     *
+     * @details
+     * - Yaws about the world-up axis through the eye, then pitches about the resulting picture-right axis, so the
+     *   horizon stays level. The target follows the view at the same eye distance, which is what keeps the orbit state
+     *   (centre / distance) meaningful after a look.
+     * - The angles are the rotation APPLIED TO THE VIEW, not the eye's place on the orbit sphere: a positive yaw turns
+     *   the view LEFT (counter-clockwise seen from the world up) and a positive pitch looks UP. `orbit()` states its
+     *   deltas about the centre instead, because there the eye is what moves.
+     * - This is the ONLY implementation of a look, and it is public because a host has the same need the built-in
+     *   devices have: the left-drag in `FirstPerson` converts pixels with `drag_sensitivity_` and the arrow keys
+     *   convert one key step with `rotate_step_`, and both call here. A host that wrote its own look would disagree
+     *   with the drag - one mode cannot have two pictures of "look".
+     * - Like the travel verbs it does not consult `mode()`: it states a motion of the viewpoint, and the EVENT HANDLER
+     *   decides which verb a gesture means.
+     * - A view pointing along the world up has no pitch axis, so such a step is refused WHOLE - nothing reaches the
+     *   camera - rather than applied halfway.
+     *
+     * @param deltaYaw   Yaw change in radians; positive turns the view left, 0 leaves it.
+     * @param deltaPitch Pitch change in radians; positive looks up, 0 leaves it.
+     */
+    void look(double deltaYaw, double deltaPitch);
 
     /** @brief Sets the orbit centre (target point). */
     void setOrbitCenter(const Vec3d& center);
@@ -236,7 +267,17 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Handles mouse wheel scroll, zooming the camera. */
     void onScroll(const vn::window::ScrollEvent& event) override;
 
-    /** @brief Handles a key press (first-person movement / Home = fit). */
+    /** @brief Handles a key press: the keyboard's travel and look pairs in `FirstPerson`, and Home = fit in both modes.
+     *
+     * @details
+     * - TRAVEL: W / S forward and back, A / D left and right, Q / E down and up, by one `move_step_` each.
+     * - LOOK: Left / Right yaw and Up / Down pitch, by one `rotate_step_` each, through `look()` - the same verb the
+     *   left-drag reaches. The arrows never travel; the two devices of one mode state one rule.
+     * - Home fits the scene (or restores the construction view when there is nothing to fit) in EITHER mode. Outside
+     *   `FirstPerson` the other keys do nothing: a turntable has no keyboard gaze and no travel.
+     *
+     * @param event Key event; only `code` and the press itself are read (hold repeats arrive as further presses).
+     */
     void onKeyDown(const vn::window::KeyEvent& event) override;
 
     /** @brief Handles a key release. */
@@ -261,12 +302,12 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Re-aims the view at a point without moving the eye. */
     void aimCenterAt(const Vec3d& point);
 
-    /** @brief Looks about the EYE: turns the view, leaves the eye where it is (FirstPerson's left-drag).
+    /** @brief Converts the FirstPerson left-drag into a `look()` step and nothing else.
      *
      * @details
-     * - Yaws about the world-up axis through the eye, then pitches about the resulting screen-right axis, so the
-     *   horizon stays level and the eye does not travel. The target follows the view at the same eye distance, which
-     *   is what keeps the orbit state (centre / distance) meaningful after the look.
+     * - A device's whole share of a look is this conversion: pixels times `drag_sensitivity_`, with the sign the drag
+     *   means (dragging right turns right, dragging up looks up). The turning itself is `look()`, so the keyboard's
+     *   look and this one cannot disagree.
      *
      * @param screenDx Horizontal screen delta in pixels.
      * @param screenDy Vertical screen delta in pixels.

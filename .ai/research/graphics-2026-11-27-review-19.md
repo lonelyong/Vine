@@ -359,7 +359,8 @@ same fact?
   orbit state stays coherent), and `Mode` is `{Orbit, FirstPerson}` (`CameraManipulator.hpp`).
 
 ### 5.2 Z8 (behaviour + corpus / medium): the first-person **keyboard** look still calls `orbit()`, and the design page
-says the arrows travel
+says the arrows travel (**fixed 2026-11-27**: the gaze is one verb, `look()`, and a device only converts into it -
+`graphics-navigation.md` 2.10 / F2 / F5 / R5 / P7 / T11)
 
 **Evidence.**
 
@@ -378,6 +379,21 @@ walkthrough host that binds arrows to look (what the code does) reads a page tha
 **Choice.** One look path for both devices (the arrows call `lookRotate`-equivalent, i.e. a yaw/pitch step about the eye),
 and `F5` states what the arrows do - or the arrows travel and look moves to the mouse only. Either way the page and the
 code state one rule. **code + doc + test** (a FirstPerson arrow key moves the direction and not the eye).
+
+> **Fixed 2026-11-27.** The first branch, redesigned rather than patched. The cause was a missing VERB, not a wrong
+> sign: travel had three public verbs of its own while the gaze had none, so the keyboard reached for the nearest
+> angular verb and got the other metaphor's. The gaze now has one implementation and it is public -
+> `OrbitCameraManipulator::look(deltaYaw, deltaPitch)`, angles of the VIEW's rotation (positive yaw turns left, positive
+> pitch looks up) - and the drag (`lookRotate`) converts pixels into it while an arrow key converts one `rotate_step_`
+> into it. `orbit()` keeps its own sense (the EYE's angles about the centre) and says so in the header. `F2` owns the
+> look's devices and `F5` the travel keys (WASD horizontally, Q/E vertically), so the page no longer states a third
+> thing; `P7` records the trap. `CameraManipulatorTest.AFirstPersonArrowKeyLooksAboutTheEyeWithoutTravelling` fails on
+> the old mapping at its first assertion. See `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device`.
+>
+> **Rejected.** The review's second branch (the arrows travel, look on the mouse only): it gives `moveForward` two key
+> sets and the gaze none, and a keyboard-only walkthrough loses its look - `graphics-navigation.md` `D7`. Also rejected:
+> pointing the arrows at a private look (leaves hosts with `orbit()` only - the same defect offered to them), and a
+> second look implementation for the keyboard (two implementations of one rotation is the finding).
 
 ## 6. R5 - state, material, light and the shading ABI
 
@@ -565,6 +581,10 @@ added with it.
 `graphics-navigation.md:123` (F5) says the arrows travel in `FirstPerson`; the code makes them look. This is the same
 defect as `Z8` seen from the page side, and it is listed separately only so the fix batch closes the sentence as well as
 the mapping.
+
+> **Fixed 2026-11-27.** `F5` now states the TRAVEL keys (WASD horizontally, Q/E vertically) and `F2` the look's devices
+> (the left-drag and the arrow keys), each key set in one place - and the code makes the arrows look, so the page and the
+> mapping state one rule. See `graphics-navigation.md` 2.10 and `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device`.
 
 ### 11.4 R10 verdict
 
@@ -1371,9 +1391,9 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z5` | R2 | low | the chunk-share test compares the fold's output; the select also reads `own.fold.placement`, which no comparison covers - the epoch is the only guard, and the epoch's list omits placements | `SceneSnapshot.cpp:55-68`; `DrawListBake.hpp:549-566`; `Node.hpp:296` |
 | `Z6` | R2 | medium | `bindSnapshot` is permanent (no withdraw), "empty clears the binding" means "draw nothing", and the binding is keyed by a scene address it outlives (**fixed 2026-11-27**: `Scene` carries a `SceneId`, every row of the publication channel keys by it, `unbindSnapshot` is the withdrawal and the empty handle keeps meaning "an empty picture" - `graphics-threading.md` 2.13 / N19) | `PublicationStore.cpp:15-41`; `RenderEngine.hpp` `bindSnapshot` |
 | `Z7` | R3 | high (latent) | the describe-once cache is unguarded in `ShaderProgram` and `MaterialValues`, guarded in `Geometry` - and the design cites `Geometry`'s lock as why shared content is thread-safe (**fixed 2026-11-27**: one `detail::DescriptionCache` behind all three, `graphics-threading.md` C22) | `ShaderProgram.cpp:45-54`; `Material.cpp:39-52`; `Geometry.cpp:425-450`; `graphics-sessions.md:18` |
-| `Z8` | R4 | medium | the first-person keyboard look still calls `orbit()` (the eye arcs); the mouse look does not; `F5` says the arrows travel | `OrbitCameraManipulator.cpp:449-463`; `graphics-navigation.md:123` |
+| `Z8` | R4 | medium | the first-person keyboard look still calls `orbit()` (the eye arcs); the mouse look does not; `F5` says the arrows travel (**fixed 2026-11-27**: the gaze has one implementation, `OrbitCameraManipulator::look()`, and each device only converts its own units into it - `graphics-navigation.md` 2.10 / R5 / P7) | `OrbitCameraManipulator.cpp:449-463`; `graphics-navigation.md:123` |
 | `Z9` | R9 | medium | `test_graphics` compiles twelve private TUs unconditionally, so the engine's suite cannot run under ASan on Linux - the ownership graph has no address-safety witness (**fixed 2026-11-27**: the module's object set is now linked instead, `graphics-architecture.md` 2.19) | `tests/test_graphics/CMakeLists.txt:38-59`; `.ai/memory/graphics.md` |
-| `Z10` | R10 | low | the navigation page's `F5` sentence is `Z8`'s defect on the corpus side | `graphics-navigation.md:123` |
+| `Z10` | R10 | low | the navigation page's `F5` sentence is `Z8`'s defect on the corpus side (**fixed 2026-11-27**: `F2` states the look's devices and `F5` the travel keys, each key set once) | `graphics-navigation.md:123` |
 | `Z11` | R11 | medium-high | "does this pass write its target" is answered three ways and the scheduler's answer is false for a camera-less clearing pass, so a consumer may be ordered before the clear (**fixed 2026-11-27**: `RenderPass::writesTarget()` is the one answer - a draw packet or an attachment policy - read by the scheduler, the produced table and the wiring's filler check, `graphics-rendering.md` 2.16 / C9) | `RenderPass.cpp:146-158`; `Device.cpp:1524-1530`, `:2063`; `EngineCompile.cpp:226-231`; `EngineCompile.cpp:925` |
 | `Z12` | R13 | medium | an instance stream is keyed by a borrowed `Buffer` address with no keep-alive and no identity, and its version (`revision`, starting at 0) is not unique across objects: a recycled address inherits the previous object's bytes (**fixed 2026-11-27**: the entry holds the `Buffer` its key names, and is withdrawn at the frame end where that share is the last one - `vk-backend.md` 2.5 / N11) | `ContentCaches.hpp:155-163`; `ContentCaches.cpp:318-350`; `Buffer.hpp:385` |
 | `Z13` | R13 | low | two of the three fills remember a refusal; an instance upload retries, allocates and copies again on every frame | `ContentCaches.cpp:371-430`, `:494-497` vs `:318-350` |
@@ -1436,7 +1456,11 @@ unobserved, and it is recorded here so the next round starts from it rather than
 8. ~~**`Z9`** - the `if(WIN32)` guard and the ASan command in the ledger; it is what lets 1-7 be proven.~~ **Done
    2026-11-27**, at the cause: the module's object set is linked instead of a guard being added, and ASan now runs on
    the whole suite (see 10.2). It moved FIRST in the actual order, because it is what lets 1-7 be proven.
-9. **`Z8` + `Z10`** - one look path and one sentence.
+9. ~~**`Z8` + `Z10`** - one look path and one sentence.~~ **Done 2026-11-27**, at the rule: the gaze had no verb of its
+   own, so the keyboard borrowed the turntable's - `look()` is now the one implementation, public because a host has the
+   same need, and the drag and an arrow key only convert their own units into it (2.10 / F2 / F5 / R5 / P7 / T11;
+   `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device.md`). The review's second branch (arrows travel) was rejected
+   as `D7`.
 10. **`Z16`** - one refusal on the program entry, and the only finding whose failure hands the driver an invalid handle:
     `ensureProgram` already has the `failed` flag and the episode rule, so an entry with no vertex and no fragment module
     becomes that flag instead of a cached success.

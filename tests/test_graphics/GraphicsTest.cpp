@@ -1571,6 +1571,48 @@ TEST(CameraManipulatorTest, AFirstPersonLookTurnsAboutTheEye)
         << "the target stays at the orbit distance, so the orbit state stays meaningful";
 }
 
+TEST(CameraManipulatorTest, AFirstPersonArrowKeyLooksAboutTheEyeWithoutTravelling)
+{
+    // A look is ONE verb (`look()`), whichever device asks for it: the left-drag and the arrow keys both turn the view
+    // about the EYE. The arrows used to call `orbit()` - the turntable's verb - so the keyboard carried the eye round
+    // an arc of the orbit radius while the mouse in the same mode looked, and the design page said the arrows travel:
+    // one mode, three answers (review 19 Z8 / Z10).
+    auto        cam = intrusive_ptr<Camera>(new Camera());
+    const Vec3d eye(8.0, 0.0, 6.0);
+    cam->lookAt(eye, Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+    cam->setPerspective(60.0, 0.1, 1000.0);
+
+    OrbitCameraManipulator manip(cam.get());
+    manip.setMode(CameraManipulator::Mode::FirstPerson);
+
+    const auto press = [&manip](vn::window::KeyCode code) {
+        vn::window::KeyEvent key;
+        key.code    = code;
+        key.pressed = true;
+        manip.onKeyDown(key);
+    };
+    const auto forward = [&cam] { return (cam->target() - cam->eye()).normalized(); };
+
+    const Vec3d forward0 = forward();
+    press(vn::window::KeyCode::Left);
+    EXPECT_NEAR((cam->eye() - eye).length(), 0.0, 1e-9) << "an arrow key does not travel the eye";
+    EXPECT_LT(forward().dot(forward0), 0.9999) << "the view turned";
+    EXPECT_NEAR((cam->target() - cam->eye()).length(), manip.orbitDistance(), 1e-9)
+        << "the target stays at the orbit distance, so the orbit state stays meaningful";
+
+    press(vn::window::KeyCode::Right);
+    EXPECT_NEAR(forward().dot(forward0), 1.0, 1e-9) << "left and right are opposite steps of one turn";
+    EXPECT_NEAR((cam->eye() - eye).length(), 0.0, 1e-9);
+
+    press(vn::window::KeyCode::Up);
+    EXPECT_GT(forward().z, forward0.z) << "the up arrow looks up";
+    EXPECT_NEAR((cam->eye() - eye).length(), 0.0, 1e-9) << "looking up does not lift the eye either";
+
+    press(vn::window::KeyCode::Down);
+    EXPECT_NEAR(forward().dot(forward0), 1.0, 1e-9) << "up and down are opposite steps of one turn";
+    EXPECT_NEAR((cam->eye() - eye).length(), 0.0, 1e-9);
+}
+
 TEST(CameraManipulatorTest, AnOrthographicFitToScreenSizesTheWindowToTheScene)
 {
     Scene scene;

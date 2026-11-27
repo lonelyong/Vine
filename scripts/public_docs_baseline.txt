@@ -889,7 +889,6 @@ src/viz/graphics/sdk/vine/graphics/Geometry.hpp	param|AttributeChannel::slice/4
 src/viz/graphics/sdk/vine/graphics/Geometry.hpp	return|AttributeChannel::empty
 src/viz/graphics/sdk/vine/graphics/Light.hpp	brief|Light::createSpot
 src/viz/graphics/sdk/vine/graphics/Light.hpp	param|Light::createSpot/5
-src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyDown/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onKeyUp/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onMouseMove/1
 src/viz/graphics/sdk/vine/graphics/OrbitCameraManipulator.hpp	param|OrbitCameraManipulator::onMousePress/1

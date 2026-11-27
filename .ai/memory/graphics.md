@@ -3197,3 +3197,36 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` (bind, publish, withdraw, the frame draws the scene's
   latest). `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn`; `graphics-threading.md` 2.13 / 2.15 /
   4.1 / 4.2 / N19 / T46; `graphics-frame-pipeline.md` F3 / 4 / 9.1; `graphics-architecture.md` 2.10; the graphics guide.
+
+## 2026-11-27 - Z8 + Z10: a look is one verb, and a device only converts into it
+
+- **The defect.** In `Mode::FirstPerson` the left-drag turned the view about the eye (`lookRotate`) while the arrow keys
+  called `orbit()`, the TURNTABLE's verb - `apply()` put the eye back on the orbit sphere, so a keyboard "look" carried
+  the eye round an arc of the orbit radius (the defect review 18 fixed for the drag, one device over). `F5` said the
+  arrows travel: one mode, three statements, only the mouse matching its mode.
+- **The cause is a missing verb, not a wrong sign.** Travel had three public verbs of its own
+  (`moveForward` / `moveRight` / `moveUp`); the gaze had none, so the keyboard reached for the nearest angular verb,
+  which belonged to the other metaphor. Two devices then each decided what "look" meant, and the page decided again.
+- **The rule (2.10 / R5 / P7).** `OrbitCameraManipulator::look(deltaYaw, deltaPitch)` is the ONE look: yaw about the
+  world up through the eye, then pitch about the resulting picture-right axis; the eye does not move and the target
+  follows at the same eye distance (`C2`). A view along the world up has no pitch axis, so the step is refused WHOLE.
+  The angles name the VIEW's rotation - positive yaw turns left, positive pitch looks up - while `orbit()`'s deltas stay
+  the EYE's angles about the centre, and both say so in the header.
+- **Devices only convert.** `lookRotate(dx, dy)` is now `look(-dx * drag_sensitivity_, -dy * drag_sensitivity_)` and
+  nothing else; `onKeyDown`'s arrows are `look(±rotate_step_, 0)` / `look(0, ±rotate_step_)`. The left/right direction
+  is unchanged; only the path changed (no arc).
+- **Why `look()` is public.** A host that flies a camera programmatically had only `orbit()` for a gaze - the defect of
+  this ADR offered to hosts. It is an ADDITION (no field added or moved, no signature changed), so a host built against
+  the previous header links and runs unchanged and simply cannot call it until it recompiles.
+- **Rejected.** Point the arrows at a private look (leaves hosts with `orbit()` only); arrows travel / look on the mouse
+  only (gives `moveForward` two key sets and the gaze none, and a keyboard-only walkthrough loses its look); keep
+  `orbit()` and fix the page only; a second look implementation for the keyboard; arrows that orbit in `Orbit` and look
+  in `FirstPerson` (two meanings for one key set, no consumer); ship no key map at all (the travel map already ships).
+  ADR options A-G.
+- **Residuals.** A key step is per PRESS (a held key arrives as further platform repeats), so a smooth walk is a host's
+  integration - stated, not hidden, and unchanged here.
+- **Evidence.** `CameraManipulatorTest.AFirstPersonArrowKeyLooksAboutTheEyeWithoutTravelling` (eye fixed for every arrow;
+  left/right and up/down are opposite steps of one turn; the target stays at the orbit distance);
+  `AFirstPersonLookTurnsAboutTheEye` unchanged and still green. Mutation: arrows back on `orbit()` fails the case at its
+  first assertion (the eye moved ~5 units for one key step). `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device`;
+  `graphics-navigation.md` 2.10 / F2 / F5 / 4 / R5 / P7 / D7 / T11 / 9.3; the graphics guide.

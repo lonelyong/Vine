@@ -92,13 +92,19 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (108)
+## decisions/ — decision records (ADRs) (109)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device.md` — **a look is one verb, and a device only converts itself
+  into it**: in `FirstPerson` the mouse drag turned the view about the eye while the arrow keys called `orbit()` - the
+  turntable's verb - so the keyboard carried the eye round an arc of the orbit radius, and the design page said a third
+  thing (the arrows travel). Travel already had its own verbs while the gaze had none, so the nearest angular verb was
+  borrowed from the other metaphor. The gaze now has one implementation, `OrbitCameraManipulator::look()`, and each
+  device (a drag's pixels, one key step) only converts into it - review 19 `Z8` / `Z10`.
 - `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn.md` — **a binding is keyed by the scene's
   identity, and it can be withdrawn**: the publication override had no end (an empty handle meant "draw nothing" while
   the documentation lent it the meaning "clear", so a host that bound once never saw that scene's later publications

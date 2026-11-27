@@ -114,6 +114,39 @@ void OrbitCameraManipulator::orbit(double deltaYaw, double deltaPitch)
     apply();
 }
 
+void OrbitCameraManipulator::look(double deltaYaw, double deltaPitch)
+{
+    Camera* cam = camera_;
+    if (cam == nullptr) {
+        return;
+    }
+    if (std::abs(deltaYaw) < 1e-12 && std::abs(deltaPitch) < 1e-12) {
+        return;
+    }
+    const Vec3d eye = cam->eye();
+    Vec3d       fwd = (cam->target() - eye).normalized();
+    Vec3d       up  = cam->up().normalized();
+    if (fwd.length() < kTiny || up.length() < kTiny) {
+        return;
+    }
+    // Yaw about the WORLD UP through the eye keeps the horizon level, which is what a look means in a Z-up world; the
+    // camera up turns with it, so the pitch below is about the picture's own right axis. The eye does not move - only
+    // the direction does - so the target follows at the same eye distance and the orbit state stays meaningful.
+    fwd               = rotateAround(fwd, kWorldUp, deltaYaw);
+    up                = rotateAround(up, kWorldUp, deltaYaw);
+    const Vec3d right = fwd.cross(up).normalized();
+    if (right.length() < kTiny) {
+        return; // Looking along the world up: the pitch axis is undefined, so the step is refused rather than guessed.
+    }
+    fwd = rotateAround(fwd, right, deltaPitch);
+    up  = rotateAround(up, right, deltaPitch).normalized();
+    if (fwd.length() < kTiny || up.length() < kTiny) {
+        return;
+    }
+    cam->lookAt(eye, eye + fwd * std::max(distance_, kTiny), up);
+    syncFromCamera();
+}
+
 void OrbitCameraManipulator::setOrbitCenter(const Vec3d& center)
 {
     center_ = center;
@@ -504,10 +537,13 @@ void OrbitCameraManipulator::onKeyDown(const vn::window::KeyEvent& event)
     case vn::window::KeyCode::D: moveRight(move_step_); break;
     case vn::window::KeyCode::E: moveUp(move_step_); break;
     case vn::window::KeyCode::Q: moveUp(-move_step_); break;
-    case vn::window::KeyCode::Left: orbit(-rotate_step_, 0.0); break;
-    case vn::window::KeyCode::Right: orbit(rotate_step_, 0.0); break;
-    case vn::window::KeyCode::Up: orbit(0.0, -rotate_step_); break;
-    case vn::window::KeyCode::Down: orbit(0.0, rotate_step_); break;
+    // The arrows LOOK, through the one look verb the left-drag reaches. They used to call `orbit()` - the turntable's
+    // verb - so the keyboard carried the eye round an arc of the orbit radius while the drag in the same mode turned
+    // about it: one mode, two pictures of "look" (review 19 Z8).
+    case vn::window::KeyCode::Left: look(rotate_step_, 0.0); break;
+    case vn::window::KeyCode::Right: look(-rotate_step_, 0.0); break;
+    case vn::window::KeyCode::Up: look(0.0, rotate_step_); break;
+    case vn::window::KeyCode::Down: look(0.0, -rotate_step_); break;
     default: break;
     }
 }
@@ -655,37 +691,9 @@ void OrbitCameraManipulator::pivotRotate(double screenDx, double screenDy)
 
 void OrbitCameraManipulator::lookRotate(double screenDx, double screenDy)
 {
-    Camera* cam = camera_;
-    if (cam == nullptr) {
-        return;
-    }
-    const double ayaw   = -screenDx * drag_sensitivity_;
-    const double apitch = -screenDy * drag_sensitivity_;
-    if (std::abs(ayaw) < 1e-12 && std::abs(apitch) < 1e-12) {
-        return;
-    }
-    const Vec3d eye = cam->eye();
-    Vec3d       fwd = (cam->target() - eye).normalized();
-    Vec3d       up  = cam->up().normalized();
-    if (fwd.length() < kTiny || up.length() < kTiny) {
-        return;
-    }
-    // Yaw about the WORLD UP through the eye keeps the horizon level, which is what a look means in a Z-up world; the
-    // camera up turns with it, so the pitch below is about the picture's own right axis. The eye does not move - only
-    // the direction does - so the target follows at the same eye distance and the orbit state stays meaningful.
-    fwd               = rotateAround(fwd, kWorldUp, ayaw);
-    up                = rotateAround(up, kWorldUp, ayaw);
-    const Vec3d right = fwd.cross(up).normalized();
-    if (right.length() < kTiny) {
-        return; // Looking along the world up: the pitch axis is undefined, so the step is refused rather than guessed.
-    }
-    fwd = rotateAround(fwd, right, apitch);
-    up  = rotateAround(up, right, apitch).normalized();
-    if (fwd.length() < kTiny || up.length() < kTiny) {
-        return;
-    }
-    cam->lookAt(eye, eye + fwd * std::max(distance_, kTiny), up);
-    syncFromCamera();
+    // The drag's share of a look is only this: pixels become angles (a drag to the right turns the view right, a drag
+    // up looks up). The turning itself is `look()`, which the arrow keys reach too - one look, two devices.
+    look(-screenDx * drag_sensitivity_, -screenDy * drag_sensitivity_);
 }
 
 void OrbitCameraManipulator::syncFromCamera()

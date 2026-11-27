@@ -110,6 +110,19 @@ the world by the HOST, as one placed transform: a `MatrixTransform` over the imp
 (+90 deg about X, `y -> z`), so the fact stays visible in the tree, picking and bounds answer in world coordinates, and
 no number the host wrote ends up silently in a second frame (`G13`).
 
+2.10 **A look is one verb, and a device only converts itself into it** (`G1` `G4` `G6` `G12`). `look(deltaYaw,
+deltaPitch)` turns the view about the EYE - yaw about the world up through the eye, then pitch about the resulting
+picture-right axis - and the eye does not move; the target follows at the same eye distance so the orbit state stays
+meaningful (`C2`). Two devices ask for it and neither implements it: the left-drag converts pixels with
+`drag_sensitivity_`, an arrow key converts one key step (`rotate_step_`). The angles are the rotation applied to the
+VIEW, so a positive yaw turns left (counter-clockwise seen from the world up) and a positive pitch looks up - a device
+states the direction it means and nothing else. Why: the arrows called `orbit()`, the TURNTABLE's verb, so the keyboard
+carried the eye round an arc of the orbit radius while the mouse in the same mode turned about it, and `F5` said a
+third thing (review 19 `Z8` / `Z10`). Travel already had its own verbs (`moveForward` / `moveRight` / `moveUp`) while
+the gaze had none, so the nearest verb was borrowed from the other metaphor. Boundary: `orbit()` still turns the rig
+about the centre and remains the programmatic turntable verb; `look()` writes the camera's view only and never the orbit
+centre or the distance; the MODE decides which verb a drag means (`onMouseMove`), never what a verb does.
+
 ## 3. Features
 
 ### 3.1 Gestures
@@ -117,10 +130,10 @@ no number the host wrote ends up silently in a second frame (`G13`).
 | # | Feature | Notes |
 |---|---|---|
 | F1 | Orbit drag | Left button: the rig turns rigidly about the press anchor, up carried with it, so the grabbed point stays under the cursor and the view may roll over the pole (`C1`, `R1`, `T1`). |
-| F2 | First-person look | Left button in `FirstPerson`: yaw about the world up through the eye, then pitch about the picture's right axis; the eye does not move (`C2`, `T2`). |
+| F2 | First-person look | Left button in `FirstPerson`, or an arrow key: yaw about the world up through the eye, then pitch about the picture's right axis; the eye does not move (`C2`, `R5`, `T2`, `T11`). |
 | F3 | Pan | Middle/right button: scaled by the picture's own extent at the grabbed point (`C3`, `R2`, `T3`). |
 | F4 | Wheel zoom | One notch = one factor through `dolly`; a positive `deltaY` zooms in; the anchor is the pixel the event names (`C4`, `R3`, `T4`). |
-| F5 | Travel | `moveForward` / `moveRight` / `moveUp`, and WASD/arrows in `FirstPerson`; never rescales the picture (`N1`, `T5`). |
+| F5 | Travel | `moveForward` / `moveRight` / `moveUp`; in `FirstPerson` WASD travels horizontally and Q/E vertically, and it never rescales the picture (`N1`, `T5`). |
 
 ### 3.2 The picture
 
@@ -143,7 +156,8 @@ no number the host wrote ends up silently in a second frame (`G13`).
 |---|---|
 | `CameraManipulator::Mode` | `Orbit` / `FirstPerson`: the navigation metaphor. |
 | `setMode` / `mode` | State and read it. |
-| `orbit` | Turn the rig about the centre by angle deltas. |
+| `orbit` | Turn the rig about the centre by angle deltas - the turntable's verb; the eye travels. |
+| `look` | Turn the view about the eye by angle deltas - the gaze's one verb; the eye does not move. |
 | `pan` | Move the picture by screen deltas, at the picture's own scale. |
 | `dolly` | The one zoom: a multiplicative factor, `<1` in, `>1` out. |
 | `setDollyToCursor` / `dollyToCursor` | Whether a zoom holds the picked point where it was. |
@@ -172,6 +186,7 @@ no number the host wrote ends up silently in a second frame (`G13`).
 | R2 | The viewport used by the interaction is the pixel extent a resize stated; the picture's shape is the camera's. |
 | R3 | One zoom implementation: the wheel calls `dolly`, and `dollyToCursor` is read there and nowhere else. |
 | R4 | The manipulator never invents a scale: pseudocode such as `distance * tan(fov / 2)` has no place in this module. |
+| R5 | One look implementation: `look()` is it, and the drag and the keyboard both call it; a device converts its own units (pixels, one key step) and nothing else. |
 | N1 | Travel is not undoable by a wheel notch; a host that offers "fly through" offers `moveForward`, not a factor. |
 | N2 | `fitToScreen` drops any accumulated roll and scales the clip planes with the fitted distance. |
 | N3 | `Mode` is a statement about the viewpoint; the button mapping is `DragAction`, and a picking manipulator forwards the events unchanged. |
@@ -187,6 +202,7 @@ no number the host wrote ends up silently in a second frame (`G13`).
 | P4 | The wheel factor is a ratio, not a length | A step in world units does not ease: it is too fast close up and too slow far out, and it cannot be retuned by a factor | `WheelZoomsByARatioAndNotByALength` compares two orbit distances |
 | P5 | `ScrollEvent` may carry an unfilled position | A host that leaves `x`/`y` at zero anchors the zoom at the picture's top-left corner | The Qt host fills it; a different host states the centre itself |
 | P6 | A degenerate direction | A camera looking along the world up has no pitch axis, and a camera whose up is parallel to its view has no right axis | `lookRotate` refuses the pitch step, `pan` falls back to the manipulator's own basis |
+| P7 | A gaze borrowed from the orbit | The keyboard called `orbit()` in `FirstPerson`, so one mode looked two ways - the drag turned about the eye while the arrows carried the eye round an arc of the orbit radius - and the page said a third thing | A gaze step goes through `look()`; `orbit()` moves the eye and belongs to the turntable (`R5`, `T11`) |
 
 ## 7. Rejected Options
 
@@ -198,6 +214,7 @@ no number the host wrote ends up silently in a second frame (`G13`).
 | D4 | A `Camera::setOrthographicZoom` | A second way to state the same window would let the two disagree; the four bounds with `orthographicHeight()` already name the quantity, and one writer sequence (scale, reshape, fit) is enough. |
 | D5 | An automatic axis conversion at the import boundary | The engine would rotate a host's content behind its back: the numbers the host wrote (a camera, a light direction, a pick result's coordinates) would live in a different frame from the tree, and a second convention would have to reach every default - the sun, the billboard axis, the shadow camera (`G1` `G7` `G13`). The host's one `MatrixTransform` is visible, testable and reversible (§2.9). |
 | D6 | `OrbitCameraManipulator::setWorldUp` (the up axis as a per-host parameter) | One world, one up (§2.9). Once the horizon is a parameter, every default beside it - the sun's direction, the billboard's default axis, the shadow camera's reference axis - is a second place that can disagree, and a Y-up host ends up half-converted: a Z horizon with a Y-up sun (`G1` `G6`). |
+| D7 | The arrows travel and the look stays on the mouse | It gives `moveForward` two sets of keys and the gaze none, and the buttons that natively read "turn / look up" would do neither; a walkthrough driven from the keyboard alone loses its look. The arrows look; a host that wants them to travel maps its own events (`C2`, `N3`). |
 
 ## 8. Tests and Acceptance
 
@@ -213,6 +230,7 @@ no number the host wrote ends up silently in a second frame (`G13`).
 | T8 | A fit frames the content in both projections and keeps the eye outside it | `CameraManipulatorTest.AnOrthographicFitToScreenSizesTheWindowToTheScene`, `FitToScreenFramesScene` |
 | T9 | `Mode` is settable and changes the drag's meaning | `CameraManipulatorTest.AFirstPersonLookTurnsAboutTheEye` |
 | T10 | A pick names a pixel's centre and a miss falls back | `CameraManipulatorTest.SetCenterFromScreenRecentersOnPick`, `PressOnEmptyKeepsCentre` |
+| T11 | An arrow key looks about the eye and does not travel it; the opposite key undoes the step | `CameraManipulatorTest.AFirstPersonArrowKeyLooksAboutTheEyeWithoutTravelling` |
 
 ## 9. Status and Evolution
 
@@ -235,6 +253,11 @@ shader sites are unchanged by it: no shader and no ABI was touched.
 enum whose two entries no code compared and no gesture used. `dolly` changed meaning for an orthographic camera from "move
 the eye, which used to rescale the picture" to "scale the window", which is the same user-visible zoom with the eye left
 where clipping wants it. The wheel no longer flies through the content (`D1`).
+
+`OrbitCameraManipulator` gained `look()` (an addition - no existing signature changed and no layout moved), and the arrow
+keys in `FirstPerson` now LOOK where they orbited: the same turn direction, a different path, because the eye no longer
+travels (`2.10`). A host that relied on the arrows orbiting had the one mode's metaphor broken anyway - it reaches
+`orbit()` directly for a turntable, or maps its own keys.
 
 ## 10. References
 
