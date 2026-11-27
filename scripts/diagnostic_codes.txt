@@ -91,6 +91,8 @@ engine.pass.image_unbound             — a declared image is bound to no target
 engine.pass.changed_during_frame      — a pass verb arrived while a frame was recording: refused, change passes between frames
 engine.threading.refused_from_frame   — setFrameThreading() was asked from the engine's own frame thread: the mode a frame runs under cannot end from inside it
 engine.threading.refused_in_flight    — setFrameThreading() was asked from another host thread while a frame was being built: switching joins the frame thread, so ask between frames
+engine.shutdown.refused_from_frame    — shutdown() was asked from the engine's own frame thread: the teardown releases what that frame is using, and a thread cannot join itself - nothing was torn down
+engine.shutdown.refused_in_flight     — shutdown() was asked from another host thread while a frame was being built: the teardown releases the tables that compile walks, so ask between frames
 engine.screen.no_program              — a FullscreenPass named no program, so it can never draw
 engine.screen.no_input                — a FullscreenPass declared no input at all, so it samples nothing
 engine.screen.no_camera               — a FullscreenPass with a fullscreen program has no camera to build its view from

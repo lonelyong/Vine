@@ -92,13 +92,20 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (104)
+## decisions/ — decision records (ADRs) (105)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-teardown-is-an-interval-entry.md` — **a teardown is an interval entry**: `RenderEngine::shutdown()`
+  takes the lease `prepare()` takes and holds it across the whole teardown, so a call from a frame body (a diagnostic
+  sink on the frame thread - where the vk backend reports a lost device) or from another host thread mid-build is
+  REFUSED with the cause and tears nothing down, while a frame answered on the thread is joined; and `detail::FrameRunner`
+  has ONE life fact (`accepting()`), published by `FramePump::threaded()`, so a stop asked from the frame thread makes
+  the runner inline before it returns instead of leaving a loop the next frame is handed to and never runs - review 19
+  `Z21`, with the rejected "clear the live flag" / "wait in the sink" / "defer the shutdown" shapes.
 - `ADR-2026-11-27-a-take-back-is-accepted-never-refused.md` — **a take-back is accepted, never refused**: the one
   shape change whose caller is a destructor (`~PassChain` / `~SceneView` → `removePassesOwnedBy`) cannot retry, so
   inside a frame it is DEFERRED to the next compile head (and applied by `shutdown()` when no frame comes) instead of

@@ -1193,6 +1193,18 @@ already promises - "after it, the runner behaves as an inline runner"), and the 
 engine's `shutdown()` should also take the interval like every other host verb, so a call from a frame body is the
 `Reentrant` refusal the rest of the tree gives rather than a half-done teardown.
 
+**Fixed 2026-11-27, at the rule.** The engine half of this is exactly that: `shutdown()` takes the lease `prepare()`
+takes and holds it across the whole teardown, so a call from a frame body refuses (`engine.shutdown.refused_from_frame`)
+and a call from another host thread mid-build refuses too (`refused_in_flight`) - nothing torn down, one sentence per
+episode. The runner half needed more than the two statements: `live_` gated `wait`/`waitIdle` as well, so clearing it
+early would report "nothing in flight" while the last job was still inside the device, and clearing `runner_` loses the
+only handle that can join the thread. What the defect actually lacked was ONE fact: "will a job handed over now run on
+the thread", which is now `FrameRunner::accepting()` (a `State`: Inline / Running / Stopping / Stopped), decided by
+`stop()` under the same lock `submit` decides under and published by `FramePump::threaded()`. A job handed over just
+before the stop is still run (the loop drains it); a job submitted after it runs on the caller. Rule:
+`../design/graphics-threading.md` 2.20 / C25; argument:
+`../decisions/ADR-2026-11-27-a-teardown-is-an-interval-entry.md`; acceptance in T45.
+
 ## 25. R22 - the appfw surface above the paint loop
 
 *The question*: does the layer above the paint loop own what it damages - a request, a declaration, a view - or does it
@@ -1296,7 +1308,10 @@ between them:
 - `Z19` - the vk backend's decision about when to answer `Lost` is asserted nowhere; the GUI test feeds the answer
   directly. A test that made a real window frame's fence fail would have caught it (the seam exists:
   `Device::refuseNextSubmit`).
-- `Z21` - no test calls `engine->shutdown()` from a frame-thread sink, so the zombie runner is unobserved.
+- `Z21` - no test calls `engine->shutdown()` from a frame-thread sink, so the zombie runner is unobserved (**since
+  2026-11-27** `RenderEngineTest.AShutdownFromTheFrameThreadIsRefusedAndTheEngineKeepsRunning` makes the backend report
+  from its frame body - the frame-thread sink - and requires the next frame to be answered, and
+  `FrameRunnerReentryTest.ARunnerAStopHasLeftRunsTheNextJobOnTheCaller` proves the runner half directly).
 - `Z22` - no test destroys a view while a frame is answered (**since 2026-11-27** the RULE has a case -
   `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` drives the take-back from inside the compile through the
   engine's public door; the appfw composition itself, `~SceneView` with a frame in flight, still has no case).
@@ -1338,7 +1353,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z18` | R18 | low | three waits on the application thread, and only one is bounded: `SceneView` takes 250 ms and states why, the attach and first-picture waits take the default 5000 ms and discard the answer | `SceneView.cpp:163`; `SurfaceWindow.cpp:744`, `:915`; `RenderEngine.hpp:543`, `:550` |
 | `Z19` | R20 | medium-low | a window frame whose submit or fence failed answers `Skipped`, never `Lost`: `rewindUnrunFrame` clears `window_acquired` before the present block reads it, so the `Lost` branch is dead - and the swapchain repair and the lost-picture line both key on `Lost` | `Device.cpp:1889-1893`, `:2291`, `:2302-2305`; `RenderEngine.cpp:620-622`; `SurfaceWindow.cpp:941-957` |
 | `Z20` | R20 | low | a frame that did not complete answers with the PREVIOUS sampled frame's GPU time and per-pass costs: every `books.timing` reset sits inside `if (completed)`, and `books` is cleared only by `FrameDriver::destroy()` | `Device.cpp:2222-2271`, `:1431-1457`, `:2565-2580`, `:1398`; `FrameReport.hpp:57-58` |
-| `Z21` | R21 | medium-low | `RenderEngine::shutdown()` takes no interval, so a call from the frame thread (a diagnostic sink) half-stops the pump: `FrameRunner::stop()` cannot join itself and leaves `live_` true, the pump returns before clearing `runner_`, and the next frame is handed to a runner whose loop has exited - it never runs, and the frame after blocks for ever in `waitIdle()` | `RenderEngine.cpp:235-255`; `FramePump.cpp:295-318`; `FrameRunner.cpp:94-116`, `:140-168` |
+| `Z21` | R21 | medium-low | `RenderEngine::shutdown()` takes no interval, so a call from the frame thread (a diagnostic sink) half-stops the pump: `FrameRunner::stop()` cannot join itself and leaves `live_` true, the pump returns before clearing `runner_`, and the next frame is handed to a runner whose loop has exited - it never runs, and the frame after blocks for ever in `waitIdle()` (**fixed 2026-11-27**: a teardown is an interval entry that refuses from a frame body, and the runner has one "will this job run" fact the pump publishes; C25 / 2.20) | `RenderEngine.cpp:235-255`; `FramePump.cpp:295-318`; `FrameRunner.cpp:94-116`, `:140-168` |
 | `Z22` | R22 | medium | `SceneView::~SceneView` asks for a SHAPE CHANGE (`clearOwnedBy`) that `beginShapeChange` refuses while a frame is answered - and a destructor can neither wait nor retry, so the view's rows stay in the engine's table with a dead owner and a dropped chain, and `removePass`'s backend release never runs (**fixed 2026-11-27**: a take-back is never refused - deferred to the next compile head, keyed by the registration ticket; C24 / 2.19) | `SceneView.cpp:27-50`; `RenderEngine.cpp:767-776`, `:757-765`; `SurfaceWindow.cpp:226-231`, `:338`; `RenderEngine.cpp:60` |
 
 ### 27.2 Proposed order (for the owner; no backlog entry added by this round)
@@ -1358,9 +1373,14 @@ unobserved, and it is recorded here so the next round starts from it rather than
    between frames, deferred to the next compile head (and by `shutdown()`) inside one, keyed by the registration ticket
    so a recycled owner address cannot take a new object's rows (C24 / 2.19; `ADR-2026-11-27-a-take-back-is-accepted-
    never-refused.md`). The review's first suggestion (defer by owner address) was rejected as the next defect.
-4. **`Z21`** - the engine's shutdown takes the interval every other host verb takes, and the runner stops advertising a
+4. ~~**`Z21`** - the engine's shutdown takes the interval every other host verb takes, and the runner stops advertising a
    thread the moment its loop can no longer run a job. It is the only finding whose failure is a permanently wedged
-   engine.
+   engine.~~ **Done 2026-11-27**, at the rule: a teardown is an INTERVAL ENTRY (`beginBuild`'s lease held across the whole
+   body, refused from a frame body / another host thread with `engine.shutdown.refused_from_*`, nothing torn down), and
+   the runner has ONE life fact (`accepting()`) that `FramePump::threaded()` publishes - so a stop asked from the frame
+   thread makes the runner inline BEFORE it returns (C25 / 2.20; `ADR-2026-11-27-a-teardown-is-an-interval-entry.md`).
+   The review's two statements were rejected: clearing the "live" flag early also makes `wait`/`waitIdle` answer idle
+   while the last job runs, and clearing `runner_` loses the only handle that can join the thread.
 5. **`Z11`** - the same family as 2 and the only finding whose wrong answer is a picture: settle the predicate once
    (what `describe` announces) and let the scheduler, `recordProduced` and the SDK sentence read it from there.
 6. **`Z12`** - the instance stream's key: hold the `Buffer` it was built from (the geometry path's own shape) so the

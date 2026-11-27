@@ -57,3 +57,40 @@ TEST(FrameRunnerReentryTest, AStopAskedFromTheFrameThreadLeavesTheJoinToAnotherT
     EXPECT_FALSE(runner.busy());
     runner.stop(); // idempotent
 }
+
+TEST(FrameRunnerReentryTest, ARunnerAStopHasLeftRunsTheNextJobOnTheCaller)
+{
+    // REVIEW 19 Z21. A stop asked from the frame thread cannot join itself, so the loop leaves after its last job - but
+    // the runner used to keep advertising a live thread (`live_` was cleared only by the join from another thread).
+    // `submit` then took the threaded branch and handed the job to a loop that had exited: accepted, never run, and
+    // `has_request_` stayed set, so every later submit (and `waitIdle`) blocked for ever. "Where does my job run" is ONE
+    // fact now (`accepting()`), and it answers "here" from the moment the stop is asked for.
+    FrameRunner runner{ RunnerMode::Threaded };
+
+    std::atomic<bool> accepting_inside{ true };
+    std::atomic<bool> frame_thread_inside{ false };
+    std::promise<void> stopped;
+    std::future<void>  stopped_future = stopped.get_future();
+    runner.submit([&]() {
+        runner.stop(); // asked from the frame thread: returns, the loop leaves after this job
+        accepting_inside     = runner.accepting();
+        frame_thread_inside  = runner.onRunnerThread();
+        stopped.set_value();
+    });
+    ASSERT_EQ(stopped_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    EXPECT_TRUE(runner.wait(std::chrono::milliseconds(5000))) << "the job in flight finished";
+    EXPECT_TRUE(frame_thread_inside.load()) << "the thread is still the frame thread while it finishes its last job";
+    EXPECT_FALSE(accepting_inside.load()) << "the loop takes no new job from the moment the stop is asked for";
+
+    // THE ZOMBIE ITSELF: the job submitted now must RUN (on this thread), not be handed to a loop that has left.
+    std::atomic<bool> ran{ false };
+    runner.submit([&ran]() { ran = true; });
+    EXPECT_TRUE(ran.load()) << "a job a stop has left is run on the caller, not dropped";
+    EXPECT_TRUE(runner.wait(std::chrono::milliseconds(0))) << "and nothing is left in flight";
+    EXPECT_FALSE(runner.busy());
+    EXPECT_EQ(runner.frames(), 2U);
+
+    runner.stop(); // the join the frame thread could not do
+    EXPECT_FALSE(runner.accepting());
+    EXPECT_EQ(runner.mode(), RunnerMode::Threaded) << "the mode is a lifetime decision; only the thread is gone";
+}

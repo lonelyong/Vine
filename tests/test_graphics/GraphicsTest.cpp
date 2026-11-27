@@ -17024,6 +17024,141 @@ TEST(RenderEngineTest, ASecondThreadCannotChangeTheFrameThreadWhileAFrameIsInFli
 }
 
 /*
+ * @brief A shutdown asked from the frame thread is REFUSED, and the engine keeps running (review 19 Z21).
+ *
+ * The vk backend reports a lost device through the engine's route, so the host's sink runs ON THE FRAME THREAD. A sink
+ * that reacts by shutting the engine down used to get a half-done teardown: the pump could not join the thread it was
+ * running on and returned before clearing its runner, and that runner had left its loop - so the next frame was handed
+ * to it, never ran (`waitForFrame` timed out), and the frame after blocked for ever in `beginFrame`'s `waitIdle`. A
+ * teardown is an interval entry now: it refuses with the cause, says it once, and tears NOTHING down.
+ */
+TEST(RenderEngineTest, AShutdownFromTheFrameThreadIsRefusedAndTheEngineKeepsRunning)
+{
+    class ReportingBackend : public GatedBackend
+    {
+      public:
+        PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+        {
+            if (report_next) {
+                report_next = false;
+                // A LOST DEVICE IS WHAT THE BACKEND REPORTS FROM ITS FRAME BODY (see Device's lost path): the sink below
+                // therefore runs on the frame thread, which is the thread a shutdown cannot join.
+                emitDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"synthetic lost device");
+            }
+            return GatedBackend::executeFrame(frame, present_to);
+        }
+        bool report_next = false;
+    };
+
+    auto backend = intrusive_ptr<ReportingBackend>(new ReportingBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    (void)scene->publish();
+    engine->setFrameThreading(FrameThreading::EngineThread);
+
+    std::atomic<int> refusals{ 0 };
+    engine->setDiagnosticSink([&](const RenderDiagnostic& diagnostic) {
+        if (diagnostic.category == DiagnosticCategory::SubmissionFailed) {
+            // THE HOST'S REACTION, ON THE THREAD THE BACKEND REPORTED FROM: the frame asking for its own teardown.
+            engine->shutdown();
+            return;
+        }
+        if (diagnostic.code == u8"engine.shutdown.refused_from_frame") {
+            refusals.fetch_add(1);
+        }
+    });
+
+    backend->report_next = true;
+    ASSERT_TRUE(engine->frame().submitted());
+    ASSERT_TRUE(engine->waitForFrame(std::chrono::seconds(5))) << "the frame that reported is answered";
+    EXPECT_EQ(refusals.load(), 1) << "the refusal is said once, with the cause";
+    EXPECT_EQ(engine->frameThreading(), FrameThreading::EngineThread) << "nothing was torn down: the pump still has its thread";
+
+    // THE WEDGE THIS RECORDS: with a runner that had left its loop, this frame was handed over, never run, and every
+    // later frame blocked in `beginFrame`'s `waitIdle`.
+    ASSERT_TRUE(engine->frame().submitted()) << "the engine still drives frames";
+    EXPECT_TRUE(engine->waitForFrame(std::chrono::seconds(5))) << "the frame after the refusal is answered";
+    EXPECT_EQ(engine->presentRecord().frame, 2U);
+
+    // AND THE SAME CALL LANDS BETWEEN FRAMES.
+    engine->shutdown();
+    EXPECT_EQ(engine->frame().status, FrameCallOutcome::Status::NotReady) << "the engine is detached";
+}
+
+/*
+ * @brief A shutdown asked from another host thread while a frame is BUILT is refused, not waited and not half applied.
+ *
+ * The same rule as a mode change (design 2.17): the content half is the other thread's own call, so this one belongs
+ * between frames. Waiting would be one host thread blocked behind another's hook, and tearing down beside it would
+ * release the tables that compile is walking.
+ */
+TEST(RenderEngineTest, ASecondThreadCannotShutTheEngineDownWhileAFrameIsBeingBuilt)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera      = vn::make_intrusive<Camera>();
+    auto unpublished = vn::make_intrusive<Scene>();
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = unpublished; // never published: the compile reports from inside itself
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    std::mutex              gate;
+    std::condition_variable changed;
+    bool                    inside   = false;
+    bool                    released = false;
+    std::atomic<int>        refusals{ 0 };
+    engine->setDiagnosticSink([&](const RenderDiagnostic& diagnostic) {
+        std::unique_lock<std::mutex> lock(gate);
+        if (diagnostic.code == u8"engine.shutdown.refused_in_flight") {
+            refusals.fetch_add(1);
+        }
+        if (inside) {
+            return;
+        }
+        inside = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    });
+
+    FrameCallOutcome outer{};
+    std::thread      driver([&] { outer = engine->frame(); });
+    {
+        std::unique_lock<std::mutex> lock(gate);
+        ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return inside; }))
+            << "the driver is inside its compile";
+    }
+
+    engine->shutdown();
+    {
+        const std::lock_guard<std::mutex> lock(gate);
+        EXPECT_EQ(refusals.load(), 1) << "the refusal is said once, with the cause";
+        released = true;
+    }
+    changed.notify_all();
+    driver.join();
+    EXPECT_TRUE(outer.ran()) << "the frame that held the interval was left alone";
+
+    // BETWEEN FRAMES THE SAME CALL LANDS, and the detach is visible: a frame is no longer driven.
+    engine->shutdown();
+    EXPECT_EQ(engine->frame().status, FrameCallOutcome::Status::NotReady);
+}
+
+/*
  * @brief The one asymmetry of a mode change: it REFUSES a build, and WAITS for an answer already in flight.
  *
  * The two halves of the interval are not alike. A content half is the host's own hook, so a switch asked beside it is

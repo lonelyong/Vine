@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <future>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -548,4 +550,38 @@ TEST(FramePumpTest, AThreadModeChangeIsAnIntervalVerb)
     EXPECT_TRUE(pump.threaded());
     EXPECT_EQ(pump.setThreaded(false), FramePump::Build::Refusal::None);
     EXPECT_FALSE(pump.threaded()) << "the thread was joined, so the pump is inline again";
+}
+
+/*
+ * @brief A stop asked from the engine thread leaves an INLINE pump - before the join, not after it (review 19 Z21).
+ *
+ * `threaded()` is the fact `frame()` reads to decide where its other half runs. It used to be "a runner object is
+ * stored", and a stop from the engine thread cannot join itself: the object stayed, its loop had left, and the next
+ * frame was handed to it and never ran. The answer now comes from the runner's own state (`FrameRunner::accepting`),
+ * so it is false from the moment the stop is asked for.
+ */
+TEST(FramePumpTest, AStopAskedFromTheFrameThreadLeavesAnInlinePump)
+{
+    FramePump pump;
+    ASSERT_EQ(pump.setThreaded(true), FramePump::Build::Refusal::None);
+    ASSERT_TRUE(pump.threaded());
+
+    std::atomic<bool> threaded_inside{ true };
+    std::promise<void> stopped;
+    std::future<void>  stopped_future = stopped.get_future();
+    pump.submit([&]() {
+        pump.stop(); // the frame asking for its own teardown
+        threaded_inside = pump.threaded();
+        stopped.set_value();
+    });
+    ASSERT_EQ(stopped_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    pump.waitIdle();
+    EXPECT_FALSE(threaded_inside.load()) << "the answer changes with the stop, not with the join";
+    EXPECT_FALSE(pump.threaded());
+
+    // AND THE NEXT FRAME RUNS HERE instead of vanishing into the loop that left: the runner runs a job it cannot hand
+    // over on the caller's thread, which is what `frame()` now reads from `threaded()`.
+    std::atomic<bool> ran{ false };
+    pump.submit([&ran]() { ran = true; });
+    EXPECT_TRUE(ran.load());
 }

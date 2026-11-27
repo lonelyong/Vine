@@ -3068,3 +3068,30 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   699/699; `scripts/tsan_check.sh` 699/699 with 0 warnings; ASan `RESULT: PASS`.
   `ADR-2026-11-27-a-take-back-is-accepted-never-refused`; `graphics-threading.md` 2.19 / C20 / C24 / T44;
   `graphics-architecture.md` 2.6 / 2.7.
+
+## 2026-11-27 - Z21: a teardown is an interval entry, and a runner says where a job will run
+
+- **The defect.** `RenderEngine::shutdown()` took no interval, so a diagnostic sink ON THE FRAME THREAD (where the vk
+  backend reports a lost device) could tear the engine down under the frame it was inside. Worse, `FramePump::stop()`
+  called from that thread could not join itself and returned before clearing `runner_`, while `live_` stayed true
+  although the loop had exited: the pump still answered `threaded() == true`, the next `frame()` handed its job to a
+  loop that had left, `has_request_` stayed set - `waitForFrame` timed out and the frame after blocked for ever in
+  `beginFrame`'s `waitIdle`.
+- **The rule (C25, 2.20).** `shutdown()` takes the lease `prepare()` takes (`FramePump::beginBuild`) and holds it across
+  the whole teardown; a call from a frame body refuses with `engine.shutdown.refused_from_frame`, one from another host
+  thread mid-build with `refused_in_flight` - once per episode, NOTHING torn down - and a frame ANSWERED on the thread is
+  waited for and joined. `detail::FrameRunner` has ONE life fact (`State` Inline/Running/Stopping/Stopped);
+  `stop()` publishes `Stopping` under the lock `submit` decides under BEFORE it returns (even from the frame thread, where
+  the join belongs to somebody else), a job handed over just before the stop is still run, and `wait`/`waitIdle` answer
+  from the job in flight. `FramePump::threaded()` publishes `runner->accepting()`.
+- **Trap (a race the review's minimal patch would not have).** The loop's leave condition must be an ASKED-FOR stop
+  (`Stopping`/`Stopped`), NOT "`state_ != Running`": the loop may already be waiting before its constructor publishes
+  `Running`, and reading that window as a stop made the loop exit at birth. TSan caught it deterministically (the normal
+  build passed, the instrumented one left the loop immediately); `wake`'s predicate now names the two leaving states.
+- **Evidence.** `RenderEngineTest.AShutdownFromTheFrameThreadIsRefusedAndTheEngineKeepsRunning` (the sink case: refused
+  once, the engine keeps driving and the next frame is answered - the wedge), `RenderEngineTest.ASecondThreadCannotShut
+  TheEngineDownWhileAFrameIsBeingBuilt`, `FrameRunnerReentryTest.ARunnerAStopHasLeftRunsTheNextJobOnTheCaller`,
+  `FramePumpTest.AStopAskedFromTheFrameThreadLeavesAnInlinePump`; `test_graphics` 703/703; `scripts/tsan_check.sh`
+  703/703 with 0 warnings; ASan `RESULT: PASS`; `ctest` 31/31.
+  `ADR-2026-11-27-a-teardown-is-an-interval-entry`; `graphics-threading.md` 2.17 / 2.20 / C25 / T45 / F10;
+  `scripts/diagnostic_codes.txt` (two new codes).

@@ -151,12 +151,15 @@ class FramePump {
      */
     [[nodiscard]] Build beginFrame();
 
-    /** @brief Marks this session as RECORDING without handing out a frame: a PREPARE is a build, not a frame.
+    /** @brief Marks this session as RECORDING without handing out a frame: a verb that walks the tables, not a frame.
      *
      * @details
      * - A PREPARE WALKS THE SAME TABLES A FRAME DOES (see RenderEngine::prepare): it compiles, resolves transients and
      *   describes every pass, so a shape change landing inside it corrupts exactly what a change during `frame()`
      *   would. The one difference is that nothing will be answered, so the interval ends with the guard.
+     * - A TEARDOWN TAKES THE SAME LEASE (see RenderEngine::shutdown): releasing the transients and detaching the
+     *   surface under a frame - built or answered on any thread - is the same corruption, and the frame value below is
+     *   simply one the caller does not read.
      *
      * @return The build, over the value the last compile filled (see currentFrame), or an EMPTY build when the
      *         interval is already held (see `refusal`).
@@ -195,7 +198,16 @@ class FramePump {
     /** @brief Gets the id of the last frame this pump handed out (0 before the first one). */
     [[nodiscard]] std::uint64_t lastNumber() const noexcept;
 
-    /** @brief Gets whether the engine half runs on a thread of its own. */
+    /** @brief Gets whether a job handed over now runs on the engine thread (false: it runs on the caller's).
+     *
+     * @details
+     * - THE FACT A FRAME READS to decide where its other half runs, and it is the RUNNER's own answer (`accepting`), not
+     *   "a runner object is still stored": a stop asked for from the engine thread cannot join itself, so the object
+     *   stays for the later join while its loop can no longer take a job - and a pump that kept answering true there
+     *   would hand the next frame to a loop that had left (review 19 `Z21`).
+     *
+     * @return true when the thread exists and no stop was asked for.
+     */
     [[nodiscard]] bool threaded() const noexcept;
 
     /**
@@ -303,6 +315,9 @@ class FramePump {
      * - CALLED FROM THE ENGINE THREAD it only asks the loop to leave: a thread cannot join itself, so the join happens
      *   in the next stop() from another thread (the destructor, `shutdown()`), which is also the only safe place for
      *   it.
+     * - THE PUMP IS INLINE FROM THE MOMENT THE STOP IS ASKED FOR, on every path: `threaded()` reads the runner's own
+     *   answer (`FrameRunner::accepting`), which is false even while the loop is still finishing its last job. That is
+     *   the difference between "a runner object is stored for the join" and "a job handed over now runs on it".
      */
     void stop();
 

@@ -368,6 +368,10 @@ engine->frame();                        // 收集 → 录制 → 提交 → pres
 engine->shutdown();
 ```
 
+**`shutdown()` 是"帧间动词"**：它释放 transient、解绑表面并 join 帧线程，所以**在一帧内部调用会被拒绝**
+（诊断 sink 跑在帧线程上，这很常见）——报告 `engine.shutdown.refused_from_frame`，**什么都不会拆**；
+等这一帧返回后再调用即可（规则见 `.ai/design/graphics-threading.md` 2.20 / C25）。
+
 **要一个四边形或盒子时，先看 `geometryFromShape`。** `models` 那边的形状已经够用，转换会**一并声明好 indexed
  triangle draw**，所以不存在「`setPositions` 顺带声明了默认 draw、必须用 `setPrimitive(0, …)` 覆盖」这一步。
 只有需要自定义通道（例如 cube map 的方向 texcoord3）或要原地改写顶点时，才走 `packAttribute` 的裸数组路径。

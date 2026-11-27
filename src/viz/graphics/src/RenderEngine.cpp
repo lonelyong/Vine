@@ -234,15 +234,49 @@ bool RenderEngine::initialize()
 
 void RenderEngine::shutdown()
 {
+    // A TEARDOWN IS AN INTERVAL ENTRY (design 2.20 / C25): what it releases - the transients the frame allocates and
+    // the surface it presents through - is what a frame being BUILT or ANSWERED on any thread is using, and it joins
+    // the thread that answers. So it takes the pump's lease the way prepare() does, and answers the same two refusals:
+    // a call from a frame body (a diagnostic sink ON THE FRAME THREAD - where the vk backend reports a lost device - or
+    // a hook) cannot wait for itself, and a call from another host thread mid-build belongs between frames. Either
+    // way NOTHING is torn down: the half-stopped pump a refusal used to produce left a runner the next frame was handed
+    // to and never ran (review 19 Z21).
+    //
+    // THE LEASE IS HELD ACROSS THE WHOLE TEARDOWN: the interval is what keeps a second host thread from starting a
+    // frame against the tables being released below.
+    const detail::FramePump::Build build = pump_->beginBuild();
+    if (!build) {
+        // SAID ONCE PER EPISODE, WITH THE CAUSE (`G4`), exactly as a refused mode change does: a sink cannot act on it
+        // (it reports, and the host tears the engine down after the frame returns), so repeating it buys nothing.
+        if (shutdown_episode_.shouldReport()) {
+            if (build.refusal() == detail::FramePump::Build::Refusal::Reentrant) {
+                reportEngineProblem(detail::engineProblem(
+                    u8"engine.shutdown.refused_from_frame", DiagnosticCategory::PassProtocolViolation,
+                    u8"shutdown() was called from inside this engine's own frame (a hook or a diagnostic sink running on "
+                    u8"the frame thread); the frame is using what the teardown would release, and a thread cannot join "
+                    u8"itself - nothing was torn down, shut the engine down after the frame returns"));
+            }
+            else {
+                reportEngineProblem(detail::engineProblem(
+                    u8"engine.shutdown.refused_in_flight", DiagnosticCategory::PassProtocolViolation,
+                    u8"shutdown() was called from another host thread while a frame was being built; the teardown "
+                    u8"releases the tables that compile is walking, so nothing was torn down - ask between frames"));
+            }
+        }
+        return;
+    }
+    shutdown_episode_.rearm();
+
+    // THE ANSWER IN FLIGHT IS FINISHED FIRST, then the thread goes: a frame still executing while this call hands the
+    // device back would touch objects its creator may already own (design F10 / N11), and the thread is joined, never
+    // detached.
+    pump_->waitIdle();
+    pump_->stop();
     // THE DEVICE IS NOT SHUT DOWN: this engine borrows it (see the declaration), and another engine may still be
     // driving it. What is this engine's own is the area's binding - and it goes FIRST, because the target is one of
     // the device's objects (see RenderDevice::createSurfaceTarget): nothing is left naming something the device's
     // creator may destroy.
     //
-    // NOTHING IS ANSWERED AFTER THIS POINT, so the frame thread goes FIRST: a frame in flight is finished (the thread is
-    // joined, never detached) and the pump is left inline - a frame still executing while this call hands the device
-    // back would touch objects its creator may already own (design F10 / N11).
-    pump_->stop();
     // A TAKE-BACK THAT WAS WAITING FOR A FRAME LANDS NOW: nothing records after the pump stopped, and the rows' backend
     // state belongs to a device this engine is about to stop naming - leaving them for a frame that will never come
     // would lose the release exactly the way the refusal did (review 19 Z22).

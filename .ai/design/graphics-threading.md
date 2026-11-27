@@ -241,7 +241,8 @@ There is exactly one answer to "when does this copy expire": the publication val
   and **only when the number changed**. So: a host resizing mid-frame does not wait for the device, and several resizes between two frames pay one swap-chain rebuild.
 - **Shutdown** (F10): `stop()` posts "no more frames" → the engine half finishes the frame in hand (or discards it) → release the present target,
   the session and the device on the engine thread → join (bounded, an error on timeout). The destruction order follows N11's rule (the thread ends before the device and the tables). The UI may now freely destroy its own
-  window, because the engine side has no edge back.
+  window, because the engine side has no edge back. The call itself is an INTERVAL ENTRY (§2.20 / C25): from a frame body it is refused, not
+  half applied - the frame that is inside the engine is using what the teardown releases.
 - **One publication per frame**: hooks run in the content half and publications happen per pass, but the engine half's bind reads the current snapshot once at the **frame head** ⇒ all of that frame's
   passes expand against the same value. That is, **what one hook writes is visible to all passes of that frame**, not "only to the passes after it" (N16).
   If a pass must not see some content, that is a **declaration** question (give it its own scene), not a scheduling one.
@@ -360,6 +361,7 @@ There is exactly one answer to "when does this copy expire": the publication val
   | the thread that already holds the interval | no - it would wait for itself | **refused**: `EngineNotReadyReason::Reentrant`, `vk.device.reentry`, `vk.session.frame_reentry` | `FrameGate`'s empty lease / `FramePump::Build` |
   | a second HOST thread calling `frame()` / `prepare()` | no - two frames are a queue (`D12`), and the content half writes a single-writer world | **refused**: `EngineNotReadyReason::Concurrent` | `FramePump::claimInterval` |
   | `setFrameThreading` (a mode change) asked while a frame is being BUILT (its content half) | no - the switch back ends by JOINING the frame thread | **refused** by the same two reasons, reported as `engine.threading.refused_from_frame` / `refused_in_flight` | `FramePump::takeInterval` |
+  | `RenderEngine::shutdown` (a teardown) | from a frame body no; a frame already ANSWERED yes - it is bounded | **refused** with `engine.shutdown.refused_from_frame` / `refused_in_flight`, nothing torn down; an answer in flight is waited for and joined | `FramePump::beginBuild` (the lease) + `FramePump::stop` (2.20) |
 
 - **Why the last row is a refusal, not a wait**: a device body can be deferred behind another and still produce the
   same picture whenever it runs. A frame cannot: its content half is the host's own hooks and description, so waiting
@@ -478,6 +480,44 @@ There is exactly one answer to "when does this copy expire": the publication val
   host to wait. Nothing ELSE becomes deferred: the take-back is the only ask whose caller is a destructor.
 - **Acceptance**: T44.
 
+### 2.20 A teardown is an interval entry, and a runner says where a job will run (`G1` / `G4` / `G10`)
+
+- **What it is**: one question - *is this frame machinery being taken down, and may work still be handed to it?* - and
+  three facts that used to answer it differently:
+  - **the engine's teardown enters the interval**: `RenderEngine::shutdown()` takes the same lease `prepare()` takes
+    (`FramePump::beginBuild`) and holds it across the WHOLE teardown (the pump stopped, the deferred take-backs
+    applied, the transients released, the surface detached). A call from a frame body - a hook, or a diagnostic sink
+    on the frame thread, which is where the vk backend reports a lost device - is refused with
+    `engine.shutdown.refused_from_frame`; a call from another host thread while a frame is being built is refused with
+    `engine.shutdown.refused_in_flight`; either way NOTHING is torn down, and the sentence is said once per episode.
+  - **a runner has ONE life fact** (`detail::FrameRunner::State`: `Inline` / `Running` / `Stopping` / `Stopped`).
+    `accepting()` answers "a job submitted now is handed to the engine thread"; `stop()` publishes `Stopping` under
+    the same lock `submit` decides under, BEFORE it returns and whether or not it could join - so from the moment the
+    stop is asked for (including from the frame thread, where the join belongs to somebody else) the next job runs on
+    the caller's thread. A job handed over just before the stop is still run: the loop drains the request it was woken
+    for and then exits.
+  - **the pump publishes that answer**: `FramePump::threaded()` is `runner != nullptr && runner->accepting()` - the
+    fact `frame()` reads to decide where its other half runs - so it stops being true when the stop is ASKED for, not
+    when somebody joins.
+- **Why**: the defect (review 19 `Z21`) was one answer short. A sink on the frame thread called `shutdown()`: the pump
+  could not join the thread it was running on, so it returned before clearing its runner - and that runner's loop had
+  left. `threaded()` still answered true (the object is stored), `submit` still took the threaded branch (`live_` was
+  cleared only by the join), the job was accepted and never run, `has_request_` stayed set, and the next frame blocked
+  for ever in `beginFrame`'s `waitIdle`. Behind it the teardown had already released the transients and detached the
+  surface under the very frame that was inside it.
+- **What it deliberately keeps** (`G4`): a stop asked from the frame thread still cannot join itself - the loop leaves
+  after its job and a later stop from another thread performs the join (the destructor, `shutdown()`). And `wait` /
+  `waitIdle` answer from the JOB IN FLIGHT, never from "is there a thread", so a stopping runner is not reported idle
+  while its last job is still inside the device - which is the one-in-flight rule `beginFrame` relies on.
+- **What it does not change**: `applyPlan` / `bindPassContent` / the take-back keep their answers (C20 / C24); a
+  `frame()` handed over just before the stop is run. The interval entry closes the whole teardown, so a second host
+  thread's `frame()` is refused (not queued) while one runs.
+- **Cost**: none on the hot path - `threaded()` is one atomic load per frame, and `submit`'s locked path is the one the
+  threaded mode already took.
+- **Boundary**: the engine decides `Ran` / `Submitted` from `threaded()` before handing the frame over, and a mode
+  change cannot land between the two decisions (2.17's interval).
+- **Acceptance**: T45.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -542,6 +582,9 @@ There is exactly one answer to "when does this copy expire": the publication val
 
 - **Behaviour**: `stop()`: post "no more frames" → the engine half finishes the frame in hand (or discards it) → release the present target /
   session / device on the **engine thread** → the thread exits → join (bounded, an error on timeout).
+- **The teardown is an INTERVAL ENTRY** (§2.20 / C25): `RenderEngine::shutdown()` takes the lease a prepare takes and holds it across the whole
+  body, so a call from a frame body (a diagnostic sink on the frame thread) or from another host thread mid-build is REFUSED - `engine.shutdown.refused_from_frame` /
+  `refused_in_flight`, once per episode, nothing torn down - while a frame ANSWERED on the engine thread is waited for and joined.
 - **Constraint**: the engine thread **must not** wait synchronously for the UI thread (or it deadlocks against "the UI must not wait for a worker").
 - **Requirement** (R10): everything the engine side allocated is released after `stop()` (the ASan criterion); unprocessed frames are observable.
 - **Acceptance** (T10): `stop()` leaks nothing; a repeated `setFrameThreading` is stable.
@@ -605,6 +648,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | C22 | **A content description is built once per revision and shared by every reader, under one lock**: `Geometry::description()`, `MaterialValues::description()` and `ShaderProgram::description()` are one verb on one type (`detail::DescriptionCache`), which measures the source's revision, compares it with the cached value's and builds on a miss in ONE critical section — so several threads describing one object (two engines publishing one scene) get the same identity and no second value for one revision. The key is measured INSIDE the lock because a material instance's `revision()` resolves on read, and the lock is the plain kind (2.8 ns uncontended against 13.2 ns for the shared lock it replaced, measured 2026-11-27). An EDIT is still the owning thread's act: the cache makes readers safe, not a concurrent edit. |
 | C23 | **A door is gated or locked, never neither: the two families a host can reach while a frame records each have ONE rule, enforced by the type that owns the state** (`G1` / `G4` / `G6`). The session shape's mutators all take `RenderEngine::beginShapeChange` (C20) - except the take-back, which takes the same gate and is deferred instead of refused (C24). The image tables (`detail::FrameResources`: the standing bindings, the frame's publications, the transients) take `tables_mutex_` in every verb a host can reach - `publish` / `unpublish` / `resolve` / `transientTarget` / `transientCount` may run during a frame and never tear - and the frame head copies the host's bindings (`beginFrame`), so the seeding, the wiring checks and the input resolution of one frame answer ONE set, while the host's own `resolve` still answers the live table (the compile resolves through `resolveForFrame`). The lock covers a lookup, an insert or an eviction, never a device call; it makes READERS safe, not a concurrent edit (as C22 does for descriptions), and a borrowed answer (`raw_ptr`) means "the instance that was live at this instant", not "it survives". |
 | C24 | **A take-back is accepted, never refused, and it names the rows its owner had when it asked** (`G4` / `G7` / `G10`). `RenderEngine::removePassesOwnedBy` (reached from `~PassChain`, `PassRegistry::clearOwnedBy`, `~SceneView`) is the one shape change whose caller is a destructor and cannot retry: between frames it is applied at once (backend release included), and while a frame records it is recorded and applied at the **next compile head** - and by `shutdown()` after the pump stopped, so it never outlives the engine. It does NOT report `engine.pass.changed_during_frame`, because that sentence asks for a retry a destructor cannot make. The record carries the registration ticket current when it was asked (`Slot::registration`, stamped by `insertSlot` under the same `phaseGate`), so the drain removes the rows that existed THEN and never a row a new object at a recycled address registered meanwhile; a frame already built keeps the shape it compiled, and a drained removal runs the same `removePass` walk (and release) an immediate one does. `applyPlan` / `bindPassContent` stay refusals (C20) - they are retryable, and the refusal is the whole answer to a caller that can wait. |
+| C25 | **A teardown is an interval entry, and a runner answers where a job will run before one is handed to it** (`G1` / `G4` / `G10`). `RenderEngine::shutdown()` takes the lease `prepare()` takes (`FramePump::beginBuild`) and holds it across the whole teardown (pump stopped, deferred take-backs applied, transients released, surface detached); a call from a frame body refuses with `engine.shutdown.refused_from_frame`, one from another host thread mid-build with `engine.shutdown.refused_in_flight` - one report per episode, and NOTHING is torn down - while a frame ANSWERED on the engine thread is waited for and joined, as a device verb waits. `detail::FrameRunner` has ONE life fact (`Inline` / `Running` / `Stopping` / `Stopped`): `accepting()` answers "a job submitted now is handed to the engine thread", `stop()` publishes `Stopping` under the lock `submit` decides under BEFORE it returns - including from the frame thread, where the join belongs to somebody else - a job handed over just before the stop is still run, and `wait` / `waitIdle` answer from the job in flight, never from "is there a thread". `FramePump::threaded()` publishes the runner's own answer, so the fact `frame()` reads stops being true when the stop is ASKED for, not when somebody joins. |
 ### 5.2 Requirements (R#)
 
 | # | Requirement |
@@ -741,6 +785,7 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T42 | the image tables are gated by one lock and one frame-head value: a host publishing, withdrawing, resolving and reading transients while a frame compiles never tears the table, and one frame answers the bindings its head took | `FrameResourcesTest.AHostSwappingBindingsWhileAFrameCompilesNeverTearsTheTables` / `FrameResourcesTest.TheFrameAnswersTheBindingsItsHeadTook` + `scripts/tsan_check.sh` | implemented |
 | T43 | a content bind is a shape change: refused from inside a compile (the declaration unchanged, one report), accepted between frames, and two passes serving one name from different targets are reported once | `PlanTest.AFrameRefusesAContentBindFromInsideItsOwnCompile` / `PlanTest.TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt` | implemented |
 | T44 | a take-back is never refused: asked from inside a compile it leaves the row the compile walks, reports no refusal, lands at the next frame head with its backend release, removes only the rows that existed when it asked (a row a later object registers at the same address survives), applies at once between frames, is applied by `shutdown()` when no frame came, and WAITS while the engine half answers a frame (the shipped host's order) | `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` / `PlanTest.ATakeBackThatWaitedLeavesRowsRegisteredAfterTheAskAlone` / `PlanTest.ATakeBackStillWaitingWhenTheEngineStopsIsApplied` / `PlanTest.ATakeBackWhileAFrameIsAnsweredWaitsForTheNextHead` | implemented |
+| T45 | a teardown is an interval entry and a runner says where a job will run: a shutdown from the frame thread (a sink reacting to a device report) is refused with the cause, said once, and tears nothing down - the engine keeps driving and the next frame is answered; a shutdown from another host thread mid-build is refused the same way and lands between frames; a stop asked from the frame thread leaves an inline runner and an inline pump BEFORE the join, and the next job runs instead of being handed to a loop that left | `RenderEngineTest.AShutdownFromTheFrameThreadIsRefusedAndTheEngineKeepsRunning` / `RenderEngineTest.ASecondThreadCannotShutTheEngineDownWhileAFrameIsBeingBuilt` / `FrameRunnerReentryTest.ARunnerAStopHasLeftRunsTheNextJobOnTheCaller` / `FramePumpTest.AStopAskedFromTheFrameThreadLeavesAnInlinePump` | implemented |
 
 ## 9. Status and Evolution
 
@@ -779,6 +824,7 @@ This file describes the **present**, not the target. The target shape and its re
   frame's publications and transients, and the one lock over them - C23)
 - `src/viz/graphics/src/FrameExpand.{hpp,cpp}` (`bindSceneDraws` / `expandPass` / `expandFrame`)
 - `src/viz/graphics/src/FrameRunner.{hpp,cpp}` (the engine thread)
+- `src/viz/graphics/src/FramePump.{hpp,cpp}` (the interval: the lease a frame / a prepare / a teardown takes, the phase, and `threaded()` - "where will this job run" - C25)
 - `src/viz/graphics/src/EngineCompile.cpp` (the content half: hooks / publication / describe / the engine half's entry)
 - `src/viz/graphics/src/SessionShape.{hpp,cpp}` (the slot table: the registration ticket, `deferTakeBack` / `applyDeferredTakeBacks` - C24)
 - `src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp` (`bindSnapshot` / `setFrameThreading` / `waitForFrame` /
@@ -790,7 +836,7 @@ This file describes the **present**, not the target. The target shape and its re
 
 - `tests/test_graphics/PublicationStoreTest.cpp` (T3 / T31's three-state publication)
 - `tests/test_graphics/FrameExpandTest.cpp` (T34 / T35: the frame-level seam, a bound publication is the truth, no publication draws nothing)
-- `tests/test_graphics/FrameRunnerTest.cpp` (T10 / T12 / T16)
+- `tests/test_graphics/FrameRunnerTest.cpp` (T10 / T12 / T16, and T45's says-where-a-job-runs pump case)
 - `tests/test_graphics/SnapshotShadowTest.cpp` (T3 / T17 / T34)
 - `tests/test_graphics/DescriptionCacheTest.cpp` (T41: one build per revision, one identity for every concurrent reader)
 - `tests/test_graphics/FrameResourcesTest.cpp` (T42: the head's value, the collision answer, and the lock under two threads)
@@ -809,6 +855,9 @@ This file describes the **present**, not the target. The target shape and its re
 - `../decisions/ADR-2026-11-27-a-take-back-is-accepted-never-refused.md` (C24: why a destructor's ask cannot be a
   refusal, the deferred removal at the frame head, the registration ticket that survives an address reuse, and the
   rejected "wait in the destructor" / "order the view's death behind the frame" / "retry from the host" shapes)
+- `../decisions/ADR-2026-11-27-a-teardown-is-an-interval-entry.md` (C25: why a shutdown from a frame body is refused,
+  the one runner state, and the rejected "clear the flag but keep pointing at the runner" / "defer the teardown" /
+  "wait in the sink" shapes)
 - `../decisions/ADR-2026-11-10-render-world-mirrors-content.md` (**history**: the original mirror-shape decision, superseded by the two above)
 - `graphics-frame-pipeline.md` (the target shape and the step-by-step migration in §9.3)
 - `vk-backend.md` (backend implementation and synchronisation details)

@@ -403,6 +403,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   RenderDevice::createSurfaceTarget): nothing is left naming something the device may destroy.
      * - A host that comes back calls initialize() again, asks the device for a target and binds it - the
      *   "device lost, rebuild from the bottom" path.
+     * - A TEARDOWN IS AN INTERVAL ENTRY (`graphics-threading.md` 2.20 / C25): it releases the transients and the surface
+     *   a frame is using, and it joins the thread an answer runs on, so it takes the same lease `prepare()` takes. A
+     *   call from a frame body (a diagnostic sink on the frame thread, a hook) or from another host thread mid-build
+     *   tears NOTHING down and says why once (`engine.shutdown.refused_from_frame` / `refused_in_flight`) - a frame
+     *   asked for its own teardown cannot wait for itself, and a half-stopped pump is the state that wedged the engine
+     *   (review 19 `Z21`). A frame ANSWERED on the thread is waited for, as before.
      */
     void shutdown();
 
@@ -1232,6 +1238,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /// The episode of "setFrameThreading() was asked from this engine's own frame thread" (see setFrameThreading).
     ReportOnce frame_thread_change_episode_;
+
+    /// The episode of "shutdown() was asked from inside a frame (or beside one)" (see shutdown).
+    ReportOnce shutdown_episode_;
 
     /// @brief Decides whether a session-shape change may be applied now, and answers the gate that keeps it so.
     ///

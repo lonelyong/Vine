@@ -197,9 +197,13 @@ std::uint64_t FramePump::lastNumber() const noexcept
 
 bool FramePump::threaded() const noexcept
 {
-    // A PUBLISHED FACT, not a lookup of a pointer another thread may be replacing (see runner_): this is what a HUD or
-    // a benchmark asks while frames run.
-    return runner_.load(std::memory_order_acquire) != nullptr;
+    // A PUBLISHED FACT, and the RIGHT one (`G4`): the runner is taken by shared ownership (a mode change may be
+    // replacing it) and then ANSWERS FOR ITSELF - "a job handed over now runs on my thread" (see FrameRunner::accepting),
+    // not "a runner object is still stored". A runner whose stop was asked for from the engine thread stays stored for
+    // the later join while it can no longer take a job, and a pump that answered true there would hand the next frame
+    // to a loop that has left (review 19 Z21).
+    const std::shared_ptr<FrameRunner> runner = runner_.load(std::memory_order_acquire);
+    return runner != nullptr && runner->accepting();
 }
 
 bool FramePump::onEngineThread() const noexcept
