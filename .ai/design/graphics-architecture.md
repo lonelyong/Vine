@@ -114,7 +114,7 @@ is a destructor and a refusal would be a silent drop. It satisfies `G4` / `G6`; 
     changing too. An alias group (`vn::graphics::backend`) was rejected: it gives one class two names, and the shared surface
     is the headers `SEAM_SHARED_HEADERS` lists (not the 8 mechanisms) - a name covering 8 of that list claims a boundary that is not there (`G1`, `G4`).
 2.10 **The migration APIs are closed**: the `addPass` family is gone, `Plan` is the only shape of a pass declaration;
-    `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
+    `applyPlan` / `plan` / `bindSnapshot` / `unbindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
     plan), `frame()` answers only Ran / Submitted, `applyPlan` is three-state, `SessionBusy` is no longer a plan problem code.
     Reason: changing during migration in two passes would leave three shapes alive; now there is one shape and the public signatures match the documentation (`G1` / `G6`).
 2.11 **An extension point's cost is a row: one DECISION SITE and a grep, never a file list** (audit `A12`): saying

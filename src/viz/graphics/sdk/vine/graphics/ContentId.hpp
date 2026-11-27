@@ -111,6 +111,7 @@ class Id {
     Handle handle_{};
 };
 
+struct SceneTag;
 struct NodeTag;
 struct GeometryTag;
 struct MaterialTag;
@@ -118,6 +119,7 @@ struct ProgramTag;
 struct TextureTag;
 struct InstanceTag;
 
+using SceneId    = Id<SceneTag>;    ///< A content root a frame draws (see Scene).
 using NodeId     = Id<NodeTag>;     ///< A placement in the graph (see Node).
 using GeometryId = Id<GeometryTag>; ///< A leaf's shape (see Geometry).
 using MaterialId = Id<MaterialTag>; ///< A material's values (see MaterialValues).

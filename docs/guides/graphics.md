@@ -134,7 +134,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   `createArea()`（尺寸走 `RenderArea::resize()`）、`publish/resolve`（命名输出）、
   `frameTable()` / `frameDescription()` / `frameReport()` / `frameResult()` / `diagnostics()` / `releaseContent()`。
   - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
-    （`SceneSnapshotRef`，可用 `valid()` / `revision()` 查）交回来；`bindSnapshot(scene, ref)` 说“这个引擎画这一份”。
+    （`SceneSnapshotRef`，可用 `valid()` / `revision()` 查）交回来；`bindSnapshot(scene, ref)` 说“这个引擎画这一份”，
+    `unbindSnapshot(scene)` 撤回它、帧重新画该场景最新发布的那一份。空句柄绑的是**空画面**（每个 view 答空列表），
+    不是撤回。覆盖按 `Scene::id()` 记账，所以场景销毁时它随之消失：同一地址上新建的场景不会继承旧画面。
     帧只画**已发布**的内容：宿主每帧先 `publishContent()`（或自己调用 `Scene::publish()`），未发布的场景不画并报一次
     `ContentSkipped`；`bindSnapshot` 是覆盖，不是必须步骤。
   - **会话形状是值**：`applyPlan(plan)` 按名字差分（新增 / 同名原地更新 / 消失的删除，一次调用完成），返回

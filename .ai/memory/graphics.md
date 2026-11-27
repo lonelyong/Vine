@@ -3159,3 +3159,41 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   under the old rule it drew the previous object's - the address search keeps its candidates alive, so the allocator's
   LIFO list is walked, and the case skips if no address comes back). `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end`;
   `vk-backend.md` 2.5 / N11 / D9 / D10 / T11 / F5 / 9.3; `graphics-content-lifecycle.md` 2.5 / 2.6; the backend guide.
+
+## 2026-11-27 - Z6: a binding is keyed by the scene's identity, and it can be withdrawn
+
+- **The defect.** The publication OVERRIDE had two holes. (a) `PublicationStore::bindSnapshot` always stored and
+  `bindings_` had no erase path, so a host that bound once never saw that scene's later publications again - and the
+  documented way to "clear" a binding was to bind an EMPTY handle, which means "draw nothing" (an empty picture), i.e.
+  two different facts shared one spelling and the honest one did not exist. (b) The row was keyed by `const Scene*` and
+  outlived the scene, so a `Scene` allocated at that address inherited the destroyed scene's picture, found before the
+  fallback to `Scene::publishedSnapshot()` was ever reached.
+- **Why it was not only a verb.** The source table (`publications_`) carries the same address key but not the defect:
+  its key is `(scene, revision)` and `SceneSnapshotRef::revision` is a PROCESS-WIDE counter, so a recycled address never
+  matches. That safety is an accident of a global counter, not a property of the key - so the fix is a key, not a
+  comparison.
+- **The rule (2.13 / 2.15 / N19).** `Scene` now carries a `SceneId` (`Id<SceneTag>`, i.e. a `Handle`) allocated at
+  construction and released by its destructor, exactly as `Node` / `MaterialValues` / `ShaderProgram` do - the identity
+  `ContentId.hpp` states content must carry because "an address is reused". Both tables of the publication channel key
+  by it, so inheritance at a recycled address is impossible by construction.
+- **The withdrawal.** `RenderEngine::unbindSnapshot(scene)` (and the store's verb) ends the override; a frame takes the
+  scene's latest again. An empty handle KEEPS its one meaning - a bound picture that happens to be empty - because the
+  review's alternative (empty handle = "no override") deletes a value a bake with nothing in it legitimately binds.
+- **The end of the row.** A scene cannot announce its death (content never knows which engines bound it - `G2`), so
+  `beginFrame` erases bindings whose handle answers gone (`ContentRegistry::alive`): the store's existing settle point,
+  one registry read per bound scene per frame. A destroyed scene's publication is therefore not kept for the engine's
+  life.
+- **Rejected.** Add the verb only (leaves the inheritance); hold the scene alive in the binding (`intrusive_ptr<Scene>` -
+  the engine becomes an owner of host content with no observable end); key by the bound publication's address (does not
+  answer "is there an override FOR THIS SCENE", and a publication cannot name its scene); a private per-scene ticket (a
+  second identity for content); announcing from `~Scene` (a back edge plus a destructor calling host code); stating the
+  bind permanent (writes the defect into the contract). ADR options A-H.
+- **Residuals.** A scene destroyed mid-build keeps its row until the next frame open (one frame of retention), and an
+  engine that never opens a frame never settles. `publications_` rows need no liveness check (the revision is unique).
+- **Evidence.** `PublicationStoreTest.ABindingOverridesTheScenesLatestPublication` (bind / empty bind / withdraw twice /
+  re-bind), `PublicationStoreTest.ASceneAtARecycledAddressDoesNotInheritAnOverride` (storage a `Scene` occupies, built
+  over by the next scene: it draws its OWN publication and the dead row leaves at the frame open - the same address is
+  forced with placement new, so the case is deterministic in Debug, ASan and TSan),
+  `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` (bind, publish, withdraw, the frame draws the scene's
+  latest). `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn`; `graphics-threading.md` 2.13 / 2.15 /
+  4.1 / 4.2 / N19 / T46; `graphics-frame-pipeline.md` F3 / 4 / 9.1; `graphics-architecture.md` 2.10; the graphics guide.

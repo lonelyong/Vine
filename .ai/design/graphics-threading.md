@@ -250,16 +250,23 @@ There is exactly one answer to "when does this copy expire": the publication val
   D10 (pipeline depth > 1), D11 (a UI-thread `onPresented` callback). Reasons in §7.
 - **Acceptance**: T9 / T10, see §3.1.3, §3.1.4, plus "both run positions draw the same picture" (T12).
 
-### 2.13 Publication is the content writer's verb, binding is an override
+### 2.13 Publication is the content writer's verb, binding is an override - and an override ends
 
 - **What it is**: whoever writes content (the host, `SceneView::publishContent`, an overlay's `FrameUpdate::onFrame()`) calls `Scene::publish()`;
   when a frame is built it takes `Scene::publishedSnapshot()` (or the bound value if one was bound). `RenderEngine::bindSnapshot(scene, ref)` is an
-  **override**: the host uses it to draw an older or another publication, and it stays in effect until the next bind (a null handle = draw nothing).
+  **override**: the host uses it to draw an older or another publication, and it stays in effect until the next bind **or until
+  `RenderEngine::unbindSnapshot(scene)` withdraws it**, after which the frame takes the scene's latest publication again. An **empty handle is a
+  bound picture that happens to be empty** ("draw nothing"), never the withdrawal.
 - **Why**: publication is the content side's verb and binding is the engine side's verb (`G2`); making "which publication a frame draws" a value taken at the moment the frame starts is what lets the host say
   "this frame draws the one I just published" rather than "whatever happened to be there while it ran" (`G4`) — and that guarantee comes from the value (`PublicationStore` holds one source per
-  `(content, revision)`), not from an implicit "wait first, then publish" convention.
+  publication), not from an implicit "wait first, then publish" convention. An override with no withdrawal would be a one-way door (`G1`): "draw this
+  instead" and "draw the scene's latest" are two facts, and a host that bound an older publication for an offscreen bake could never hand that scene's
+  live content back to the engine.
 - **Boundary**: one engine keeps one override per scene; the override is **per engine**, so two engines can each draw their own (an editor + offscreen baking).
-  With no override both engines draw the same latest publication.
+  With no override both engines draw the same latest publication. **The override is keyed by `Scene::id()`** (a `SceneId` handle), never by the
+  scene's address, because the row outlives the scene: a host destroys and reloads content while the engine still holds the override, and an address
+  key would let the next scene at that address inherit the old picture (review 19 `Z6`, `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn`).
+  A binding whose scene has died leaves the table at the frame open, which is where the store asks the identity and settles what it holds.
 - **A scene that was never published**: the frame does not publish on its behalf and does not read its live content: the draw gets no source and draws nothing, and it reports once
   `ContentSkipped` ("pass 'x' draws a scene that was never published").
 
@@ -288,8 +295,9 @@ There is exactly one answer to "when does this copy expire": the publication val
 
 ### 2.15 Publication and expansion are two halves, and the frame value carries only the publication (`G2` / `G12`)
 
-- **What it is**: `detail::PublicationStore` holds the table "one `SnapshotSource` per `(content, publication)`" and its lock,
-  and the verbs are all on the content side — `bindSnapshot` / `publicationFor` / `sourceFor` (plus the table-level `beginFrame`, the engine half's single call).
+- **What it is**: `detail::PublicationStore` holds the table "one `SnapshotSource` per publication" and its lock, its rows keyed by the
+  scene's identity (`Scene::id()`) plus the publication's revision, and the verbs are all on the content side — `bindSnapshot` / `unbindSnapshot` /
+  `publicationFor` / `sourceFor` (plus the table-level `beginFrame`, the engine half's single call).
   The frame's binding and expansion are in `detail::FrameExpand`: `bindSceneDraws` points each scene draw at its publication source, and `expandFrame`
   reads values only and collects per view.
 - **Why one source per publication**: a source is one immutable value's `DrawListSource` face. A new publication gets a new source, so a frame already built keeps drawing
@@ -299,14 +307,14 @@ There is exactly one answer to "when does this copy expire": the publication val
   "the content half must know the engine half's objects". Binding belongs to the content side as well: `RenderPass::describe` writes only the VIEW,
   `buildFrameValue` binds after describe (`detail::bindSceneDraws`), so: the content side owns publication **and** binding, the engine side only
   expands values, and the frame value carries no live content across threads (`G2`); `Scene` is no longer a `DrawListSource` either (`G12`: the author tree is not the frame's source).
-- **Boundary**: what was split is objects, not threads. `FrameRunner` still hands only the engine half's expansion to the engine thread; `bindSnapshot` must still happen
+- **Boundary**: what was split is objects, not threads. `FrameRunner` still hands only the engine half's expansion to the engine thread; `bindSnapshot` / `unbindSnapshot` must still happen
   between frames (`PublicationStore`'s class comment pins this invariant), so frames may not overlap before "publication creation" enters the handshake.
 - **Publication granularity**: the host/chain runs the overlays' `update()` (`FrameUpdate`) **before** the frame, and `buildFrameValue` takes the publication "once per frame per scene" and then describes. The same
   scene's N passes therefore publish once; and "describe first, publish after" would put two instants inside one frame, so the update and the publication must finish before the frame
   (that is how N16's "all passes see the same one" holds).
 - **A scene that was never published**: the frame does not publish on its behalf and does not read its live content — the draw gets no source and expansion collects nothing (the backend records nothing),
   which is the honest answer to "you handed over no picture".
-- **Acceptance**: `T34` / `T17` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`;
+- **Acceptance**: `T34` / `T17` / `T35` / `T46` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`;
   `FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing` pins "no publication, nothing drawn".
 
 ### 2.16 The three faces of a shared device: content shared, targets not shared, frames concurrent per session (`G1` / `G4`)
@@ -607,6 +615,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | `Scene::publish() → ScenePublishResult` | one publication: `Posted` / `Unchanged` / `InsideBatch`, the answer carrying that `SceneSnapshotRef` | `Scene.hpp` |
 | `ScenePublishResult::snapshot` | the one that is the answer after this call (inside a batch = the one at the batch's start) | same |
 | `Scene::beginEdit()` / `endEdit()` | the batch boundaries; only the outermost releases a publication | exists |
+| `Scene::id() → SceneId` | the scene's identity: a `Handle` allocated at construction and released with the scene, so a table that names it across lifetimes (the override table) can tell "gone" from "somebody else at this address" | `ContentId.hpp`, `Scene.hpp` |
 | `Node::id()` / `visible` / the state setters | the content editing API, all of it on the content thread | exists |
 
 ### 4.2 The engine side (`vn::graphics`)
@@ -614,7 +623,8 @@ There is exactly one answer to "when does this copy expire": the publication val
 | Interface | Contract | Notes |
 |---|---|---|
 | `Scene::publishedSnapshot()` | the handle of the scene's latest publication: what a frame build takes by default | new |
-| `RenderEngine::bindSnapshot(scene, ref)` | **override**: this engine draws `ref` instead (until the next bind) | new; it is only an override, not a required step |
+| `RenderEngine::bindSnapshot(scene, ref)` | **override**: this engine draws `ref` instead, until the next bind or `unbindSnapshot` (an empty handle = an empty picture, not a withdrawal) | new; it is only an override, not a required step |
+| `RenderEngine::unbindSnapshot(scene)` | **withdrawal**: the override ends and a frame takes the scene's latest publication again; idempotent | new (review 19 `Z6`) |
 | `SceneView::publishContent()` / `PassChain::publishContent()` | the host's once-per-frame publication (the view + the chain-owned scenes) | new |
 | `RenderEngine::frame() → FrameCallOutcome` | build + hand over (`Submitted`) or run in place (`Ran`); `NotReady` + `EngineNotReadyReason` means nothing is driving it | exists |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline` (default) / `EngineThread`; decides the lifetime | exists |
@@ -682,6 +692,7 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | N16 | Within one frame there is only one publication: what a hook writes is visible to all of that frame's passes. | half-new, half-old inside a frame |
 | N17 | The camera is on the content side and an event takes effect at once, so the picture is the previous frame's camera snapshot. Therefore **a query that turns a pointer into a world point (picking, anchors) uses the camera of "the frame the user saw"**: `RenderEngine::frameResult().query` (`view` + the `snapshot` it draws) publishes it, `presentedCamera()` is shorthand for its `view`; it reaches the manipulator through `SceneView::setPresentedCamera`; with no published value it falls back to the current camera. | at a low frame rate the pivot/selection is one frame off |
 | N18 | The default content program belongs to **the session** (replacing "one device-level slot"): when two engines declare different default programs each shades with its own (`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram`); diagnostic routing was already multi-way (each engine gets its own copy, `setDiagnosticsRoute`). | the second engine quietly changes the first one's shading |
+| N19 | A binding is keyed by the scene's IDENTITY (`Scene::id()`, a handle), never by its address, and it ends with the scene (`beginFrame` drops a row whose scene answers gone) or with `RenderEngine::unbindSnapshot`. An empty handle binds an EMPTY PICTURE, not a withdrawal. | a scene destroyed while bound leaves an override that the next scene at that address inherits - the new picture is silently the old one |
 
 ## 6. Caveats and Traps
 
@@ -786,6 +797,7 @@ VN_TSAN_TARGET=test_vk VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_
 | T43 | a content bind is a shape change: refused from inside a compile (the declaration unchanged, one report), accepted between frames, and two passes serving one name from different targets are reported once | `PlanTest.AFrameRefusesAContentBindFromInsideItsOwnCompile` / `PlanTest.TwoPassesPublishingOneNameAreReportedAndTheLastOneServesIt` | implemented |
 | T44 | a take-back is never refused: asked from inside a compile it leaves the row the compile walks, reports no refusal, lands at the next frame head with its backend release, removes only the rows that existed when it asked (a row a later object registers at the same address survives), applies at once between frames, is applied by `shutdown()` when no frame came, and WAITS while the engine half answers a frame (the shipped host's order) | `PlanTest.ATakeBackAskedInsideAFrameLandsOnTheNextFrame` / `PlanTest.ATakeBackThatWaitedLeavesRowsRegisteredAfterTheAskAlone` / `PlanTest.ATakeBackStillWaitingWhenTheEngineStopsIsApplied` / `PlanTest.ATakeBackWhileAFrameIsAnsweredWaitsForTheNextHead` | implemented |
 | T45 | a teardown is an interval entry and a runner says where a job will run: a shutdown from the frame thread (a sink reacting to a device report) is refused with the cause, said once, and tears nothing down - the engine keeps driving and the next frame is answered; a shutdown from another host thread mid-build is refused the same way and lands between frames; a stop asked from the frame thread leaves an inline runner and an inline pump BEFORE the join, and the next job runs instead of being handed to a loop that left | `RenderEngineTest.AShutdownFromTheFrameThreadIsRefusedAndTheEngineKeepsRunning` / `RenderEngineTest.ASecondThreadCannotShutTheEngineDownWhileAFrameIsBeingBuilt` / `FrameRunnerReentryTest.ARunnerAStopHasLeftRunsTheNextJobOnTheCaller` / `FramePumpTest.AStopAskedFromTheFrameThreadLeavesAnInlinePump` | implemented |
+| T46 | an override is keyed by the scene's identity and ends with a withdrawal or with its scene: an empty handle binds an empty picture (not the withdrawal), `unbindSnapshot` hands the scene's latest publication back, a scene at a recycled address does not inherit the override, and the dead scene's row leaves the table at the frame open | `PublicationStoreTest.ABindingOverridesTheScenesLatestPublication` / `PublicationStoreTest.ASceneAtARecycledAddressDoesNotInheritAnOverride` / `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | implemented |
 
 ## 9. Status and Evolution
 

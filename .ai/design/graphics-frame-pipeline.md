@@ -196,7 +196,7 @@
 |---|---|---|---|
 | F1 | Snapshot publication | a copy-on-write row table in chunks + material values + a spatial index + the light set, swapped in one pointer exchange | landed: `ScenePublisher::publish` compiles a `detail::SceneSnapshot`, and frame compilation makes `SnapshotSource` answer each draw through `PublicationStore::sourceFor` (`EngineCompile.cpp`); an unpublished scene is refused with `engine.compile.unpublished_scene` and the live tree is not read back |
 | F2 | Pure derivation `select` | `selectSnapshot(snapshot, view)` equals the live collection item by item | landed: each view's draw list is the one `selectSnapshot` run `SnapshotSource` performs (`ScenePublisher.cpp`: there is no second walk over live rows); `T8` proves it pure (serial / concurrent / after the content is cleared, the same result) |
-| F3 | Content identity and generation | `Handle` + typed id + `ContentRef`; a stale handle answers gone | landed |
+| F3 | Content identity and generation | `Handle` + typed id + `ContentRef`; a stale handle answers gone; the content ROOT carries one too (`Scene::id()`), which is what the publication channel's override is keyed by | landed (the scene's id: review 19 `Z6`) |
 | F4 | The engine table keeps residency by `(id, revision)` | the fact tables get a row per ref; an old frame reads the old version | landed |
 | F5 | Row-level epoch reclamation | a row is reclaimed at "the last frame a plan hit it"; an entry leaves when "the host does not want it ∧ no row names it" | landed |
 | F6 | A plan is a value | a by-name difference at a frame boundary + plan validation with stable codes | landed: `Plan` + `validatePlan` + `applyPlan` (session and scope forms, `PlanResult` three states) + `plan()` / `planFor(owner)`; `Target` is still an explicit `RenderTarget` handle |
@@ -365,9 +365,9 @@
 
 > Each signature is the contract; once it lands, the header is the authority.
 >
-> **The migration APIs are closed**: `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts;
+> **The migration APIs are closed**: `applyPlan` / `plan` / `bindSnapshot` / `unbindSnapshot` / `prepare` are host contracts;
 > `Plan` is the only pass shape, `FrameTable` is the compiled frame table, `frame()` answers Ran / Submitted only, and `applyPlan` has three states.
-> `bindSnapshot` is still an **override** (a frame takes `Scene::publishedSnapshot()` by default), and the production path is
+> `bindSnapshot` is still an **override** (a frame takes `Scene::publishedSnapshot()` by default) and `unbindSnapshot` withdraws it, and the production path is
 > `SceneView::publishContent` + `applyPlan`.
 
 ### 4.1 The content side
@@ -668,7 +668,7 @@ A step that breaks its own `K` ⇒ that step is rolled back and the conclusion i
   `InvalidOutput`). `View` and `RenderArea` are values as well.
 - **Not done**: F10 (the prototype and instance layer) and F12's `poses` half (which waits on F10); `FrameResult` / `query` themselves are in.
 - **Nothing is published implicitly inside a frame**: publication is the content writer's verb, and a frame takes `Scene::publishedSnapshot()` at build time; `bindSnapshot`
-  has only the meaning "override" (`graphics-threading.md` §2.13).
+  has only the meaning "override" and `unbindSnapshot` withdraws it, the override keyed by `Scene::id()` so that it ends with its scene (`graphics-threading.md` §2.13).
 - **Relation to the threading contract**: `graphics-threading.md` is the current threading contract (`C1–C15` / `N1–N14` are retired numbers, not reused);
   `graphics-scene.md`'s description of collection still carries mirror-era wording and will be aligned when it is next rewritten.
 

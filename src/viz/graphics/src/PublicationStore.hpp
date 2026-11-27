@@ -21,9 +21,14 @@ namespace detail
  * @details
  * - WHAT IT IS. The table a frame's draws are bound through: for every publication a frame has drawn, the
  *   `SnapshotSource` that answers its views. Its verbs are the CONTENT side's - `sourceFor` (the source of one
- *   publication, attached on first use), `publicationFor` (which publication a frame built now takes) and
- *   `bindSnapshot` (a host saying "draw this one instead") - because a publication is produced where the content is
- *   written.
+ *   publication, attached on first use), `publicationFor` (which publication a frame built now takes),
+ *   `bindSnapshot` (a host saying "draw this one instead") and `unbindSnapshot` (a host saying "no override any
+ *   more") - because a publication is produced where the content is written.
+ * - KEYED BY IDENTITY, NEVER BY ADDRESS. Every row names its scene by `Scene::id()`, the handle the scene holds for
+ *   its whole life, because these rows OUTLIVE a scene: a host may destroy a scene while this engine still holds an
+ *   override for it, and an address would let the next scene allocated at the same address inherit the old picture
+ *   (review 19 `Z6`). A binding whose scene has died is dropped when the store next opens a frame, so an override's
+ *   lifetime is its scene's - never longer.
  * - KEYED BY PUBLICATION, NOT BY CONTENT. A source is the `DrawListSource` face of ONE immutable value, so a new
  *   publication gets its own source: a frame that was already built keeps drawing the value it took, and a publish
  *   landing while it is answered cannot change its picture (`G4`: the guarantee is the value, not an ordering rule).
@@ -32,9 +37,9 @@ namespace detail
  *   and binds each draw; the engine half (see `detail::expandFrame`) only reads the values it is handed. The
  *   dependency is one-directional: the content half reads this table, the engine half's single call is `beginFrame`
  *   (the token the memos share).
- * - THE LOCK GUARDS THE LISTS, NOT THE VALUES. `sourceFor` / `bindSnapshot` / `publicationFor` run on the content
- *   thread; `beginFrame` runs on whichever thread answers a frame. The mutex is held for a lookup, an insert or an
- *   eviction, never across a collection.
+ * - THE LOCK GUARDS THE LISTS, NOT THE VALUES. `sourceFor` / `bindSnapshot` / `unbindSnapshot` / `publicationFor` run
+ *   on the content thread; `beginFrame` runs on whichever thread answers a frame. The mutex is held for a lookup, an
+ *   insert or an eviction, never across a collection.
  *
  * @note
  * - `beginFrame` opens the frame token on every source, which is what makes the per-view memos share one walk across
@@ -55,16 +60,34 @@ class PublicationStore {
      *
      * @details
      * - THE EXPLICIT OVERRIDE: a host that wants an older or a different picture than the scene's latest publication
-     *   hands the value over here, and every frame built afterwards draws it - until another bind replaces it.
-     * - An empty handle is a legitimate bound value: every view answers an empty list, the same answer as a scene
-     *   whose content draws nothing.
-     * - WITHOUT A BIND, a frame takes the scene's latest publication (`Scene::publishedSnapshot`), so publishing is
-     *   the only verb a host needs.
+     *   hands the value over here, and every frame built afterwards draws it - until another bind replaces it, or
+     *   the host withdraws it (see unbindSnapshot).
+     * - An EMPTY handle is a bound picture that happens to be empty: every view answers an empty list, the same
+     *   answer as a scene whose content draws nothing. It is NOT the withdrawal - `unbindSnapshot` is, because
+     *   "draw nothing" and "go back to the scene's latest" are two different facts and must not share one spelling.
+     * - WITHOUT AN OVERRIDE, a frame takes the scene's latest publication (`Scene::publishedSnapshot`), so publishing
+     *   is the only verb a host needs.
      *
      * @param scene    The scene whose publication is being handed over.
-     * @param snapshot The publication to draw, or an empty handle to draw nothing.
+     * @param snapshot The publication to draw, or an empty handle to draw nothing at all.
      */
     void bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot);
+
+    /**
+     * @brief Withdraws @p scene's override: frames take its latest publication again.
+     *
+     * @details
+     * - THE OTHER HALF OF bindSnapshot. An override nobody can withdraw is a one-way door: a host that bound an
+     *   older publication for an offscreen bake could never hand the engine back to the live content of that scene
+     *   without destroying it.
+     * - IDEMPOTENT: withdrawing a scene that has no override changes nothing, and answers no "was there one" -
+     *   the state afterwards is the fact a caller acts on.
+     * - IT DOES NOT DROP THE BOUND PUBLICATION'S SOURCE: sources are per publication and end with the frames that
+     *   named them (see the class note), so a frame already built keeps the picture it took.
+     *
+     * @param scene The scene whose override is withdrawn.
+     */
+    void unbindSnapshot(Scene& scene);
 
     /**
      * @brief Gets the publication a frame built NOW takes for @p scene: the bound one, else the scene's latest.
@@ -95,7 +118,13 @@ class PublicationStore {
     [[nodiscard]] SnapshotSource* sourceFor(Scene& scene, const SceneSnapshotRef& snapshot);
 
     /**
-     * @brief Opens @p frame on every source and drops the publications no frame has named for one frame.
+     * @brief Opens @p frame on every source, and drops what this store should not be holding any more.
+     *
+     * @details
+     * - TWO ENDS, ONE WALK: a source no frame has named for one frame is a picture nothing draws, and an override
+     *   whose scene has died (`Scene::id()` answers gone) is a picture no scene can take back. A scene cannot tell
+     *   the store it is going - content never knows which engines bound it (`G2`) - so the store asks the identity
+     *   instead, which is what the handle is for.
      *
      * @param frame The frame about to ask for views (0 means none is open: nothing is memoised).
      */
@@ -104,6 +133,9 @@ class PublicationStore {
   public:
     /** @brief Gets how many publications this store holds a source for. */
     [[nodiscard]] std::size_t publicationCount() const noexcept;
+
+    /** @brief Gets how many overrides this store holds (see bindSnapshot; one ends with its scene or a withdrawal). */
+    [[nodiscard]] std::size_t bindingCount() const noexcept;
 
     /** @brief Gets how many lists the publications' sources answered from their memos (the per-view reuse witness). */
     [[nodiscard]] std::uint64_t memoHits() const noexcept;
@@ -114,7 +146,8 @@ class PublicationStore {
   private:
     /// @brief One publication's source, owned by the store.
     struct Publication {
-        const Scene*                    content{ nullptr };
+        /// The scene the publication belongs to: its HANDLE, so a recycled address is a different key.
+        SceneId content{};
         /// The publication this source answers (`SceneSnapshotRef::revision`, unique per posted publication).
         std::uint64_t                   revision{ 0 };
         std::unique_ptr<SnapshotSource> source{};
@@ -122,20 +155,21 @@ class PublicationStore {
         std::uint64_t                   last_used_frame{ 0 };
     };
 
-    /// @brief One content's explicit override (see bindSnapshot).
+    /// @brief One scene's explicit override (see bindSnapshot / unbindSnapshot).
     struct Binding {
-        const Scene*     content{ nullptr };
+        /// The scene the override belongs to: its HANDLE, so a recycled address cannot inherit it.
+        SceneId          content{};
         SceneSnapshotRef snapshot{};
     };
 
     /// @brief The source of @p scene's @p snapshot, attaching one when this store has not seen it yet.
     [[nodiscard]] SnapshotSource* sourceForLocked(Scene& scene, const SceneSnapshotRef& snapshot);
 
-    /// @brief The publication record of @p scene's @p revision, or null.
-    [[nodiscard]] Publication* publicationOfLocked(const Scene& scene, std::uint64_t revision) noexcept;
+    /// @brief The publication record of the scene @p content has at @p revision, or null.
+    [[nodiscard]] Publication* publicationOfLocked(SceneId content, std::uint64_t revision) noexcept;
 
-    /// @brief The override bound for @p scene, or null.
-    [[nodiscard]] const Binding* bindingOfLocked(const Scene& scene) const noexcept;
+    /// @brief The override bound for the scene @p content has, or null.
+    [[nodiscard]] const Binding* bindingOfLocked(SceneId content) const noexcept;
 
   private:
     std::vector<Publication> publications_;

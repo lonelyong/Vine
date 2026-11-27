@@ -204,11 +204,20 @@ TEST(FrameExpandTest, ABoundPublicationIsThePictureTheFrameDraws)
     expandFrame(fresh);
     EXPECT_EQ(commandsOf(fresh).size(), 2U) << "the frame draws the publication it was last bound to";
 
-    // An empty handle clears the binding: the same answer as a scene whose content draws nothing.
+    // An empty handle binds an EMPTY PICTURE - the same answer as a scene whose content draws nothing. It is not the
+    // withdrawal: that is `unbindSnapshot`, and the last step below shows what it hands back.
     store.bindSnapshot(scene, SceneSnapshotRef{});
     FrameDescription cleared = onePassFrame(frameSourceFor(store, scene));
     expandFrame(cleared);
     EXPECT_TRUE(commandsOf(cleared).empty()) << "an empty publication draws nothing, and says so by drawing nothing";
+
+    // THE WITHDRAWAL HANDS THE FRAME BACK TO THE SCENE (review 19 Z6): binding an empty picture and withdrawing the
+    // override are two statements, and the frame built after the withdrawal draws what the scene last published.
+    store.unbindSnapshot(scene);
+    EXPECT_EQ(store.publicationFor(scene).revision(), second.snapshot.revision()) << "no override: the scene's latest";
+    FrameDescription live = onePassFrame(frameSourceFor(store, scene));
+    expandFrame(live);
+    EXPECT_EQ(commandsOf(live).size(), 2U) << "the frame draws the content the scene published last";
 }
 
 TEST(FrameExpandTest, ASecondExpansionKeepsTheListTheDrawAlreadyCarries)

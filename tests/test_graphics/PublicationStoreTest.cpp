@@ -1,3 +1,5 @@
+#include <new>
+
 #include <gtest/gtest.h>
 
 #include <vine/intrusive_ptr.hpp>
@@ -153,12 +155,69 @@ TEST(PublicationStoreTest, ABindingOverridesTheScenesLatestPublication)
     EXPECT_EQ(store.publicationFor(scene).revision(), first.revision()) << "a bind outranks later publications";
     EXPECT_NE(store.sourceFor(scene, store.publicationFor(scene)), nullptr);
 
-    // An empty handle is a bound value: "draw nothing" (every view then answers an empty list).
+    // An empty handle is a bound VALUE: "draw nothing" (every view then answers an empty list).
     store.bindSnapshot(scene, SceneSnapshotRef{});
     EXPECT_FALSE(store.publicationFor(scene).valid());
     EXPECT_EQ(store.sourceFor(scene, store.publicationFor(scene)), nullptr) << "nothing published or bound names no source";
 
+    // "DRAW NOTHING" IS NOT "NO OVERRIDE": the withdrawal is its own verb, and it hands the scene's latest picture
+    // back. One spelling for the two facts would make the override a one-way door (review 19 Z6).
+    store.unbindSnapshot(scene);
+    EXPECT_EQ(store.publicationFor(scene).revision(), second.revision()) << "with no override, a frame takes the scene's latest publication again";
+    EXPECT_EQ(store.bindingCount(), 0U);
+    store.unbindSnapshot(scene); // idempotent: the state afterwards is the fact a caller acts on
+    EXPECT_EQ(store.publicationFor(scene).revision(), second.revision());
+    EXPECT_EQ(store.bindingCount(), 0U);
+
+    // A PICTURE BOUND EARLIER IS WHAT A WITHDRAWAL REVEALS: the scene's latest, not the one that was bound for it.
+    store.bindSnapshot(scene, first);
+    EXPECT_EQ(store.publicationFor(scene).revision(), first.revision());
+    store.unbindSnapshot(scene);
+    EXPECT_EQ(store.publicationFor(scene).revision(), second.revision());
+
     // Re-binding the second publication puts the picture back (a bind replaces the previous one).
     store.bindSnapshot(scene, second);
     EXPECT_EQ(store.publicationFor(scene).revision(), second.revision());
+}
+
+TEST(PublicationStoreTest, ASceneAtARecycledAddressDoesNotInheritAnOverride)
+{
+    // THE OVERRIDE OUTLIVES ITS SCENE, and an address is reused: a host that destroys a scene it bound (an offscreen
+    // bake's scene, its replacement after a reload) leaves the row standing in the store. The store keys it by the
+    // scene's IDENTITY - the handle the scene held until its destructor released it - so the next scene at the same
+    // address is a different key and takes its own latest publication, never the destroyed scene's picture.
+    PublicationStore store;
+
+    // The same address twice: storage a Scene occupies, then the next scene built over it.
+    alignas(Scene) unsigned char storage[sizeof(Scene)];
+    auto* const                  first = new (static_cast<void*>(storage)) Scene();
+
+    auto first_root = intrusive_ptr<Group>(new Group());
+    first_root->addChild(triangleAt(0.0));
+    first->setRoot(first_root);
+    const SceneSnapshotRef bound = first->publish().snapshot;
+    ASSERT_TRUE(bound.valid());
+    store.bindSnapshot(*first, bound);
+    first->~Scene();
+
+    auto* const second = new (static_cast<void*>(storage)) Scene();
+    ASSERT_EQ(static_cast<const void*>(second), static_cast<const void*>(first)) << "the case needs the SAME address";
+
+    auto second_root = intrusive_ptr<Group>(new Group());
+    second_root->addChild(triangleAt(2.0));
+    second->setRoot(second_root);
+    const SceneSnapshotRef own = second->publish().snapshot;
+    ASSERT_TRUE(own.valid());
+    ASSERT_NE(own.revision(), bound.revision());
+
+    EXPECT_EQ(store.publicationFor(*second).revision(), own.revision())
+        << "a scene at a recycled address draws its OWN latest publication, not the destroyed scene's override";
+
+    // AND THE DEAD SCENE'S ROW LEAVES. A scene cannot announce its death - content never learns which engines bound
+    // it - so the store asks the identity when it opens a frame, which is also where it settles what it holds.
+    EXPECT_EQ(store.bindingCount(), 1U) << "the row is still held until a frame settles it";
+    store.beginFrame(1);
+    EXPECT_EQ(store.bindingCount(), 0U) << "an override whose scene has died is not kept for the life of the store";
+
+    second->~Scene();
 }

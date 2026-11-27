@@ -248,6 +248,11 @@ pointer comparison per row, and then the epoch is a second line of defence rathe
 ### 3.3 Z6 (API semantics / medium): `bindSnapshot` cannot be withdrawn, and its "empty handle" reads as a withdrawal
 but means "draw nothing" - so a host that binds once never sees the scene's later publications again
 
+> **Fixed 2026-11-27.** `Scene` carries a `SceneId` (a `Handle`, as every other content object does), the store keys both
+> its tables by it, `RenderEngine::unbindSnapshot` is the withdrawal, an empty handle keeps its one meaning (an empty
+> picture), and `beginFrame` drops a binding whose scene answers gone - `graphics-threading.md` 2.13 / 2.15 / N19 /
+> `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn`.
+
 **Evidence.**
 
 - `PublicationStore::bindSnapshot` always stores (`PublicationStore.cpp:15-28`); the store has no erase path for
@@ -270,6 +275,14 @@ missing verb (`unbindSnapshot(scene)`, or make an empty handle mean "no override
 spelling). (b) is the honest shape: an override with no withdrawal is a one-way door in a class that otherwise offers
 `unpublish` for every other binding. Whichever is chosen, the binding's key should not be a raw address that outlives
 its owner. **code + doc (+ test: bind, unbind, publish, the frame draws the new publication).**
+
+**Fixed 2026-11-27, redesigned rather than patched.** The withdrawal is a verb of its own (`unbindSnapshot`) and the
+empty handle keeps the meaning it always had - an empty picture - because the review's alternative (give the empty
+handle the withdrawal meaning) would have deleted a real value. The key is not fixed by holding the scene alive (that
+would make the engine an owner of host content with no observable end) nor by a private ticket (a second identity for
+content): `Scene` now carries a `SceneId`, the token `ContentId.hpp` exists for, and every row of the publication
+channel keys by it. The row's end is the scene's end, noticed by asking the identity at the frame open - the one place
+the store already settles what it holds.
 
 ## 4. R3 - lifecycle and the ownership vocabulary
 
@@ -1356,7 +1369,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z3` | R1 | medium-low | `setFrameThreading` is the only interval verb that answers `void`; its three siblings answer the same refusal as a value | `RenderEngine.hpp`; `RenderEngine.cpp:392-419` |
 | `Z4` | R1 | low | `frameContext()` says "the same answer all frame" and then reads three fields live | `RenderEngine.hpp`; `RenderEngine.cpp:445-456` |
 | `Z5` | R2 | low | the chunk-share test compares the fold's output; the select also reads `own.fold.placement`, which no comparison covers - the epoch is the only guard, and the epoch's list omits placements | `SceneSnapshot.cpp:55-68`; `DrawListBake.hpp:549-566`; `Node.hpp:296` |
-| `Z6` | R2 | medium | `bindSnapshot` is permanent (no withdraw), "empty clears the binding" means "draw nothing", and the binding is keyed by a scene address it outlives | `PublicationStore.cpp:15-41`; `RenderEngine.hpp` `bindSnapshot` |
+| `Z6` | R2 | medium | `bindSnapshot` is permanent (no withdraw), "empty clears the binding" means "draw nothing", and the binding is keyed by a scene address it outlives (**fixed 2026-11-27**: `Scene` carries a `SceneId`, every row of the publication channel keys by it, `unbindSnapshot` is the withdrawal and the empty handle keeps meaning "an empty picture" - `graphics-threading.md` 2.13 / N19) | `PublicationStore.cpp:15-41`; `RenderEngine.hpp` `bindSnapshot` |
 | `Z7` | R3 | high (latent) | the describe-once cache is unguarded in `ShaderProgram` and `MaterialValues`, guarded in `Geometry` - and the design cites `Geometry`'s lock as why shared content is thread-safe (**fixed 2026-11-27**: one `detail::DescriptionCache` behind all three, `graphics-threading.md` C22) | `ShaderProgram.cpp:45-54`; `Material.cpp:39-52`; `Geometry.cpp:425-450`; `graphics-sessions.md:18` |
 | `Z8` | R4 | medium | the first-person keyboard look still calls `orbit()` (the eye arcs); the mouse look does not; `F5` says the arrows travel | `OrbitCameraManipulator.cpp:449-463`; `graphics-navigation.md:123` |
 | `Z9` | R9 | medium | `test_graphics` compiles twelve private TUs unconditionally, so the engine's suite cannot run under ASan on Linux - the ownership graph has no address-safety witness (**fixed 2026-11-27**: the module's object set is now linked instead, `graphics-architecture.md` 2.19) | `tests/test_graphics/CMakeLists.txt:38-59`; `.ai/memory/graphics.md` |
@@ -1415,7 +1428,11 @@ unobserved, and it is recorded here so the next round starts from it rather than
    Hold-only (the review's own prescription) was rejected: it enlarges the leak it would leave standing, since the entry
    would pin the host's bytes as well and the pattern this table serves rebuilds its buffer per frame (2.5 / N11 /
    D9 / D10 / T11; `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md`).
-7. **`Z6`** - the override's withdrawal (one verb, plus the binding key).
+7. ~~**`Z6`** - the override's withdrawal (one verb, plus the binding key).~~ **Done 2026-11-27**, at the rule: the scene
+   carries a content identity (`Scene::id()`), so no row of the publication channel is keyed by an address any more;
+   `unbindSnapshot` is the withdrawal, and the empty handle keeps its one meaning. The review's alternative - let the
+   empty handle mean "no override" - was rejected: it deletes the value "an empty picture", which a bake with nothing
+   in it legitimately binds (2.13 / 2.15 / N19 / T46; `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn.md`).
 8. ~~**`Z9`** - the `if(WIN32)` guard and the ASan command in the ledger; it is what lets 1-7 be proven.~~ **Done
    2026-11-27**, at the cause: the module's object set is linked instead of a guard being added, and ASan now runs on
    the whole suite (see 10.2). It moved FIRST in the actual order, because it is what lets 1-7 be proven.

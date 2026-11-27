@@ -92,13 +92,20 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (107)
+## decisions/ — decision records (ADRs) (108)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-binding-is-keyed-by-identity-and-can-be-withdrawn.md` — **a binding is keyed by the scene's
+  identity, and it can be withdrawn**: the publication override had no end (an empty handle meant "draw nothing" while
+  the documentation lent it the meaning "clear", so a host that bound once never saw that scene's later publications
+  again) and its row was keyed by the scene's ADDRESS while outliving the scene (a new `Scene` at that address inherited
+  the destroyed scene's picture). `Scene` now carries a `SceneId` (the `Handle` rule the repo already states), the store
+  keys by it, `RenderEngine::unbindSnapshot` is the withdrawal, and `beginFrame` drops a row whose scene answers gone -
+  review 19 `Z6`.
 - `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` — **a held entry is withdrawn at the frame end where its
   share is the last**: an entry keyed by a `Buffer`'s address now HOLDS that buffer (the identity half
   `ADR-2026-11-09-address-keys-hold-the-object` already decided, which the instance stream was the one table to break -

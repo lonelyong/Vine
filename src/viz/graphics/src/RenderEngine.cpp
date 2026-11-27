@@ -312,6 +312,13 @@ void RenderEngine::bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot)
     publications_->bindSnapshot(scene, snapshot);
 }
 
+void RenderEngine::unbindSnapshot(Scene& scene)
+{
+    // The withdrawal is the same kind of statement as a bind: it changes what the NEXT frame takes, and a frame
+    // already built keeps the publication it took (see detail::PublicationStore).
+    publications_->unbindSnapshot(scene);
+}
+
 PrepareReport RenderEngine::prepare()
 {
     // The two reasons nothing can be prepared are the same two answers frame() gives, and they are values rather

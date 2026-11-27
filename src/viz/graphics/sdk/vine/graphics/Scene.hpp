@@ -12,12 +12,13 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "View.hpp"
+#include "ContentId.hpp"
+#include "DrawItem.hpp"
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"
-#include "DrawItem.hpp"
 #include "SceneSnapshotRef.hpp"
+#include "View.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -112,11 +113,24 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     VN_DISABLE_COPY_MOVE(Scene);
 
   public:
-    /** @brief Constructs an empty scene (no root, no lights). */
+    /** @brief Constructs an empty scene (no root, no lights), with an identity of its own. */
     Scene();
     ~Scene();
 
   public:
+    /** @brief Gets this scene's identity.
+     *
+     * @details
+     * - ALLOCATED AT CONSTRUCTION, released with the scene, so the handle answers "gone" after the object dies. A
+     *   scene is the content root an engine's tables name ACROSS lifetimes (the publication channel keeps an
+     *   override per scene, `RenderEngine::bindSnapshot`), and an address is reused: a handle is the only key that
+     *   says "the scene that was here" from "somebody else at the same address".
+     * - THE NAME IS NOT THE IDENTITY (see name()): two scenes may share a name, and a rename keeps the identity.
+     *
+     * @return The scene id; never null for a constructed scene.
+     */
+    [[nodiscard]] SceneId id() const noexcept;
+
     /** @brief Gets the scene name.
      *
      * @return The name (empty when never set).
@@ -488,6 +502,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     friend class detail::SceneRows;      // the engine side's publish: version + a copy of the rows (see SceneRows.hpp)
 
   private:
+    SceneId               id_; // This scene's identity (see id()): a handle, not an address.
     String                name_;
     bool                  visible_ = true;
     float                 opacity_ = 1.0f;

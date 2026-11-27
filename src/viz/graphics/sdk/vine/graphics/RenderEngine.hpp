@@ -421,22 +421,42 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   then draws exactly that picture - not whatever the content happened to say when the frame ran.
      * - IT IS PER ENGINE AND PER SCENE. Two engines drawing one scene each hold their own publication, so an editor
      *   view and an offscreen bake can be one publication apart without either telling the other what to draw.
-     * - An EMPTY handle clears the binding: every view then answers an empty list, which is the same answer as a
-     *   scene whose content draws nothing.
+     * - An EMPTY handle binds an EMPTY PICTURE: every view then answers an empty list, which is the same answer as a
+     *   scene whose content draws nothing. It does NOT withdraw the override - unbindSnapshot() does.
      * - IT IS AN OVERRIDE, NOT A REQUIRED STEP: a frame takes the scene's latest publication by default
      *   (`Scene::publishedSnapshot`), so a host that publishes and stops there always draws its own content. Bind when
      *   you want an OLDER or a DIFFERENT picture - an offscreen bake drawing the state an editor has moved past, two
      *   engines drawing one scene one publication apart.
-     * - A BIND SURVIVES later publications: every frame built until the next bind draws the publishing value you named.
+     * - A BIND SURVIVES later publications: every frame built until the next bind or unbindSnapshot() draws the
+     *   publishing value you named.
      *
      * @note
-     * - A frame pins the publication it took when it was BUILT, so a bind (or a publish) landing while a frame is being
-     *   answered never changes that frame's picture (see detail::PublicationStore).
+     * - A frame pins the publication it took when it was BUILT, so a bind (or a publish, or a withdrawal) landing
+     *   while a frame is being answered never changes that frame's picture (see detail::PublicationStore).
      *
      * @param scene    The scene whose publication is being handed over.
      * @param snapshot The publication to draw (see ScenePublishResult::snapshot), or an empty handle to draw nothing.
      */
     void bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot);
+
+    /**
+     * @brief Withdraws @p scene's override: this engine draws the scene's latest publication again.
+     *
+     * @details
+     * - THE OTHER HALF OF bindSnapshot. Bind states "draw this one instead" and holds until something replaces it, so
+     *   without a withdrawal an override would be a one-way door: a host that bound an older publication for an
+     *   offscreen bake could never hand the engine back to that scene's live content without destroying the scene.
+     * - IT ANSWERS NOTHING AND IS IDEMPOTENT: a scene that was never bound is already in the state this call states,
+     *   and the state afterwards is what the caller acts on.
+     * - AN OVERRIDE ALSO ENDS WITH ITS SCENE. The binding is keyed by the scene's identity, not its address, so a
+     *   scene destroyed while bound takes its override with it - and a scene created later never inherits the old
+     *   picture, even at the same address.
+     * - Between frames, like bindSnapshot: it states what the NEXT frame takes, and a frame already built keeps the
+     *   publication it took.
+     *
+     * @param scene The scene whose override is withdrawn.
+     */
+    void unbindSnapshot(Scene& scene);
 
     /**
      * @brief Prepares the frame the next frame() would build, without running it: a warm-up a host can budget.

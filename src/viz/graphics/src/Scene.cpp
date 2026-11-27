@@ -105,13 +105,22 @@ Aabbd visibleWorldBox(const Node& node, std::uint32_t inherited_layers, std::uin
 
 } // namespace
 
-
-
 Scene::Scene()
-  : publisher_(std::make_unique<detail::ScenePublisher>(*this))
+  : id_(ContentRegistry::instance().allocate<SceneTag>())
+  , publisher_(std::make_unique<detail::ScenePublisher>(*this))
 {}
 
-Scene::~Scene() = default;
+Scene::~Scene()
+{
+    // The id leaves with the scene: a table that still names it afterwards reads "gone" instead of resolving to
+    // whatever occupies the same address next (see ContentId.hpp and PublicationStore's binding key).
+    ContentRegistry::instance().release(id_.handle());
+}
+
+SceneId Scene::id() const noexcept
+{
+    return id_;
+}
 
 String Scene::name() const
 {

@@ -28,7 +28,8 @@ class ScenePublisher;    // The derived side of a scene: builds the publication 
  *   last posted, the engine keeps the one it was bound to, an in-flight frame keeps the one it started with). The
  *   rows leave when the last holder does.
  * - AN EMPTY HANDLE IS A VALUE, NOT AN ERROR: it means "no publication" (a scene that has never published, or a bind
- *   that clears one), and every view then answers with an empty list.
+ *   that hands over an empty picture), and every view then answers with an empty list. It is not the withdrawal of an
+ *   override - `RenderEngine::unbindSnapshot` is.
  *
  * @note
  * - `revision()` is the publication's identity and is what tells two publications apart: it starts at 1 for the first
