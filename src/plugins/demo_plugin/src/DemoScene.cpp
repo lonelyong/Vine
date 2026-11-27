@@ -266,14 +266,15 @@ makeDemoCubeMap(int side, std::span<const DemoCubeFace> faces, const std::array<
  * position form is the one written out because it stays exact for a box whose faces are not squares
  * (there the corner lengths differ, and pre-normalising distorts the field).
  *
- * The vector is re-expressed in the MAP's frame: the sky maps are authored Y-up while this demo's
+ * The vector is re-expressed in the MAP's frame: the box map is authored Y-up while this demo's
  * world is Z-up, so it is REORIENTED - by a ROTATION, never by a swap. Swapping y and z has
  * determinant -1: it MIRRORS the environment, and a mirrored map reads as looking INTO the box
  * rather than at it.
  *
- * BOTH cube-map users in the demo share this: the small `env_box` (sampled by the engine's own
- * content program, which shades it) and the `sky_box` that surrounds the scene (sampled by the SDK's
- * unlit sky program - see skyboxProgram).
+ * It is used by the one cube-mapped body the demo draws, `env_box` (sampled by the engine's own
+ * content program, which shades it). The SKY needs no geometry from here: the chain's background owns
+ * its own direction box and states the same rotation through `BackgroundOptions::world_to_map` (see
+ * ChainDesc::background and skyboxProgram).
  *
  * @param name Geometry name.
  * @param half Half extents along X / Y / Z.
@@ -379,61 +380,6 @@ void addDemoCubeMappedBox(vn::graphics::Group* root, vn::intrusive_ptr<vn::graph
 {
     if (cube != nullptr) {
         addCubeMappedBox(root, std::move(cube), u8"env_box", centre, half);
-    }
-}
-
-/** @brief Half extent of the demo's sky box, in world units.
- *
- * Big enough to sit well behind the scene (which fits in ~6 units) and inside the camera's far plane
- * (1000) even at its corners: 400 * sqrt(3) ~ 693. See addDemoSkyBox for why the box is static.
- */
-constexpr double kSkyRadius = 400.0;
-
-/**
- * @brief Adds the demo's SKY BOX: one large direction box sampled by the SDK's unlit sky program.
- *
- * The camera stands INSIDE the box, so every ray leaves through exactly one face, and that face's
- * direction channel is the direction the ray is heading in: one fragment per pixel, nothing to sort,
- * and no depth write needed. The map is the SECOND shipped cube map (kSkyCubeFaces) - a different
- * scene from the box's own, so the two cannot be mistaken for each other on screen.
- *
- * WHERE IT IS DRAWN, and why that placement is the whole trick: into the forward OVERLAY scene, which
- * the pipeline renders with the depth test on and the depth write off, AFTER the opaque result. Its
- * fragments are far away, so they pass the test exactly where nothing has been drawn yet - the
- * background - and fail everywhere else. That is what a sky is: the thing behind everything else. It
- * also keeps the sky out of the opaque content scene, which matters twice: a pass program override
- * (the deferred G-buffer) would replace the sky's own program, and the shadow pass frames the
- * content's bounding box - a box this large would blow the shadow map's resolution apart.
- *
- * SIZE: a STATIC box around the world origin. Following the camera would need a per-frame hook the
- * demo does not have, and sampling by the view direction would need the view rotation, which the
- * content push-constant ABI does not carry - so a viewer that flies outside the box would see it from
- * the outside. The manipulator zooms multiplicatively from a ~10-unit orbit, so that is a long way
- * out.
- *
- * @param root   Root group receiving the node.
- * @param radius Half extent of the box, in world units.
- * @param cube   The map it samples (null skips the sky).
- */
-void addDemoSkyBox(vn::graphics::Group* root, double radius, vn::intrusive_ptr<vn::graphics::CubeMap> cube)
-{
-    using vn::math::Vec3d;
-
-    if (cube != nullptr) {
-        auto geometry = makeDirectionBox(u8"sky_box", Vec3d(radius, radius, radius));
-
-        auto material = vn::make_intrusive<vn::graphics::Material>();
-        // White: the sky program is unlit and multiplies nothing, so the map IS the colour.
-        material->setBaseColor(vn::Colorf::kWhite);
-        material->setTexture(vn::graphics::TextureSlot::BaseColor, std::move(cube));
-        geometry->setMaterial(material);
-        // The SDK's built-in sky program (BuiltinShaders::skyboxProgram): unlit, samples the material's
-        // cube map by the authored direction, and takes its sampler kind from the texcoord channel's
-        // width - which is what the backend's kind check needs to keep a mismatched map from becoming an
-        // unbindable descriptor.
-        geometry->setProgram(vn::graphics::skyboxProgram());
-
-        root->addChild(geometry);
     }
 }
 
@@ -1439,6 +1385,9 @@ bool demoUsesDeferred()
  * window pass is DECLARED as the surface's presentation (RenderArea), which
  * is what keeps RenderControl from adding a default forward pass beside it.
  *
+ * The SKY is declared as the chain's background (ChainDesc::background) with no map yet: the pass exists from this
+ * moment, disabled, and installContent() installs the environment into it when the cube map lands.
+ *
  * @param render_control Render view whose engine receives the passes.
  */
 void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusive_ptr<vn::graphics::Scene> transparent)
@@ -1471,6 +1420,16 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     if (transparent != nullptr) {
         options.transparent = std::move(transparent);
     }
+    // THE SKY IS THE CHAIN'S BACKGROUND, not content of either scene (see ChainDesc::background): it is declared
+    // here without a map, because the cube map is streamed in later (installContent -> setBackgroundMap). A
+    // background drawn as CONTENT would be re-programmed by the Deferred G-buffer pass, framed by the shadow fit and
+    // measured into the content's bounding box - all of them wrong for a world-sized environment
+    // (graphics-rendering.md §2.15).
+    vn::graphics::BackgroundOptions background;
+    // The shipped maps are authored Y-up while this demo's world is Z-up, so the quarter turn is stated here - as a
+    // ROTATION (an axis swap would mirror the environment and read as looking into the sky).
+    background.world_to_map     = vn::math::Mat3d(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0);
+    options.background          = std::move(background);
     options.path                = path;
     // Axis-gizmo HUD overlay: mirrors the view camera in the bottom-left.
     options.gizmo.source_camera = view->camera();
@@ -1697,15 +1656,10 @@ vn::intrusive_ptr<vn::graphics::Scene> DemoScene::buildScene(bool deferred)
     content_root_ = root;
 
     // Overlay scene: drawn AFTER the pipeline's own result with the depth test on and the depth write
-    // off, so it composites over what the path already drew.
+    // off, so it composites over what the path already drew. The SKY is NOT here: it is the chain's
+    // background (see addDemoPipeline), drawn first among the forward-only passes, so this content blends
+    // onto it instead of over an empty pixel (graphics-rendering.md §2.15).
     auto overlay_root = vn::make_intrusive<Group>();
-    // SKY FIRST: the overlay draws its content in scene order and nothing in it writes depth, so the sky
-    // has to fill the background BEFORE the translucent box blends over it - a sky added after would
-    // paint over the blended box instead of behind it. The slot is a group created here and filled by
-    // installContent(); creating it empty keeps the sky in that position whatever the asset's timing is.
-    sky_group_        = vn::make_intrusive<Group>();
-    sky_group_->setName(u8"sky_slot");
-    overlay_root->addChild(sky_group_);
     if (deferred) {
         addBlendedPair(overlay_root.get(), kOverlayBlended);
     }
@@ -1910,12 +1864,26 @@ void DemoScene::installContent(const DemoCubeImages& images)
                              Vec3d(0.5, 0.5, 0.5));
     }
 
-    // The sky goes into the slot buildScene left first in the overlay root, so it stays behind the blended
-    // pair however late the map arrives.
-    if (images.sky_complete && sky_group_ != nullptr) {
-        addDemoSkyBox(sky_group_.get(),
-                      kSkyRadius,
-                      makeDemoCubeMap(kSkyCubeSide, kSkyCubeFaces, images.sky, "sky box 'sky_box' samples it by direction (3-component texcoords)"));
+    // THE SKY IS THE CHAIN'S BACKGROUND (see ChainDesc::background): installing the map is ONE statement, and it
+    // turns the chain's background pass on with it - no pass is registered, no scene edited and no chain rebuilt for
+    // one texture. The pass existed since the build, disabled, so the first second draws no sky at all (the deferred
+    // shading's debug grey) instead of an unbound sampler.
+    //
+    // A PLAN CANNOT BE APPLIED WHILE A FRAME IS BEING RECORDED (see RenderEngine::applyPlan), and this switch is a
+    // declaration diff: the wait below is the same remedy addDemoPass takes - bounded, and repeated once when a frame
+    // started between the wait and the call.
+    if (images.sky_complete) {
+        if (auto* chain = control_->view()->chain(); chain != nullptr) {
+            auto        sky    = makeDemoCubeMap(kSkyCubeSide, kSkyCubeFaces, images.sky, "the chain's background samples it by direction");
+            auto* const engine = control_->engine();
+            if (engine != nullptr) {
+                (void)engine->waitForFrame(std::chrono::milliseconds(250));
+            }
+            if (!chain->setBackgroundMap(sky) && engine != nullptr) {
+                (void)engine->waitForFrame(std::chrono::milliseconds(250));
+                (void)chain->setBackgroundMap(sky);
+            }
+        }
     }
 
     // The surface renders ON DEMAND, so putting content into the scene produces no frame by itself: without this

@@ -1,10 +1,10 @@
-# graphics rendering: targets, MSAA, image sources, colour, shading, shadows
+# graphics rendering: targets, MSAA, image sources, colour, shading, shadows, background
 
 > **Status**: current
-> **Last verified**: 2026-11-23
-> **Scope**: targets, MSAA, image sources, colour space, shading and shadows.
+> **Last verified**: 2026-11-27
+> **Scope**: targets, MSAA, image sources, colour space, shading, shadows and the background.
 > **Sources**: `RenderTarget.hpp` / `ImageInput.hpp` / `Sampler.hpp` / `ShaderProgram.hpp` /
-> `ShaderAbi.hpp` / `Light.hpp`.
+> `ShaderAbi.hpp` / `Light.hpp` / `BuiltinShaders.hpp` / `PassChain.hpp`.
 > **Backlog**: `../backlog/graphics.md`
 
 ## 1. Overview
@@ -314,6 +314,40 @@ tone curve: a lit value above 1 clips there.
   formats; encoding inside a copy program and a tonemap stage are rejected with their reasons in the decision record,
   [`ADR-2026-11-26`](../decisions/ADR-2026-11-26-linear-light-is-encoded-by-the-target-format.md).
 
+2.15 **A background is not a surface, and its four statements live in ONE pair** (`G1` / `G4` / `G7` / `G12`; review 18
+`Y9`):
+
+A picture needs an answer for "what does a ray that reached nothing see", and that answer is not geometry: a sky is not
+lit, not shadowed, not measured and not occluded. The SDK states it as a pair - `skyboxProgram()` for the text and
+`skyboxRenderState()` for the state - and a chain declares it (`ChainDesc::background`), so no host has to remember the
+invariants between the two halves.
+
+- **The camera decides the picture, not the box.** The vertex stage removes the camera's translation from
+  `view * model`, so the unit box is centred on the eye wherever the eye is: its radius encloses nothing, a camera that
+  flies out of the authored box still stands inside the sky, and no per-frame work positions it. What remains is the
+  window's own scale (`1 / projection[0][0]`, `1 / projection[1][1]`), which is a no-op for a perspective projection
+  (coverage there is angular) and exactly the lateral coverage an orthographic one needs.
+- **The depth is the far plane, not the geometry's.** The stage writes `kFarClipZ` (`ShaderAbi.hpp`) as clip z and keeps
+  the fragment's `w`, so a sky fragment holds exactly the depth an empty pixel holds: the test passes only where the
+  picture wrote nothing, and neither the camera's far plane nor the size of the scene has to agree with the box. That
+  is the gap review 18 `Y9` found - a host-sized box had to stay inside the far plane AND enclose the camera, and
+  neither requirement was written where a host would read it.
+- **The cull is part of the contract, not an optimisation.** Both shells of the box sit at the far plane, so the depth
+  test cannot choose between them; under an orthographic projection there is no `w` to clip the near shell away with,
+  and that shell's direction is the ANTIPODAL one. `CullMode::Front` keeps the shell each ray leaves through - which is
+  why the program and the state cannot be applied separately.
+- **The background is the chain's, not the content's.** It is a scene of its own drawn by a pass of its own, after the
+  shading and before every other forward-only pass. As content it would be re-programmed by the G-buffer pass, framed
+  by the shadow fit and measured into the content's bounding box - three wrong answers no per-container flag separates
+  (`G7`).
+- **A declared background is a structural choice on the Deferred path**: its test needs the G-buffer's depth, so the
+  lit result is baked into the off-screen composite first - the same rule transparent content already follows.
+- **The environment may arrive late.** The map and the pass' enabled flag are one answer (`PassChain::setBackgroundMap`),
+  so installing a streamed cube map costs one call and re-registers nothing.
+- Boundary: the pair states what a background IS; where it enters the frame, and which depth it tests against, is the
+  chain's (stage `Transparent`, one order step earlier than any other pass of it). A host drawing its own background
+  uses the pair and states its own placement. `D17` records the rejected alternatives.
+
 ## 3. Features
 
 ### 3.1 Targets
@@ -367,6 +401,8 @@ tone curve: a lit value above 1 clips there.
 | F23 | Transparency | TWO INPUTS, ONE RULE: the magnitude is the drawable's `opacity` × the material's own alpha × the base map's alpha, and the material's `AlphaMode` says what that product means (Opaque ignores it, Mask thresholds it, Blend uses it as the output alpha) - sorting and shading read the same pair (`graphics-material.md` §2.7). Blending is not a pipeline constant: `blendEnable` is baked false and switched per draw through `VK_EXT_extended_dynamic_state3` (`StateCommands`), and a draw in the transparent queue that authored no blend resolves to the default pair ENABLED (`resolveRenderState(..., transparent)`) - so the classification the sort used is the one that opens the blend. |
 | F24 | Shadows | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`; the light camera is derived by `directionalShadowMatrix` (orthographic) / `spotShadowMatrix` (perspective). **One map per chain, one light (the first buildable directional or spot light)**, point lights unsupported (see 2.7). |
 | F26 | Line width | `StateNode::setLineWidth` / `RenderPass::setLineWidthOverride`: the width of **line primitives** (`Topology::Lines`), framebuffer pixels, dynamic state (`vkCmdSetLineWidth`) so no rebuild; `wideLines` is a required device feature, the limit is the device's `lineWidthRange` (`Capabilities::limits.max_line_width`), the floor 1.0. It does **not** widen `PolygonMode::Line` wireframe edges. |
+| F29 | Background | `ChainDesc::background` (`BackgroundOptions{map, world_to_map}`): the chain builds the SDK's unit direction box, its material, its scene and its pass; the pass is `skybox` at stage `Transparent` order `-1` (after the shading, before the transparent content), keeps its target, tests depth and writes none. A null map builds the row DISABLED, and `PassChain::setBackgroundMap(map)` / `backgroundPass()` are the install and the switch. |
+| F30 | Background program + state | `skyboxProgram()` (direction lookup at the far plane, centred on the eye, scaled to an orthographic window) and `skyboxRenderState()` (`DepthState{test, !write, LessEqual}` + `CullMode::Front`). A host that draws its own sky states both; the chain's background states them for it. |
 
 
 ## 4. Public Interface
@@ -403,6 +439,16 @@ tone curve: a lit value above 1 clips there.
 | `spotShadowMatrix(light, box, ...)` | Light camera (spot, perspective, eye at the light position, cone angle = outer cone angle × 1.02) |
 | `RenderTarget::shadowOf()` / `setShadowOf()` | Shadow-target declaration |
 
+### 4.4 Background
+
+| Interface | Purpose |
+|---|---|
+| `ChainDesc::background` (`std::optional<BackgroundOptions>`) | Declares the picture's background; unset draws none |
+| `BackgroundOptions::map` / `world_to_map` | The environment, and the rotation from world directions to the frame it is authored in |
+| `PassChain::backgroundPass()` / `setBackgroundMap()` | The pass (its enabled flag IS "drawn"), and the one live switch (map + enable together) |
+| `skyboxProgram()` / `skyboxRenderState()` | The program and the state a background is drawn with - one pair, never one half |
+| `kFarClipZ` (`ShaderAbi.hpp`) | The clip z that means "behind everything" |
+
 ## 5. Constraints, Requirements and Invariants
 
 ### 5.1 Constraints (C#)
@@ -416,6 +462,7 @@ tone curve: a lit value above 1 clips there.
 | C5 | A colour texel's readback width is its channel count: the 8-bit family is one byte per channel (1 / 2 / 4 bytes); the float family answers `std::nullopt` from `colorBytesPerTexel` and `Unsupported` from a read. |
 | C6 | A format is a target only when the device backs colour attachment, sampling AND transfer-source for it; a target asking for anything less is refused by name, never attempted. |
 | C7 | A pass' inputs are ONE ordered list of `ImageInput`; each entry names one identity, and every reader (resolution, edges, wiring checks, frame table, plan description) reads that list in declaration order. |
+| C8 | A background is NOT content: the chain draws it from a scene of its own, and no pass that walks the picture's content (G-buffer, shadow, content bounds) sees it. |
 
 ### 5.2 Requirements (R#)
 
@@ -425,6 +472,7 @@ tone curve: a lit value above 1 clips there.
 | R2 | A multisampled target's depth resolve takes `sample0`, no averaging. |
 | R3 | Target formats gain no second colour semantics. |
 | R4 | The shadow convention lives only in the built-in shaders: a pass that does not use the built-in programs has nothing to do with `VineShadowBlock`; sample the map as an ordinary produced image. |
+| R5 | A background drawn with the SDK's program states the SDK's state too (`skyboxRenderState()`); one half without the other is a defect, not a style choice (2.15). |
 
 ### 5.3 Invariants (N#)
 
@@ -443,6 +491,7 @@ tone curve: a lit value above 1 clips there.
 | N11 | Alpha-to-coverage is not stated: a Mask fragment on a multisampled target keeps binary edges. On this backend it is ONE switch (`vkCmdSetAlphaToCoverageEnableEXT`, dynamic under the EDS3 floor), so the obstacle is not the backend - coverage is derived from the fragment's first colour output, which is the material's fact (`graphics-material.md` N6, backlog `T58`). |
 | N12 | A shader writes `vec4` into any colour format; the attachment keeps its own channels and drops the rest, so a value added to the vocabulary needs no second fragment-output contract - and a product narrower than four channels is a mask, not a picture with empty channels (`P4`). |
 | N13 | `validatePlan` judges only `ImageInput::byName` entries (a plan has no frame); a target/image identity is judged by the compile that resolves it. Both walk the same `PassDesc::inputs` list, so no input is invisible to one reader and visible to another. |
+| N14 | A background fragment's depth IS the cleared value (`kFarClipZ`) and it writes none: it therefore passes exactly where an empty pixel is still stored, whatever the scene's size or the camera's far plane. |
 
 ## 6. Caveats and Traps
 
@@ -487,6 +536,19 @@ tone curve: a lit value above 1 clips there.
 - How to prevent it: state the identity you hold - `byTarget` for a target you own, `byName` for a name you can
   publish. A name list is a fallback list by design, not an "all of these" list.
 
+### 6.6 A background drawn as content, or with half its pair
+
+- How it fails: a sky that is CONTENT is re-programmed by a G-buffer pass' override, framed by the shadow fit and
+  counted into the content's bounding box - so the sky loses its program, the shadow map's texels line up with a
+  world-sized box, and a "fit to content" view flies out to the sky. A sky drawn with `skyboxProgram()` but without
+  `skyboxRenderState()` writes the far plane over every pixel it covers (depth write on) or samples the hemisphere
+  facing AWAY from the eye (no cull) - and both look right from a perspective camera pointed along an axis.
+- How to detect it: the background pass' `content` is the picture's scene; the scene root's `depth()` / `cullMode()`
+  are not `skyboxRenderState()`'s; or a pass that walks the picture's content lists an object thousands of units
+  across.
+- How to prevent it: declare it (`ChainDesc::background`) instead of drawing it, and when a host must draw its own,
+  apply the program and the state together (`R5`).
+
 ## 7. Rejected Options
 
 | # | Rejected | Reason |
@@ -507,6 +569,7 @@ tone curve: a lit value above 1 clips there.
 | D14 | A separate `InputTarget` type beside `ImageInput` | `G1`: one input, two types; the binding order would need two lists again. |
 | D15 | `validatePlan` also checking object identities | `G7`: it would need the host's publication set and the transient identities inside the plan layer, duplicating the compile's wiring rules (`N13`). |
 | D16 | Rename the pair to `PassInput` / `ResolvedInput` | `G1`: the existing pair already says declaration/resolution; renaming buys no distinction and costs every search. |
+| D17 | A sky as ordinary content; a `DepthRange` band for the sky; a fullscreen triangle + `inverse(projection)`; the shader-only `z = w` fix | The first is `C8`'s defect (G-buffer override, shadow fit, content bounds). A depth band declares a LAYER and does not remove clip-space clipping, so it cannot say "infinitely far". A fullscreen program receives no camera matrices (`VinePushRange` is the content ABI), so the ray reconstruction would need a second ABI for one program. And `z = w` alone leaves the near shell on screen under an orthographic camera - the depth test cannot reject it (2.15). |
 
 ## 8. Tests and Acceptance
 
@@ -520,6 +583,7 @@ tone curve: a lit value above 1 clips there.
 | T6 | The dynamic-state list: every item the command's `record()` writes is declared in the pipeline (witness: `../bugs/vsg-depth-bias-not-declared-dynamic.md`). |
 | T7 | Every colour format: `VkContentTargetTest.AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack` (agreement between the device mask and the build path, plus the 8-bit readback values), `VkBackendTest.AColourFormatIsATargetOnlyWhenTheDeviceBacksEveryUse` (mapping, names, all-or-nothing feature rule), `CoreReadbackTest.TheTablesAnswerATexelWidthOrNothingAndCoverBothSides`, `RenderTargetTest.MultipleColorAttachments`. |
 | T8 | One input list: `PlanTest.TheDescriptionSpellsEveryDeclaredInput` (every identity spelled in one order), `RenderTest.NamedOutputAndInputSlots` (an empty name declares nothing), `RenderPassTest.ObjectTypedOutputAndInputImages` (kinds and declaration order), `OwnedFrameTest.TheOwnedFrameKeepsWhatItsProducersReleased` (a whole target resolves like an imported texture does), `PassChainTest.AShadowThisChainCannotShadeIsReported` (the shadow map appears in the frame table), `PassScheduleTest.AProducerRunsBeforeAConsumerAnnouncedEarlier` (the edge comes from a target identity). |
+| T9 | The background: `VkBackgroundTest.TheBackgroundFollowsTheCameraAndHoldsTheFarPlane` (content 50 units away beats a unit box, and the frame is the map five units from the box's origin), `VkBackgroundTest.AnOrthographicViewKeepsTheShellItsRaysLeaveThrough` (an identity camera never samples the antipodal face), `PassChainTest.ABackgroundIsAChainOwnedPassAboveTheShading` (own scene, own state, row order in the frame table, published by the chain), `PassChainTest.ABackgroundMakesTheDeferredChainCompositeAndInstallsItsMap` (the composite, the borrowed depth, the live map switch, the refusal). |
 
 ## 9. Status and Evolution
 

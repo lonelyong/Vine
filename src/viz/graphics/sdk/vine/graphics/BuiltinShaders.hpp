@@ -3,6 +3,7 @@
 
 #include <vine/intrusive_ptr.hpp>
 
+#include "RenderState.hpp"
 #include "ShaderProgram.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -135,26 +136,60 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> depthOnlyProgram();
 VN_GRAPHICS_API intrusive_ptr<ShaderProgram> gbufferGeometryProgram();
 
 /**
- * @brief The built-in SKY BOX program: an UNLIT cube-map lookup by direction.
+ * @brief The built-in BACKGROUND (sky) program: an UNLIT cube-map lookup by direction, at the far plane.
  *
  * @details
- * - Draw a large box the camera stands inside, with a texcoord channel that carries a direction per
- *   vertex (see Geometry::setTexcoords3), and the material's texture as the map: every ray then leaves
- *   through exactly one face and samples the sky in the direction it is heading. Nothing is lit - a
- *   sky is not a surface the scene's sun lights, it is the thing the sun is in - so this program
- *   declares no material or lights block and the map IS the colour.
- * - The sampler KIND follows the texcoord channel's width, exactly like the engine's own content
- *   stages (three scalars: a cube map; two: a 2-D map), which is what keeps a material of the wrong
- *   kind from becoming an unbindable descriptor. The returned program therefore names BOTH kinds in
- *   its import pragma (VN_TEXCOORD_UV / VN_TEXCOORD_CUBE) and samples the pair when neither is
- *   set — which is the shape its PROGRAM-LEVEL compile gets (a stage set is built once with no
- *   defines) and the shape a mis-widthed channel takes. A backend that binds the sampler kind to
- *   the texcoord width keeps it honest by setting exactly one of the two, and one that sets neither
- *   still gets a program whose sampler matches the coordinates its data carries.
+ * - Draw a direction box with a texcoord channel that carries a direction per vertex (see Geometry::setTexcoords3)
+ *   and the material's texture as the map: every ray leaves through exactly one face and samples the sky in the
+ *   direction it is heading. Nothing is lit - a sky is not a surface the scene's sun lights, it is the thing the sun
+ *   is in - so this program declares no material or lights block and the map IS the colour.
+ * - IT ALSO OWNS THE BACKGROUND'S DEPTH CONTRACT, and this is why a sky is not just "a box with an unlit program"
+ *   (see .ai/design/graphics-rendering.md §2.15):
+ *   - the vertex stage removes the camera's TRANSLATION from `view * model`, so the box is centred on the eye wherever
+ *     the eye is - neither its radius nor the camera's far plane has to agree with anything, and a camera that leaves
+ *     the authored box still sees the sky from the inside;
+ *   - it writes the FAR PLANE as clip z (kFarClipZ in ShaderAbi.hpp), so a sky fragment holds exactly the depth an
+ *     empty pixel holds: the depth test passes only where the picture wrote nothing, and the sky can never occlude
+ *     content however large the scene is;
+ *   - it scales the box to the window for an ORTHOGRAPHIC projection (parallel rays need lateral coverage) and leaves
+ *     a perspective one alone.
+ * - IT IS ONLY CORRECT WITH skyboxRenderState()'s state: depth test on, depth write OFF, `LessEqual`, and
+ *   `CullMode::Front`. Culling is not an optimisation here - both shells of the box sit at the far plane, so the depth
+ *   test cannot choose between them, and under an orthographic projection (where nothing is clipped by `w`) keeping
+ *   the near shell would sample the hemisphere facing AWAY from the eye.
+ * - The sampler KIND follows the texcoord channel's width, exactly like the engine's own content stages (three
+ *   scalars: a cube map; two: a 2-D map), which is what keeps a material of the wrong kind from becoming an unbindable
+ *   descriptor. The returned program therefore names BOTH kinds in its import pragma (VN_TEXCOORD_UV / VN_TEXCOORD_CUBE)
+ *   and samples the pair when neither is set - which is the shape its PROGRAM-LEVEL compile gets (a stage set is built
+ *   once with no defines) and the shape a mis-widthed channel takes. A backend that binds the sampler kind to the
+ *   texcoord width keeps it honest by setting exactly one of the two, and one that sets neither still gets a program
+ *   whose sampler matches the coordinates its data carries.
+ *
+ * @note
+ * - The chain that declares a background (`ChainDesc::background`) builds the box, the material and the pass, and
+ *   states this program and this state itself - a host only reaches for the pair when it draws its own background.
  *
  * @return The vertex + fragment program (fresh per call).
  */
 VN_GRAPHICS_API intrusive_ptr<ShaderProgram> skyboxProgram();
+
+/**
+ * @brief The render state a background is drawn with: the other half of skyboxProgram()'s contract.
+ *
+ * @details
+ * - Depth TEST on, depth WRITE off, `LessEqual`, and `CullMode::Front`; everything else is left unset so the content's
+ *   own word (and then the defaults) still decides.
+ * - It is a state and not three notes in a header because the two halves cannot be separated: the program writes the
+ *   far plane, so a sky that wrote depth would stamp the far plane over every pixel it covers, and a sky that kept the
+ *   near shell would sample the environment backwards under an orthographic camera. A host that applies one half and
+ *   not the other gets a picture that looks right from one camera and wrong from the next.
+ * - `LessEqual` (and not `Less`) because the sky's depth is exactly the cleared value: the test has to accept
+ *   "equally far", which is what "nothing was drawn here" means.
+ *
+ * @return The state to fold onto the background's content: `StateNode::setDepth` and `StateNode::setCullMode` from its
+ *         two items (RenderState::merge folds it onto a block a host already authors).
+ */
+[[nodiscard]] VN_GRAPHICS_API RenderState skyboxRenderState();
 
 /**
  * @brief The built-in fullscreen-triangle VERTEX program every fullscreen FRAGMENT stage is written against.

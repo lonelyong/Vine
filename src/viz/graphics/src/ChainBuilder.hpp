@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
@@ -12,6 +13,7 @@ VN_GRAPHICS_NS_BEGIN
 
 class Camera;
 class Light;
+class Material;
 class RenderTarget;
 class Scene;
 class ShaderProgram;
@@ -46,6 +48,24 @@ class ChainBuilder {
     /** @brief Builds the depth-only shadow pass a casting light asks for, and returns its map. */
     intrusive_ptr<RenderTarget> buildShadowPass(PassChain& chain, const intrusive_ptr<const Light>& light);
 
+    /**
+     * @brief Declares the background's pass: the window on the forward path, the composite (against the G-buffer's
+     *        depth) on the deferred one.
+     *
+     * @details
+     * - ONE place states the placement the whole feature is about: after the shading, before every other
+     *   forward-only pass, with the depth test on and no depth write, and drawn by skyboxProgram() with
+     *   skyboxRenderState() (both stated by the scene it draws, see makeBackgroundScene).
+     * - A background that has no environment yet (`BackgroundOptions::map` null) declares the SAME row with
+     *   `enabled = false`: the picture behaves as if there were none (what a pixel holds is the path's own answer)
+     *   and PassChain::setBackgroundMap turns it on without a rebuild.
+     *
+     * @param target      The target it draws into; null draws into the window.
+     * @param depth_owner The target whose depth it tests against when @p target is a composite (the G-buffer).
+     * @return The declaration (see PassDesc).
+     */
+    PassDesc backgroundPassDesc(const intrusive_ptr<RenderTarget>& target, const intrusive_ptr<RenderTarget>& depth_owner) const;
+
     /** @brief Adds the optional HUD overlays to @p chain. */
     bool applyOverlays(PassChain& chain, const ChainDesc& desc);
 
@@ -68,6 +88,10 @@ class ChainBuilder {
     raw_ptr<Camera>      camera_;
     intrusive_ptr<Scene> content_;
     intrusive_ptr<Scene> transparent_;
+    /// This build's background declaration, when the request has one (see ChainDesc::background).
+    std::optional<BackgroundOptions> background_;
+    /// The scene the background pass draws (owned by the chain from the moment it is built).
+    intrusive_ptr<Scene> background_scene_;
     /// Shadow passes THIS build created: a requested shadow that WAS built is not a gap to report.
     std::size_t shadows_built_    = 0;
     /// This build's content selection, taken from ChainDesc::layer_mask.

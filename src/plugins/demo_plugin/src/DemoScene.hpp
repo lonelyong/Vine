@@ -39,7 +39,7 @@ class DemoScene;
 struct DemoCubeImages {
     /// The BOX map's faces (256^2): what `env_box` samples.
     std::array<vn::intrusive_ptr<vn::imaging::Image>, 6> box;
-    /// The SKY map's faces (512^2): what `sky_box` samples.
+    /// The SKY map's faces (512^2): what the chain's background samples (see ChainDesc::background).
     std::array<vn::intrusive_ptr<vn::imaging::Image>, 6> sky;
     /// Whether all six faces of each map were read (a group with a missing face is skipped, already reported).
     bool box_complete = false;
@@ -105,7 +105,8 @@ void assembleDemoContentLater(std::shared_ptr<DemoScene> demo);
  *  - blended pair: the translucent box and the rainbow star cloud, which need a destination to blend
  *    against - drawn in the forward scene, or in the Deferred overlay scene the pipeline composites
  *    after the deferred-lit result (depth test on, depth write off);
- *  - sky box: in an overlay for both paths, drawn last so it fills only the background.
+ *  - background (sky): declared on the CHAIN for both paths - `ChainDesc::background` - so it is never
+ *    content of the picture's scene, and the map is installed when it arrives (see installContent()).
  *
  * So a single Scene OBJECT cannot serve both paths, while the vocabulary can and does: what differs is
  * which slices a path may draw, and buildScene decides that in one place.
@@ -128,20 +129,20 @@ class DemoScene {
      *
      * It deliberately reads NO asset: the two cube maps are the expensive half of the demo's start-up and
      * arrive later (loadDemoCubeImagesAsync() + installContent()), which is what takes that half off the
-     * application thread. Both scenes are left with the slot the content goes into - the overlay's sky slot
-     * is a group created here, in the position the sky has to keep (see buildScene).
+     * application thread. The skeleton therefore declares the chain's BACKGROUND without a map - the
+     * pass exists, disabled - and installContent() installs the environment into it.
      */
     void install();
 
     /**
-     * @brief Hangs the staged cube maps on the skeleton: `env_box` in the content scene, `sky_box` in the
-     * overlay's sky slot.
+     * @brief Hangs the staged cube maps on the skeleton: `env_box` in the content scene, and the sky as the
+     *        chain's background.
      *
      * APPLICATION THREAD ONLY: it creates graphics objects (the two CubeMaps) and adds them to scenes the
      * render control is already drawing. The heavy half - reading, decoding, filtering - is behind it by
      * then (loadDemoCubeImagesAsync()).
      *
-     * A group that is incomplete is skipped (the reader reported it), so a demo without its assets is the
+     * A map that is incomplete is skipped (the reader reported it), so a demo without its assets is the
      * scene the skeleton built and nothing else.
      *
      * @param images Staged faces for both maps.
@@ -165,7 +166,7 @@ class DemoScene {
      *
      * @param deferred true for the Deferred path (opaque base + G-buffer variety, overlay with the
      *                 blended pair and a light rig), false for the forward path (opaque base + forward
-     *                 showcase + blended pair, sky-only overlay).
+     *                 showcase + blended pair).
      * @return The overlay scene the pipeline draws after the path's own result (never null).
      */
     vn::intrusive_ptr<vn::graphics::Scene> buildScene(bool deferred);
@@ -203,10 +204,6 @@ class DemoScene {
 
     /// Content scene root the cube-mapped box is hung on later (see installContent()); owned by the scene.
     vn::intrusive_ptr<vn::graphics::Group> content_root_;
-
-    /// The overlay's sky slot: created by install() - empty, but FIRST in the overlay root, because the sky
-    /// has to fill the background before the blended pair composites over it (see buildScene).
-    vn::intrusive_ptr<vn::graphics::Group> sky_group_;
 };
 
 } // namespace vn::demo

@@ -253,6 +253,19 @@ intrusive_ptr<ShaderProgram> skyboxProgram()
     return makeProgram(u8"builtin_skybox", shaders::kBuiltinSkyboxVert, shaders::kBuiltinSkyboxFrag);
 }
 
+RenderState skyboxRenderState()
+{
+    // The state is the program's other half, not a suggestion: the vertex stage writes the FAR plane as its clip z
+    // (kFarClipZ), so a background that wrote depth would stamp that value over every pixel it covers, and the near
+    // shell of the box has to be culled or an orthographic view samples the hemisphere facing away from the eye
+    // (both shells sit at the far plane, so the depth test cannot choose). `LessEqual`, because the sky's depth IS
+    // the cleared value - "equally far" is exactly what an untouched pixel holds.
+    RenderState state;
+    state.depth    = DepthState{ true, false, CompareOp::LessEqual };
+    state.cullMode = CullMode::Front;
+    return state;
+}
+
 intrusive_ptr<ShaderProgram> depthOnlyProgram()
 {
     // A pass with no colour attachment still needs a fragment stage to rasterise, and the only one that tells the truth

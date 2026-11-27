@@ -8290,6 +8290,150 @@ TEST(PassChainTest, DeferredPresetWithTransparentContentBuildsComposite)
 }
 
 /**
+ * @brief A BACKGROUND is the chain's own pass: above the shading, below the transparent content, and drawn with the
+ *        SDK's program-and-state pair.
+ *
+ * The three facts a host cannot check on screen once the picture is drawn: the scene the sky draws is NOT the picture's
+ * content (the G-buffer override, the shadow fit and the content's bounding box would all see it otherwise), the pass
+ * sits where the depth test can still see what the content wrote, and the content carries the state
+ * `skyboxRenderState()` states - the half a program alone cannot promise.
+ */
+TEST(PassChainTest, ABackgroundIsAChainOwnedPassAboveTheShading)
+{
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    engine->initialize();
+
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto overlay = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+    cam->lookAt(Vec3d(0.0, 0.0, 5.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+
+    ChainDesc opts;
+    opts.camera      = cam.get();
+    opts.content     = content;
+    opts.transparent = overlay;
+    opts.path        = ShadingPath::Forward;
+    // DECLARED, with no environment yet: the pass and its scene exist and draw nothing until setBackgroundMap (which is
+    // the shape an asset that streams in needs - see BackgroundOptions).
+    opts.background  = BackgroundOptions{};
+
+    auto pipeline = PassChain::build(engine.get(), opts);
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(engine->passCount(), 3u) << "main + background + forward transparent: one pass per drawing step";
+
+    RenderPass* sky = pipeline->backgroundPass();
+    ASSERT_NE(sky, nullptr) << "a declared background is a pass of the chain";
+
+    // A BACKGROUND IS NOT CONTENT: its own scene, so no pass that walks the picture's content (and no query on its
+    // bounds) can reach it (graphics-rendering.md 2.15).
+    const PassDesc declaration = sky->declaration();
+    ASSERT_NE(declaration.content, nullptr);
+    EXPECT_NE(declaration.content.get(), content.get());
+    EXPECT_NE(declaration.content.get(), overlay.get());
+
+    // WHERE IT SITS: above the shading (the depth it tests is the one the content pass wrote) and below the transparent
+    // content (which blends ONTO the sky instead of over an empty pixel).
+    ASSERT_TRUE(declaration.order.has_value());
+    EXPECT_EQ(*declaration.order, passStageOrder(PassStage::Transparent) - 1);
+    EXPECT_GT(*declaration.order, passStageOrder(PassStage::Shading));
+
+    // WHAT IT DOES WITH THE TARGET: keeps it (a background fills an empty pixel; it never clears the picture) and tests
+    // without writing.
+    ASSERT_TRUE(declaration.clear_enabled.has_value());
+    EXPECT_FALSE(*declaration.clear_enabled);
+    EXPECT_EQ(declaration.depth_policy, DepthPolicy::TestOnly);
+
+    // NO ENVIRONMENT YET: the row is there (a map needs no re-registration) and draws nothing.
+    EXPECT_FALSE(sky->isEnabled());
+
+    // THE STATE IS THE PROGRAM'S OTHER HALF, folded onto the content's root - the reason a host does not have to
+    // remember four invariants (see skyboxRenderState).
+    auto* root = dynamic_cast<StateNode*>(declaration.content->root().get());
+    ASSERT_NE(root, nullptr) << "the background's scene root states what a background is drawn with";
+    const RenderState state = skyboxRenderState();
+    ASSERT_TRUE(state.depth.has_value());
+    ASSERT_TRUE(state.cullMode.has_value());
+    EXPECT_EQ(root->depth(), state.depth);
+    EXPECT_EQ(root->cullMode(), state.cullMode);
+    EXPECT_EQ(root->cullMode(), CullMode::Front) << "the shell behind the eye is culled: the depth test cannot reject it";
+
+    // THE FRAME SAYS SO: three rows, in the order the depth test needs, and no complaint about a scene that was never
+    // published - the chain publishes the one it owns (see PassChain::publishContent).
+    pipeline->publishContent();
+    (void)content->publish();
+    const std::size_t problems_before = engine->diagnosticCount();
+    engine->frame();
+
+    EXPECT_EQ(engine->diagnosticCount(), problems_before);
+    const FrameTable& table = engine->frameTable();
+    ASSERT_EQ(table.passes.size(), 3u);
+    EXPECT_EQ(table.passes[0].name, String(u8"main"));
+    EXPECT_EQ(table.passes[1].name, String(u8"skybox"));
+    EXPECT_EQ(table.passes[2].name, String(u8"forward_transparent"));
+    EXPECT_EQ(table.passes[1].content, declaration.content.get()) << "the row draws the background's own scene";
+    EXPECT_LT(table.passes[1].order, table.passes[2].order) << "the background is what the transparent content blends over";
+}
+
+/**
+ * @brief A declared background is a STRUCTURAL choice on the Deferred path, and its map is a live switch.
+ *
+ * The background tests depth, and the depth it has to test against is the G-buffer's - the same reason a transparent
+ * scene forces the off-screen composite. The second half is the asset that arrives late: the map and the pass' enabled
+ * flag are one answer, so installing an environment is one statement and no pass is re-registered.
+ */
+TEST(PassChainTest, ABackgroundMakesTheDeferredChainCompositeAndInstallsItsMap)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto content = intrusive_ptr<Scene>(new Scene());
+    auto cam     = intrusive_ptr<Camera>(new Camera());
+
+    ChainDesc opts;
+    opts.camera           = cam.get();
+    opts.content          = content;
+    opts.path             = ShadingPath::Deferred;
+    opts.offscreen_width  = 64;
+    opts.offscreen_height = 64;
+    opts.background       = BackgroundOptions{};
+
+    auto pipeline = PassChain::build(engine.get(), opts);
+    ASSERT_NE(pipeline, nullptr);
+    EXPECT_EQ(engine->passCount(), 4u) << "G-buffer + lighting (into the composite) + background + present";
+
+    ASSERT_NE(pipeline->compositeTarget(), nullptr) << "a background that tests depth needs the composite";
+    ASSERT_NE(pipeline->offscreenTarget(), nullptr);
+
+    RenderPass* sky = pipeline->backgroundPass();
+    ASSERT_NE(sky, nullptr);
+    const PassDesc declaration = sky->declaration();
+    // The composite owns no depth of its own, so the edge says whose depth the sky tests: the G-buffer's, exactly as the
+    // lighting and the transparent passes state it.
+    ASSERT_TRUE(declaration.depth_view.has_value());
+    EXPECT_EQ(declaration.depth_view->target(), pipeline->offscreenTarget());
+    EXPECT_EQ(declaration.target.target.get(), pipeline->compositeTarget());
+
+    // THE ENVIRONMENT ARRIVES LATER: one statement installs it, and it turns the pass on with it.
+    auto cube = intrusive_ptr<CubeMap>(new CubeMap(4, PixelFormat::Rgba8Unorm));
+    EXPECT_TRUE(pipeline->setBackgroundMap(cube));
+    EXPECT_TRUE(sky->isEnabled());
+    // ... and removing it turns the pass off, so what is sampled and what is drawn cannot disagree.
+    EXPECT_TRUE(pipeline->setBackgroundMap(nullptr));
+    EXPECT_FALSE(sky->isEnabled());
+
+    // A CHAIN THAT DECLARED NONE HAS NOTHING TO INSTALL INTO: the refusal is the answer a host can act on, not a
+    // silently ignored call.
+    ChainDesc bare;
+    bare.camera  = cam.get();
+    bare.content = content;
+    bare.path    = ShadingPath::Deferred;
+    auto without = PassChain::build(engine.get(), bare);
+    ASSERT_NE(without, nullptr);
+    EXPECT_EQ(without->backgroundPass(), nullptr);
+    EXPECT_FALSE(without->setBackgroundMap(cube));
+}
+
+/**
  * @brief What a recipe writes down is what the plan says: the tags, and the stages that place the passes.
  *
  * The builder's ordinary passes are DECLARATIONS now (see PassDesc), so this pins the part a reader of a plan

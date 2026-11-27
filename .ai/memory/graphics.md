@@ -2868,3 +2868,37 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   that judges the map by its texels must state `D32F`/`D16`. And the Mask witness only proves the variant plumbing because
   it FAILS when the depth stage compiles without `VN_TEXTURED` (the factor alone keeps the whole quad).
 - **Verified.** Whole tree builds; `test_graphics` 685/685, `test_vk` 227/227; `vn_shader_check.sh` PASS.
+
+## 2026-11-27 - Y9: the sky is a background, and its depth contract is a pair
+
+- **The finding.** The sky had no depth contract: it was a world-sized direction box the HOST had to keep the camera
+  inside of and size against the far plane (`DemoScene`'s `kSkyRadius = 400` beside a 1000 far plane), its render state
+  (`LessEqual` + no write + `CullMode::Front`) was only accidentally true because the demo put it in the transparent
+  scene, and "the colour of a ray that hit nothing" had two owners (the host's box, and `builtin_deferred_lighting`'s
+  hard-coded `0.06` grey).
+- **The model now.** `builtin_skybox.vert` removes the camera's TRANSLATION from `view * model` (the box follows any
+  eye, no per-frame work, radius irrelevant) and writes `kFarClipZ` (`ShaderAbi.hpp`, 0 = the cleared depth under
+  reverse-Z) as clip z while keeping the fragment's `w`; it also scales the box by the window's own extent for an
+  ORTHOGRAPHIC projection (`1 / projection[0][0]`, `1 / projection[1][1]`). The state that goes with it is
+  `skyboxRenderState()`: `DepthState{test, !write, LessEqual}` + `CullMode::Front` - the cull is a CORRECTNESS rule, not
+  an optimisation: both shells sit at the far plane and an ortho view has no `w` to clip the near one, so keeping it
+  samples the antipodal hemisphere.
+- **The composition.** `ChainDesc::background` (`std::optional<BackgroundOptions{map, world_to_map}>`) makes the chain
+  build a scene of its own (unit direction box + material + `StateNode` root carrying the pair) and a pass of its own:
+  name `skybox`, stage `Transparent`, `order = passStageOrder(Transparent) - 1`, `clear_enabled = false`,
+  `TestOnly`, and on the Deferred path `target = composite` + `depth_view = gbuffer`. A declared background therefore
+  FORCES the composite on the deferred path (the same rule transparent content follows). A null map builds the row
+  DISABLED; `PassChain::setBackgroundMap` sets the material's texture and the enabled flag together, so a streamed
+  environment costs one call and re-registers nothing.
+- **Landing oracle.** `VkBackgroundTest.TheBackgroundFollowsTheCameraAndHoldsTheFarPlane` (a quad 50 units away beats
+  the unit box, and the frame is the map with the camera 5 units from the box's origin - the pre-Y9 shader fails both),
+  `VkBackgroundTest.AnOrthographicViewKeepsTheShellItsRaysLeaveThrough` (identity camera: never the antipodal face),
+  `PassChainTest.ABackgroundIsAChainOwnedPassAboveTheShading` (own scene, root state == `skyboxRenderState()`, row
+  order in the frame table, published by the chain) and
+  `PassChainTest.ABackgroundMakesTheDeferredChainCompositeAndInstallsItsMap` (composite, borrowed depth, live map
+  switch, refusal without a declaration).
+- **Trap.** `PassRenderState::depth` is a POLICY for content that authored none, so the sky's depth must be on the
+  CONTENT (`StateNode` root) - a pass-level `TestOnly` alone would let the pass' write flag reach the far plane and
+  stamp it over the whole rectangle. And a rotation for `world_to_map`, never an axis swap (det -1 mirrors the sky).
+- **Verified.** Whole tree builds; `test_graphics` 687/687, `test_vk` 229/229; `vn_shader_check.sh` PASS; the demo now
+  declares `ChainDesc::background` and installs its map from `installContent`.

@@ -4,6 +4,7 @@ set(TEST_NAME test_vk)
 # No VulkanSceneGraph is linked: this backend reaches Vulkan through volk (tp::volk carries the Vulkan headers).
 add_executable(${TEST_NAME}
         BackendTest.cpp
+        BackgroundTest.cpp
         BarrierPlanTest.cpp
         BuiltinProgramTest.cpp
         ContentDrawTest.cpp

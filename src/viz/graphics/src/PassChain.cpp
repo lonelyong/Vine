@@ -4,12 +4,14 @@
 #include <vector>
 
 #include <vine/graphics/AxisGizmo.hpp>
-#include <vine/graphics/Plan.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
+#include <vine/graphics/Material.hpp>
+#include <vine/graphics/Plan.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
+#include <vine/graphics/Texture.hpp>
 
 #include "PixelGeometry.hpp"
 
@@ -220,8 +222,49 @@ void PassChain::update(const FrameContext& context)
 
 raw_ptr<RenderPass> PassChain::overlayPass(const String& role) const noexcept
 {
+    return passForRole(role);
+}
+
+raw_ptr<RenderPass> PassChain::passForRole(const String& role) const noexcept
+{
     const auto found = std::find_if(entries_.begin(), entries_.end(), [&role](const Entry& entry) { return entry.role == role; });
     return found != entries_.end() ? registry_.findFor(found->name, scope_) : nullptr;
+}
+
+raw_ptr<RenderPass> PassChain::backgroundPass() const noexcept
+{
+    return passForRole(String(kBackgroundRole));
+}
+
+bool PassChain::setBackgroundMap(intrusive_ptr<CubeMap> map)
+{
+    raw_ptr<RenderPass> pass = backgroundPass();
+    if (pass == nullptr || background_material_ == nullptr) {
+        // The shape setOverlayVisible refuses in: a switch that silently did nothing would leave a host believing the
+        // environment was installed. Once per episode, because a host may ask every frame and the condition - not the
+        // call - is the news.
+        if (background_refused_.shouldReport()) {
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                String(u8"this chain has no background, so the environment map was not installed: build with "
+                                       u8"ChainDesc::background to get one"));
+        }
+        return false;
+    }
+    background_refused_.rearm();
+    // THE MAP AND THE ENABLE ARE ONE ANSWER (see the declaration): a null map hides the background, and a map nobody
+    // draws would be a chain whose picture disagrees with what it samples. The material's revision moves with the
+    // write, so the next publication carries the new map - no pass is re-registered and no target is resized.
+    const bool draws = map != nullptr;
+    if (draws) {
+        background_material_->setTexture(vn::graphics::TextureSlot::BaseColor, std::move(map));
+    }
+    else {
+        background_material_->clearTexture(vn::graphics::TextureSlot::BaseColor);
+    }
+    PassDesc desc = pass->declaration();
+    desc.enabled  = draws;
+    return restate(desc);
 }
 
 raw_ptr<Object> PassChain::overlayContent(const String& role) const noexcept
@@ -347,13 +390,22 @@ void PassChain::setTransparentContent(intrusive_ptr<Scene> scene)
     transparent_content_ = std::move(scene);
 }
 
+void PassChain::setBackgroundContent(intrusive_ptr<Scene> scene, intrusive_ptr<Material> material)
+{
+    background_content_  = std::move(scene);
+    background_material_ = std::move(material);
+}
+
 void PassChain::publishContent()
 {
-    // ONE OWNER PER SCENE: this chain owns the transparent scene it draws (see ChainDesc::transparent), so publishing it
-    // is this call's job - the host publishes the content it owns (SceneView::publishContent), and a frame only draws
-    // what was published.
+    // ONE OWNER PER SCENE: this chain owns the scenes it draws that nobody else keeps alive (the transparent scene,
+    // ChainDesc::transparent, and the background, ChainDesc::background), so publishing them is this call's job - the
+    // host publishes the content it owns (SceneView::publishContent), and a frame only draws what was published.
     if (transparent_content_ != nullptr) {
         (void)transparent_content_->publish();
+    }
+    if (background_content_ != nullptr) {
+        (void)background_content_->publish();
     }
 }
 

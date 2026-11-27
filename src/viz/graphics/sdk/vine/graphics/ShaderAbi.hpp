@@ -124,6 +124,21 @@ struct alignas(16) VinePushRange {
 };
 
 /**
+ * @brief The clip-space z of the FAR plane in the convention `VinePushRange::projection` produces.
+ *
+ * @details
+ * - The device clip space is reverse-Z: the near plane is 1 and the far plane is 0, and a target's depth is cleared to
+ *   this value, so "as far as the frame can express" and "what an empty pixel holds" are one number.
+ * - A stage that wants a fragment BEHIND every surface writes this z and keeps its own `w`: the perspective divide then
+ *   yields exactly the cleared depth, the depth test passes only where nothing wrote a nearer one, and the geometry's
+ *   own distance (and therefore the far plane, or the size of a box around the eye) stops being part of the picture.
+ * - It is a constant of the ABI and not of one backend: every backend folds into this ONE convention, because the
+ *   built-in shading text (which a host also writes against) is shared and a backend that folded elsewhere would need
+ *   a second text. `builtin_skybox.vert` is the one stage that depends on the value - see skyboxProgram.
+ */
+inline constexpr float kFarClipZ = 0.0F;
+
+/**
  * @brief Per-draw data block the built-in shading reads (L1 shape).
  *
  * @note The parameter slot's first two lanes are the engine's: `x` is the drawable's effective opacity (the

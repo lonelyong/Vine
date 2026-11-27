@@ -2,11 +2,13 @@
 #include "graphics_global.hpp"
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include <vine/RefCounted.hpp>
 #include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
+#include <vine/math/Matrix3x3.hpp>
 #include <vine/raw_ptr.hpp>
 
 #include "DiagnosticsHandle.hpp"
@@ -33,7 +35,9 @@ class ChainBuilder;
 
 class AxisGizmo;
 class Camera;
+class CubeMap;
 class FpsOverlay;
+class Material;
 // Declared rather than included: a chain only ever passes a declaration straight on to the engine
 // (PassRegistry::apply, scoped to the chain), so its own header does not need the one that defines it.
 struct PassDesc;
@@ -113,6 +117,37 @@ struct VN_GRAPHICS_API FpsOverlayOptions {
 };
 
 /**
+ * @brief Options of the BACKGROUND a chain draws where nothing else was drawn (see ChainDesc::background).
+ *
+ * @details
+ * - A BACKGROUND IS NOT A SURFACE: it is what a ray that reached nothing sees. The chain owns it as a SCENE OF ITS
+ *   OWN drawn by a PASS OF ITS OWN, never as content of the picture's scene, because the picture's content is what
+ *   the G-buffer pass overrides the program of, what the shadow pass frames and what the content's bounding box is
+ *   measured from - and a world-sized box is all three of those things wrong (graphics-rendering.md §2.15).
+ * - The pass the chain builds draws the SDK's direction box with skyboxProgram() and skyboxRenderState(): the box
+ *   follows whatever camera the chain draws with, its fragments hold the far plane's depth, and neither the host's
+ *   scene nor the camera's far plane has to agree with the box about anything.
+ * - THE MAP MAY ARRIVE LATE. An environment is usually streamed, so declaring a background with no map builds the
+ *   pass DISABLED and PassChain::setBackgroundMap turns it on once the cube map exists - the alternative, a chain
+ *   rebuilt when an asset lands, would re-register every pass of the picture for one texture.
+ */
+struct VN_GRAPHICS_API BackgroundOptions {
+    /** @brief The environment sampled in the direction of every ray that reached nothing; null draws none yet. */
+    intrusive_ptr<CubeMap> map;
+
+    /** @brief Rotation from a WORLD direction to the direction the cube map is authored in, or unset when the map is
+     *         already in the world's frame.
+     *
+     * @details
+     * - A map authored Y-up shown in a Z-up world states the quarter turn here. It has to be a ROTATION: an axis swap
+     *   has determinant -1 and MIRRORS the environment, which reads as looking into the sky instead of at it.
+     * - It is baked into the direction channel of the box the chain builds, so it belongs to the declaration: a
+     *   different frame is a different ChainDesc, not a live switch.
+     */
+    std::optional<vn::math::Mat3d> world_to_map;
+};
+
+/**
  * @brief Options controlling PassChain::build().
  *
  * @details
@@ -159,6 +194,20 @@ struct VN_GRAPHICS_API ChainDesc {
      * - The scene is lit by its own lights (like any forward pass).
      */
     intrusive_ptr<Scene> transparent;
+
+    /** @brief Optional BACKGROUND: what a ray that reached nothing sees (see BackgroundOptions).
+     *
+     * @details
+     * - UNSET (the default) draws no background, and what an empty pixel holds is the path's own answer: the window's
+     *   clear colour on the forward path, the deferred shading's debug grey on the deferred one.
+     * - SET (even with a null map) makes the chain own one - a scene of its own, drawn by a pass of its own right
+     *   after the shading and before any forward-only content, so that content blends ONTO the background instead of
+     *   floating over an empty pixel.
+     * - IT IS ALSO A STRUCTURAL CHOICE ON THE DEFERRED PATH: the background tests depth, and the depth it has to test
+     *   against is the G-buffer's, so a deferred chain that declares one bakes its result into the off-screen
+     *   composite (see PassChain::compositeTarget) exactly as a transparent scene does.
+     */
+    std::optional<BackgroundOptions> background;
 
     /** @brief How the opaque content is shaded (the structural choice). */
     ShadingPath path = ShadingPath::Forward;
@@ -387,14 +436,40 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief Gets the off-screen composite target of a composite pipeline.
      *
      * @details
-     * - A Deferred pipeline that also receives forward-only (transparent / overlay) content bakes an off-screen
-     *   composite target holding the lit opaque image plus the opaque depth the forward content occludes against; the
-     *   window pass then presents that composite.
-     * - Null when the pipeline has no transparent content.
+     * - A Deferred pipeline that also draws forward-only content (a background, a transparent scene, or both) bakes an
+     *   off-screen composite target holding the lit opaque image plus the opaque depth that content occludes against;
+     *   the window pass then presents that composite.
+     * - Null when the pipeline has neither.
      *
      * @return The composite target, or null when none was created.
      */
     raw_ptr<RenderTarget> compositeTarget() const;
+
+    /** @brief Gets the pass that draws this chain's background (see ChainDesc::background).
+     *
+     * @details
+     * - The pass' enabled flag IS "the background is drawn": a chain declared with a background but no environment
+     *   yet keeps the row (and the scene) and draws nothing (see PassChain::setBackgroundMap).
+     *
+     * @return The background pass, or null when the chain declared no background.
+     */
+    [[nodiscard]] raw_ptr<RenderPass> backgroundPass() const noexcept;
+
+    /** @brief Installs the environment this chain's background samples (see ChainDesc::background).
+     *
+     * @details
+     * - THE ONE WAY TO CHANGE IT AT RUNTIME, because the map and the pass' enabled flag are one answer: a map nobody
+     *   draws and a draw with no map are both mistakes, and two calls could leave the chain in either state.
+     * - A null @p map switches the background OFF (the pass stops drawing); the chain keeps its scene and its row, so
+     *   a later map needs no rebuild and costs no registration.
+     * - The scene the chain owns is re-published by the next publishContent(), so a frame that had already collected
+     *   it keeps the picture it started with (see Scene::publish).
+     *
+     * @param map The environment to sample, or null to draw no background.
+     * @return true when this chain HAS a background (it now samples @p map); false when it declared none - build with
+     *         ChainDesc::background to get one.
+     */
+    bool setBackgroundMap(intrusive_ptr<CubeMap> map);
 
     /** @brief How an overlay lays itself out for a surface size (see addOverlay).
      *
@@ -660,6 +735,17 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     intrusive_ptr<RenderPass> addPass(const PassDesc& desc, const String& role = String());
 
+    /** @brief Finds this chain's pass registered under @p role (see addPass).
+     *
+     * @details
+     * - ONE lookup for every role-keyed accessor (an overlay's, the background's): the role is bookkeeping of this
+     *   chain's (entries_), the row itself is the engine's (the plan identifies a pass by name).
+     *
+     * @param role Role the pass was added under.
+     * @return The pass, or null when this chain has no row under that role.
+     */
+    raw_ptr<RenderPass> passForRole(const String& role) const noexcept;
+
 
     /** @brief States which pass presents the picture, by NAME (applied with the chain's plan). */
     void setWindowPass(const String& name);
@@ -696,8 +782,14 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief Sets the extra scene this chain draws (see ChainDesc::transparent); the builder's call. */
     void setTransparentContent(intrusive_ptr<Scene> scene);
 
+    /** @brief Sets the background scene and its material (see ChainDesc::background); the builder's call. */
+    void setBackgroundContent(intrusive_ptr<Scene> scene, intrusive_ptr<Material> material);
+
     /** @brief Role the axis-gizmo HUD pass is registered under. */
     inline static constexpr const char8_t kGizmoRole[] = u8"gizmo";
+
+    /** @brief Role the background pass is registered under. */
+    inline static constexpr const char8_t kBackgroundRole[] = u8"skybox";
 
     /** @brief Role the frame-rate readout pass is registered under. */
     inline static constexpr const char8_t kStatsRole[] = u8"stats";
@@ -717,6 +809,10 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     intrusive_ptr<RenderTarget> composite_target_;
     /// The extra scene this chain draws (see ChainDesc::transparent), or null: owned here so it is published here.
     intrusive_ptr<Scene> transparent_content_;
+    /// The background scene this chain draws (see ChainDesc::background), or null - owned and published here too.
+    intrusive_ptr<Scene> background_content_;
+    /// The background's material (the half a scene cannot hold): the live map switch writes into it.
+    intrusive_ptr<Material> background_material_;
     // Every pass this chain applied, in registration order: the role a reader asks for (an overlay's, or empty) and
     // the plan name it is registered under. The node itself is the engine's (a plan identifies a pass by name), so
     // this list is the chain's own bookkeeping, not a second registry.
@@ -747,6 +843,8 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     // "this chain has no such overlay" (see setGizmoVisible / setStatsVisible).
     ReportOnce mode_refused_;
     ReportOnce overlay_refused_;
+    /// "This chain has no background" is one condition, not a per-call event (see setBackgroundMap).
+    ReportOnce background_refused_;
 };
 
 VN_GRAPHICS_NS_END
