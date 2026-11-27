@@ -138,6 +138,9 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
      * @details
      * - When enabled, dollying towards a picked point keeps that world point under the cursor; the orbit
      *   centre slides towards the anchor so successive rotations orbit around the region just approached.
+     * - When disabled the wheel moves straight along the view axis and the point under the cursor is not
+     *   held. Both paths that read the switch (`onScroll` and `dolly`) honour it, so a host gets one answer
+     *   whichever route its input takes.
      *
      * @param enabled True to dolly towards the cursor anchor.
      */

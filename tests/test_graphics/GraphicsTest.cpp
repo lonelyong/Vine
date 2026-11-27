@@ -1329,6 +1329,89 @@ TEST(CameraManipulatorTest, DollyClampsAtMinOrbitDistance)
     EXPECT_NEAR((cam->eye() - cam->target()).length(), manip.orbitDistance(), 1e-6);
 }
 
+TEST(CameraManipulatorTest, WheelStepIsAFractionOfTheOrbitDistance)
+{
+    // ONE NOTCH IS A FRACTION, NOT A LENGTH: the eye travels a fixed fraction of the eye-to-centre distance, and the
+    // wheel does not change that distance - the orbit centre travels with the eye. Two orbits of 10 and 20 units
+    // therefore travel twice as far per notch, which is what "the speed tracks the zoom level" has to mean here:
+    // against the target plane the factor per notch is constant.
+    const auto one_notch = [](double orbit) {
+        auto cam = intrusive_ptr<Camera>(new Camera());
+        // 30 deg above the horizon in a Z-up world: a basis the spherical model carries without the pole.
+        cam->lookAt(Vec3d(0.0, orbit * 0.86602540378443865, orbit * 0.5), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 0.0, 1.0));
+        cam->setPerspective(60.0, 0.1, 1000.0);
+
+        OrbitCameraManipulator manip(cam.get()); // no scene: nothing is picked, so no anchor sits on the ray
+        const Vec3d            eye0 = cam->eye();
+        EXPECT_NEAR(manip.orbitDistance(), orbit, 1e-9);
+
+        vn::window::ScrollEvent scroll;
+        scroll.deltaY = 1.0;
+        manip.onScroll(scroll);
+
+        EXPECT_NEAR(manip.orbitDistance(), orbit, 1e-9) << "the step's reference is the orbit distance, and the wheel does not change it";
+        return (cam->eye() - eye0).length();
+    };
+
+    const double ten    = one_notch(10.0);
+    const double twenty = one_notch(20.0);
+    EXPECT_GT(ten, 0.0);
+    EXPECT_NEAR(twenty, 2.0 * ten, 1e-9);
+}
+
+TEST(CameraManipulatorTest, WheelDivesAtThePickedAnchorUnlessDollyToCursorIsOff)
+{
+    // The pointer names a pixel whose ray meets the model OFF the view axis, so "dive at the anchor" and "move along
+    // the view axis" are different directions and the switch's effect is visible in the eye's path.
+    struct Notch {
+        Vec3d moved;     // Eye displacement of one notch.
+        Vec3d to_anchor; // Unit eye -> picked point, before the notch.
+        Vec3d forward;   // Unit eye -> target, before the notch.
+    };
+
+    const auto notch_at = [](bool dolly_to_cursor) -> Notch {
+        Scene scene;
+        scene.setRoot(makeTriangleNode(Vec3d(1.4, 0.0, 0.0), nullptr, u8"tri"));
+
+        auto        cam = intrusive_ptr<Camera>(new Camera());
+        const Vec3d eye(0.0, 0.0, 5.0);
+        cam->lookAt(eye, Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+        cam->setPerspective(60.0, 0.1, 1000.0);
+
+        OrbitCameraManipulator manip(cam.get(), &scene);
+        manip.onResize(vn::window::ResizeEvent{ 800, 600 });
+        manip.setDollyToCursor(dolly_to_cursor);
+
+        Vec3d anchor;
+        EXPECT_TRUE(manip.pickAt(600.0, 250.0, anchor)) << "the fixture's triangle must cover the chosen pixel";
+        const Vec3d forward = (cam->target() - eye).normalized();
+
+        vn::window::MouseEvent move;
+        move.x = 600.0;
+        move.y = 250.0;
+        manip.onMouseMove(move); // no button held: this records the pointer and moves nothing
+
+        vn::window::ScrollEvent scroll;
+        scroll.deltaY = 1.0;
+        manip.onScroll(scroll);
+
+        return { cam->eye() - eye, (anchor - eye).normalized(), forward };
+    };
+
+    const Notch diving = notch_at(true);
+    const Notch plain  = notch_at(false);
+
+    EXPECT_GT(diving.moved.length(), 0.0);
+    // The fixture is meaningful: the picked point is off the view axis, so the two answers differ.
+    EXPECT_LT(diving.to_anchor.dot(diving.forward), 0.99);
+    // On (the documented default): the eye travels straight at the picked point, which stays under the cursor.
+    EXPECT_NEAR(diving.moved.normalized().dot(diving.to_anchor), 1.0, 1e-9);
+    // Off: the wheel moves along the view axis and does not hold the anchor.
+    EXPECT_NEAR(plain.moved.normalized().dot(plain.forward), 1.0, 1e-9);
+    // The switch chooses the DIRECTION, not the amount: one notch moves the same distance either way.
+    EXPECT_NEAR(plain.moved.length(), diving.moved.length(), 1e-9);
+}
+
 TEST(CameraManipulatorTest, FitToScreenFramesScene)
 {
     Scene scene;

@@ -472,8 +472,10 @@ void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
     if (forward.length() < kTiny) {
         return;
     }
+    // The dive is what setDollyToCursor switches: with it off the wheel is a plain dolly along the view axis, so
+    // the point under the cursor is not held. Both readers of the switch (this one and dolly()) then agree.
     Vec3d dir = forward;
-    if (anchor_on_ray_) {
+    if (anchor_on_ray_ && dolly_to_cursor_) {
         const Vec3d  to_anchor    = anchor_ - eye;
         const double d            = to_anchor.length();
         // Keep the dive aimed at the anchor while it is clearly in front (it
@@ -487,8 +489,10 @@ void OrbitCameraManipulator::onScroll(const vn::window::ScrollEvent& event)
         }
     }
 
-    // Move by a fraction of the current eye-to-centre distance per notch so
-    // the dolly speed tracks the zoom level.
+    // One notch moves the eye a fixed FRACTION of the orbit distance (eye-to-centre), and the wheel does not change
+    // that distance - the centre travels with the eye. Measured against the target plane this is exactly the nominal
+    // factor per notch (d -> d / wheel_factor_); against a picked anchor NEARER than the centre the eye closes faster
+    // than that, which is what the release rule above answers.
     const double ratio = 1.0 - 1.0 / wheel_factor_;
     const double step  = (event.deltaY > 0.0 ? distance_ * ratio : -distance_ * ratio);
     center_ += dir * step;
