@@ -30,7 +30,7 @@ namespace detail
  * consumer (see TaskCompletionSource for the contract).
  */
 template <typename T>
-struct TcsState {
+struct TaskCompletionSourceState {
     std::mutex                           mutex;
     bool                                 completed{ false };
     std::optional<T>                     value{};
@@ -42,7 +42,7 @@ struct TcsState {
  * @brief Shared completion state of a void TaskCompletionSource.
  */
 template <>
-struct TcsState<void> {
+struct TaskCompletionSourceState<void> {
     std::mutex                           mutex;
     bool                                 completed{ false };
     std::exception_ptr                   exception{};
@@ -57,16 +57,21 @@ struct TcsState<void> {
  * coroutine (mirrors AsyncEvent's safety).
  */
 template <typename T>
-class TcsAwaiter {
+class TaskCompletionSourceAwaiter {
   public:
-    explicit TcsAwaiter(std::shared_ptr<TcsState<T>> state) noexcept
+    /**
+     * @brief Binds the awaiter to the source's shared state.
+     *
+     * @param state State of the source being awaited; kept alive for the duration of the await.
+     */
+    explicit TaskCompletionSourceAwaiter(std::shared_ptr<TaskCompletionSourceState<T>> state) noexcept
       : state_(std::move(state))
     {}
 
-    TcsAwaiter(const TcsAwaiter&)            = delete;
-    TcsAwaiter& operator=(const TcsAwaiter&) = delete;
+    TaskCompletionSourceAwaiter(const TaskCompletionSourceAwaiter&)            = delete;
+    TaskCompletionSourceAwaiter& operator=(const TaskCompletionSourceAwaiter&) = delete;
 
-    ~TcsAwaiter() noexcept
+    ~TaskCompletionSourceAwaiter() noexcept
     {
         if (handle_) {
             std::lock_guard<std::mutex> lock(state_->mutex);
@@ -131,7 +136,7 @@ class TcsAwaiter {
     }
 
   private:
-    std::shared_ptr<TcsState<T>> state_;
+    std::shared_ptr<TaskCompletionSourceState<T>> state_;
     std::coroutine_handle<>      handle_{};
 
     /// Why the waiter could not be registered; rethrown by await_resume().
@@ -147,7 +152,7 @@ class TcsAwaiter {
  * from the shared list, so the next iteration simply does not find it.
  */
 template <typename T>
-inline void resumeWaitersOneByOne(const std::shared_ptr<TcsState<T>>& state) noexcept
+inline void resumeWaitersOneByOne(const std::shared_ptr<TaskCompletionSourceState<T>>& state) noexcept
 {
     for (;;) {
         std::coroutine_handle<> h;
@@ -333,16 +338,16 @@ class TaskCompletionSource {
     Task<T> task()
     {
         if constexpr (std::is_void_v<T>) {
-            co_await detail::TcsAwaiter<T>{ impl_ };
+            co_await detail::TaskCompletionSourceAwaiter<T>{ impl_ };
             co_return;
         }
         else {
-            co_return co_await detail::TcsAwaiter<T>{ impl_ };
+            co_return co_await detail::TaskCompletionSourceAwaiter<T>{ impl_ };
         }
     }
 
   private:
-    std::shared_ptr<detail::TcsState<T>> impl_{ std::make_shared<detail::TcsState<T>>() };
+    std::shared_ptr<detail::TaskCompletionSourceState<T>> impl_{ std::make_shared<detail::TaskCompletionSourceState<T>>() };
 };
 
 /**
@@ -481,12 +486,12 @@ class TaskCompletionSource<void> {
     [[nodiscard]]
     Task<void> task()
     {
-        co_await detail::TcsAwaiter<void>{ impl_ };
+        co_await detail::TaskCompletionSourceAwaiter<void>{ impl_ };
         co_return;
     }
 
   private:
-    std::shared_ptr<detail::TcsState<void>> impl_{ std::make_shared<detail::TcsState<void>>() };
+    std::shared_ptr<detail::TaskCompletionSourceState<void>> impl_{ std::make_shared<detail::TaskCompletionSourceState<void>>() };
 };
 
 VN_ASYNC_NS_END

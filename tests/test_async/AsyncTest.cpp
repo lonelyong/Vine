@@ -506,12 +506,12 @@ async::Task<void> latchWaitFlag(async::AsyncLatch& latch, bool& released)
 async::Task<void> rwBasic(async::AsyncReaderWriterLock& lock, int& value)
 {
     {
-        auto guard = co_await lock.writerLock();
+        auto guard = co_await lock.writeLock();
         (void)guard;
         value = 5;
     }
     {
-        auto guard = co_await lock.readerLock();
+        auto guard = co_await lock.readLock();
         (void)guard;
         EXPECT_EQ(value, 5);
     }
@@ -520,7 +520,7 @@ async::Task<void> rwBasic(async::AsyncReaderWriterLock& lock, int& value)
 
 async::Task<void> rwReaderConcurrent(async::AsyncReaderWriterLock& lock, std::atomic<int>& active, std::atomic<int>& max_active)
 {
-    auto guard = co_await lock.readerLock();
+    auto guard = co_await lock.readLock();
     (void)guard;
     int now = ++active;
     int cur = max_active.load();
@@ -531,7 +531,7 @@ async::Task<void> rwReaderConcurrent(async::AsyncReaderWriterLock& lock, std::at
 
 async::DetachedTask rwReaderHold(async::AsyncReaderWriterLock& lock, async::AsyncEvent& r1_held, async::AsyncEvent& w1_done)
 {
-    auto guard = co_await lock.readerLock();
+    auto guard = co_await lock.readLock();
     (void)guard;
     r1_held.set();
     co_await w1_done;
@@ -539,7 +539,7 @@ async::DetachedTask rwReaderHold(async::AsyncReaderWriterLock& lock, async::Asyn
 
 async::DetachedTask rwWriterThen(async::AsyncReaderWriterLock& lock, async::AsyncEvent& w1_done, std::atomic<bool>& ran)
 {
-    auto guard = co_await lock.writerLock();
+    auto guard = co_await lock.writeLock();
     (void)guard;
     ran.store(true);
     w1_done.set();
@@ -547,14 +547,14 @@ async::DetachedTask rwWriterThen(async::AsyncReaderWriterLock& lock, async::Asyn
 
 async::DetachedTask rwReaderThen(async::AsyncReaderWriterLock& lock, std::atomic<bool>& ran)
 {
-    auto guard = co_await lock.readerLock();
+    auto guard = co_await lock.readLock();
     (void)guard;
     ran.store(true);
 }
 
 async::DetachedTask rwWriterHolder(async::AsyncReaderWriterLock& lock, async::AsyncEvent& held, async::AsyncEvent& release, std::atomic<bool>& done)
 {
-    auto guard = co_await lock.writerLock();
+    auto guard = co_await lock.writeLock();
     (void)guard;
     held.set();
     co_await release;
@@ -563,7 +563,7 @@ async::DetachedTask rwWriterHolder(async::AsyncReaderWriterLock& lock, async::As
 
 async::DetachedTask rwWriterHoldRelease(async::AsyncReaderWriterLock& lock, async::AsyncEvent& held, async::AsyncEvent& release)
 {
-    auto guard = co_await lock.writerLock();
+    auto guard = co_await lock.writeLock();
     (void)guard;
     held.set();
     co_await release;
@@ -571,7 +571,7 @@ async::DetachedTask rwWriterHoldRelease(async::AsyncReaderWriterLock& lock, asyn
 
 async::Task<void> rwWriterLockUnlock(async::AsyncReaderWriterLock& lock)
 {
-    auto guard = co_await lock.writerLock();
+    auto guard = co_await lock.writeLock();
     (void)guard;
     co_return;
 }
@@ -794,7 +794,7 @@ async::Task<void> queueMakeAny(async::AsyncQueue<int>& queue, std::atomic<int>& 
 async::Task<void> rwReaderLoser(async::AsyncReaderWriterLock& lock, std::atomic<int>& registered, std::atomic<int>& acquired)
 {
     ++registered;
-    auto guard = co_await lock.readerLock();
+    auto guard = co_await lock.readLock();
     (void)guard;
     ++acquired;
 }
@@ -883,7 +883,7 @@ async::Task<void> scopeChildThatReports(async::AsyncEvent& release, std::atomic<
 async::DetachedTask scopeJoinProbe(async::AsyncEvent& release, CancellationToken token, std::atomic<bool>& cancelled_seen, std::thread::id& wake_thread)
 {
     async::Scope scope;
-    scope.add(scopeChildThatReports(release, s_scopeChildFinished));
+    scope.spawn(scopeChildThatReports(release, s_scopeChildFinished));
     try {
         co_await scope.join(token);
     }
@@ -1545,7 +1545,7 @@ TEST(AsyncMutexTest, FifoOrder)
 
     async::Scope scope;
     for (int i = 1; i <= 4; ++i) {
-        scope.add(fifoWorker(mutex, order, i));
+        scope.spawn(fifoWorker(mutex, order, i));
     }
 
     // All four are now queued; releasing kicks off FIFO handoff.
@@ -1749,9 +1749,9 @@ TEST(ScopeTest, AddAndJoin)
     async::Scope scope;
     bool         a = false;
     bool         b = false;
-    scope.add(noop());
-    scope.add(scopeFlag(a));
-    scope.add(scopeFlag(b));
+    scope.spawn(noop());
+    scope.spawn(scopeFlag(a));
+    scope.spawn(scopeFlag(b));
     scope.join().result();
     EXPECT_TRUE(a);
     EXPECT_TRUE(b);
@@ -1761,7 +1761,7 @@ TEST(ScopeTest, JoinWaitsForSlowChild)
 {
     async::Scope      scope;
     async::AsyncEvent slow;
-    scope.add(scopeAwaitEvent(slow));
+    scope.spawn(scopeAwaitEvent(slow));
 
     std::thread setter([&slow] {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -1774,7 +1774,7 @@ TEST(ScopeTest, JoinWaitsForSlowChild)
 TEST(ScopeTest, JoinRethrowsChildFailure)
 {
     async::Scope scope;
-    scope.add(failTask());
+    scope.spawn(failTask());
     EXPECT_THROW(scope.join().result(), std::runtime_error);
 }
 
@@ -1822,7 +1822,7 @@ TEST(ScopeTest, RunsChildrenOnPool)
     vn::ThreadPool   pool(2);
     std::atomic<int> counter{ 0 };
     for (int i = 0; i < 4; ++i) {
-        scope.add(async::runOn(pool, [&counter] { return ++counter; }));
+        scope.spawn(async::runOn(pool, [&counter] { return ++counter; }));
     }
     scope.join().result();
     EXPECT_EQ(counter.load(), 4);
@@ -2975,7 +2975,7 @@ eventReArmAndFinish(async::AsyncEvent& event, async::Scope& scope, std::atomic<i
     ++registered;
     co_await event;                                             // gen-1 waiter, queued first, so it is the first one resumed
     event.reset();                                              // re-arm while set() is still unwinding (the read-loop pattern)
-    scope.add(eventGen2Waiter(event, gen2_woken, gen2_is_set)); // gen-2 waiter, queued now
+    scope.spawn(eventGen2Waiter(event, gen2_woken, gen2_is_set)); // gen-2 waiter, queued now
     co_return;                                                  // finishing makes whenAny the winner: the sibling below is destroyed
 }
 
@@ -3269,7 +3269,7 @@ TEST(SleepTimerTest, ConcurrentSleepsShareOneTimerThread)
 #endif
     std::atomic<int> completed{ 0 };
     for (int i = 0; i < 32; ++i) {
-        scope.add(sleepCounted(std::chrono::milliseconds(100), completed));
+        scope.spawn(sleepCounted(std::chrono::milliseconds(100), completed));
     }
 #if defined(__linux__)
     const long during = osThreadCount();
@@ -3337,7 +3337,7 @@ TEST(SleepTimerTest, CancellationResumesOnTheTimerThreadNotTheCancellers)
 
 TEST(SleepTimerTest, ShorterDeadlineInsertedLaterStillFiresFirst)
 {
-    // install() must wake the worker when a new deadline jumps the queue;
+    // schedule() must wake the worker when a new deadline jumps the queue;
     // without that notification the later, shorter sleep would only fire when
     // the earlier long deadline expires. Bound chosen far below the 400 ms long
     // sleep, so this is a real check and not a timing race.
@@ -3345,11 +3345,11 @@ TEST(SleepTimerTest, ShorterDeadlineInsertedLaterStillFiresFirst)
     std::atomic<bool> long_done{ false };
     std::atomic<bool> short_done{ false };
 
-    scope.add(sleepFlag(std::chrono::milliseconds(400), long_done));
+    scope.spawn(sleepFlag(std::chrono::milliseconds(400), long_done));
     std::this_thread::sleep_for(std::chrono::milliseconds(20)); // long sleep arms first
 
     const auto start = std::chrono::steady_clock::now();
-    scope.add(sleepFlag(std::chrono::milliseconds(20), short_done));
+    scope.spawn(sleepFlag(std::chrono::milliseconds(20), short_done));
     while (!short_done.load() && std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -3371,7 +3371,7 @@ TEST(SleepTimerTest, ManyStaggeredDeadlinesAllFireOnce)
     std::atomic<int> completed{ 0 };
     const auto       start = std::chrono::steady_clock::now();
     for (int i = 0; i < 100; ++i) {
-        scope.add(sleepCounted(std::chrono::milliseconds(1 + i % 20), completed));
+        scope.spawn(sleepCounted(std::chrono::milliseconds(1 + i % 20), completed));
     }
     scope.join().result();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
@@ -3799,7 +3799,7 @@ TEST(ScopeTest, ChildrenRunInTheScopesEnvironmentAndLeavingAsksThemToStop)
 
     {
         async::Scope scope;
-        scope.add(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
+        scope.spawn(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         EXPECT_EQ(scope.pendingChildren(), 1u);
     } // leaving the scope requests stop, without waiting
@@ -3816,7 +3816,7 @@ TEST(ScopeTest, JoinStopAndWaitAsksTheChildrenToStopAndWaitsForThem)
     async::Scope      scope;
     std::atomic<bool> cancelled{ false };
     std::atomic<bool> finished{ false };
-    scope.add(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
+    scope.spawn(sleepInEnvironment(std::chrono::milliseconds(2000), cancelled, finished));
 
     vn::CancellationSource source;
     std::thread            canceller([&] {
@@ -3843,7 +3843,7 @@ TEST(ScopeTest, ADetachedScopeLeavesItsChildrenAlone)
 
     {
         async::Scope scope;
-        scope.add(sleepInEnvironment(std::chrono::milliseconds(120), cancelled, finished));
+        scope.spawn(sleepInEnvironment(std::chrono::milliseconds(120), cancelled, finished));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         scope.detach();
     }
@@ -4141,12 +4141,12 @@ TEST(ScopeTest, ABatchAfterRequestStopGetsAFreshUnrequestedToken)
     // requestStop() applies to the batch it was made in. A later add() starts a new batch, so it
     // must be handed a fresh source instead of inheriting the stopped one.
     async::Scope scope;
-    scope.add(noop());
+    scope.spawn(noop());
     scope.join().result();
     scope.requestStop(); // the finished batch's request
 
     std::optional<std::stop_token> seen;
-    scope.add(readEnvironment(seen));
+    scope.spawn(readEnvironment(seen));
     scope.join().result();
 
     ASSERT_TRUE(seen.has_value());

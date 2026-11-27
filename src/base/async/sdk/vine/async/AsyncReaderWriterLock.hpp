@@ -109,7 +109,7 @@ class AsyncWriterGuard {
  * guard obtained from it. Waiters unregister on destruction, so an abandoned
  * wait is safe.
  *
- * Usage: auto guard = co_await lock.readerLock(); (or writerLock()); the guard
+ * Usage: auto guard = co_await lock.readLock(); (or writeLock()); the guard
  * releases on destruction.
  *
  * Internal invariants (guarded by mutex_):
@@ -258,7 +258,7 @@ class AsyncReaderWriterLock {
      * @return An awaiter; co_await it to hold a read lock until the guard dies.
      */
     [[nodiscard]]
-    ReaderAwaiter readerLock() noexcept
+    ReaderAwaiter readLock() noexcept
     {
         return ReaderAwaiter{ *this };
     }
@@ -269,7 +269,7 @@ class AsyncReaderWriterLock {
      * @return An awaiter; co_await it to hold a write lock until the guard dies.
      */
     [[nodiscard]]
-    WriterAwaiter writerLock() noexcept
+    WriterAwaiter writeLock() noexcept
     {
         return WriterAwaiter{ *this };
     }

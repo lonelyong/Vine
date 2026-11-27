@@ -44,7 +44,7 @@ asked reports that instead of dropping the request.
 - A suspended coroutine **cannot** be destroyed by another thread while the object it awaits is completing it.
 - **Abandoning a wait is supported**: before destroying a waiting coroutine, the awaiter unregisters itself in its destructor; the library guarantees that “a destroyed waiter is never resumed”.
 - Every awaiter carries its own unregister logic (`AsyncEvent::Awaiter::queued_`, `CvWaiter::queued_`,
-  `AsyncMutex::LockAwaiter::waiter_`、`TcsAwaiter::handle_`、`SharedTaskAwaiter::handle_`、
+  `AsyncMutex::LockAwaiter::waiter_`、`TaskCompletionSourceAwaiter::handle_`、`SharedTaskAwaiter::handle_`、
   `SleepAwaiter::scheduled_` and so on).
 - The duty covers a slot that is not a list. A composition has exactly one waiter, so its park slot (`detail::WhenBaton`) is a borrowed
   handle in shared state, and `~ParkAwaiter` withdraws it (§2.6). Without that, a posted cancellation wake arriving after the driver was

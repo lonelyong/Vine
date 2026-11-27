@@ -242,7 +242,7 @@ void deferWhenWake(const std::shared_ptr<State>& state) noexcept
  * data race exists.
  *
  * policy and source are what a completed composition does about its children: source is the
- * environment every child is handed (the same mechanism Scope::add uses, see TaskEnvironment), and
+ * environment every child is handed (the same mechanism Scope::spawn uses, see TaskEnvironment), and
  * policy decides whether being done means "ask them to stop and wait" or "destroy them now". A
  * Destroy composition never calls source.request_stop(), so the token its children see stays inert.
  */
@@ -441,7 +441,7 @@ class WhenChild {
  *
  * The task is handed the composition's environment before it is awaited: it is still lazy here, so
  * this is the last moment at which it can be told what environment it lives in (see
- * currentStopToken(); Scope::add() does the same injection on the scope side).
+ * currentStopToken(); Scope::spawn() does the same injection on the scope side).
  *
  * @param task Task to drive; must be non-empty.
  * @param token Environment token handed to the task.

@@ -28,8 +28,8 @@ namespace detail
  * @brief One pending wake-up in the shared timer service.
  *
  * Owned by the awaiter; the service keeps only a weak reference, so a timer
- * can never outlive the frame waiting on it. installed/settled/aborted are
- * guarded by the service mutex: `installed` publishes the node into the
+ * can never outlive the frame waiting on it. scheduled/settled/aborted are
+ * guarded by the service mutex: `scheduled` publishes the node into the
  * deadline queue, `aborted` records a token cancellation that arrived while
  * arming, and `settled` is the claim deciding who may resume the continuation.
  */
@@ -38,12 +38,12 @@ struct TimerNode {
     std::coroutine_handle<>               continuation{};
 
     /// true once this node is in the deadline queue.
-    bool installed{ false };
+    bool scheduled{ false };
 
     /// true once claimed (resumed) or abandoned; never resumed after that.
     bool settled{ false };
 
-    /// true when the token was cancelled before the node was installed.
+    /// true when the token was cancelled before the node was scheduled.
     bool aborted{ false };
 
     /// true while the node sits in the service's early-wake queue.
@@ -100,7 +100,7 @@ class TimerService {
      * @return true when the wait is live, false when the token was cancelled
      * while arming and the caller must not suspend.
      */
-    bool install(const std::shared_ptr<TimerNode>& node);
+    bool schedule(const std::shared_ptr<TimerNode>& node);
 
     /**
      * @brief Asks the timer thread to resume a wait early (token cancelled).
@@ -180,13 +180,13 @@ inline void TimerService::ensureWorkerLocked()
     }
 }
 
-inline bool TimerService::install(const std::shared_ptr<TimerNode>& node)
+inline bool TimerService::schedule(const std::shared_ptr<TimerNode>& node)
 {
     std::lock_guard lock(mutex_);
     if (node->aborted) {
         return false; // Cancelled while arming: never schedule a dead wait.
     }
-    node->installed = true;
+    node->scheduled = true;
     timers_.emplace(node->deadline, node);
     ensureWorkerLocked();
     // The new deadline may be earlier than the one the worker waits for.
@@ -202,8 +202,8 @@ inline void TimerService::requestAbort(const std::shared_ptr<TimerNode>& node) n
             return;
         }
         node->aborted = true;
-        if (!node->installed) {
-            // install() sees `aborted` and refuses to suspend; nothing to resume.
+        if (!node->scheduled) {
+            // schedule() sees `aborted` and refuses to suspend; nothing to resume.
             return;
         }
         node->queued = true;
@@ -299,7 +299,7 @@ inline void TimerService::run() noexcept
         }
 
         if (timers_.begin()->first > std::chrono::steady_clock::now()) {
-            // Sleep exactly until the earliest deadline; install() and
+            // Sleep exactly until the earliest deadline; schedule() and
             // requestAbort() notify when the queue changes.
             cv_.wait_until(lock, timers_.begin()->first);
             continue;
@@ -393,11 +393,11 @@ class SleepAwaiter {
             abort_.emplace(token_, AbortRequest{ node_ });
         }
 
-        // Publish last: install() hands the node to the timer thread, and the
+        // Publish last: schedule() hands the node to the timer thread, and the
         // destructor (which may run on that thread, at the deadline) reads this
         // flag, so it has to be written before the node becomes visible.
         scheduled_ = true;
-        if (!TimerService::instance().install(node_)) {
+        if (!TimerService::instance().schedule(node_)) {
             scheduled_ = false; // Never published, so there is nothing to cancel.
             return false;       // Cancelled while arming: no wait, await_resume throws.
         }

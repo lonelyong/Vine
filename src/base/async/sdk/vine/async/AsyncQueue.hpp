@@ -80,7 +80,7 @@ class WakePeerAndContinue {
      * @param kind Which waiter list to wake when the action runs.
      */
     WakePeerAndContinue(std::shared_ptr<AsyncQueueState<T>> state, PeerKind kind)
-      : work_(std::make_shared<Work>(std::move(state), kind))
+      : hand_off_(std::make_shared<HandOff>(std::move(state), kind))
     {}
 
     WakePeerAndContinue(const WakePeerAndContinue&)            = delete;
@@ -88,8 +88,8 @@ class WakePeerAndContinue {
 
     ~WakePeerAndContinue() noexcept
     {
-        std::lock_guard<std::mutex> lock(work_->mutex);
-        work_->waiter = {};
+        std::lock_guard<std::mutex> lock(hand_off_->mutex);
+        hand_off_->waiter = {};
     }
 
     [[nodiscard]]
@@ -107,10 +107,10 @@ class WakePeerAndContinue {
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
         {
-            std::lock_guard<std::mutex> lock(work_->mutex);
-            work_->waiter = h;
+            std::lock_guard<std::mutex> lock(hand_off_->mutex);
+            hand_off_->waiter = h;
         }
-        TimerService::instance().postWake(work_, &WakePeerAndContinue<T>::run);
+        TimerService::instance().postWake(hand_off_, &WakePeerAndContinue<T>::run);
         return true;
     }
 
@@ -119,20 +119,20 @@ class WakePeerAndContinue {
 
   private:
     /// Hand-off shared with the posted action: the queue state plus this coroutine's registration.
-    struct Work {
+    struct HandOff {
         /**
          * @brief Binds one hand-off to its queue state and waiter list.
          *
          * @param state_ Queue state whose waiter list is woken.
          * @param kind_ Which waiter list to wake when the action runs.
          */
-        Work(std::shared_ptr<AsyncQueueState<T>> state_, PeerKind kind_) noexcept
+        HandOff(std::shared_ptr<AsyncQueueState<T>> state_, PeerKind kind_) noexcept
           : state(std::move(state_))
           , kind(kind_)
         {}
 
-        Work(const Work&)            = delete;
-        Work& operator=(const Work&) = delete;
+        HandOff(const HandOff&)            = delete;
+        HandOff& operator=(const HandOff&) = delete;
 
         std::shared_ptr<AsyncQueueState<T>> state;
         PeerKind                            kind;
@@ -143,12 +143,12 @@ class WakePeerAndContinue {
     /// Runs on the timer thread: wake one peer, then resume this operation if it is still alive.
     static void run(void* p) noexcept
     {
-        auto& work = *static_cast<Work*>(p);
+        auto& hand_off = *static_cast<HandOff*>(p);
 
         std::coroutine_handle<> peer{};
         {
-            std::lock_guard<std::mutex> lock(work.state->mutex);
-            auto&                       list = (work.kind == PeerKind::Poppers) ? work.state->poppers : work.state->pushers;
+            std::lock_guard<std::mutex> lock(hand_off.state->mutex);
+            auto&                       list = (hand_off.kind == PeerKind::Poppers) ? hand_off.state->poppers : hand_off.state->pushers;
             if (!list.empty()) {
                 peer = list.front();
                 list.erase(list.begin());
@@ -160,15 +160,15 @@ class WakePeerAndContinue {
 
         std::coroutine_handle<> self{};
         {
-            std::lock_guard<std::mutex> lock(work.mutex);
-            self = std::exchange(work.waiter, {});
+            std::lock_guard<std::mutex> lock(hand_off.mutex);
+            self = std::exchange(hand_off.waiter, {});
         }
         if (self) {
             self.resume();
         }
     }
 
-    std::shared_ptr<Work> work_;
+    std::shared_ptr<HandOff> hand_off_;
 };
 
 /**

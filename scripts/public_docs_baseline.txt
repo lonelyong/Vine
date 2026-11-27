@@ -58,8 +58,6 @@ src/base/async/sdk/vine/async/Task.hpp	param|WaitTask::WaitTask/1
 src/base/async/sdk/vine/async/Task.hpp	param|nodiscard::Task/1
 src/base/async/sdk/vine/async/TaskCombinators.hpp	param|transform/2
 src/base/async/sdk/vine/async/TaskCombinators.hpp	return|transform
-src/base/async/sdk/vine/async/TaskCompletionSource.hpp	brief|TcsAwaiter::TcsAwaiter
-src/base/async/sdk/vine/async/TaskCompletionSource.hpp	param|TcsAwaiter::TcsAwaiter/1
 src/base/async/sdk/vine/async/ThreadPoolScheduler.hpp	brief|ScheduleAwaiter::ScheduleAwaiter
 src/base/async/sdk/vine/async/ThreadPoolScheduler.hpp	brief|ThreadPoolScheduler::ThreadPoolScheduler
 src/base/async/sdk/vine/async/ThreadPoolScheduler.hpp	param|ScheduleAwaiter::ScheduleAwaiter/1

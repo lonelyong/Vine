@@ -75,27 +75,27 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
 /**
  * @brief Structured concurrency scope for dynamically-created children.
  *
- * The C++/folly co_scope equivalent. add() starts a child task eagerly so it
+ * The C++/folly co_scope equivalent. spawn() starts a child task eagerly so it
  * runs concurrently with the enclosing coroutine; co_await join() suspends
- * until every added child completes, rethrowing the first child failure.
+ * until every spawned child completes, rethrowing the first child failure.
  *
  * Children are self-owned (they run to completion independently), so the
  * Scope must not be destroyed while a join() task is still waiting; await
  * join() before the Scope goes out of scope to guarantee all children have
- * finished. A child may be added after a previous join(); this starts a fresh
+ * finished. A child may be spawned after a previous join(); this starts a fresh
  * batch whose failures are collected by the next join(), and whose stop source
  * is new: a requestStop() aimed at the previous batch does not reach it.
  *
- * Environment: the scope owns a std::stop_source and hands its token to every child it adds, so
+ * Environment: the scope owns a std::stop_source and hands its token to every child it spawns, so
  * a child that reads co_await currentStopToken() - and passes that token to the operations it
  * awaits - can be asked to stop. Destroying the scope makes that request (see ~Scope); it cannot cancel a child
  * that does not read the token, and it does not wait for one, so pendingChildren() is what a host
  * uses to notice a scope that went away with work still running. detach() is how a caller says
  * "leave this batch alone".
  *
- * add() and join() must not be called concurrently from different threads:
+ * spawn() and join() must not be called concurrently from different threads:
  * the pending counter and the first-failure slot are batch-level state whose
- * add/join interleaving is intentionally left to the caller to serialize.
+ * spawn/join interleaving is intentionally left to the caller to serialize.
  */
 class Scope {
   public:
@@ -107,7 +107,7 @@ class Scope {
      * Children that read their environment token (co_await currentStopToken()) and pass it to
      * what they await observe the request and can finish early; one that never looks is unaffected.
      * The scope still waits for them in join() - detach() is the call that lets them be ignored.
-     * The next add() starts a fresh batch that is tracked again.
+     * The next spawn() starts a fresh batch that is tracked again.
      */
     void detach() noexcept
     {
@@ -119,7 +119,7 @@ class Scope {
      *
      * A request, not a cancellation: it is recorded in the scope's stop_source, and only a child
      * that reads the token reacts to it. Calling this is harmless when there are no children, or
-     * when they have all finished. The request is scoped to the current batch; the next add()
+     * when they have all finished. The request is scoped to the current batch; the next spawn()
      * after the batch has finished starts with a fresh, unrequested source.
      */
     void requestStop() noexcept
@@ -134,7 +134,7 @@ class Scope {
      * itself cannot do more than ask (a destructor is not a coroutine, so it cannot wait, and
      * blocking the thread or pumping an event loop would be the host's decision).
      *
-     * @return Number of added children that have not completed yet.
+     * @return Number of spawned children that have not completed yet.
      */
     [[nodiscard]]
     std::size_t pendingChildren() const noexcept
@@ -174,7 +174,7 @@ class Scope {
      * @param task Task to run; must be non-empty.
      */
     template <typename T>
-    void add(Task<T> task)
+    void spawn(Task<T> task)
     {
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
@@ -197,7 +197,7 @@ class Scope {
     }
 
     /**
-     * @brief Waits until every added child completes.
+     * @brief Waits until every spawned child completes.
      *
      * Rethrows the first exception recorded by any child. If the token is
      * cancelled while waiting, TaskCancelledException is thrown and the
@@ -267,7 +267,7 @@ class Scope {
   private:
     std::shared_ptr<detail::ScopeState> state_{ std::make_shared<detail::ScopeState>() };
 
-    /// Environment handed to every child of the scope; see add() and requestStop().
+    /// Environment handed to every child of the scope; see spawn() and requestStop().
     std::stop_source source_{};
 
     /// true while the current batch is exempt from the destructor's stop request; see detach().
