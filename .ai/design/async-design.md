@@ -46,8 +46,8 @@ asked reports that instead of dropping the request.
 - Every awaiter carries its own unregister logic (`AsyncEvent::Awaiter::queued_`, `CvWaiter::queued_`,
   `AsyncMutex::LockAwaiter::waiter_`、`TcsAwaiter::handle_`、`SharedTaskAwaiter::handle_`、
   `SleepAwaiter::scheduled_` and so on).
-- The duty covers a slot that is not a list. A composition has exactly one waiter, so its park slot (`detail::WhenSignal`) is a borrowed
-  handle in shared state, and `~WhenPark` withdraws it (§2.6). Without that, a posted cancellation wake arriving after the driver was
+- The duty covers a slot that is not a list. A composition has exactly one waiter, so its park slot (`detail::WhenBaton`) is a borrowed
+  handle in shared state, and `~ParkAwaiter` withdraws it (§2.6). Without that, a posted cancellation wake arriving after the driver was
   destroyed resumes a freed frame - the one path “no waiter pointer across a resume” cannot reach, because the waiter is found through
   the state rather than through a list.
 
@@ -107,17 +107,19 @@ In a composition child the returned handle is the driver's, which is also what l
 
 ### 2.6 A composition hands its driver back instead of waking it
 
-- A composition has exactly one waiter - its own driver - so its wake-up is a **single-slot hand-off** (`detail::WhenSignal`), not an event with a waiter list.
+- A composition has exactly one waiter - its own driver - so its wake-up is a **single-slot hand-off** (`detail::WhenBaton`), not an event with a waiter list.
+  The shape is folly's `coro::Baton` and cppcoro's `single_consumer_event`; the awaiter is `detail::ParkAwaiter`, and the verb pair
+  `park` / `wake` / `unpark` is the one Rust's `thread::park` and Tokio's `Parker` use for the same three acts.
 - A child that finishes offers its `final_suspend::await_suspend` the driver's handle and **returns it** (symmetric transfer); it never resumes the driver there.
   Why: a driver that completes is destroyed together with its children, and a coroutine may only be destroyed while it is **suspended** - during `await_suspend` it is not, so an inline resume destroys a frame that is still executing.
   That is undefined behaviour, and no sanitizer reports it, because nothing writes to the frame after the return.
-- `WhenSignal::park` / `wake` therefore keep two states rather than a flag to re-arm: a completion arriving while no driver is parked sets `pending_`, and the next park consumes it without suspending.
-  `drainChildren` is then a plain `while (remaining != 0) co_await park`, with no window between clearing a flag and waiting in which a completion could be lost.
+- `WhenBaton::park` / `wake` therefore keep two states rather than a flag to re-arm: a completion arriving while no driver is parked sets `pending_`, and the next park consumes it without suspending.
+  `waitForChildren` is then a plain `while (remaining != 0) co_await ParkAwaiter{state}`, with no window between clearing a flag and waiting in which a completion could be lost.
 - The rule is checked where it can still be observed: `~WhenChild` / `~WhenAnyChild` assert that the child's final `await_suspend` is not on the stack (`async-design.md` §6.4).
 - Cancellation still posts its wake-up (`detail::deferWhenWake`): a `std::stop_callback` may not resume the driver either, for the same same-thread-destruction reason.
 - The hand-off has a second half. The driver can be destroyed while parked - a `Destroy` parent, a `Scope` teardown - and a posted
-  cancellation wake can still be queued behind it. The park slot is therefore *registered*, not merely written: `~WhenPark` calls
-  `WhenSignal::unpark`, so a later `wake()` finds nothing and reports `noop_coroutine()` instead of handing back a freed frame.
+  cancellation wake can still be queued behind it. The park slot is therefore *registered*, not merely written: `~ParkAwaiter` calls
+  `WhenBaton::unpark`, so a later `wake()` finds nothing and reports `noop_coroutine()` instead of handing back a freed frame.
   `unpark` clears the slot only when it still holds the handle being withdrawn, so it can never cancel a later park.
 
 Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acquisition per completion) and G11 (the invariant is asserted at the point where a violation becomes observable).
@@ -281,14 +283,14 @@ Serves G4 (the position rule is stated and enforced) and G12 (the constraint nam
 | N4 | `TimerService` deliberately never destructs (a process-wide singleton plus a worker thread). |
 | N5 | `SharedTask` takes its waiters out one at a time and never holds a handle across a resume. |
 | N6 | `notify_all` releases the generation queued when the call started; a waiter that registers during the loop waits for the next notify. |
-| N7 | a parked composition driver withdraws its handle in `~WhenPark`; a later `wake()` reports `noop_coroutine()`. |
+| N7 | a parked composition driver withdraws its handle in `~ParkAwaiter`; a later `wake()` reports `noop_coroutine()`. |
 
 ## 6. Caveats and Traps
 
 ### 6.1 A synchronous resume inside `std::stop_callback`
 
 - How it fails: the coroutine frame holding the callback is destroyed while the callback runs, and `~stop_callback` hits the standard's undefined case (measured: abort).
-- How to detect it: a direct `done.set()` in `whenRace`/`whenAllImpl`/`whenAny`/`Scope::join` turns the case red.
+- How to detect it: a direct `done.set()` in `whenDriver`/`whenAllDriver`/`whenAny`/`Scope::join` turns the case red.
 - How to prevent it: everything goes through `TimerService::postWake()` + `detail::deferWake()`, and the timer thread does the resume.
 
 ### 6.2 `TimerService`'s OOM exposure
@@ -311,7 +313,7 @@ Serves G4 (the position rule is stated and enforced) and G12 (the constraint nam
   This is what the module did before §2.6, where the wake-up was `AsyncEvent::set()` and `set()` resumes inline.
 - How to detect it: `~WhenChild` / `~WhenAnyChild` assert that the child's final `await_suspend` is not on the stack - the flag is set around the wake-up, so the destructor sees it exactly when the old ordering is back.
   `tests/test_async`'s `WhenLifetimeTest` cases drive the only two ways a child can wake a **parked** driver: a `whenAll` whose last child finishes in the timer, and a `StopAndWait` `whenAny` that wakes twice.
-  Putting `parked.resume()` back into `WhenSignal::wake` turns both red.
+  Putting `parked.resume()` back into `WhenBaton::wake` turns both red.
 - How to prevent it: §2.6 - hand the handle back and let the compiler suspend the child first.
 
 ### 6.5 A granted reader destroyed before resuming would leave a queued writer stranded
@@ -328,12 +330,12 @@ Serves G4 (the position rule is stated and enforced) and G12 (the constraint nam
 
 ### 6.6 A composition driver destroyed while parked
 
-- How it fails: the driver's frame is destroyed (a `Destroy` parent, a `Scope` teardown) while its handle sits in `WhenSignal::parked_`.
+- How it fails: the driver's frame is destroyed (a `Destroy` parent, a `Scope` teardown) while its handle sits in `WhenBaton::parked_`.
   A cancellation wake already posted to the timer thread keeps the *state* alive, so it runs, claims the stale handle and resumes a freed
   frame. Neither ASan nor the debug asserts see it, because the state that holds the handle is not part of the frame.
 - How to detect it: `WhenLifetimeTest.ADestroyedParkWithdrawsItsHandle` parks a live probe frame, destroys the awaiter, and requires
-  `wake()` to report `noop_coroutine()`. Removing `WhenSignal::unpark` from `~WhenPark` turns it red.
-- How to prevent it: `~WhenPark` withdraws the handle (§2.1, §2.6); the park slot is a registration, not a write into shared state.
+  `wake()` to report `noop_coroutine()`. Removing `WhenBaton::unpark` from `~ParkAwaiter` turns it red.
+- How to prevent it: `~ParkAwaiter` withdraws the handle (§2.1, §2.6); the park slot is a registration, not a write into shared state.
 
 ### 6.7 The element a throwing move strands
 

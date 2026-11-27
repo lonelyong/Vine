@@ -2063,17 +2063,17 @@ TEST(WhenLifetimeTest, ADestroyedParkWithdrawsItsHandle)
     ParkProbe probe = parkedProbe();
     auto      state = std::make_shared<async::detail::WhenState>();
 
-    async::detail::WhenPark<async::detail::WhenState> parked{ state };
+    async::detail::ParkAwaiter<async::detail::WhenState> parked{ state };
     ASSERT_TRUE(parked.await_suspend(probe.handle));
-    std::coroutine_handle<> registered = state->signal.wake();
+    std::coroutine_handle<> registered = state->baton.wake();
     EXPECT_TRUE(registered == probe.handle) << "the park did not register its driver";
 
     // The abandoned path: the awaiter dies while the driver is still in the slot.
     {
-        async::detail::WhenPark<async::detail::WhenState> abandoned{ state };
+        async::detail::ParkAwaiter<async::detail::WhenState> abandoned{ state };
         ASSERT_TRUE(abandoned.await_suspend(probe.handle));
     }
-    std::coroutine_handle<> withdrawn = state->signal.wake();
+    std::coroutine_handle<> withdrawn = state->baton.wake();
     EXPECT_TRUE(withdrawn == std::noop_coroutine()) << "a park whose awaiter is gone still handed its handle back";
 }
 

@@ -54,15 +54,21 @@ enum class WhenMode
  *   manual-reset flag had to be cleared before each wait, and a completion landing in that window
  *   would be lost.
  * - The slot is a *registration*, not a write into shared state: the driver withdraws its handle in
- *   `~WhenPark` (unpark), so a wake-up posted before the driver died finds an empty slot and reports
- *   `noop_coroutine()` instead of handing back a freed frame (see WhenPark).
+ *   `~ParkAwaiter` (unpark), so a wake-up posted before the driver died finds an empty slot and
+ *   reports `noop_coroutine()` instead of handing back a freed frame (see ParkAwaiter).
+ *
+ * @note
+ * - The name is folly's `coro::Baton`, the same one-slot hand-off cppcoro spells
+ *   `single_consumer_event`: one consumer, and a completion is taken exactly once. The repository's
+ *   `AsyncEvent` is the broadcast sibling, which is why a broadcast word such as "signal" is not
+ *   used here.
  */
-class WhenSignal {
+class WhenBaton {
   public:
-    WhenSignal() noexcept = default;
+    WhenBaton() noexcept = default;
 
-    WhenSignal(const WhenSignal&)            = delete;
-    WhenSignal& operator=(const WhenSignal&) = delete;
+    WhenBaton(const WhenBaton&)            = delete;
+    WhenBaton& operator=(const WhenBaton&) = delete;
 
     /**
      * @brief Parks the driver, or reports that a completion is already pending.
@@ -129,27 +135,27 @@ class WhenSignal {
 };
 
 /**
- * @brief Awaits a composition's signal: suspends until a child reports.
+ * @brief Awaits a composition's baton: suspends until a child reports.
  *
- * The awaiting half of WhenSignal, spelled as an awaiter so a driver reads
- * `co_await WhenPark<State>{ state }` where it used to await an event.
+ * The awaiting half of WhenBaton, spelled as an awaiter so a driver reads
+ * `co_await ParkAwaiter<State>{ state }` where it used to await an event.
  *
- * @tparam State Composition state type holding a `signal` member.
+ * @tparam State Composition state type holding a `baton` member.
  */
 template <typename State>
-class WhenPark {
+class ParkAwaiter {
   public:
     /**
-     * @brief Binds the composition state whose signal is awaited.
+     * @brief Binds the composition state whose baton is awaited.
      *
      * @param state State to park on; kept alive for the duration of the await.
      */
-    explicit WhenPark(std::shared_ptr<State> state) noexcept
+    explicit ParkAwaiter(std::shared_ptr<State> state) noexcept
       : state_(std::move(state))
     {}
 
-    WhenPark(const WhenPark&)            = delete;
-    WhenPark& operator=(const WhenPark&) = delete;
+    ParkAwaiter(const ParkAwaiter&)            = delete;
+    ParkAwaiter& operator=(const ParkAwaiter&) = delete;
 
     /**
      * @brief Withdraws the park when this awaiter dies while the driver is still parked.
@@ -160,12 +166,12 @@ class WhenPark {
      *   posted to the timer thread keeps the state alive and runs afterwards, so the slot has to be
      *   empty by then - otherwise it hands back a freed frame and resumes it.
      * - The await that completes normally clears the handle in await_resume(), so this destructor
-     *   only takes the signal's lock on the abandoned path.
+     *   only takes the baton's lock on the abandoned path.
      */
-    ~WhenPark() noexcept
+    ~ParkAwaiter() noexcept
     {
         if (driver_) {
-            state_->signal.unpark(driver_);
+            state_->baton.unpark(driver_);
         }
     }
 
@@ -184,7 +190,7 @@ class WhenPark {
     bool await_suspend(std::coroutine_handle<> h) noexcept
     {
         driver_ = h;
-        return state_->signal.park(h);
+        return state_->baton.park(h);
     }
 
     void await_resume() noexcept
@@ -194,7 +200,7 @@ class WhenPark {
 
   private:
     std::shared_ptr<State>  state_;
-    /// The driver parked in `state_->signal`, non-null only while the await is suspended.
+    /// The driver parked in `state_->baton`, non-null only while the await is suspended.
     std::coroutine_handle<> driver_{};
 };
 
@@ -204,16 +210,16 @@ class WhenPark {
  * What a `std::stop_callback` above a composition uses: it may not resume the driver itself (the
  * driver unwinds and destroys that callback while its own callback is still running on this
  * thread), so the wake-up is queued and the timer thread runs it - the same rule detail::deferWake
- * follows for a Scope, with the composition's own signal instead of its event.
+ * follows for a Scope, with the composition's own baton instead of its event.
  *
- * @tparam State Composition state type holding a `signal` member.
+ * @tparam State Composition state type holding a `baton` member.
  * @param state State to wake; kept alive until the wake-up has run.
  */
 template <typename State>
 void deferWhenWake(const std::shared_ptr<State>& state) noexcept
 {
     // wake() hands back either the parked driver or noop_coroutine(); resuming noop is a no-op.
-    TimerService::instance().postWake(state, [](void* p) noexcept { static_cast<State*>(p)->signal.wake().resume(); });
+    TimerService::instance().postWake(state, [](void* p) noexcept { static_cast<State*>(p)->baton.wake().resume(); });
 }
 
 /**
@@ -225,9 +231,9 @@ void deferWhenWake(const std::shared_ptr<State>& state) noexcept
  *
  * Synchronization: the non-atomic payloads (first_exception, and the typed
  * results) are published before the child ticks the seq_cst counters below.
- * The final decrement synchronizes-with every earlier one, and `signal.wake()`
+ * The final decrement synchronizes-with every earlier one, and `baton.wake()`
  * hands the parked composition back to the child that finished, which resumes it
- * on its own thread by symmetric transfer - see WhenSignal for why it is handed
+ * on its own thread by symmetric transfer - see WhenBaton for why it is handed
  * back rather than resumed.
  * Cancellation is the one path that does not: its wake-up is posted to the timer thread, so
  * the composition never unwinds inside the cancelling thread's stop_callback (see
@@ -249,8 +255,8 @@ struct WhenState {
     CancelPolicy             policy{ CancelPolicy::Destroy };
     std::exception_ptr       first_exception{};
     std::stop_source         source{};
-    /// The driver's park slot; see WhenSignal.
-    WhenSignal signal;
+    /// The driver's park slot; see WhenBaton.
+    WhenBaton baton;
 };
 
 /**
@@ -259,7 +265,7 @@ struct WhenState {
  * Asks the children to stop first: that request is what a cooperative child needs in order to wind
  * down, and it is idempotent, so asking again on a path that already asked is free.
  *
- * The counter decides; the signal only says "something changed". A child that finishes between the
+ * The counter decides; the baton only says "something changed". A child that finishes between the
  * count being read and the driver parking leaves a pending wake-up behind, so the park returns
  * without suspending and the loop re-reads the count - there is no re-arm window a completion could
  * fall into, which is why this loop is shorter than the manual-reset version it replaced.
@@ -269,12 +275,12 @@ struct WhenState {
  * @return A task completing once every child has finished.
  */
 template <typename State>
-Task<void> drainChildren(std::shared_ptr<State> state)
+Task<void> waitForChildren(std::shared_ptr<State> state)
 {
     state->source.request_stop();
 
     while (state->remaining.load() != 0) {
-        co_await WhenPark<State>{ state };
+        co_await ParkAwaiter<State>{ state };
     }
 }
 
@@ -351,7 +357,7 @@ class WhenChild {
                     // together with its children - including this one - so resuming it here would
                     // destroy a frame that is still executing.
                     h.promise().in_await_suspend = true;
-                    std::coroutine_handle<> next = state->signal.wake();
+                    std::coroutine_handle<> next = state->baton.wake();
                     h.promise().in_await_suspend = false;
                     return next;
                 }
@@ -409,7 +415,7 @@ class WhenChild {
             // Debug check for the lifetime rule this class exists to keep: the composition owns
             // this frame and destroys it when it completes, so the frame must already be suspended
             // by then. A wake path that resumes the driver from inside await_suspend gets here with
-            // the flag still set. See WhenSignal.
+            // the flag still set. See WhenBaton.
             assert(!handle_.promise().in_await_suspend && "a composition child was destroyed from inside its own final await_suspend");
             handle_.destroy();
         }
@@ -462,7 +468,7 @@ inline WhenChild composeChild(AnyTask task, std::stop_token token)
  * @return A task completing per mode, rethrowing the first child failure.
  */
 [[nodiscard]]
-Task<void> whenRace(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken token, CancelPolicy policy)
+Task<void> whenDriver(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken token, CancelPolicy policy)
 {
     throwIfCancelled(token);
 
@@ -500,10 +506,10 @@ Task<void> whenRace(WhenMode mode, std::vector<AnyTask> tasks, CancellationToken
         child.start(state);
     }
 
-    co_await WhenPark<WhenState>{ state };
+    co_await ParkAwaiter<WhenState>{ state };
 
     if (state->policy == CancelPolicy::StopAndWait) {
-        co_await drainChildren(state);
+        co_await waitForChildren(state);
     }
 
     if (state->cancelled) {
@@ -587,7 +593,7 @@ Task<void> whenAll(std::vector<AnyTask> tasks, CancellationToken token = {}, Can
 {
     // Forwarded, not wrapped in another coroutine: the driver is already lazy and
     // owns the children, so an extra frame would buy nothing.
-    return detail::whenRace(detail::WhenMode::All, std::move(tasks), std::move(token), policy);
+    return detail::whenDriver(detail::WhenMode::All, std::move(tasks), std::move(token), policy);
 }
 
 /**
@@ -609,7 +615,7 @@ Task<void> whenAll(std::vector<AnyTask> tasks, CancellationToken token = {}, Can
 [[nodiscard]]
 Task<void> whenAny(std::vector<AnyTask> tasks, CancellationToken token = {}, CancelPolicy policy = CancelPolicy::Destroy)
 {
-    return detail::whenRace(detail::WhenMode::Any, std::move(tasks), std::move(token), policy);
+    return detail::whenDriver(detail::WhenMode::Any, std::move(tasks), std::move(token), policy);
 }
 
 namespace detail
@@ -654,7 +660,7 @@ WhenChild composeChildResult(Task<T> task, std::optional<T>* slot, std::stop_tok
  */
 template <typename... Ts>
 [[nodiscard]]
-Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, CancelPolicy policy, Task<Ts>... tasks)
+Task<std::tuple<Ts...>> whenAllDriver(CancellationToken token, CancelPolicy policy, Task<Ts>... tasks)
 {
     throwIfCancelled(token);
 
@@ -663,7 +669,7 @@ Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, CancelPolicy policy
     state->policy    = policy;
     state->remaining = sizeof...(Ts);
 
-    // Cancellation is handed to the timer thread; see whenRace() for why.
+    // Cancellation is handed to the timer thread; see whenDriver() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
                                         state->cancelled = true;
                                         detail::deferWhenWake(state);
@@ -677,10 +683,10 @@ Task<std::tuple<Ts...>> whenAllImpl(CancellationToken token, CancelPolicy policy
 
     std::apply([&state](auto&... child) { (child.start(state), ...); }, children);
 
-    co_await WhenPark<WhenState>{ state };
+    co_await ParkAwaiter<WhenState>{ state };
 
     if (state->policy == CancelPolicy::StopAndWait) {
-        co_await drainChildren(state);
+        co_await waitForChildren(state);
     }
 
     if (state->cancelled) {
@@ -710,8 +716,8 @@ struct WhenAnyState {
     std::exception_ptr       exception{};
     std::optional<T>         result{};
     std::stop_source         source{};
-    /// The driver's park slot; see WhenSignal.
-    WhenSignal signal;
+    /// The driver's park slot; see WhenBaton.
+    WhenBaton baton;
 };
 
 /**
@@ -785,7 +791,7 @@ class WhenAnyChild {
                     // until await_suspend returns, and a driver that completes is destroyed
                     // together with its children - including this one.
                     p.in_await_suspend = true;
-                    std::coroutine_handle<> next = state->signal.wake();
+                    std::coroutine_handle<> next = state->baton.wake();
                     p.in_await_suspend = false;
                     return next;
                 }
@@ -934,7 +940,7 @@ requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(Task<Ts>... tasks)
 {
-    co_return co_await detail::whenAllImpl(CancellationToken{}, CancelPolicy::StopAndWait, std::move(tasks)...);
+    co_return co_await detail::whenAllDriver(CancellationToken{}, CancelPolicy::StopAndWait, std::move(tasks)...);
 }
 
 template <typename... Ts>
@@ -942,7 +948,7 @@ requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
-    co_return co_await detail::whenAllImpl(std::move(token), CancelPolicy::StopAndWait, std::move(tasks)...);
+    co_return co_await detail::whenAllDriver(std::move(token), CancelPolicy::StopAndWait, std::move(tasks)...);
 }
 
 /**
@@ -962,7 +968,7 @@ requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(CancelPolicy policy, Task<Ts>... tasks)
 {
-    co_return co_await detail::whenAllImpl(CancellationToken{}, policy, std::move(tasks)...);
+    co_return co_await detail::whenAllDriver(CancellationToken{}, policy, std::move(tasks)...);
 }
 
 /**
@@ -979,7 +985,7 @@ requires(sizeof...(Ts) > 0) && (std::conjunction_v<std::negation<std::is_void<Ts
 [[nodiscard]]
 Task<detail::TupleResults<Ts...>> whenAll(CancelPolicy policy, CancellationToken token, Task<Ts>... tasks)
 {
-    co_return co_await detail::whenAllImpl(std::move(token), policy, std::move(tasks)...);
+    co_return co_await detail::whenAllDriver(std::move(token), policy, std::move(tasks)...);
 }
 
 /**
@@ -1002,7 +1008,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, CancelPolicy::StopAndWait);
+    co_await detail::whenDriver(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, CancelPolicy::StopAndWait);
 }
 
 template <typename... Ts>
@@ -1010,7 +1016,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token), CancelPolicy::StopAndWait);
+    co_await detail::whenDriver(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token), CancelPolicy::StopAndWait);
 }
 
 /**
@@ -1029,7 +1035,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(CancelPolicy policy, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, policy);
+    co_await detail::whenDriver(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, policy);
 }
 
 /**
@@ -1046,7 +1052,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAll(CancelPolicy policy, CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token), policy);
+    co_await detail::whenDriver(detail::WhenMode::All, detail::toAnyTasks(std::move(tasks)...), std::move(token), policy);
 }
 
 /**
@@ -1085,7 +1091,7 @@ Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks,
     state->policy    = policy;
     state->remaining = count;
 
-    // Cancellation is handed to the timer thread; see whenRace() for why.
+    // Cancellation is handed to the timer thread; see whenDriver() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
                                         state->cancelled = true;
                                         detail::deferWhenWake(state);
@@ -1102,10 +1108,10 @@ Task<typename detail::VectorResult<T>::type> whenAll(std::vector<Task<T>> tasks,
         child.start(state);
     }
 
-    co_await detail::WhenPark<detail::WhenState>{ state };
+    co_await detail::ParkAwaiter<detail::WhenState>{ state };
 
     if (state->policy == CancelPolicy::StopAndWait) {
-        co_await detail::drainChildren(state);
+        co_await detail::waitForChildren(state);
     }
 
     if (state->cancelled) {
@@ -1156,7 +1162,7 @@ Task<T> whenAny(std::vector<Task<T>> tasks, CancellationToken token = {}, Cancel
     state->policy    = policy;
     state->remaining = count;
 
-    // Cancellation is handed to the timer thread; see whenRace() for why.
+    // Cancellation is handed to the timer thread; see whenDriver() for why.
     std::stop_callback cancellation{ token, [state]() noexcept {
                                         state->cancelled = true;
                                         detail::deferWhenWake(state);
@@ -1172,10 +1178,10 @@ Task<T> whenAny(std::vector<Task<T>> tasks, CancellationToken token = {}, Cancel
         child.start(state);
     }
 
-    co_await detail::WhenPark<detail::WhenAnyState<T>>{ state };
+    co_await detail::ParkAwaiter<detail::WhenAnyState<T>>{ state };
 
     if (state->policy == CancelPolicy::StopAndWait) {
-        co_await detail::drainChildren(state);
+        co_await detail::waitForChildren(state);
     }
 
     if (state->cancelled) {
@@ -1304,7 +1310,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, CancelPolicy::Destroy);
+    co_await detail::whenDriver(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, CancelPolicy::Destroy);
 }
 
 template <typename... Ts>
@@ -1312,7 +1318,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token), CancelPolicy::Destroy);
+    co_await detail::whenDriver(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token), CancelPolicy::Destroy);
 }
 
 /**
@@ -1328,7 +1334,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(CancelPolicy policy, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, policy);
+    co_await detail::whenDriver(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), CancellationToken{}, policy);
 }
 
 /**
@@ -1345,7 +1351,7 @@ requires(sizeof...(Ts) > 0) && (std::is_void_v<Ts> && ...)
 [[nodiscard]]
 Task<void> whenAny(CancelPolicy policy, CancellationToken token, Task<Ts>... tasks)
 {
-    co_await detail::whenRace(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token), policy);
+    co_await detail::whenDriver(detail::WhenMode::Any, detail::toAnyTasks(std::move(tasks)...), std::move(token), policy);
 }
 
 VN_ASYNC_NS_END
