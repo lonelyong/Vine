@@ -256,9 +256,11 @@ intrusive_ptr<ShaderProgram> skyboxProgram()
 intrusive_ptr<ShaderProgram> depthOnlyProgram()
 {
     // A pass with no colour attachment still needs a fragment stage to rasterise, and the only one that tells the truth
-    // about such a pass declares no output (see the shipped fragment). The vertex stage is the content's, so this
-    // program places geometry exactly where every colour pass of the same drawable places it - the reason it is not a
-    // position-only stage is in the header: that one would declare inputs the geometry need not carry.
+    // about such a pass declares no output (see the shipped fragment). It applies the material's alpha rule there,
+    // because a depth map that ignored a Mask material's cut-out would shadow the shape of the quad instead of the
+    // leaf. The vertex stage is the content's, so this program places geometry exactly where every colour pass of the
+    // same drawable places it - the reason it is not a position-only stage is in the header: that one would declare
+    // inputs the geometry need not carry.
     return makeProgram(u8"builtin_depth", shaders::kBuiltinForwardVert, shaders::kBuiltinDepthFrag);
 }
 

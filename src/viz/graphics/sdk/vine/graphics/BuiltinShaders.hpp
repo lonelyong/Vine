@@ -100,20 +100,28 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> unlitForwardProgram();
 VN_GRAPHICS_API intrusive_ptr<ShaderProgram> normalsForwardProgram();
 
 /**
- * @brief The built-in DEPTH-ONLY program: the content's own vertex stage, and a fragment stage with no output.
+ * @brief The built-in DEPTH-ONLY program: the content's own vertex stage, and a fragment stage with no output that
+ *        applies the material's alpha rule.
  *
  * @details
  * - It exists for passes whose target has no colour attachment at all (the shadow map): such a pass must still
  *   name a fragment stage (a pipeline that rasterises cannot omit it), and the only honest one writes nothing. A
  *   stage that goes on writing location 0 there draws with a text that disagrees with the pass - every validation
  *   layer that checks fragment outputs says so, and the per-fragment shading it does is work nobody reads.
+ * - IT STILL READ A MATERIAL, because a depth map has to state what the picture states: a `Mask` material's alpha
+ *   cuts a silhouette out of a quad, and a depth pass that ignored it would record the whole quad (Review 18 Y7: the
+ *   leaf's shadow was a rectangle). The fragment calls the same coverage rule the forward and G-buffer stages call
+ *   (`vine_alpha.glsl`), so picture and shadow cut one silhouette; the block and the base slot are already in the
+ *   content set, so this costs no binding, no ABI byte and no second program. Only a textured `Mask` caster pays a
+ *   fetch per depth texel - `Opaque` content settles the coverage before it.
  * - THE VERTEX STAGE IS `builtin_forward.vert`, deliberately: same push constants, same instancing, same position
  *   expression, so a depth pass and a colour pass of one triangle cannot disagree about where it is. The price is
- *   that the stage still transforms a normal and a texcoord the empty fragment ignores; the alternative - a
- *   position-only stage - would declare an INPUT SET the geometry is not required to carry, which is an error (not
- *   a warning) for every geometry that has no normals, so it would trade a quiet pass for a broken one.
+ *   that the stage still transforms a normal the fragment ignores; the alternative - a position-only stage - would
+ *   declare an INPUT SET the geometry is not required to carry, which is an error (not a warning) for every geometry
+ *   that has no normals, so it would trade a quiet pass for a broken one.
  * - The per-drawable variants (textured / vertex colour / instanced) still apply: they are the content's, and this
- *   program's vertex stage is the same text those variants are written against.
+ *   program's vertex stage is the same text those variants are written against. The fragment stage names the same
+ *   texcoord the vertex stage interpolates, so a Mask caster's cut-out follows the material's own map.
  *
  * @return The vertex + fragment program (fresh per call).
  */

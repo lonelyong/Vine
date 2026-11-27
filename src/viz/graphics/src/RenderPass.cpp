@@ -137,6 +137,9 @@ void RenderPass::fillPassFacts(PassDraw& out)
     // announcement: what a backend needs to resolve each command's FINAL state
     // (StateResolution.hpp's resolveRenderState).
     out.state            = stateOverrides();
+    // WHICH commands it records: a pass fact the backend applies per command (see PassSelection), stated here so a
+    // depth pass cannot be described without its own answer to "what may occlude for me".
+    out.selection        = desc_.selection;
     out.packets.clear();
 }
 

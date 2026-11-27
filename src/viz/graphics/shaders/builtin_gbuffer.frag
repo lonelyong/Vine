@@ -57,15 +57,13 @@ void main()
     // geometry pass records opaque and masked content only; a host that wants blended content on this path puts
     // it in a forward overlay pass, which is what the Deferred preset does. A masked fragment that survives the
     // threshold is fully opaque, exactly as in the forward stage.
-    const uint vn_alpha_mode = (vn_material.flags.x >> VN_MATERIAL_ALPHA_MODE_SHIFT) & 3u;
-    if (vn_alpha_mode == 2u)
+    if (vnAlphaMode() == VN_ALPHA_MODE_BLEND)
     {
         discard;
     }
-    if (vn_alpha_mode == 1u && vn_draw.params.x * vn_surface.alpha < vn_material.params.w)
-    {
-        discard;
-    }
+    // Mask: the SAME threshold the forward stage and a depth pass apply, from its one owner (vine_alpha.glsl) - a
+    // masked fragment either survives here or is cut away everywhere, so the projection and the picture agree.
+    vnAlphaCoverage(vn_surface.alpha, vn_draw.params.x);
     // Most of this design's work happens in ONE line: the surface is stored, not shaded. The albedo is the
     // material's BASE colour (not its diffuse lobe): the lighting pass derives the diffuse part and the
     // reflectance from it and the metallic it reads beside the normal, so f0 is never stored - a derived value

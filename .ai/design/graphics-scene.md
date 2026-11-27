@@ -147,7 +147,7 @@ fragment (`G10`). The one placement this cannot cover is an INSTANCE matrix, rec
 
 | # | Feature | Notes |
 |---|---|---|
-| F18 | L1 content mask | `Node::setLayers` + `PassDesc::layer_mask`; decided on drawable nodes. |
+| F18 | L1 content mask | `Node::setLayers` + `PassDesc::layer_mask`; decided on drawable nodes. A SECOND selection sits beside it - which CLASS of surface a pass records (`PassDesc::selection`, `PassSelection`) - and it is a depth pass' statement, not a layer (graphics-rendering.md §2.7). |
 | F19 | Subtree layer union | `subtreeLayerUnion` lazily cached; `(union & mask) == 0` skips the whole subtree (the cache is invalidated by a process-level layer epoch, see N11). |
 | F20 | `View` | Camera values / device-pixel viewport / layer mask; collection and description share the same value. |
 | F21 | ViewDependence | `None` / `View` / `ViewAndViewport`; only the last puts the viewport into the memo key. |

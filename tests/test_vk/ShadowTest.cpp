@@ -45,17 +45,22 @@
 #include <vine/graphics/ImageInput.hpp>
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/PassSelection.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/Image.hpp>
+#include <vine/imaging/PixelFormat.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 using vn::BufferSlice;
 using vn::Colorf;
 using vn::intrusive_ptr;
 using vn::String;
+using vn::graphics::AlphaMode;
 using vn::graphics::AttachmentPolicy;
 using vn::graphics::CameraSnapshot;
 using vn::graphics::ColorReadback;
@@ -72,11 +77,14 @@ using vn::graphics::Light;
 using vn::graphics::LightValue;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
+using vn::graphics::PassSelection;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::Texture2D;
+using vn::graphics::TextureSlot;
 
 namespace
 {
@@ -182,6 +190,125 @@ makeQuad(float x0, float x1, float z)
     draw.commands    = std::move(commands);
     draw.light_values = std::move(lights);
     return draw;
+}
+
+/// @brief A full-screen quad at depth @p z that CARRIES UVs: a Mask material's silhouette is read through them.
+[[nodiscard]] intrusive_ptr<Geometry> makeUvQuad(float z)
+{
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+      -1.0F,
+      -1.0F,
+      z,
+      1.0F,
+      -1.0F,
+      z,
+      1.0F,
+      1.0F,
+      z,
+      -1.0F,
+      -1.0F,
+      z,
+      1.0F,
+      1.0F,
+      z,
+      -1.0F,
+      1.0F,
+      z,
+    })));
+    // The engine's forward vertex stage declares normals unconditionally, so a geometry without them draws undefined
+    // values (and validation says so).
+    geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+      0.0F,
+      0.0F,
+      1.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+    })));
+    // One UV set spanning the quad left to right, so u < 0.5 is the quad's left half.
+    geometry->setTexcoords2(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+      0.0F,
+      0.0F,
+      1.0F,
+      0.0F,
+      1.0F,
+      1.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+      1.0F,
+      0.0F,
+      1.0F,
+    })));
+    geometry->bumpRevision();
+    return geometry;
+}
+
+/// @brief A 4x1 base-colour map whose ALPHA is opaque on the left half and clear on the right (a cut-out's shape).
+[[nodiscard]] intrusive_ptr<Texture2D> makeCutOutMap()
+{
+    auto                       image  = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(4, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::span<std::byte> texels = image->mipData(0);
+    for (int texel = 0; texel < 4; ++texel) {
+        const std::size_t at = static_cast<std::size_t>(texel) * 4U;
+        texels[at + 0U]      = std::byte{ 255U };
+        texels[at + 1U]      = std::byte{ 255U };
+        texels[at + 2U]      = std::byte{ 255U };
+        texels[at + 3U]      = texel < 2 ? std::byte{ 255U } : std::byte{ 0U };
+    }
+    auto map = intrusive_ptr<Texture2D>(new Texture2D(4, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    map->setImage(image);
+    return map;
+}
+
+/// @brief A depth-only map whose DEPTH CAN BE READ BACK.
+///
+/// @note D24 is combined depth/stencil - the backend refuses to copy it as plain depth (see
+///       `VkContentTargetTest`), so a case that judges the map by its texels states a format it can read.
+[[nodiscard]] intrusive_ptr<RenderTarget> makeReadableMap()
+{
+    auto map = intrusive_ptr<RenderTarget>(new RenderTarget());
+    map->setName(String(u8"vk_caster_map"));
+    map->attachDepth(RenderTarget::DepthFormat::D32F);
+    map->setSize(kTargetSize, kTargetSize);
+    return map;
+}
+
+/// @brief One DEPTH-ONLY pass: @p commands into @p map, through the engine's depth program, under @p selection.
+[[nodiscard]] FrameDescription depthFrame(vn::graphics::RenderPass* pass, RenderTarget* map, std::vector<DrawItem> commands, PassSelection selection)
+{
+    FrameDescription       frame;
+    FrameDescription::Pass entry;
+    entry.pass  = pass;
+    entry.order = 0;
+
+    const intrusive_ptr<ShaderProgram> depth_program = vn::graphics::depthOnlyProgram();
+    PassDraw                           draw;
+    draw.target                       = map;
+    draw.attachment_policy            = AttachmentPolicy{}; // clears the depth (the only attachment)
+    draw.state.depth                  = DepthPolicy::TestAndWrite;
+    draw.selection                    = selection;
+    // THE PASS OVERRIDE the chain states too (see ChainBuilder::buildShadowPass): a depth map has no colour
+    // attachment, so the content's own program is not what this pass draws with.
+    draw.program_override             = depth_program;
+    draw.program_override_description = depth_program->description();
+    draw.packets.push_back(sceneDraw(std::make_shared<const std::vector<DrawItem>>(std::move(commands))));
+    entry.draw = std::move(draw);
+    frame.passes.push_back(std::move(entry));
+    return frame;
 }
 
 /// @brief What a case's two-pass frame is made of.
@@ -642,6 +769,117 @@ TEST(VkShadowTest, AMultisampledMapDrawnAgainStatesBothDepthImages)
             << "the driver rejected an object of the map's second frame: "
             << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
     }
+
+    backend->shutdown();
+}
+
+/**
+ * @brief A MASK caster's silhouette is what the map holds (review 18 Y7's cut-out half).
+ *
+ * THE FAILURE THIS PINS. The depth stage used to declare no output and read nothing, so every drawable of a depth pass
+ * wrote its whole quad: a cut-out leaf cast the shadow of its rectangle. One depth texel can describe a surface whose
+ * coverage is all-or-nothing, so the map has to reproduce the MATERIAL's threshold - the same call the colour pass
+ * makes (`vine_alpha.glsl`), not a second copy of it.
+ *
+ * WHY THE DEPTH IS READ AND NOT THE PICTURE. "The shadow is leaf-shaped" is a claim about the map, and the map is a
+ * value this device can hand back: the covered half carries the caster's depth (clip z = 0 folds to 0.5), the cut-away
+ * half still carries the pass' CLEAR (the reverse-Z far plane, 0).
+ */
+TEST(VkShadowTest, AMaskedCastersSilhouetteIsTheShapeTheMapHolds)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  map     = makeReadableMap();
+    const intrusive_ptr<ShaderProgram> program = vn::graphics::depthOnlyProgram();
+    ASSERT_NE(program, nullptr) << "the engine ships its depth-only program";
+    const intrusive_ptr<Geometry>  caster  = makeUvQuad(0.0F);
+    const intrusive_ptr<Texture2D> cut_out = makeCutOutMap();
+    auto                           pass    = intrusive_ptr<vn::graphics::RenderPass>(new vn::graphics::RenderPass());
+
+    // The caster: a Mask material whose base map's alpha is zero over the quad's right half.
+    auto masked = intrusive_ptr<Material>(new Material());
+    masked->setBaseColor(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    masked->setTexture(TextureSlot::BaseColor, cut_out);
+    masked->setAlphaMode(AlphaMode::Mask);
+    masked->setAlphaCutoff(0.5F);
+
+    EXPECT_EQ(backend->executeFrame(depthFrame(pass.get(), map.get(), { commandOf(caster, program, masked) }, PassSelection::Opaque), nullptr),
+              vn::graphics::PresentOutcome::Skipped);
+
+    vn::graphics::DepthReadback read = backend->readDepthImage(map.get());
+    ASSERT_TRUE(read.ok()) << "the map's depth must read back: " << static_cast<int>(read.status);
+    ASSERT_EQ(read.values.size(), std::size_t{ kTargetSize * kTargetSize }) << "one value per texel";
+    const auto depthAt = [&read](int x, int y) { return read.values[static_cast<std::size_t>(y) * kTargetSize + static_cast<std::size_t>(x)]; };
+    EXPECT_NEAR(depthAt(8, kTargetSize / 2), 0.5F, 0.002F) << "the opaque half of the cut-out lost the caster: the mask must not cut what its map keeps";
+    EXPECT_FLOAT_EQ(depthAt(56, kTargetSize / 2), 0.0F) << "the cut-away half still holds a distance: the map's shape is the quad's, not the leaf's";
+
+    // THE CONTROL: the SAME map, the SAME quad, an OPAQUE material (its alpha is ignored). Both halves are written, so
+    // the hole above is the alpha MODE's rule and not a draw that never happened.
+    auto opaque = intrusive_ptr<Material>(new Material());
+    opaque->setBaseColor(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    opaque->setTexture(TextureSlot::BaseColor, cut_out);
+
+    EXPECT_EQ(backend->executeFrame(depthFrame(pass.get(), map.get(), { commandOf(caster, program, opaque) }, PassSelection::Opaque), nullptr),
+              vn::graphics::PresentOutcome::Skipped);
+    read = backend->readDepthImage(map.get());
+    ASSERT_TRUE(read.ok());
+    EXPECT_NEAR(depthAt(56, kTargetSize / 2), 0.5F, 0.002F)
+        << "an Opaque material's map alpha still cut the map: the cut-out is the Mask mode's rule, not the map's value";
+
+    backend->shutdown();
+}
+
+/**
+ * @brief A depth pass records what OCCLUDES, and a blended surface does not (review 18 Y7's policy half).
+ *
+ * ONE DISTANCE CANNOT DESCRIBE PARTIAL COVERAGE. A blended drawable's colours are a mix with what is behind it, so a
+ * depth texel written for it would shadow everything under the parts its colour only tints - the map would be darker
+ * than the picture it belongs to. The pipeline states that as `PassSelection` (a depth pass draws the sort's OPAQUE
+ * queue), and the pass' own list stays the shared one the colour passes draw: the backend applies the selection per
+ * command, the same way it applies the pass' state and program override.
+ *
+ * The same frame is run twice: once as a depth pass states it, once with EVERY command selected. The map's texels are
+ * the answer, so "nothing was recorded" cannot be confused with "the device failed".
+ */
+TEST(VkShadowTest, ADepthPassRecordsOnlyWhatCanOcclude)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  map     = makeReadableMap();
+    const intrusive_ptr<ShaderProgram> program = vn::graphics::depthOnlyProgram();
+    ASSERT_NE(program, nullptr);
+    const intrusive_ptr<Geometry> caster = makeUvQuad(0.0F);
+    auto                          pass   = intrusive_ptr<vn::graphics::RenderPass>(new vn::graphics::RenderPass());
+
+    auto blended = intrusive_ptr<Material>(new Material());
+    blended->setBaseColor(Colorf(1.0F, 1.0F, 1.0F, 0.25F));
+    blended->setAlphaMode(AlphaMode::Blend);
+    ASSERT_TRUE(commandOf(caster, program, blended).isTransparent()) << "the fixture must be a transparent command";
+
+    EXPECT_EQ(backend->executeFrame(depthFrame(pass.get(), map.get(), { commandOf(caster, program, blended) }, PassSelection::Opaque), nullptr),
+              vn::graphics::PresentOutcome::Skipped);
+    vn::graphics::DepthReadback read = backend->readDepthImage(map.get());
+    ASSERT_TRUE(read.ok()) << "the map's depth must read back: " << static_cast<int>(read.status);
+    for (const float value : read.values) {
+        EXPECT_FLOAT_EQ(value, 0.0F) << "a blended drawable wrote a distance into the map: it would shadow what it only tints";
+    }
+
+    // THE SAME FRAME WITH NOTHING EXCLUDED: the very command the depth pass skipped is recorded, so the emptiness above
+    // is the selection's answer and not a program, a pipeline or a stream that could not be built.
+    EXPECT_EQ(backend->executeFrame(depthFrame(pass.get(), map.get(), { commandOf(caster, program, blended) }, PassSelection::All), nullptr),
+              vn::graphics::PresentOutcome::Skipped);
+    read = backend->readDepthImage(map.get());
+    ASSERT_TRUE(read.ok());
+    EXPECT_NEAR(read.values[static_cast<std::size_t>(kTargetSize / 2) * kTargetSize + kTargetSize / 2], 0.5F, 0.002F)
+        << "with every command selected the caster must reach the map: the case above would then prove nothing";
 
     backend->shutdown();
 }

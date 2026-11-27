@@ -125,6 +125,7 @@ FrameTable SessionShape::frameTable(std::span<const PassCost> answered) const
         row.content       = pass->content();
         row.camera        = pass->camera();
         row.layer_mask    = pass->layerMask();
+        row.selection     = pass->declaration().selection;
         row.target        = pass->renderTarget();
         row.enabled       = pass->isEnabled();
         row.clears_color  = pass->isClearEnabled();

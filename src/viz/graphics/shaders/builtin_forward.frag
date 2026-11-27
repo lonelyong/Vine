@@ -63,46 +63,24 @@ void main()
     vec3 vn_n = vnFacingNormal(normalize(vn_view_normal));
 #endif
     vec3 vn_view_dir = normalize(-vn_view_pos);
-    // The drawable's opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it
-    // arrives in the draw block and is rewritten in place when the command's
-    // opacity changes, so a translucent drawable costs O(1) per frame instead of
-    // a pass over its vertices (and the vertex colour stream stays free to carry
-    // authored colours, which its alpha does not compete with).
-    //
-    // It is also the per-drawable half of the engine's transparency INPUT, and the material's alpha mode decides
-    // how the two are used (see the block below): the engine sorts a drawable by this value plus the mode
-    // (`DrawItem::isTransparent`), so the picture and the order read the same pair.
-    float vn_alpha = vn_draw.params.x;
-    // The surface: this stage's geometric normal, then the material's five slots on top of its factors - the
+    // The surface: this stage's geometric normal, then the material's slots on top of its factors - the
     // same function the G-buffer writer calls, so one material has ONE surface on both paths.
 #ifdef VN_TEXTURED
     VineSurface vn_surface = vnSampleMaterial(vn_n, vn_view_pos, vn_uv);
 #else
     VineSurface vn_surface = vnSurfaceFromFactors(vn_n);
 #endif
-    // THE ALPHA MODE, in one place for both paths' shading stages (graphics-material.md 2.7/3.5): the effective
-    // alpha is the drawable's opacity times the material's own alpha (its factor times its base map's), and the
-    // mode says which of three things that product means.
-    {
-        const uint vn_alpha_mode = (vn_material.flags.x >> VN_MATERIAL_ALPHA_MODE_SHIFT) & 3u;
-        if (vn_alpha_mode == 1u)
-        {
-            // Mask: the product is a THRESHOLD, not an opacity. A fragment that survives is fully opaque and the
-            // drawable stays in the opaque queue, because a cut-out leaf must still occlude itself (C4).
-            if (vn_draw.params.x * vn_surface.alpha < vn_material.params.w)
-            {
-                discard;
-            }
-        }
-        else if (vn_alpha_mode == 2u)
-        {
-            // Blend: the product IS the output alpha. The drawable is in the transparent queue by its mode alone
-            // (DrawItem::isTransparent), so the order and the blend factor are the same two numbers.
-            vn_alpha = vn_draw.params.x * vn_surface.alpha;
-        }
-        // Opaque ignores both material alphas and keeps the drawable's own opacity, which is what a host fades a
-        // whole object with - and the deferred path sees the same value (it is read from the same draw block).
-    }
+    // THE ALPHA MODE, from its one owner (vine_alpha.glsl): the product of the drawable's opacity and the material's
+    // own alpha means a THRESHOLD for Mask (the fragment either survives opaque or is cut away), the OUTPUT alpha for
+    // Blend, and nothing at all for Opaque - which keeps the drawable's own opacity (graphics-material.md 2.7/3.5).
+    // The same call cuts the same holes in a depth pass, so an object's shadow and its picture state one silhouette.
+    //
+    // That opacity is a PER-DRAWABLE VALUE, not a per-vertex one: it arrives in the draw block and is rewritten in
+    // place when the command's opacity changes, so a translucent drawable costs O(1) per frame instead of a pass over
+    // its vertices (and the vertex colour stream stays free to carry authored colours, which its alpha does not
+    // compete with). The engine sorts a drawable by this value plus the mode (`DrawItem::isTransparent`), so the
+    // picture and the order read the same pair.
+    float vn_alpha = vnAlphaCoverage(vn_surface.alpha, vn_draw.params.x);
 #ifdef VN_VERTEX_COLOR
     // An AUTHORED vertex colour modulates the albedo only. Its alpha is
     // deliberately NOT an opacity input: opacity belongs to the draw block, so

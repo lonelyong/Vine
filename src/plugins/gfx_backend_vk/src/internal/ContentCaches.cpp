@@ -21,6 +21,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/MaterialAbi.hpp>
+#include <vine/graphics/PassSelection.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 
@@ -1171,6 +1172,9 @@ struct ContentCaches::Impl {
      * @param refusal           Receives the reason a command could not be resolved, with its code and category.
      * @param builds            This frame's admissions (see FrameBuilds).
      * @return true when the command can be recorded.
+     *
+     * @note A command the pass' SELECTION excludes (see PassSelection) answers false with @p refusal untouched: the
+     *       pass asked for the content's opaque set, so nothing failed - the empty plan is how the recorder skips it.
      */
     [[nodiscard]] bool planCommand(const vn::graphics::DrawItem&                  command,
                                    const vn::graphics::PassDraw&                       pass,
@@ -1185,6 +1189,13 @@ struct ContentCaches::Impl {
         // freed and reallocated that storage on every command of every frame (the exact defect the head's file note
         // promises cannot happen).
         plan.clear();
+        // THE PASS' SELECTION, BEFORE ANYTHING IS RESOLVED (see PassSelection): a pass that records only occluders - a
+        // depth map somebody samples - has nothing to draw for a command the sort calls transparent, and that is not a
+        // refusal: the pass asked for the content's opaque set and this command is not in it. So the plan stays empty
+        // (the recorder skips exactly this command) while the pass' other commands keep theirs.
+        if (pass.selection == vn::graphics::PassSelection::Opaque && command.isTransparent()) {
+            return false;
+        }
         const vn::graphics::ShaderProgramDescriptionPtr program =
             pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
         const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;

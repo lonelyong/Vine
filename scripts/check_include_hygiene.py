@@ -231,6 +231,7 @@ SEAM_SHARED_HEADERS = frozenset((
     "Primitive.hpp",
     "ProgramVariant.hpp",
     "RenderDiagnostic.hpp",
+    "PassSelection.hpp",
 ))
 SDK_GRAPHICS_ROOT = "src/viz/graphics/sdk/vine/graphics"
 BACKEND_ROOTS = ("src/plugins/gfx_backend_vk",)

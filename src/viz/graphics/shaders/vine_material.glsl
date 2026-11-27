@@ -1,5 +1,7 @@
-// How a material's texture set becomes the surface a light can shade: the five slots, their channel packing,
-// the constant an ABSENT slot contributes and the tangent basis a normal map needs - sampled in ONE place.
+// How a material's texture set becomes the surface a light can shade: the four data slots, their channel packing,
+// the constant an ABSENT slot contributes and the tangent basis a normal map needs - sampled in ONE place. The
+// base colour slot and the ALPHA MODE are the fifth slot's own contract and live in `vine_alpha.glsl` (included
+// below), because a stage that needs a SILHOUETTE without a surface - a depth pass - takes that module alone.
 //
 // WHY A FRAGMENT. Two stages build the same surface: the forward content stage (which shades it) and the
 // G-buffer writer (which stores it, so the deferred lighting stage rebuilds it from texels). If one of them read
@@ -24,6 +26,11 @@
 // CUBE-MAPPED MATERIALS ARE DIRECTION-SAMPLED and have no UV pair at all, so only their base colour slot takes
 // part (graphics-material.md 2.4: a cube map is legal in the base slot and nowhere else): the four data maps
 // parameterise a surface, and there is no surface parameterisation to read them with.
+//
+// WHAT IS NOT HERE: the base colour slot and the ALPHA MODE. A surface's coverage is the one fact a stage that builds
+// no surface still needs - a depth-only pass must cut the same holes a Mask material cuts in the colour picture -
+// so the base slot, the mode's three rules and the threshold live in `vine_alpha.glsl`, which this file includes.
+#include "vine_alpha.glsl"
 
 /**
  * @brief What the shading needs to know about a surface, whatever wrote it.
@@ -43,22 +50,14 @@ struct VineSurface
 };
 
 #ifdef VN_TEXTURED
-// The five slots at the content set's fixed bindings (graphics-material.md 3.3): the base colour may be a cube
-// map, whose kind follows the vertex stage's texcoord width; the other four are 2-D data maps. The variant is
-// BINARY (one VN_TEXTURED bit for the whole set, see 2.5), so all five are declared together even though a
-// material rarely has more than two.
+// The four DATA slots at the content set's fixed bindings (graphics-material.md 3.3): all 2-D, and all declared
+// together because the variant is BINARY (one VN_TEXTURED bit for the whole set, see 2.5) even though a material
+// rarely has more than two.
 //
-// THE FIVE NAMES ARE ABI KEYS, not this file's locals: the content set decides what a declared sampler receives
-// BY NAME (an image's origin is answered from these exact spellings), so the prefix is not decoration - it marks
-// the drawable's own maps as the engine's vocabulary, and renaming one side alone silently rebinds them to the
-// pass' inputs.
-#if defined(VN_TEXCOORD_CUBE)
-layout(set = 0, binding = 1) uniform samplerCube vn_baseColorMap;
-#elif defined(VN_TEXCOORD_UV)
-layout(set = 0, binding = 1) uniform sampler2D vn_baseColorMap;
-#else
-#error a sampled texcoord slot needs one kind: define VN_TEXCOORD_UV or VN_TEXCOORD_CUBE
-#endif
+// THE NAMES ARE ABI KEYS, not this file's locals: the content set decides what a declared sampler receives BY NAME
+// (an image's origin is answered from these exact spellings), so the prefix is not decoration - it marks the
+// drawable's own maps as the engine's vocabulary, and renaming one side alone silently rebinds them to the pass'
+// inputs. The fifth slot (base colour) is the same vocabulary, declared in vine_alpha.glsl for the reason above.
 layout(set = 0, binding = 2) uniform sampler2D vn_metallicRoughnessMap;
 layout(set = 0, binding = 3) uniform sampler2D vn_normalMap;
 layout(set = 0, binding = 4) uniform sampler2D vn_occlusionMap;
@@ -108,10 +107,10 @@ VineSurface vnSurfaceFromFactors(vec3 vn_n)
     vn_surface.metallic   = clamp(vn_material.params.x, 0.0, 1.0);
     vn_surface.roughness  = clamp(vn_material.params.y, 0.0, 1.0);
     vn_surface.occlusion  = clamp(vn_material.params.z, 0.0, 1.0);
-    // The material's own alpha: the MODE decides what it does (a threshold for Mask, the blend factor for Blend,
-    // nothing at all for Opaque - see the stages), and its second input is the drawable's opacity, which arrives
-    // per drawable and is not a material fact (graphics-material.md 2.7).
-    vn_surface.alpha      = clamp(vn_material.base_color.a, 0.0, 1.0);
+    // The material's own alpha: its FACTOR half (the base map's, when there is one, multiplies it in the samplers
+    // below). What the mode then makes of it - a threshold, the output alpha, or nothing - is `vine_alpha.glsl`'s
+    // single answer, which every stage that cuts a fragment away asks for.
+    vn_surface.alpha      = vnAlphaFactor();
     return vn_surface;
 }
 

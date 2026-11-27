@@ -11,6 +11,7 @@
 
 #include "DepthRange.hpp"
 #include "Node.hpp"
+#include "PassSelection.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -46,6 +47,12 @@ struct VN_GRAPHICS_API PassRow {
     /// Per pass rather than per frame, because it is the pass that decides what it draws: a frame with a
     /// shadow pass (casters only) and a main pass (everything) says so here, one row each.
     std::uint32_t layer_mask           = kAllLayers;
+    /// Which of the content's commands it records (see PassSelection): `All` for a pass that writes colour, `Opaque`
+    /// for one that writes a DEPTH map other passes read.
+    ///
+    /// The second half of "what this pass draws": the layer mask says which rows of the content, this says which
+    /// class of surface — so a frame table states why a blended leaf appears in the picture and casts nothing.
+    PassSelection selection{ PassSelection::All };
     /// The off-screen target it draws into, or null: the WINDOW (the default framebuffer).
     raw_ptr<const RenderTarget> target = nullptr;
     /// Whether it runs this frame. A disabled pass is LISTED (its row is part of the picture) and skipped.

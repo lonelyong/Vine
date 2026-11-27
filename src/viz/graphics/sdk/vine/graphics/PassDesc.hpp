@@ -17,6 +17,7 @@
 #include "DrawState.hpp"
 #include "ImageInput.hpp"
 #include "Output.hpp"
+#include "PassSelection.hpp"
 #include "PassStage.hpp"
 #include "PolygonMode.hpp"
 #include "RenderTarget.hpp"
@@ -149,6 +150,15 @@ struct VN_GRAPHICS_API PassDesc {
     std::optional<float> line_width;
     /// The pass-scoped depth policy.
     DepthPolicy depth_policy{ DepthPolicy::TestAndWrite };
+    /// Which of the content's commands this pass records (see PassSelection), or `All` for everything its view
+    /// collects.
+    ///
+    /// A DEPTH PASS STATES `Opaque`: what it writes is a map somebody else reads as occlusion, and a surface whose
+    /// coverage is partial does not occlude anything (its depth would shadow what its blended colour only tints).
+    /// The criterion is the sort's own (`DrawItem::isTransparent`), so a `Mask` material still casts - its cut-out
+    /// reaches the map through the alpha threshold the colour pass applies, not through this selection
+    /// (graphics-rendering.md §2.7, graphics-material.md §2.7).
+    PassSelection selection{ PassSelection::All };
     /// Which layers of the CONTENT this pass draws (see Node::setLayers): a node whose layers do not
     /// intersect the mask is left out of the walk that fills this pass. kAllLayers (the default) draws
     /// everything - including content that declares no layers (kDefaultLayer) - so saying nothing is

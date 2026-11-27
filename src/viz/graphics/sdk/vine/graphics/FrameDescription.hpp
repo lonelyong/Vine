@@ -19,6 +19,7 @@
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"
+#include "PassSelection.hpp"
 #include "StateResolution.hpp"
 #include "View.hpp"
 #include "Viewport.hpp"
@@ -226,6 +227,12 @@ struct VN_GRAPHICS_API PassDraw {
     std::optional<AttachmentPolicy> attachment_policy;
     /// This pass' state for the content it draws (see RenderPass::stateOverrides).
     PassRenderState state{};
+    /// Which of a packet's commands this pass records (see PassSelection), as the declaration stated it.
+    ///
+    /// A PASS FACT, like @ref state and @ref program_override: the selection travels with the pass and the shared
+    /// command lists stay untouched, so a depth pass that wants only the surfaces which occlude costs no copy of the
+    /// list the colour passes draw (the same trade, for the same reason - see @ref program_override).
+    PassSelection selection{ PassSelection::All };
     /// The program this pass draws ALL of its content with, or null for per-geometry programs (see
     /// RenderPass::setProgramOverride).
     ///

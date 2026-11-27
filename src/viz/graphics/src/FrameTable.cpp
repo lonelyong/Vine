@@ -107,6 +107,11 @@ String FrameTable::describe() const
         if (pass.layer_mask != kAllLayers) {
             text += " layers=" + layerMaskText(pass.layer_mask);
         }
+        // Same rule as the mask above: only a pass that NARROWS what it records says so - a depth pass reading as
+        // "draws the content" would hide the reason a blended leaf casts nothing (see PassSelection).
+        if (pass.selection != PassSelection::All) {
+            text += " selection=opaque";
+        }
         text += " clear=" + clearText(pass);
         text += " viewport=" + viewportText(pass);
         text += " inputs=" + listText(pass.inputs);

@@ -52,6 +52,14 @@ const uint VN_MATERIAL_FLAG_NORMAL             = 1u << 2;
 const uint VN_MATERIAL_FLAG_OCCLUSION          = 1u << 3;
 const uint VN_MATERIAL_FLAG_EMISSIVE           = 1u << 4;
 const uint VN_MATERIAL_ALPHA_MODE_SHIFT        = 8u;
+
+// The three values `AlphaMode` packs into bits 8-9, by its own ORDINAL (C++ `enum class AlphaMode` -
+// MaterialValues.hpp): the packer shifts the ordinal up and a shader shifts it back, so a mode added to the enum
+// and not here is a shader that treats the new value as Opaque - which is why `vine_alpha.glsl` is the only
+// reader of the pair and nothing else compares the bits.
+const uint VN_ALPHA_MODE_OPAQUE = 0u;
+const uint VN_ALPHA_MODE_MASK   = 1u;
+const uint VN_ALPHA_MODE_BLEND  = 2u;
 #endif
 
 #ifdef VN_PARAM_DRAW

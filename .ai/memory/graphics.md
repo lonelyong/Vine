@@ -2845,3 +2845,26 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   first host that needs it, fix = a split per handedness in the collection.
 - **Trap.** The old pixel expectation "a mirrored placement is a BACK face" WAS the bug written down; if a fixture has to
   be re-wound or a front-face sign flipped to keep a rule case green, the rule is the suspect.
+## 2026-11-27 - Y7: one coverage rule, and a depth pass records what occludes
+
+- **The two halves of Y7.** (a) The depth stage declared no output and READ NOTHING, so a `Mask` material's cut-out never
+  reached a shadow map: a leaf cast the shadow of its quad. That was a FRAMEWORK defect - the material block and the base
+  slot were already bound in the same content set, and the threshold was spelled twice (forward, G-buffer) and missing
+  from the third writer. (b) "Does blended content cast?" was a design hole with no statement anywhere.
+- **The model now.** `shaders/vine_alpha.glsl` owns the coverage: the base colour slot's declaration (moved out of
+  `vine_material.glsl`, which now includes it) plus `vnAlphaMode()` / `vnAlphaFactor()` / `vnAlphaCoverage(surface_alpha,
+  opacity)` and `vnSurfaceCoverage(opacity, uv|direction)` for a stage with no surface. Three callers, one threshold:
+  forward (`vn_alpha = vnAlphaCoverage(...)`), G-buffer (Blend discards, Mask cuts) and `builtin_depth.frag`. The opacity
+  is an ARGUMENT, not a hidden `vn_draw` read (the deferred path has no draw block).
+- **The policy.** `PassSelection { All, Opaque }` on `PassDesc` / `PassDraw` / `PassRow`; the shadow pass states
+  `Opaque`, and the vk backend applies it in `planCommand` (empty plan, NO refusal) so the collected list stays shared and
+  immutable - the same trade `program_override` documents. `Mask` casts (opaque to the sort); `Blend` and opacity < 1 do not.
+- **Landing oracle.** `VkShadowTest.AMaskedCastersSilhouetteIsTheShapeTheMapHolds` (reads the map: covered half 0.5,
+  cut-away half 0.0, plus an Opaque control that writes both halves) and `VkShadowTest.ADepthPassRecordsOnlyWhatCanOcclude`
+  (same blended caster, selection `Opaque` vs `All`). Device-free: `PassChainTest.ARequestedShadowIsBuiltOnTheDeferredPath`
+  reads `PassRow::selection` off the frame table; `ShaderAbiTest.TheAlphaModeDecidesWhatTheMaterialsAlphaMeans` now counts
+  thresholds per stage (exactly one) instead of pinning a copy in each.
+- **Trap.** A D24 shadow map CANNOT be read back (`ReadbackStatus::Unsupported` - combined depth/stencil), so a witness
+  that judges the map by its texels must state `D32F`/`D16`. And the Mask witness only proves the variant plumbing because
+  it FAILS when the depth stage compiles without `VN_TEXTURED` (the factor alone keeps the whole quad).
+- **Verified.** Whole tree builds; `test_graphics` 685/685, `test_vk` 227/227; `vn_shader_check.sh` PASS.

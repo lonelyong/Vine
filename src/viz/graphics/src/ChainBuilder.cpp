@@ -273,6 +273,12 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline, c
     // through several passes.
     desc.layer_mask    = content_layers_;
     desc.target        = Target::explicitTarget(shadow_map);
+    // WHAT MAY OCCLUDE: only the content the sort leaves in its opaque queue (see PassSelection). A map records a
+    // DISTANCE, so a surface whose coverage is a fraction of its fragment cannot be written into it - the depth of a
+    // blended quad would shadow everything under the parts its colour only tints. The criterion is the sort's own, so
+    // the queue, the blend state and "does this cast" are one answer; a Mask material still casts, and its cut-out
+    // reaches the map through the alpha threshold the depth stage applies (graphics-rendering.md §2.7).
+    desc.selection           = PassSelection::Opaque;
     // A DEPTH MAP HAS NO COLOUR ATTACHMENT, so the pass draws with the depth-only program instead of whatever each
     // drawable's own program is: the content program writes location 0, and a fragment output nobody can see is a
     // validation warning plus per-fragment shading work no one reads. The override is the pass's statement "everything

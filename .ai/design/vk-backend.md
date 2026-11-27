@@ -356,6 +356,14 @@ and every cache has a witness a test can read.**
   short); `Device::frameHeadStorageGrows()` exposes it to tests, and `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage` pins it with "3 warm-up frames, then 5
   unchanged". **It proves the head's storage reuse only**, not a whole frame allocating nothing (pipeline keys and content caches have their own allocations, which this page
   neither claims nor measures). `planCommand` clears with `plan.clear()` rather than releasing and rebuilding the reused vector per command.
+- **A pass' SELECTION is applied at the same place as its state and its program override** (`G1` `G10`, 2026-11-27): a
+  `PassSelection::Opaque` pass (a depth map) answers "not recorded" for a command the sort calls transparent, so the plan
+  stays empty and the recorder skips exactly that command - the pass' other commands keep theirs. The command list is never
+  filtered: it is the shared, immutable list every pass of the frame draws, and rewriting it per pass would cost a
+  command-sized copy on every frame (the same trade `program_override` documents). The empty plan carries no `ContentRefusal`
+  - the pass asked for the content's opaque set and this command is not in it, which is an answer, not a failure.
+  Witness: `VkShadowTest.ADepthPassRecordsOnlyWhatCanOcclude` runs one blended caster twice (selection `Opaque` vs `All`) and
+  reads the map's texels.
 
 ### 2.17 Residency's three states: one key has one publisher (`G1` / `G4` / `G10`)
 

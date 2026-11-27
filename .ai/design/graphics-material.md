@@ -65,7 +65,8 @@ normal flat, emissive black). The bound stand-in exists only for "the descriptor
 2.6 **One BRDF, two paths** (`G1` `G5`): `shaders/vine_brdf.glsl` is the only implementation of GGX / Smith / Schlick:
 forward calls it directly; deferred first reconstructs the same inputs from the G-buffer and then calls it. `vnEvaluateLight` stays the only light implementation.
 The translation from slots to surface inputs (channel packing, missing-slot constants, normal tangent basis) is one contract too, its one home is `vine_material.glsl`,
-and both surface-writing stages (forward / G-buffer) include it.
+and both surface-writing stages (forward / G-buffer) include it. The COVERAGE half of a material - its base colour slot's alpha and what the mode makes of it - is
+`vine_alpha.glsl` (2.7), which `vine_material.glsl` includes: a stage that needs a silhouette but no surface (a depth pass) takes the module alone.
 
 2.7 **Transparency: the mode on the material, the magnitude on the drawable** (`G1` `G4`): `AlphaMode::Opaque | Mask | Blend`; effective alpha =
 `vn_draw.params.x` (drawable opacity) × `vn_material.base_color.a` × the optional base texture alpha.
@@ -76,6 +77,15 @@ default pair enabled (`resolveRenderState(..., transparent)`, `BlendState`'s not
 draw into the transparent queue and then wrote its fragment unchanged (review 17 `W2`). An authored blend - enabled or
 disabled - keeps its word either way.
 Blend content goes through the forward overlay; the deferred G-buffer takes opaque and Mask only.
+
+**Three readers of one rule, its one home `shaders/vine_alpha.glsl`** (2026-11-27, review 18 `Y7`): the forward stage (which outputs the alpha), the G-buffer
+writer (which refuses a Blend and cuts a Mask) and a DEPTH pass (which must leave the same hole, or a cut-out leaf's shadow is the shape of its quad). The mode
+was spelled in the two shading stages and missing from the depth one, so the picture and its shadow could disagree about one material with nothing to report it;
+ownership moved into a fragment that also declares the base colour slot - the one map a coverage can come from - and a depth stage includes it INSTEAD of
+`vine_material.glsl`, so it declares no normal, roughness or tangent basis it has no use for. `AlphaMode`'s ordinals stay the shader's numbers
+(`VN_ALPHA_MODE_OPAQUE` / `_MASK` / `_BLEND` beside `kMaterialAlphaModeShift`), and the drawable's opacity is an ARGUMENT to `vnAlphaCoverage`, not a hidden read
+of the draw block (`G4`). A depth pass also records only what can occlude (`PassSelection::Opaque`, graphics-rendering.md §2.7): `Blend` casts nothing, which is a
+policy of the pass rather than a texel it writes.
 
 2.8 **The G-buffer is a projection of the material** (`G10`): the four attachments hold exactly the per-pixel quantities — A0 base colour.rgb (a writes 1),
 A1 octahedral normal.rg + roughness + metallic, A2 emissive.rgb + occlusion, A3 view position.xyz + write mask.
@@ -210,7 +220,8 @@ An instance copies neither textures nor bytes beyond the block.
 | Interface | Contract |
 |---|---|
 | `VineMaterialBlock` (64 B) | See F4's offset table; `operator==` stays default |
-| `vine_material.glsl` | `VineSurface vnSampleMaterial(vn_n, vn_position, vn_uv)`: five slots → surface; a missing slot short-circuits by flags |
+| `vine_alpha.glsl` | The base colour slot (declared once for both kinds of stage) and the mode's rule: `vnAlphaMode()` / `vnAlphaFactor()` / `vnAlphaCoverage(surface_alpha, opacity)` (discards on Mask) / `vnSurfaceCoverage(opacity, uv or direction)` for a stage with no surface |
+| `vine_material.glsl` | `VineSurface vnSampleMaterial(vn_n, vn_position, vn_uv)`: the four data slots → surface; a missing slot short-circuits by flags; includes `vine_alpha.glsl` for the base slot and the coverage |
 | `vine_brdf.glsl` | `vnEvaluateBRDF(vn_base_color, vn_metallic, vn_roughness, vn_n, vn_v, vn_l)`: no radiance and no cosine (the caller multiplies) |
 | `vine_gbuffer.glsl` | `vnOctahedralEncode` / `vnOctahedralDecode` and the four attachments' packing comments; `VN_TEXTURED` declares the five slot samplers |
 
@@ -306,8 +317,8 @@ forward and deferred reconstruct the same set of surfaces from their own inputs 
 ### 10.1 Code
 
 - `src/viz/graphics/sdk/vine/graphics/MaterialValues.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
-- `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
-- `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
+- `shaders/vine_params.glsl` · `vine_alpha.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
+- `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag` · `builtin_depth.frag`
 - `MaterialAbi.hpp` (`blockOfMaterial` and the block's offsets) · `ContentImages.hpp` (F11's slot decision) · `ProgramVariant.hpp` (the SDK's variant rule) · `SceneBuild.cpp` (`materialFrom`)
 
 ### 10.2 Documents, ADRs and external sources

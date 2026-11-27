@@ -7470,6 +7470,22 @@ TEST(PassChainTest, ARequestedShadowIsBuiltOnTheDeferredPath)
     EXPECT_FALSE(shadow_camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the shadow pass looks along the light, not through the view";
     EXPECT_FALSE(shadow_camera.projection.isEqual(cam->projectionMatrix(), 1e-12)) << "and projects the light's own, orthographic frame";
 
+    // WHAT THE PASS MAY OCCLUDE WITH: a depth map holds one DISTANCE per texel, so the chain states the sort's opaque
+    // answer as the pass' selection - and every colour pass keeps the full set. Reading it from the frame table is what
+    // makes "why does a blended leaf cast nothing" a fact a host can look up instead of a rule nobody wrote down.
+    bool saw_shadow_row = false;
+    for (const PassRow& row : engine->frameTable().passes) {
+        if (row.name == String(u8"shadow")) {
+            saw_shadow_row = true;
+            EXPECT_EQ(row.selection, PassSelection::Opaque) << "the shadow pass must record only what can occlude";
+        }
+        else {
+            EXPECT_EQ(row.selection, PassSelection::All) << "a colour pass draws everything its view collects";
+        }
+    }
+    EXPECT_TRUE(saw_shadow_row) << "the chain built no shadow pass to inspect";
+    EXPECT_NE(engine->frameTable().describe().find(u8"selection=opaque"), vn::String::npos) << "the table text must say what the pass narrowed itself to";
+
     // The map reached the lighting: a declared input nothing produced is reported by the engine.
     EXPECT_EQ(engine->diagnosticCount(), problems_before);
 }
