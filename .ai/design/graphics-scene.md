@@ -1,7 +1,7 @@
 # graphics scene graph: nodes, state, collection, layers, picking
 
 > **Status**: current (the relation between collection and snapshots is in `graphics-threading.md` §2.2)
-> **Last verified**: 2026-11-16
+> **Last verified**: 2026-11-27
 > **Scope**: strict tree, state folding, collection memo, layers and picking.
 > **Sources**: `Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
 > `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`; the derived half lives in `src/viz/graphics/src/ScenePublisher.hpp`.
@@ -107,6 +107,17 @@ authored back face instead of its outside, and `gl_FrontFacing` reports the auth
 is the same surface seen from behind). Nothing about a mirror reaches a shader, a varying or an ABI byte — the alternative
 (a per-draw flag plus a flat varying, or a determinant per vertex) pays for the same answer at every vertex or every
 fragment (`G10`). The one placement this cannot cover is an INSTANCE matrix, recorded in §9.2.
+
+2.14 **A subtree's turn has two OSG spellings, and they are two states** (`G1` `G4` `G6` `G12`): the scene graph is
+OSG's, so its class names and their accessors are kept (`Group`, `MatrixTransform`, `PositionAttitudeTransform`,
+`AutoTransform`). The quaternion therefore answers twice - `attitude()` / `setAttitude()` on the TRS node,
+`rotation()` / `setRotation()` on the billboard - and that is a stated difference rather than an unfinished rename:
+an attitude IS the node's whole orientation (the value `Isometry3d::rotation` and `transform()` report), while a
+billboard's rotation is applied AFTER the automatic orientation, so the two name one quantity only under
+`NoRotation` (§5.3 N6). Boundary: a node that carries an orientation of its own spells it `rotation()` - the
+engine's word, and the one `Isometry3d` uses - unless it keeps an OSG class name, in which case it keeps that
+class's accessor; whichever it does, the two headers cross-reference each other, because "the counterpart has no
+such accessor" was the defect that recorded this (review 18 `Y12`).
 
 ## 3. Features
 
@@ -273,6 +284,7 @@ fragment (`G10`). The one placement this cannot cover is an INSTANCE matrix, rec
 | D3 | Built-in LOD / spatial partitioning in the framework | Wait for a real load where "collection itself per frame" is the bottleneck; see the backlog. |
 | D4 | Layer-mask pruning on containers | Nearest declaration wins would make a descendant's redeclaration unreachable. |
 | D5 | State folding as a per-leaf upward query | O(depth) and allocating; top-down `InheritedState` is the only implementation. |
+| D6 | Renaming one transform's accessor so both classes say `rotation()` | It breaks a shipped SDK spelling to remove a difference the two contracts genuinely have; what the rename would fix is the CLASS name (`PositionAttitudeTransform`), and that moves both names together (§2.14). |
 
 ## 8. Tests and Acceptance
 

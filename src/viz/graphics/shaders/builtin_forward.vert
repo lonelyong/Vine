@@ -26,7 +26,7 @@ layout(location = 2) in vec4 vn_Color;
 #ifdef VN_TEXTURED
 // The slot's KIND is NAMED, never defaulted: the backend sets exactly ONE of the two names for every
 // drawable, from the width of the geometry's texcoord channel (three scalars is a direction, two is a
-// UV pair - see SceneBridgePipeline), so a variant that samples the slot without saying what the slot
+// UV pair - see ProgramVariant), so a variant that samples the slot without saying what the slot
 // IS cannot be built at all. The fragment stage below declares the matching sampler.
 #if defined(VN_TEXCOORD_CUBE)
 // A cube map is sampled BY DIRECTION, so the same slot carries three scalars (xyz) instead of a UV
@@ -72,9 +72,9 @@ void main()
 #ifdef VN_TEXTURED
     vn_uv = vn_TexCoord0;
 #endif
-    // Reverse-Z: the projection matrix maps near to 1 and far to 0, which is
-    // what this backend's depth compare (GREATER) expects. See the depth
-    // convention note in SceneBridgePipeline.cpp.
+    // Reverse-Z: the projection the push range carries is already folded, so it maps near to 1 and far to 0,
+    // which is what this backend's depth compare (GREATER) expects. The convention is the ABI's
+    // (ShaderAbi.hpp, kFarClipZ), not a stage's to apply.
     gl_Position = vn_pc.projection * vn_view_position;
     // A POINT_LIST pipeline needs a vertex stage that STATICALLY writes gl_PointSize: without
     // maintenance5 (and with no tessellation / geometry stage) a point draw from a stage that never

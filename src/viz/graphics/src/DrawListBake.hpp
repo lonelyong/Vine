@@ -426,7 +426,7 @@ struct SortKey {
     std::int32_t  draw_order{ 0 };      ///< Declared draw order; a higher value is drawn later.
     std::uint32_t layer{ 0 };           ///< Smallest layer index the row belongs to (0 when it states none).
     bool          transparent{ false }; ///< Opaque segment first, transparent segment after it.
-    std::int64_t  depth{ 0 };           ///< Quantized camera-space depth (near = larger, see makeSortKey).
+    std::int64_t  depth{ 0 };           ///< Quantized camera-space depth, growing away from the eye (see makeSortKey).
     std::uint64_t tie{ 0 };             ///< (row index << 32) | primitive index: what makes the order total.
 
     /// @brief Depth quantization: one step is 1/4096 of a world unit.

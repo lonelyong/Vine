@@ -128,10 +128,14 @@ class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
      */
     virtual void onKeyUp(const vn::window::KeyEvent& event) = 0;
 
-    /** @brief Handles a viewport resize.
+    /** @brief Handles a viewport resize: the pixel extent the interaction math converts with.
      *
-     * The manipulator should refresh anything derived from the viewport size,
-     * typically the camera projection aspect ratio.
+     * @details
+     * - What a resize refreshes here is the rectangle, not the picture's shape: a manipulator turns a pointer or a
+     *   wheel step into world units with the PIXEL extent, so that is the number it keeps.
+     * - The camera owns the shape of its picture and the view that owns the camera writes it there (see Camera),
+     *   which is why OrbitCameraManipulator leaves a perspective projection alone. An orthographic camera's window
+     *   IS its picture, so a new shape does reach the window.
      *
      * @param event Resize event carrying the new surface size in pixels.
      */

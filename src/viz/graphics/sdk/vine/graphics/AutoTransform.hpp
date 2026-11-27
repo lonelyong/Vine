@@ -83,6 +83,11 @@ class VN_GRAPHICS_API AutoTransform : public Group {
 
     /** @brief Gets the rotation applied AFTER the automatic orientation.
      *
+     * @details
+     * - Under NoRotation this is the node's whole orientation - the quantity PositionAttitudeTransform spells
+     *   `attitude()`; under the other modes it is a SPIN on the orientation the camera derivation chose, so the two
+     *   classes name it differently on purpose (`.ai/design/graphics-scene.md` §2.14).
+     *
      * @return The stored quaternion (identity by default). The matrix path normalizes a non-unit value.
      */
     Quatd rotation() const;

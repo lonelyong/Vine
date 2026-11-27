@@ -22,9 +22,9 @@ using vn::math::Vec3d;
  *
  * @details
  * - ONE CAMERA, ONE PICTURE SHAPE: the aspect lives here because the projection is what needs it, and every
- *   reader of the projection then reads the SAME number from the same place - the view block that builds
- *   it, the culling that decides what is worth projecting, and the picking ray. A host that wants the same
- *   eye at two shapes uses two cameras.
+ *   reader of the projection then reads the SAME number from the same place - the push range a pass carries it
+ *   in (VinePushRange), the culling that decides what is worth projecting, and the picking ray. A host that
+ *   wants the same eye at two shapes uses two cameras.
  * - A camera whose shape differs from the picture a pass draws it into projects a STRETCHED picture; the
  *   engine REPORTS that while compiling the frame (see RenderEngine's frame-plan problems) instead of
  *   letting the picture be quietly wrong. What this replaced derived the aspect from the pass' rectangle at

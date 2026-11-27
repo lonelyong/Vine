@@ -122,8 +122,8 @@ constexpr char8_t shadow_term[] = u8"        if (vn_shadow.params.x > 0.5 && vn_
                                   u8"            // the map found is. Outside the map's rectangle nothing casts, so the fragment\n"
                                   u8"            // stays lit: the map only covers what the light camera framed.\n"
                                   u8"            //\n"
-                                  u8"            // The block's matrix is the SDK's clip convention: x to the right, y UP, z 0 at\n"
-                                  u8"            // the near plane to 1 at the far one. The MAP is a Vulkan image this renderer\n"
+                                  u8"            // The block's matrix is the SDK's clip convention: x to the right, y UP, z -1 at\n"
+                                  u8"            // the near plane to +1 at the far one (ShaderAbi's clip contract). The MAP is a Vulkan image this renderer\n"
                                   u8"            // rasterised with the backend's clip fold: v = 0 is the TOP row (world up -\n"
                                   u8"            // the same fact that makes the G-buffer upright), and the depth is REVERSE-Z\n"
                                   u8"            // (near = 1, far = 0 - the depth range the pass declared, see DepthRange).\n"
@@ -193,9 +193,9 @@ bool insertShadowAbi(std::u8string& source, std::u8string_view declarations, std
  * its pass declared a shadow input (see SceneBridge), and EmbeddedShadersTest asserts both markers
  * against the shipped source.
  *
- * The declarations are the CONTENT path's bindings, not the fullscreen path's: set 0 / 3 for the map
- * and 4 for the block, right after the material (0) and the optional diffuse map (1) that share the set (the
- * lights take 5 on both paths - see vine_params.glsl).
+ * The declarations are the CONTENT path's bindings, not the fullscreen path's: set 0, the map at 7 and the block
+ * at 8, after the material (0) and the five texture slots (1-5) that share the set (the lights take 6 on both
+ * paths - see vine_params.glsl).
  *
  * @return The fragment source every forward program is derived from.
  */

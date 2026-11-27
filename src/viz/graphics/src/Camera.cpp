@@ -178,8 +178,8 @@ vn::geom::spatial::Rayd Camera::screenToWorldRay(const Vec2d& screenPos) const
 
 CameraSnapshot CameraSnapshot::of(const Camera& camera)
 {
-    // The ONE conversion from an authored camera to the value a frame carries: the same four numbers the view block,
-    // the culling and the picking ray read, taken together so one frame cannot see a camera that moved in between.
+    // The ONE conversion from an authored camera to the value a frame carries: the same four numbers the pushed
+    // projection, the culling and the picking ray read, taken together so one frame cannot see a camera that moved in between.
     CameraSnapshot snapshot;
     snapshot.present    = true;
     snapshot.view       = camera.viewMatrix();

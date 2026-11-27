@@ -196,9 +196,10 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     /** @brief Gets the light propagation direction (world space).
      *
      * @details
-     * - Only meaningful for directional lights.
+     * - Only meaningful for a light that has one (directional and spot - see hasDirection()): the packer writes
+     *   zero for a point light, so a point light's direction reaches no stage.
      *
-     * @return The direction.
+     * @return The direction (world space, as authored).
      */
     vn::math::Vec3d direction() const;
 

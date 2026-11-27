@@ -2902,3 +2902,29 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   stamp it over the whole rectangle. And a rotation for `world_to_map`, never an axis swap (det -1 mirrors the sky).
 - **Verified.** Whole tree builds; `test_graphics` 687/687, `test_vk` 229/229; `vn_shader_check.sh` PASS; the demo now
   declares `ChainDesc::background` and installs its map from `installContent`.
+
+## 2026-11-27 - Y11 + Y12: the sentences the landings left behind, and a spelling that is two states
+
+- **Y11 (doc only, seven sites; the eighth was already gone).** `Camera.hpp` / `Camera.cpp` said "the view block"
+  builds the projection - that block was deleted by `ADR-2026-11-26-host-program-contract-is-the-push-range`, so
+  both now name the push range (`VinePushRange`). `BuiltinShaders.cpp`'s shadow term said the light block's clip z
+  is "0 at the near plane to 1 at the far one"; it is the SDK's backend-neutral range (-1 / +1) and the LINES BELOW
+  it are what fold it into the map's reverse-Z. The same file's `forwardFragmentSource()` note described review-9
+  bindings (map 0 / 3, block 4, lights 5); the content set is material 0, texture slots 1-5, lights 6, shadow pair
+  7 / 8. `builtin_forward.vert` cited `SceneBridgePipeline` twice (a retired backend file) - now `ProgramVariant`
+  for the texcoord kinds and `ShaderAbi.hpp`'s `kFarClipZ` for the depth, and it says the pushed projection is
+  the already-folded one. The first attempt also named `ContentDraw::foldToDeviceClip` and `check_vk_exposure.py`
+  refused it (`C4`: a public shader names no unit a plugin keeps in `internal/`), so the fold stays the backend's
+  and the stage only reads the convention. `SortKey::depth` said "near = larger"; `makeSortKey`
+  computes `-(view * point).z`, so it grows away from the eye. `Light::direction()` said "only meaningful for
+  directional lights"; spot lights have one and the packer zeroes a point light's. `CameraManipulator::onResize`
+  said a manipulator should refresh "typically the camera projection aspect ratio"; it deliberately does not - the
+  camera owns the shape and `OrbitCameraManipulator` keeps only the pixel extent (plus the ortho window).
+- **Y12 (naming, doc only, no ABI).** The review called `PositionAttitudeTransform::attitude()` and
+  `AutoTransform::rotation()` "one property, two names". They are not: an attitude IS the node's whole orientation
+  (`transform()` → `Isometry3d::rotation`), while a billboard's rotation is the SPIN applied after the automatic
+  orientation, so the two name one quantity only under `NoRotation`. Both headers now say that and cross-reference
+  (§2.14); the rejected rename is `D6` - what would remove the difference is the CLASS name, and that moves both
+  names together. No accessor changed, so no host breaks.
+- **Verified.** Whole tree builds; `test_graphics` 687/687, `test_vk` 229/229; `vn_shader_check.sh` PASS (the
+  forward stage's comment text changed, the embedded copy is regenerated); all 12 doc gates green.

@@ -56,7 +56,14 @@ class VN_GRAPHICS_API PositionAttitudeTransform : public Group {
      */
     void setPosition(const Point3d& position);
 
-    /** @brief Gets the attitude (rotation).
+    /** @brief Gets the attitude: the node's whole orientation.
+     *
+     * @details
+     * - This IS the orientation, not a supplement to one: the local matrix is `T(position) * R(attitude) * S(scale)`,
+     *   and transform() reports the same quaternion as `Isometry3d::rotation`.
+     * - The name is this class's OSG spelling and is deliberately NOT AutoTransform's `rotation()`: there the value
+     *   is the spin applied AFTER the automatic orientation, so the two name one quantity only under NoRotation
+     *   (`.ai/design/graphics-scene.md` §2.14).
      *
      * @return The stored quaternion (identity by default). The matrix path normalizes a non-unit value.
      */
