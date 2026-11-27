@@ -182,7 +182,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   - **指针 = 事件说的那个像素**：位置是像素索引，取样本走像素中心（`index + 0.5`）；按下、移动、滚轮各自带位置，
     锚点一律从手里这个事件解析（不再用"上一次移动"或画面中心猜）。
   - **世界约定**：右手、**Z 轴向上**（机器人惯例：X 前、Z 上），世界单位随内容、引擎不规定。水平线、默认平行光方向、
-    默认 billboard 轴都是 Z。`setWorldUp` 尚未提供，Y 轴向上的内容（glTF 规范）要先把根节点转过来。
+    默认 billboard 轴都是 Z。**引擎不做轴转换**，也不提供 `setWorldUp`：Y 轴向上的内容（glTF 规范）由宿主用一个根节点
+    的 `MatrixTransform` 摆进 Z 世界（对 +Y 内容绕 X 转 +90°，`y → z`），导入边界只报告、不代改——旋转留在树里，
+    拾取和包围盒仍按世界坐标回答。
 - `RenderTarget` —— 若干彩色附件 + 可选深度：`attachColor(fmt)` / `attachDepth(fmt)` / `setSize(w,h)`，
   以及 `shareDepth(DepthView)`（借别人的深度；`DepthView` 是个值，命名一张 target 的深度图并保活它）与
   `setDepthPromotion(bool)`（深度是否变成可采样）。借来的深度也可以由**画它的那条 pass** 声明：

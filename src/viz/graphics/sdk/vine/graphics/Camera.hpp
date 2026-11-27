@@ -246,7 +246,9 @@ class VN_GRAPHICS_API Camera : public Object, public RefCounted<Camera> {
     String         name_;
     Mat4d          view_{ Mat4d() };
     ProjectionType projection_type_ = ProjectionType::Perspective;
-    // Copy of the last look-at parameters, used for ray generation.
+    // Copy of the last look-at parameters, used for ray generation. The DEFAULTS are a Z-up TOP VIEW - the eye on the
+    // world's up axis, a +Y picture up - which is Vine's convention and not a Y-up one
+    // (`.ai/design/graphics-navigation.md` §2.9; the engine converts no axis, so Y-up content is turned by the host).
     Vec3d eye_{ 0.0, 0.0, 5.0 };
     Vec3d center_{ 0.0, 0.0, 0.0 };
     Vec3d up_{ 0.0, 1.0, 0.0 };

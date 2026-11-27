@@ -104,8 +104,11 @@ stop at the surface the interesting case.
 forward, Z up), and the world unit is the content's - no unit is imposed. The manipulator's horizon is that up axis, the
 default directional light shines down it and the default billboard axis is it. Why: five defaults and one private
 constant already said Z-up while no page, header or guide did, so a Y-up host met a horizon it could not name.
-Boundary: `setWorldUp` and an import-time axis conversion are trigger-gated (§9.2); until then the convention is a
-statement, not a parameter.
+Boundary: the engine CONVERTS NOTHING and takes no up-axis parameter - neither a conversion at the import boundary nor a
+`setWorldUp` on the manipulator (§7 `D5` `D6`). A source that states another up axis (glTF states +Y) is brought into
+the world by the HOST, as one placed transform: a `MatrixTransform` over the imported subtree that turns +Y onto +Z
+(+90 deg about X, `y -> z`), so the fact stays visible in the tree, picking and bounds answer in world coordinates, and
+no number the host wrote ends up silently in a second frame (`G13`).
 
 ## 3. Features
 
@@ -193,6 +196,8 @@ statement, not a parameter.
 | D2 | The orthographic window derived from `fieldOfView` and the eye distance | `fieldOfView` is a perspective parameter, and the derivation made the eye distance both the scale and the clip placement, so the clamp fought every zoom (`P1`). |
 | D3 | A `Pan` / `Zoom` entry in `Mode` | A mode that no comparison reads describes nothing, and it competes with `DragAction` for "what a drag does" (`N3`). |
 | D4 | A `Camera::setOrthographicZoom` | A second way to state the same window would let the two disagree; the four bounds with `orthographicHeight()` already name the quantity, and one writer sequence (scale, reshape, fit) is enough. |
+| D5 | An automatic axis conversion at the import boundary | The engine would rotate a host's content behind its back: the numbers the host wrote (a camera, a light direction, a pick result's coordinates) would live in a different frame from the tree, and a second convention would have to reach every default - the sun, the billboard axis, the shadow camera (`G1` `G7` `G13`). The host's one `MatrixTransform` is visible, testable and reversible (§2.9). |
+| D6 | `OrbitCameraManipulator::setWorldUp` (the up axis as a per-host parameter) | One world, one up (§2.9). Once the horizon is a parameter, every default beside it - the sun's direction, the billboard's default axis, the shadow camera's reference axis - is a second place that can disagree, and a Y-up host ends up half-converted: a Z horizon with a Y-up sun (`G1` `G6`). |
 
 ## 8. Tests and Acceptance
 
@@ -217,9 +222,10 @@ shader sites are unchanged by it: no shader and no ABI was touched.
 
 9.2 **Known gaps**:
 
-- **No `setWorldUp`, no import-time axis conversion.** The world is Z-up (§2.9); a Y-up host (glTF states Y-up in its
-  specification) meets a Z horizon. Trigger: the first host with Y-up content in a Z-up scene; the shape is a basis the
-  spherical model is expressed in, plus a reported root rotation at the import boundary.
+- **No importer reports a source's stated up axis.** The world is Z-up (§2.9) and the engine converts nothing (`D5`,
+  `D6`), so a Y-up source arrives exactly as authored - lying on its back until the host turns it, with no diagnostic
+  saying why. A loader that reads a format which STATES its axis (glTF: +Y) should report it once. Trigger: the first
+  such asset in a Z-up scene.
 - **No orthographic host in the tree.** The parallel picture's contract is now exact and tested, but no shipped host
   switches a camera's projection at run time. Trigger: the first host that offers an orthographic view.
 - **`ScrollEvent` has no "position known" bit.** A host that cannot state where the wheel turned leaves `x`/`y` at zero

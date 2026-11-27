@@ -2928,3 +2928,23 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   names together. No accessor changed, so no host breaks.
 - **Verified.** Whole tree builds; `test_graphics` 687/687, `test_vk` 229/229; `vn_shader_check.sh` PASS (the
   forward stage's comment text changed, the embedded copy is regenerated); all 12 doc gates green.
+
+## 2026-11-27 - Y6 settled: one world, one up, and the engine turns nothing
+
+- **The decision (owner's call, not a gap any more).** The world is right-handed and Z-up, and the engine performs NO
+  axis conversion and takes NO up-axis parameter: `setWorldUp` is rejected (`graphics-navigation.md` §7 `D6`), and so
+  is an automatic conversion at the import boundary (`D5`). A Y-up source (glTF states +Y) is brought into the world by
+  the HOST, as one placed `MatrixTransform` over the imported subtree - +90 deg about X for a +Y source (`y -> z`).
+- **Why (the argument to keep).** A conversion in the engine rotates a host's content behind its back, so the numbers
+  the host wrote (a camera, a light direction, a pick's coordinates) live in a different frame from the tree; and a
+  per-host up axis has to reach EVERY default beside it (the sun's direction, the billboard's axis, the shadow
+  camera's reference axis) or the world is half-converted: a Z horizon with a Y-up sun. A visible placement node is
+  testable, reversible, and keeps picking/bounds answering in world coordinates (`G1` `G7` `G13`).
+- **Where it is said / marked.** `graphics-navigation.md` §2.9 (the convention + this boundary), `docs/guides/graphics.md`
+  (the 世界约定 line), and the defaults a reader actually meets: `Camera`'s private `eye_` now says the defaults are a
+  Z-up TOP VIEW, not a Y-up one - review 11 read that exact line as "implies Y-up", which is the misreading to prevent.
+- **What is still missing (one thing, trigger-gated).** No importer reports a source's stated up axis: a Y-up asset
+  arrives lying on its back with no diagnostic. Trigger: the first glTF (or other axis-stating) asset in a Z-up scene;
+  the answer is a report, never a rotation.
+- **No ADR.** §2.9 + the two `D#` entries carry the argument and the rejected options, which is where the next reader
+  looks; a dated ADR would restate them (design-docs skill: ADR only for a decision likely to be re-litigated).
