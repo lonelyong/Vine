@@ -679,7 +679,7 @@ once?
   keep-alive the geometry entry uses (`ContentCaches.hpp:147`), so a recycled address cannot inherit a compiled module.
 - **A failed compile is remembered** (`:424-428`), and a second ask answers `nullptr` without compiling again.
 
-### 15.2 Z12 (medium) - an instance stream is keyed by a borrowed address with a counter that restarts
+### 15.2 Z12 (medium) - an instance stream is keyed by a borrowed address with a counter that restarts (**fixed 2026-11-27**: the entry holds the `Buffer` its key is the address of, and is withdrawn at the frame end where that share is the last one - `vk-backend.md` 2.5 / N11, `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md`)
 
 `InstanceStream` is the one entry of the four that holds **no identity at all**
 (`ContentCaches.hpp:155-163`): the key is the `Buffer`'s address (`ensureInstanceStream`,
@@ -697,6 +697,18 @@ stream's `source` is a `Buffer` the entry keeps alive **through the description 
 (`GeometryEntry::description`, `ContentCaches.hpp:147`), so its address cannot be recycled underneath it. The class
 header calls the address "the identity the SDK releases by" (`ContentCaches.hpp:156-157`) - which is true, and is
 exactly the assumption `Z6` shows the module cannot enforce on a host's behalf.
+
+**Fixed 2026-11-27.** The instance stream was the one table that had not followed
+`ADR-2026-11-09-address-keys-hold-the-object`, and it now does: `InstanceStream::source` holds the buffer its key is the
+address of, so the key cannot be handed to a later object and `revision` compares versions of the object the bytes came
+from (`ensureInstanceStream` takes the command's `BufferSlice`, so the share is given by its owner, not invented from a
+borrowed reference). The review's second fact - the entries that were never announced - is why the fix could not stop
+there: holding makes the cache an OWNER of the host's bytes, so an entry now ends two ways, the host's announcement and
+the frame end at which its share is the last one (`sweepUnheldStreams`). The review's own prescription ("hold the
+`Buffer` it was built from") was therefore not enough by itself: hold-only would have traded a stale `VkBuffer` for a
+stale `VkBuffer` plus the host's memory, and the host pattern this table serves - rebuild the instance buffer each
+frame - has no verb with which to announce. A geometry entry keeps the announcement-only rule, and `N11` says why: scene
+content's residency is the host's decision and its rows leave the tree, while a `Buffer` has no row to say it is gone.
 
 ### 15.3 Z13 (low) - two of the three fills remember a refusal and the third does not
 
@@ -1350,7 +1362,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z9` | R9 | medium | `test_graphics` compiles twelve private TUs unconditionally, so the engine's suite cannot run under ASan on Linux - the ownership graph has no address-safety witness (**fixed 2026-11-27**: the module's object set is now linked instead, `graphics-architecture.md` 2.19) | `tests/test_graphics/CMakeLists.txt:38-59`; `.ai/memory/graphics.md` |
 | `Z10` | R10 | low | the navigation page's `F5` sentence is `Z8`'s defect on the corpus side | `graphics-navigation.md:123` |
 | `Z11` | R11 | medium-high | "does this pass write its target" is answered three ways and the scheduler's answer is false for a camera-less clearing pass, so a consumer may be ordered before the clear (**fixed 2026-11-27**: `RenderPass::writesTarget()` is the one answer - a draw packet or an attachment policy - read by the scheduler, the produced table and the wiring's filler check, `graphics-rendering.md` 2.16 / C9) | `RenderPass.cpp:146-158`; `Device.cpp:1524-1530`, `:2063`; `EngineCompile.cpp:226-231`; `EngineCompile.cpp:925` |
-| `Z12` | R13 | medium | an instance stream is keyed by a borrowed `Buffer` address with no keep-alive and no identity, and its version (`revision`, starting at 0) is not unique across objects: a recycled address inherits the previous object's bytes | `ContentCaches.hpp:155-163`; `ContentCaches.cpp:318-350`; `Buffer.hpp:385` |
+| `Z12` | R13 | medium | an instance stream is keyed by a borrowed `Buffer` address with no keep-alive and no identity, and its version (`revision`, starting at 0) is not unique across objects: a recycled address inherits the previous object's bytes (**fixed 2026-11-27**: the entry holds the `Buffer` its key names, and is withdrawn at the frame end where that share is the last one - `vk-backend.md` 2.5 / N11) | `ContentCaches.hpp:155-163`; `ContentCaches.cpp:318-350`; `Buffer.hpp:385` |
 | `Z13` | R13 | low | two of the three fills remember a refusal; an instance upload retries, allocates and copies again on every frame | `ContentCaches.cpp:371-430`, `:494-497` vs `:318-350` |
 | `Z14` | R14 | low | `vk.window.presenter_missing` accuses the host of a foreign presenter when the window merely has no live chain - and the window's own reason is never reported there | `Device.cpp:1550-1560`; `WindowTarget.cpp:494-497` |
 
@@ -1395,8 +1407,14 @@ unobserved, and it is recorded here so the next round starts from it rather than
    (`passHasEffect`), and the scheduler's edge / the produced table / the wiring's filler check all call it (2.16 /
    C9 / N15 / T10; `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target.md`). The review's "make a camera-less
    pass announce nothing" alternative was rejected: it deletes the clear-only pass the backend already records.
-6. **`Z12`** - the instance stream's key: hold the `Buffer` it was built from (the geometry path's own shape) so the
-   address cannot be recycled underneath it, and withdraw the entry when the buffer's last reference goes.
+6. ~~**`Z12`** - the instance stream's key: hold the `Buffer` it was built from (the geometry path's own shape) so the
+   address cannot be recycled underneath it, and withdraw the entry when the buffer's last reference goes.~~ **Done
+   2026-11-27**, at the rule: the entry holds its key (`InstanceStream::source`, and `ensureInstanceStream` takes the
+   segment so the share is given rather than invented), and because holding makes the cache an owner the entry ends two
+   ways - the host's announcement and the frame end where the cache's share is the last one (`sweepUnheldStreams`).
+   Hold-only (the review's own prescription) was rejected: it enlarges the leak it would leave standing, since the entry
+   would pin the host's bytes as well and the pattern this table serves rebuilds its buffer per frame (2.5 / N11 /
+   D9 / D10 / T11; `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md`).
 7. **`Z6`** - the override's withdrawal (one verb, plus the binding key).
 8. ~~**`Z9`** - the `if(WIN32)` guard and the ASan command in the ledger; it is what lets 1-7 be proven.~~ **Done
    2026-11-27**, at the cause: the module's object set is linked instead of a guard being added, and ASan now runs on

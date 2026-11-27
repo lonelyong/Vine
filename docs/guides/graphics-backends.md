@@ -44,7 +44,7 @@
 | `RenderDevice::capabilities()` | `render_targets`、`presentation`（创建意图）、`Features` / `Limits`；缺席不是零 |
 | `RenderDevice::createFrameDriver()` / `releaseFrameDriver()` | 一个设备服务多个窗口/引擎；每个驱动者有自己的帧机器与暂存 |
 | `createSurfaceTarget` / `setRenderTarget` / `releaseRenderTarget` / `releasePass` | 目标由设备持有；窗口目标一格一次（第二次答 `WindowOccupied`）；释放后下一帧重建 |
-| `releaseContent(Object)` / `releaseContent(Buffer)` | 放掉 GPU 驻留，对象仍有效；释放本身不增加 `deviceWaits()` |
+| `releaseContent(Object)` / `releaseContent(Buffer)` | 放掉 GPU 驻留，对象仍有效；释放本身不增加 `deviceWaits()`。宿主丢掉 `Buffer` 的最后一个引用与 announce 等效：`vk` 在下一帧尾撤下那条实例流（[`vk-backend.md`](../../.ai/design/vk-backend.md) 2.5） |
 | `readColorImage` / `readDepthImage` | 先分类再工作：`Unsupported`（永远不行）与 `NotReady`（还没画）是不同答案；读回按每次一次计数等待设备 |
 | `frameReport()` | 本帧成本（passes/draws、uploads、locking、retention、frames）+ 报告一次性的诊断 episode |
 | `PresentTarget::present()` | **机制**：帧尾由执行器调用，宿主不直接调 |
@@ -57,6 +57,8 @@
   `diagnosticCount()` 只数引擎 + 设备，宿主经 `reportEngineProblem` 注入的另算（`DiagnosticOrigin::Host`）。
 * **驻留由内容声明钉住**：几何行声明 stream 的 buffer、材质行与 pass 导入声明贴图；裁剪不丢上传，
   离树过一个 `slots + 1` 的窗口后才离场（[`graphics-content-lifecycle.md`](../../.ai/design/graphics-content-lifecycle.md)）。
+  插槽之外没有行可声明的对象（实例流的 `Buffer`）则看**持有关系**：`vk` 在帧尾发现自己是最后持有者就撤下它，
+  地址从此可以复用（[`vk-backend.md`](../../.ai/design/vk-backend.md) 2.5）。
 
 ## 3. 宿主可见的事实（`vk`）
 

@@ -188,8 +188,18 @@ struct ContentCaches::Impl {
 
     std::unordered_map<ProgramKey, ProgramEntry, ProgramKeyHash>                     programs;
     std::unordered_map<const vn::graphics::GeometryDescription*, std::shared_ptr<GeometryEntry>> geometries;
-    /// One entry per INSTANCE buffer a command read (keyed by the buffer's address, see InstanceStream).
-    std::unordered_map<const vn::Buffer<float>*, std::shared_ptr<InstanceStream>> instance_streams;
+    /**
+     * @brief One entry per INSTANCE buffer a command read, keyed by that buffer's address (see InstanceStream).
+     *
+     * @details
+     * - THE ENTRY KEEPS ITS KEY ALIVE, so a key that is still in this table names the object it was built from: the
+     *   allocator cannot hand the address to a later `Buffer`, and `revision` compares versions of ONE object.
+     * - WHAT THAT COSTS, AND WHO PAYS IT: the cache is now a strong owner of the host's bytes, so an entry nobody else
+     *   holds must END (`sweepUnheldStreams`) instead of turning a stale VkBuffer into a stale VkBuffer plus the
+     *   host's memory.
+     */
+    using InstanceStreamTable = std::unordered_map<const vn::Buffer<float>*, std::shared_ptr<InstanceStream>>;
+    InstanceStreamTable instance_streams;
     /// The built pipelines, as SHARED HANDLES (see PipelineHandle): a frame that resolved one keeps it alive.
     std::unordered_map<ContentPipelineKey, std::shared_ptr<PipelineHandle>, ContentPipelineKeyHash> pipelines;
     /**
@@ -305,23 +315,27 @@ struct ContentCaches::Impl {
      * @brief Gets (or uploads) one instance stream: the per-instance model matrices a command reads.
      *
      * @details
-     * - KEYED BY THE BUFFER'S ADDRESS, the identity the SDK releases by (see RenderDevice::releaseContent(Buffer)),
-     *   and re-uploaded when the buffer's revision moves - a command's instance data is announced through the
-     *   buffer, not through a geometry revision.
+     * - KEYED BY THE BUFFER'S ADDRESS, AND THE ENTRY HOLDS THAT BUFFER (see InstanceStream): an address is an
+     *   identity only while something occupies it, and the share taken here is that something - so a later `Buffer`
+     *   can never be allocated at a key this table still holds, and the revision below is read from the very object
+     *   the bytes came from (`ADR-2026-11-09-address-keys-hold-the-object`). A command's instance data is announced
+     *   through the buffer, not through a geometry revision.
      * - The bytes are the WHOLE buffer: `first_instance` / `instance_count` are DRAW parameters, so one upload
      *   serves every draw that reads the same buffer.
      *
-     * @param buffer The instance buffer (its floats are the matrices, four vec4 columns per instance).
-     * @param why    Receives the reason when the bytes could not be uploaded.
+     * @param transforms The instance segment the command reads (its buffer is not null: only an instanced command
+     *                   reaches this, see `planCommand`).
+     * @param why        Receives the reason when the bytes could not be uploaded.
      * @return The stream, or null when it could not be uploaded.
      */
-    [[nodiscard]] std::shared_ptr<InstanceStream> ensureInstanceStream(const vn::Buffer<float>& buffer, vn::String& why)
+    [[nodiscard]] std::shared_ptr<InstanceStream> ensureInstanceStream(const vn::BufferSlice<float>& transforms, vn::String& why)
     {
-        std::shared_ptr<InstanceStream>& slot = instance_streams[&buffer];
+        std::shared_ptr<InstanceStream>& slot = instance_streams[transforms.values.get()];
         if (!slot) {
-            slot = std::make_shared<InstanceStream>();
+            slot         = std::make_shared<InstanceStream>();
+            slot->source = transforms.values; // THE KEY, HELD (see the type's note): the address stays ours
         }
-        const std::uint64_t revision = buffer.revision();
+        const std::uint64_t revision = slot->source->revision();
         if (slot->buffer != VK_NULL_HANDLE && slot->revision == revision) {
             return slot;
         }
@@ -331,6 +345,7 @@ struct ContentCaches::Impl {
         if (slot->buffer != VK_NULL_HANDLE) {
             std::shared_ptr<InstanceStream> previous = std::move(slot);
             slot                                     = std::make_shared<InstanceStream>();
+            slot->source                             = transforms.values; // the new entry holds the key too
             const std::weak_ptr<const void> named    = previous;
             releaseLater(named, [target = this, entry = std::move(previous)]() mutable { target->destroyBuffer(entry->buffer, entry->memory); });
         }
@@ -338,7 +353,7 @@ struct ContentCaches::Impl {
         // `Edit`'s note and ADR-2026-11-26). What makes this upload coherent is the caller's rule - a writer rewrites
         // the same elements and announces, and does not grow the storage while a frame that reads it is in flight - so
         // the span below is stable for the copy, and the geometry is never copied twice.
-        const std::span<const float> floats = buffer.view();
+        const std::span<const float> floats = transforms.values->view();
         if (floats.empty()) {
             why = vn::String(u8"vk: an instance stream carries no transforms");
             return nullptr;
@@ -353,6 +368,71 @@ struct ContentCaches::Impl {
         ++stream_builds_;
         stream_bytes_ += slot->bytes;
         return slot;
+    }
+
+    /**
+     * @brief Withdraws ONE instance stream: the table's entry leaves now, its VkBuffer follows when the device says it
+     *        may.
+     *
+     * @details
+     * - TWO TRIGGERS, ONE BODY: the host's announcement (`releaseStreams`) and the last-share sweep
+     *   (`sweepUnheldStreams`) both say "this entry is not ours to keep", so both run this - a second withdrawal body
+     *   would be a second answer to when an entry ends.
+     * - THE PARK STILL NAMES THE ENTRY. A frame that borrowed it (`FrameBuilds::borrow`) may still be recording what the
+     *   VkBuffer is bound into, and the parked act's own share is what the park's `use_count` probe counts; detaching
+     *   the handles into a capture with no share would make "nobody else holds it" read the frame's share as zero.
+     * - THE SOURCE SHARE LEAVES WITH THE TABLE. It is the share that kept the host's bytes alive (see InstanceStream),
+     *   so a withdrawal that carried it into the park would extend the lifetime it exists to end - the act keeps the
+     *   ENTRY only because the probe needs an object to count, and the entry dies with the act.
+     *
+     * @param entry The table iterator for the entry this withdraws (erased by this call).
+     * @return true when a live stream was withdrawn; false when the entry held no uploaded buffer.
+     */
+    bool withdrawInstanceStream(InstanceStreamTable::iterator entry)
+    {
+        const std::shared_ptr<InstanceStream> doomed = std::move(entry->second);
+        instance_streams.erase(entry);
+        if (doomed == nullptr || doomed->buffer == VK_NULL_HANDLE) {
+            return false;
+        }
+        ++stream_releases_;
+        const std::weak_ptr<const void> named = doomed;
+        releaseLater(named, [target = this, entry = std::move(doomed)]() { target->destroyBuffer(entry->buffer, entry->memory); });
+        return true;
+    }
+
+    /**
+     * @brief Ends every instance stream whose buffer the host has let go: the entry holds its key, so the cache is the
+     *        one that has to notice it is the last holder.
+     *
+     * @details
+     * - THE CACHE'S SHARE IS THE LAST ONE, and that is observable: a `Buffer` is reached through `intrusive_ptr` (see
+     *   RefCounted), so every holder IS a count - `source->useCount()` reading 1 means this entry and nobody else. A
+     *   frame that is about to record the stream holds the ENTRY (`FrameBuilds::borrow`) and the command holds the
+     *   BUFFER, so a stream a frame names cannot be swept here.
+     * - WHY THE CACHE MUST ASK AT ALL: holding the buffer is what makes the key an identity, and it also makes the
+     *   cache an owner - without this sweep an entry would keep the host's bytes AND a VkBuffer for the session's life,
+     *   which is the leak it replaced made larger. The announcement (`releaseContent(Buffer)`) still ends an entry, and
+     *   remains how a host that KEEPS the buffer says "not resident"; this is the arm for the host that stopped
+     *   holding it - the shape a host that rebuilds its instance buffer every frame has, and has no verb to announce.
+     * - WHERE: a frame's end, once (see ContentCaches::endFrame). A value nobody holds is not a frame's business, but a
+     *   frame's end is where the cache already settles what the host let go, and walking the table there is O(entries).
+     * - WHAT IT DOES NOT COVER: a GEOMETRY entry is withdrawn by the host's announcement only. Its key is a scene
+     *   object whose residency follows the SDK's rows (`graphics-content-lifecycle.md` 2.9), while a `Buffer` is content
+     *   DATA with no row that could declare it gone - so this table is the one that must look at holdings itself. The
+     *   residual is `N11` in `vk-backend.md`.
+     */
+    void sweepUnheldStreams()
+    {
+        for (auto entry = instance_streams.begin(); entry != instance_streams.end();) {
+            auto next = entry;
+            ++next;
+            const bool held = entry->second != nullptr && entry->second->source != nullptr && entry->second->source->useCount() > 1U;
+            if (!held) {
+                (void)withdrawInstanceStream(entry);
+            }
+            entry = next;
+        }
     }
 
     /**
@@ -1248,7 +1328,7 @@ struct ContentCaches::Impl {
         }
         std::shared_ptr<InstanceStream> instances;
         if (instanced) {
-            instances = ensureInstanceStream(*command.instance_transforms.values, build_why);
+            instances = ensureInstanceStream(command.instance_transforms, build_why);
             if (instances == nullptr) {
                 refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                                contentRefusalCode(ContentRefusalCause::InstanceStreamRefused),
@@ -2149,14 +2229,11 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     }
     // AN INSTANCE STREAM IS RELEASED BY THE SAME ANNOUNCEMENT (`releaseContent(Buffer)` names a vertex-or-instance
     // stream, see RenderDevice): the next draw that reads this buffer uploads it again, exactly like a vertex one.
+    // THE ENTRY LEAVES THE TABLE instead of becoming a placeholder: an entry IS the share of the key it holds (see
+    // InstanceStream), so the only two states of this table are "held" and "absent".
     const auto instance = impl->instance_streams.find(static_cast<const vn::Buffer<float>*>(buffer));
-    if (instance != impl->instance_streams.end() && instance->second->buffer != VK_NULL_HANDLE) {
-        const std::shared_ptr<InstanceStream> previous = std::move(instance->second);
-        instance->second                               = std::make_shared<InstanceStream>();
-        ++impl->stream_releases_;
+    if (instance != impl->instance_streams.end() && impl->withdrawInstanceStream(instance)) {
         ++dropped;
-        const std::weak_ptr<const void> named = previous;
-        impl->releaseLater(named, [target = impl.get(), entry = previous]() { target->destroyBuffer(entry->buffer, entry->memory); });
     }
     return dropped;
 }
@@ -2233,6 +2310,10 @@ void ContentCaches::endFrame(const ContentImages::BatchId batch, const bool comp
         else {
             impl->images.batchAbandoned(batch);
         }
+        // AND THE OWNERSHIP A FRAME'S END SETTLES (see the header): an instance stream whose buffer nobody but this
+        // cache holds any more ends here. The batch's outcome does not enter it - holdings are a host fact, not a
+        // submission's.
+        impl->sweepUnheldStreams();
     }
 }
 

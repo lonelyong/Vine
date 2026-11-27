@@ -203,6 +203,18 @@ constexpr int kTargetSize = 64;
     return { pixels[index + 0U], pixels[index + 1U], pixels[index + 2U], pixels[index + 3U] };
 }
 
+/// @brief An instance buffer holding ONE column-major identity matrix translated to @p x (16 floats).
+[[nodiscard]] intrusive_ptr<vn::Buffer<float>> oneInstanceAt(const float x)
+{
+    std::vector<float> matrix(16U, 0.0F);
+    matrix[0]  = 1.0F;
+    matrix[5]  = 1.0F;
+    matrix[10] = 1.0F;
+    matrix[12] = x; // the translation: column 3's first row
+    matrix[15] = 1.0F;
+    return intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::move(matrix)));
+}
+
 /// @brief The live count of the Streams row, or 0 when the report keeps no such row.
 [[nodiscard]] std::uint32_t streamsLive(const vn::graphics::FrameReport& report)
 {
@@ -350,6 +362,114 @@ TEST(VkBuiltinProgramTest, EveryInstanceIsDrawnWhereItsMatrixPlacesIt)
     EXPECT_EQ(pixelAt(reread.values, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the re-uploaded instance stream drew nothing";
     EXPECT_EQ(pixelAt(reread.values, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 }));
     EXPECT_EQ(streamsLive(backend->frameReport()), before) << "the next frame did not bring the instance stream back";
+
+    backend->shutdown();
+}
+
+TEST(VkBuiltinProgramTest, AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = unlitProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(false, false, 0.25F);
+    const intrusive_ptr<Material>      material = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    intrusive_ptr<vn::Buffer<float>> instances = oneInstanceAt(-0.5F);
+
+    DrawItem command            = commandOf(geometry, program, material);
+    command.instance_transforms = BufferSlice<float>::whole(instances);
+    command.first_instance      = 0U;
+    command.instance_count      = 1U;
+
+    FrameDescription frame = frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ command }));
+    backend->executeFrame(frame, nullptr);
+    const std::uint32_t resident = streamsLive(backend->frameReport());
+    ASSERT_GE(resident, 3U) << "positions, indices and the instance stream are three live streams";
+
+    // THE ENTRY HOLDS THE BUFFER ITS KEY IS THE ADDRESS OF (see ContentCaches' InstanceStream): once the command list and
+    // this test's own copy of it are gone, two references are left - this one and the cache's - and the cache's is what
+    // stops a later `Buffer` from being allocated at the key.
+    frame                       = FrameDescription{};
+    command.instance_transforms = BufferSlice<float>{};
+    EXPECT_EQ(instances->useCount(), 2U) << "the instance stream is keyed by this buffer's address without holding it";
+
+    // THE HOST LETS GO, AND NOTHING ANNOUNCES A RELEASE: a frame's end is where the cache withdraws a stream whose
+    // buffer is its own alone (see ContentCaches::endFrame).
+    instances.reset();
+    backend->executeFrame(
+        frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) })),
+        nullptr);
+    EXPECT_EQ(streamsLive(backend->frameReport()), resident - 1U) << "a stream whose buffer nobody holds any more stayed resident";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+
+    backend->shutdown();
+}
+
+TEST(VkBuiltinProgramTest, ARecycledAddressDoesNotInheritThePreviousInstanceBytes)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = unlitProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(false, false, 0.25F);
+    const intrusive_ptr<Material>      material = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    // ONE matrix that TRANSLATES the triangle to x: whichever buffer's bytes reach the GPU is what the picture says.
+    const auto frameDrawing = [&](const intrusive_ptr<vn::Buffer<float>>& instances) {
+        DrawItem command            = commandOf(geometry, program, material);
+        command.instance_transforms = BufferSlice<float>::whole(instances);
+        command.first_instance      = 0U;
+        command.instance_count      = 1U;
+        return frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ std::move(command) }));
+    };
+    const FrameDescription plain =
+        frameWith(target.get(), std::make_shared<const std::vector<DrawItem>>(std::vector<DrawItem>{ commandOf(geometry, program, material) }));
+
+    intrusive_ptr<vn::Buffer<float>> first         = oneInstanceAt(-0.5F);
+    const void* const                first_address = first.get();
+    backend->executeFrame(frameDrawing(first), nullptr);
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    ASSERT_EQ(pixelAt(read.values, 12, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the first buffer's matrix did not place the triangle at -x";
+
+    // THE HOST DROPS EVERYTHING IT HELD, and the address is asked for at once: while the stream is resident the entry
+    // holds that buffer, so only a frame's end (and the park behind it) can give the address back - which is the whole
+    // difference the fixed rule makes, because the defect needed no announcement at all.
+    first.reset();
+    intrusive_ptr<vn::Buffer<float>>              second;
+    std::vector<intrusive_ptr<vn::Buffer<float>>> candidates;
+    for (int round = 0; round < 6 && second == nullptr; ++round) {
+        for (int ask = 0; ask < 8 && second == nullptr; ++ask) {
+            candidates.push_back(oneInstanceAt(0.5F));
+            if (candidates.back().get() == first_address) {
+                second = std::move(candidates.back());
+            }
+        }
+        candidates.clear();
+        if (second == nullptr) {
+            backend->executeFrame(plain, nullptr);
+        }
+    }
+    if (second == nullptr) {
+        GTEST_SKIP() << "this allocator did not hand the withdrawn buffer's address back";
+    }
+
+    backend->executeFrame(frameDrawing(second), nullptr);
+    const ColorReadback recycled = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(recycled.ok());
+    EXPECT_EQ(pixelAt(recycled.values, 51, 54), (std::array<int, 4>{ 255, 0, 0, 255 })) << "the new buffer's matrix did not place the triangle at +x";
+    EXPECT_EQ(pixelAt(recycled.values, 12, 54), (std::array<int, 4>{ 0, 0, 0, 255 }))
+        << "a fresh buffer at a withdrawn stream's address was served the previous object's bytes";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     backend->shutdown();
 }

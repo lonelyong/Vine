@@ -92,13 +92,20 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (106)
+## decisions/ — decision records (ADRs) (107)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` — **a held entry is withdrawn at the frame end where its
+  share is the last**: an entry keyed by a `Buffer`'s address now HOLDS that buffer (the identity half
+  `ADR-2026-11-09-address-keys-hold-the-object` already decided, which the instance stream was the one table to break -
+  a fresh `Buffer` starts at revision 0, so a recycled address was served the previous object's bytes silently), and
+  because holding makes the cache an owner, the entry ends in two ways: the host's announcement, or the frame end at which
+  the cache's share is the last one (`sweepUnheldStreams`). Rejected: hold-only (makes the leak larger), a weak handle in
+  `base/core`, an id on `Buffer`, a TTL/LRU, and sweeping at table growth - review 19 `Z12`.
 - `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target.md` — **a pass says whether it writes its target**: the
   producer half of the frame ("does this pass change the target it draws into") had three answers and two of them were
   wrong - the scheduler's rule said a clear is not a substitute for a draw (so a consumer could run before a camera-less

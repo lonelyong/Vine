@@ -107,9 +107,19 @@ and every cache has a witness a test can read.**
 ### 2.5 Content identity, never content comparison
 
 - **What it is**: geometry by `GeometryDescription`'s address + revision, textures by `Texture`'s address + revision, programs by description + variant bits;
-  `releaseContent` only empties the matching streams (leaving a hole) and the next frame fills the holes only.
+  `releaseContent` only empties the matching streams (leaving a hole) and the next frame fills the holes only. The instance stream is keyed by its
+  `Buffer`'s address **and holds that buffer** (`InstanceStream::source`), which is what makes the key an identity in both directions: no later object can
+  be allocated at an address the entry still names, and `revision` compares versions of the one object the bytes came from.
 - **Why**: `G5` (the cache key is identity, release leaves a hole, no traversal to compare) + `G10` (one release, one upload, not one rebuild).
-- **Boundary**: the key holds an `intrusive_ptr`, so an address is never reused by a later object; that is the premise that lets identity be a key.
+- **Boundary**: the key holds an `intrusive_ptr`, so an address is never reused by a later object; that is the premise that lets identity be a key
+  (`../decisions/ADR-2026-11-09-address-keys-hold-the-object.md`). The geometry and program entries already held what they were keyed by; the instance
+  stream did not, and because a fresh `Buffer` starts at revision 0, an object allocated at a withdrawn entry's address was served the previous object's
+  bytes **silently** - the revision check passed (review 19 `Z12`).
+- **Withdrawal**: holding the key's buffer makes the cache an owner, so an entry ends two ways - the host's announcement (`releaseContent(Buffer)`),
+  and the frame end at which the cache's share is the last one (`sweepUnheldStreams`, called from `endFrame`). The second arm exists because the shape
+  this table serves - a host that rebuilds its instance buffer per frame - has no way to announce a buffer it no longer holds, and because a share kept
+  for the session's life would trade a stale `VkBuffer` for a stale `VkBuffer` **plus** the host's bytes (`G10`). Cost: one walk of the instance-stream
+  table per frame, O(entries), under the lock `endFrame` already takes (`../decisions/ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md`).
 
 ### 2.6 Shape vs extent: a resize does not recompile a pipeline
 
@@ -624,7 +634,7 @@ and every cache has a witness a test can read.**
 - **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key is the
   SEAM's `vn::graphics::PipelineKey` and NOTHING ELSE (kind, program identity + revision, the vertex layout slots,
   attachment-set compatibility, variant, topology class - see `ContentPipelineKey`); one `DrawItem` = one
-  `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision. The pipeline states NO render pass: it carries
+  `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision, and the entry holds that buffer (§2.5). The pipeline states NO render pass: it carries
   the attachment FORMATS through `VkPipelineRenderingCreateInfo`, so its blend-array length and the rendering instance's colour
   count are the same number derived from one value.
 - **EVERY state item is a command** (`T54`, `ADR-2026-11-23` D4): viewport, scissor, line width and the depth-bias
@@ -875,6 +885,14 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   frame's answer, and the record loop of `Device::executeFrame` takes no lock
   (`VkMultiSessionTest.AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampledSource`,
   `AFrameKeepsTheSourceItReadsUntilTheFrameEnds`).
+- **N11 A table entry holds its key, and ends with it**: an instance stream's entry holds the `Buffer` its key is the address
+  of, and is withdrawn either on `releaseContent(Buffer)` or at the frame end where that share is the last one - so an
+  entry is never left keyed by an address the allocator may hand to a later object
+  (`VkBuiltinProgramTest.AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes`,
+  `ARecycledAddressDoesNotInheritThePreviousInstanceBytes`). **Residual:** a geometry entry is withdrawn by the host's
+  announcement only. Residency for scene content is the host's decision (`graphics-content-lifecycle.md` 2.3) and its
+  rows are what leave the tree; a `Buffer` is content DATA with no row that could say it is gone, which is why the
+  instance stream is the one entry whose end reads holdings.
 
 ## 6. Caveats and Traps
 
@@ -1075,6 +1093,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | D6 | implementing several frames in flight directly | `G4`: changing the "read when drawn" contract needs a decision document first; the measured ceiling is about 10% (the device is 90%) | `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` |
 | D7 | splitting the device and the session objects right away | `G8`: the contract is one frame in flight, one at a time, and a split would only add a layer of forwarding; because concurrent frames are clearly wanted it lands in **two steps** (the gate + the contract first, then the split) rather than in one go | `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` |
 | D8 | an attachment-set base class for `TargetObjects` / `WindowTarget` | `G10` / `G12`: a vtable in a value type, and one header that would have to know both; a `PassTarget` VALUE (owner pointer + four answers) gives the frame body one shape without either cost (§2.20) | — |
+| D9 | giving `Buffer` a unique id, or a weak handle, so an entry can outlive its key's address | `G10` / `G1`: a weak handle needs a control block beside `RefCounted`'s in-object counter - a redesign of the primitive every holder uses, for one table - and an id neither ends the entry nor answers the multi-session case (two caches would hold it for ever) | `../decisions/ADR-2026-11-09-address-keys-hold-the-object.md` (option B, rejected there) / `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` |
+| D10 | ending an unheld entry by a TTL, an LRU or a byte cap | `G1`: the SDK states the opposite rule (`graphics-content-lifecycle.md` 2.3: no cap, no LRU, no pressure eviction), and "the host stopped holding it" is already observable exactly - the cache's share is the last one | `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end.md` |
 
 ## 8. Tests and Acceptance
 
@@ -1090,6 +1110,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T8 | mutations are load-bearing | recorded in `../memory/graphics.md`: the ring / set, pool and cache-file mutations each turn only their own cases red |
 | T9 | readback | `OffscreenClearTest`, `ContentTargetTest`, `VkMemoryPoolTest.AReadbackGivesItsStagingBytesBack` |
 | T10 | content is resident only when its fill is proven | `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` (a refused submit through `Device::refuseNextSubmit`; the mutation that publishes at record time turns it red - §2.21, §6.19) |
+| T11 | a table entry holds its key and ends when nobody else holds it | `VkBuiltinProgramTest.AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes` (the cache's share shows in `useCount`; the stream leaves at a frame end with no announcement) and `ARecycledAddressDoesNotInheritThePreviousInstanceBytes` (the picture is the fresh buffer's; under the old rule the previous matrices were drawn at the previous position - verified by reverting the share and the sweep) |
 
 ## 9. Status and Evolution
 
@@ -1137,6 +1158,9 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 - **SDK**: `DeviceDesc` gains `cache_directory` (it has a default, so the old two-argument aggregate initialisation is unchanged).
 - **Plugin ABI**: only `RenderBackend` / `RenderBackendFactory` face the host; the internal headers (`internal/`) promise no stability.
+- **Residency, not ABI**: a host that drops its last reference to a `Buffer` without announcing a release now sees that stream leave
+  residency at the next frame end (§2.5), where it previously stayed for the session. Nothing about the API changed, and a host that
+  keeps the buffer and calls `releaseContent` sees exactly what it saw before.
 - **Cache file**: format version `1`; a mismatched version is refused (no migration, no guessing).
 - **Device requirements**: a Vulkan **1.3** device (step 2 of `T60`'s batch, `ADR-2026-11-23` D4) with the
   `synchronization2` and `dynamicRendering` FEATURES enabled - a 1.3 device that does not offer them is refused with

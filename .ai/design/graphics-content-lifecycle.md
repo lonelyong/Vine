@@ -37,15 +37,17 @@ This file defines the current design of graphics content lifecycle: release and 
 2.5 **Streams are shared by buffer identity, and lifetime is "who still declares these bytes"**: `StreamKey` = buffer + revision + segment; the steady state retransmits nothing.
     An entry holds the `Buffer` its key names, so the address lives as long as the entry. Residency lifetime **does not look at time**; two O(1) facts decide it:
     the residency key's revision (`StreamKey` = buffer + revision + segment, held in `ContentCaches`) says "is the revision still the one it uploaded", and
-    a host's release is the only thing that forgets a key — a frame that draws nothing asks nothing.
-    An entry whose revision has moved on, or whose key a host released, is forgotten and its object parks (`ContentCaches::releaseGeometry` → the device's park queue). The per-frame cost is O(#resident entries),
+    who still holds the entry's key says "is anyone still using it": a host's release forgets a key, and so does the backend's own frame end when the cache is the
+    key's last holder (`vk-backend.md` 2.5 - a `Buffer` has no row to announce its end, so that table reads holdings).
+    An entry whose revision has moved on, or whose key nobody holds any more, is forgotten and its object parks (`ContentCaches::releaseGeometry` → the device's park queue). The per-frame cost is O(#resident entries),
     not a function of content size (culling does not delete rows, so scanning rows would turn the frame that draws nothing into the most expensive frame).
 2.6 **Tables keyed by identity, and an entry must live while its key lives; only uploads are still keyed by address**: the geometry / material / program fact rows are keyed by the content handle
     `(id, revision)` (`ContentId.hpp`), and the compiled halves and descriptor sets are keyed by the same `ContentRef` (plus layout / variant /
     kind) — the whole class of error "another description at the same address" no longer exists for them, because the handle moves its generation on release and a stale reference
     answers gone outright. **The only table still keyed by address is the upload table** (`StreamUploads`' `StreamKey` = `Buffer` address + revision + segment,
     and `Buffer` is not part of the content object system): its entries **hold the `Buffer` their key names**, keep the entry when parking cannot be scheduled and retry next frame,
-    and never hand the address back to the allocator early; the instance stream a plan reads is likewise held by the plan (see ADR-2026-11-09-address-keys-hold-the-object).
+    and never hand the address back to the allocator early; the instance stream a plan reads is likewise held by the plan **and by the cache entry that uploaded it** (see ADR-2026-11-09-address-keys-hold-the-object and
+    `vk-backend.md` 2.5).
     Explicit release names it the same way: `releaseContent(const Buffer<float>& / const Buffer<uint32_t>&)` parks this stream's entry
     by address, with no need to invent an identity for `Buffer` (G1: at this layer the address is its only identity).
 2.7 **Three words, three meanings** (read this table before the code, or "identity" will mean three things):

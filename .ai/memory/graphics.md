@@ -3127,3 +3127,35 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   `scripts/tsan_check.sh` 706/706 with 0 warnings; ASan `RESULT: PASS`; `ctest` 31/31.
   `ADR-2026-11-27-a-pass-says-whether-it-writes-its-target`; `graphics-rendering.md` 2.16 / C9 / N15 / F31 / T10;
   `graphics-architecture.md` 2.5.
+
+## 2026-11-27 - Z12: a table entry holds its key, and ends when its share is the last
+
+- **The defect.** `instance_streams` was the one content table that held NOTHING it was keyed by: the key was a
+  `Buffer`'s address, the only version compared was `Buffer::revision()` (every fresh buffer starts at 0), and nothing
+  but an explicit `releaseContent(Buffer)` ever removed an entry. Two facts followed: a `Buffer<float>` allocated at a
+  recycled address at the same revision was served the previous object's GPU bytes (silently - the revision check
+  passed, so only the picture was wrong); and every dropped buffer left a `VkBuffer` plus a pool slice for the session.
+- **The rule (2.5 / N11).** `InstanceStream::source` holds the buffer its key is the address of, so the address is an
+  identity (no later object can take it while the entry lives) and `revision` compares versions of ONE object - the
+  rule `ADR-2026-11-09-address-keys-hold-the-object` already states and the geometry / program entries already follow.
+  `ensureInstanceStream` takes the command's `BufferSlice`, so the share is GIVEN by its owner instead of invented from
+  a borrowed reference.
+- **The withdrawal.** Holding makes the cache an owner, so an entry ends two ways: the host's announcement, and the
+  frame end where the cache's share is the last one (`Impl::sweepUnheldStreams` from `endFrame`, tested as
+  `source->useCount() == 1`). One body (`withdrawInstanceStream`) serves both and ERASES the entry - the table's states
+  are "held" and "absent", no placeholder. The parked act keeps the ENTRY (the park's `use_count` probe counts frames
+  through that share) and the entry's source dies with the act.
+- **Rejected (D9 / D10).** Hold-only (the review's own prescription) leaves the accumulation standing and makes it
+  larger - the entry would pin the host's bytes too, and this table's host pattern rebuilds the instance buffer every
+  frame with no verb to announce; a weak handle in `base/core` (a control block beside `RefCounted`'s in-object counter,
+  and it does not answer two caches holding the same buffer); an id on `Buffer`; a TTL / LRU / byte cap (the SDK states
+  the opposite rule); sweeping at table growth (quadratic in a frame that names many buffers for the first time).
+- **Residuals.** A buffer two sessions' caches both hold is never swept by either (each sees a count of 2) - the
+  announcement remains the way out. A GEOMETRY entry keeps the announcement-only rule: scene content's residency is the
+  host's decision and its rows leave the tree, while a `Buffer` has no row that could say it is gone.
+- **Evidence.** `VkBuiltinProgramTest.AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes` (the cache's share shows
+  in `useCount()`; the stream leaves at a frame end with no announcement) and
+  `ARecycledAddressDoesNotInheritThePreviousInstanceBytes` (the fresh buffer at the withdrawn address draws ITS matrix;
+  under the old rule it drew the previous object's - the address search keeps its candidates alive, so the allocator's
+  LIFO list is walked, and the case skips if no address comes back). `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end`;
+  `vk-backend.md` 2.5 / N11 / D9 / D10 / T11 / F5 / 9.3; `graphics-content-lifecycle.md` 2.5 / 2.6; the backend guide.

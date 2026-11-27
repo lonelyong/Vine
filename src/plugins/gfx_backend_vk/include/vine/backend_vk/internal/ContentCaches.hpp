@@ -153,13 +153,21 @@ class VN_BACKEND_VK_API ContentCaches final {
 
     /// @brief One uploaded instance stream: the per-instance model matrices a command reads at locations 12-15.
     ///
-    /// Keyed by the BUFFER's address (the identity the SDK releases by, see releaseContent(Buffer)), and re-uploaded
-    /// when the buffer's revision moves - the bytes are announced through it, not through a geometry revision.
+    /// THE ENTRY HOLDS THE BUFFER ITS KEY NAMES (`ADR-2026-11-09-address-keys-hold-the-object`, and
+    /// `ADR-2026-11-27-a-held-entry-is-withdrawn-at-the-frames-end`): the table is keyed by that buffer's address, and
+    /// a share held here is what makes the address an IDENTITY - no later object can be allocated at it while the entry
+    /// exists - and what makes @c revision a version of the bytes the entry actually holds. A fresh `Buffer` starts at
+    /// revision 0, so without the share an entry keyed by a predecessor's address answered for the new object's bytes.
+    /// The second consequence is an obligation: the cache now OWNS the host's bytes, so an entry whose share is the last
+    /// one is withdrawn (`sweepUnheldStreams`), not merely replaced when the host announces a release.
     struct InstanceStream {
+        /// The buffer the bytes came from: the table's key, made unforgeable (see the type's note).
+        vn::intrusive_ptr<const vn::Buffer<float>> source;
+
         VkBuffer      buffer{ VK_NULL_HANDLE };
         MemorySlice   memory{};
         std::uint64_t bytes{ 0 };    // Bytes copied in (the entry's residency weight).
-        std::uint64_t revision{ 0 }; // The Buffer revision the bytes came from.
+        std::uint64_t revision{ 0 }; // The `source` revision the bytes came from.
     };
 
     /// @brief One built pipeline, held as a share so a frame that resolved it can keep it alive (see `borrow`).
@@ -655,6 +663,10 @@ class VN_BACKEND_VK_API ContentCaches final {
      *   pending entries are parked. Both take this cache's lock, because the image table is part of it.
      * - THE CALLER ALWAYS CLOSES ITS BATCH, on every path out of a frame or a warm-up: a batch left open keeps its
      *   pending entries invisible to every other driver and its staging buffers alive.
+     * - A FRAME'S END IS ALSO WHERE OWNERSHIP IS SETTLED: every instance stream whose buffer nobody but this cache holds
+     *   any more is withdrawn here (see `sweepUnheldStreams`). The entry keeps its key's buffer alive, so the cache is
+     *   the one place that can notice the host has stopped holding it - and the batch's outcome does not enter the
+     *   question, because holdings are a host fact, not a submission's.
      *
      * @param batch     The driver whose command buffer was recorded (see ContentImages::BatchId).
      * @param completed Whether that command buffer ran to completion.
