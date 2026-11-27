@@ -374,16 +374,21 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 #endif
 }
 
-TEST(VkWindowPresentTest, AFrameWhoseSubmitIsRefusedGivesItsImageBackAndTheNextOnePresents)
+TEST(VkWindowPresentTest, AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents)
 {
 #if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
     GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
 #else
-    // THE ACQUIRED IMAGE IS A PAIR OR IT IS A LEAK (see Device's `giveBackWindowImage`): a frame that dies after
-    // `vkAcquireNextImageKHR` - here the queue refuses the submit - hands the image back through
-    // `WindowTarget::abandonFrame`, and the NEXT frame has to acquire again. That acquire hands the semaphore
-    // `vkAcquireNextImageKHR` an UNSIGNALLED one (VUID-vkAcquireNextImageKHR-semaphore-01286), which is why the chain - and
-    // the acquire semaphore with it - is rebuilt: the abandoned acquire's signal was never consumed by a submit.
+    // ONE FAILED WINDOW FRAME ANSWERS TWO FACTS, AND BOTH ARE PINNED HERE (review 19 `Z19`):
+    // - the ACQUIRED IMAGE GOES BACK (see `FrameRecording::giveBackWindowImage`): a frame that dies after
+    //   `vkAcquireNextImageKHR` - here the queue refuses the submit - hands it back through `WindowTarget::abandonFrame`,
+    //   and the NEXT frame has to acquire again. That acquire hands `vkAcquireNextImageKHR` an UNSIGNALLED semaphore
+    //   (VUID-vkAcquireNextImageKHR-semaphore-01286), which is why the chain - and the acquire semaphore with it - is
+    //   rebuilt: the abandoned acquire's signal was never consumed by a submit.
+    // - the ANSWER IS `Lost`, not `Skipped` (see `PresentOutcome`): there was a surface and the picture did not reach
+    //   it, and that is the one answer the host acts on - the engine re-announces the size so the swapchain is
+    //   rebuilt, and the surface logs the lost picture once. The give-back clears the HOLD, never the promise, which
+    //   is what keeps this reachable; the assertion used to read `Skipped`, which is the defect this case pins.
     TestDisplay display;
     if (!display.open()) {
         GTEST_SKIP() << display.skipReason();
@@ -408,11 +413,11 @@ TEST(VkWindowPresentTest, AFrameWhoseSubmitIsRefusedGivesItsImageBackAndTheNextO
     auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    // 1. A FRAME THAT NEVER REACHED THE QUEUE: the acquired image is given back and the picture is reported Lost (the
-    //    outcome a host acts on), while the device itself stays up.
+    // 1. A FRAME THAT NEVER REACHED THE QUEUE gives its image back AND reports the picture lost: both facts are this
+    //    frame's, and a give-back that erased the second would tell the host there was nothing to present.
     device->refuseNextSubmit();
-    EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Skipped)
-        << "a frame that never reached the queue has no picture to report (and gives its image back)";
+    EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Lost)
+        << "a frame that owed the surface a picture and never reached the queue must say the picture did not arrive";
     EXPECT_TRUE(backend->initialized()) << "a refused submit is not a lost device";
 
     // 2. THE NEXT FRAME ACQUIRES AGAIN and presents. The semaphore state is what this pins: re-signalling the one the

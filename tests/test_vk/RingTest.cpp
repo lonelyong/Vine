@@ -323,11 +323,22 @@ TEST(VkDeviceClockTest, AFrameReportsItsDeviceTime)
     }
     EXPECT_GT(first.timing->gpu_micros, 0U) << "a frame that ran cannot have cost no device time";
 
+    // AND A FRAME THAT DID NOT RUN MEASURED NOTHING EITHER (review 19 `Z20`): its timestamp pair is only readable once
+    // the fence signalled, so the frame answers DISENGAGED - never the sampled frame's time, which is what a
+    // `books.timing` outliving its frame would hand a host asking about THIS one. The refusal is the backend's own
+    // door (`Device::refuseNextSubmit`), and `FrameReport`'s rule is the absent part, not a zero.
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+    device->refuseNextSubmit();
+    (void)backend->executeFrame(frame, nullptr);
+    EXPECT_FALSE(backend->frameReport().timing.has_value())
+        << "a frame that never reached the queue answered with the previous frame's device time";
+
     (void)backend->executeFrame(frame, nullptr);
     EXPECT_FALSE(backend->frameReport().timing.has_value()) << "an unsampled frame repeated a value it did not measure";
 
-    // Frames 3..31 (two have run): the thirty-first is the next sample (see kTimestampSampleFrames).
-    for (int frame_index = 0; frame_index < 29; ++frame_index) {
+    // Frames 4..31 (three have run): the thirty-first is the next sample (see kTimestampSampleFrames).
+    for (int frame_index = 0; frame_index < 28; ++frame_index) {
         (void)backend->executeFrame(frame, nullptr);
     }
     const vn::graphics::FrameReport sampled_again = backend->frameReport();

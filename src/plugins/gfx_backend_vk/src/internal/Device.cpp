@@ -338,7 +338,8 @@ struct FrameBooks {
     vn::graphics::FrameCounters               counters{};
     vn::graphics::FrameProgress               progress{};
     std::optional<vn::graphics::FrameUploads> uploads;
-    /// What the last frame cost on the device (see FrameTiming); disengaged when the device keeps no clock.
+    /// What the last frame cost on the device (see FrameTiming): DISENGAGED until a frame's own fence made a sampled
+    /// pair readable, so a frame that did not run (or was not sampled) answers "not measured", never a stale number.
     std::optional<vn::graphics::FrameTiming> timing;
     /// What the last frame spent on the cache lock (see FrameLocking); engaged from the first frame that ends.
     std::optional<vn::graphics::FrameLocking> locking;
@@ -393,8 +394,11 @@ struct MovedLayout {
 struct FrameRecording {
     /// The presenter this frame draws into (resolved from `present_to`), or null.
     WindowTarget* window{ nullptr };
-    /// Whether the window's image was taken, and therefore must be given back on every path that does not present.
+    /// Whether the window's image is STILL HELD, and therefore must be given back on every path that does not present.
     bool window_acquired{ false };
+    /// Whether this frame OWES the surface a picture: set with the acquire (which is the promise a present keeps), and
+    /// NOT cleared by the give-back - see `giveBackWindowImage` and `unrunOutcome`.
+    bool picture_owed{ false };
     /// A pass lost its target claim this frame (see TargetTable::Lease): the conflict episode stays open.
     bool claim_refused{ false };
     /// A pass was left out for a reason that has already been reported (the "nothing I can run" sentence would repeat it).
@@ -433,11 +437,50 @@ struct FrameRecording {
         moved_layouts.clear();
     }
 
+    /**
+     * @brief Gives the presentation engine's image back without presenting it (see WindowTarget::abandonFrame).
+     *
+     * @details
+     * - THE ACQUIRE IS A PAIR OR IT IS A LEAK: `vkAcquireNextImageKHR` took an image and signalled its semaphore, and
+     *   only a present hands it back - so every path that will not present calls this ONE act.
+     * - IT CLEARS THE HOLD, NOT THE PROMISE: `window_acquired` answers "the image is still owed back", `picture_owed`
+     *   answers "this frame promised the surface a picture". The frame's answer is `unrunOutcome`, which reads the
+     *   SECOND - so a give-back that erased both would make the one answer a host must act on unreachable on exactly
+     *   the paths it exists for (review 19 `Z19`).
+     */
+    void giveBackWindowImage() noexcept
+    {
+        if (window_acquired && window != nullptr) {
+            window->abandonFrame();
+            window_acquired = false;
+        }
+    }
+
+    /**
+     * @brief Answers a frame that will not present: `Lost` when it owed the surface a picture, `Skipped` when it never
+     *        had one to deliver.
+     *
+     * @details
+     * - ONE DECISION, EVERY EXIT THAT DOES NOT PRESENT (see `Device::FrameDriver::executeFrame`): the buffer that will
+     *   not begin, the buffer that will not end, and the submission the fence never confirmed. Each calls this, so
+     *   "what does a frame that did not run answer" is stated once instead of being re-derived per failure path.
+     * - `Skipped` is `PresentOutcome`'s "there was nothing to present": a frame with no window at all (an off-screen
+     *   target), and one whose walk claimed no pass before it ever reached the queue (the walk withdraws the promise
+     *   itself - a rebuild cannot fix a content refusal, so it must not be asked for).
+     *
+     * @return #PresentOutcome::Lost or #PresentOutcome::Skipped, per the frame's own promise.
+     */
+    [[nodiscard]] vn::graphics::PresentOutcome unrunOutcome() const noexcept
+    {
+        return picture_owed ? vn::graphics::PresentOutcome::Lost : vn::graphics::PresentOutcome::Skipped;
+    }
+
     /** @brief Forgets the last frame's entries and keeps their capacity. */
     void clear() noexcept
     {
         window           = nullptr;
         window_acquired  = false;
+        picture_owed     = false;
         claim_refused    = false;
         refused_pass     = false;
         window_written   = false;
@@ -1610,7 +1653,10 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
                     continue;
                 }
                 owner.window_reports.acquire.rearm(); // the image arrived: this episode is over
+                // THE PROMISE AND THE HOLD, TWO FACTS (see FrameRecording::picture_owed): taking the image commits this
+                // frame to a present, and that answer survives the give-back every failure path below performs.
                 recording.window_acquired = true;
+                recording.picture_owed    = true;
             }
             if (!claim_pass_samples(draw, entry)) {
                 continue;
@@ -1683,12 +1729,13 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
     resolveReadSet(head, recording);
 
     if (head.passes().empty()) {
-        // A WALK THAT TOOK THE WINDOW'S IMAGE RETURNS IT (see WindowTarget::abandonFrame): an acquire is a pair with a
-        // present, and no pass was claimed to present it.
-        if (recording.window_acquired && recording.window != nullptr) {
-            recording.window->abandonFrame();
-            recording.window_acquired = false;
-        }
+        // A WALK THAT TOOK THE WINDOW'S IMAGE RETURNS IT (see FrameRecording::giveBackWindowImage): an acquire is a
+        // pair with a present, and no pass was claimed to present it. The PROMISE is withdrawn with it - the walk took
+        // the image before it knew it could draw nothing into it, and no picture was ever recorded - so the frame
+        // answers `Skipped` and not the `Lost` a failure earns: a swapchain rebuild cannot fix a refused pass, and
+        // asking for one per frame would buy a device wait for a content defect.
+        recording.giveBackWindowImage();
+        recording.picture_owed = false;
         return PassWalk::Nothing;
     }
     return PassWalk::Ready;
@@ -1754,7 +1801,7 @@ void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::Frame
                 (void)owner.caches.planFullscreen(description, pass_draw, pass_head.target.compatibility(), plan, packet.refusal, cache_lock, frame_builds);
                 // The destination's stand-in and shadow sampler: a full-screen draw samples the target it names, so its
                 // slots are the source's views (assembled where the source is), not a material's.
-                owner.caches.resolveTextures(nullptr, commands, head, plan, packet.refusal, cache_lock, uploadBatch(), frame_builds);
+                owner.caches.resolveTextures(nullptr, commands, head, plan, packet.refusal, cache_lock, uploadBatch(), frame_builds, &barrier_tally);
                 continue;
             }
             if (description.commands == nullptr) {
@@ -1774,7 +1821,7 @@ void Device::FrameDriver::resolveFrameHead(FrameHead& head, ContentCaches::Frame
                 {
                     continue; // the plan stays empty and `record` skips exactly this command
                 }
-                owner.caches.resolveTextures(plan.material.get(), commands, head, plan, packet.refusal, cache_lock, uploadBatch(), frame_builds);
+                owner.caches.resolveTextures(plan.material.get(), commands, head, plan, packet.refusal, cache_lock, uploadBatch(), frame_builds, &barrier_tally);
             }
         }
     }
@@ -1853,6 +1900,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     }
     FrameTokenCloser                        frame_close{ owner.clock, owner.retirement, owner.clock_mutex, frame_token };
     const ContentTotals    before = owner.contentNumbers();
+    // A FRAME'S DEVICE TIME STARTS DISENGAGED (see FrameTiming): only a reading of this frame's own pair may engage it,
+    // so a frame that never reached the queue - or reached it and did not finish - answers "not measured" instead of
+    // the previous frame's number. Stated at the START rather than on the failure path because every exit has to answer
+    // the same way, and one statement true before all of them makes that true by construction (review 19 `Z20`).
+    books.timing.reset();
     // the frame's counters live in its recording value (see FrameRecording): the books read them when the frame ends.
     struct BooksCloser {
         FrameDriver*                 session;
@@ -1904,8 +1956,10 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                           u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
                                           u8"served); nothing was submitted"));
         }
-        // THE WALK RETURNED THE WINDOW'S IMAGE (see claimPasses): a frame that claims no pass has nothing to present.
-        return PresentOutcome::Skipped;
+        // THE WALK RETURNED THE WINDOW'S IMAGE AND WITHDREW THE PROMISE (see claimPasses): a frame that claims no pass
+        // has nothing to present, so the answer is `Skipped` - and it is read from the promise like every other
+        // frame-level answer after the acquire, so the two cannot disagree.
+        return recording.unrunOutcome();
     case PassWalk::Ready:
         break;
     }
@@ -1914,20 +1968,15 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         claim_conflicts.clear(); // no pass lost its target this frame: the conflict episode is over
     }
 
-    // THE ACQUIRED IMAGE IS A PAIR OR IT IS A LEAK: `vkAcquireNextImageKHR` took an image and signalled its semaphore,
-    // and only a present hands it back. Everything between here and the present can fail, so the give-back is one named
-    // act (`WindowTarget::abandonFrame`) that every failure path below calls.
-    const auto giveBackWindowImage = [&]() {
-        if (recording.window_acquired && recording.window != nullptr) {
-            recording.window->abandonFrame();
-            recording.window_acquired = false;
-        }
-    };
-
     // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The buffer is THIS DRIVER'S (see create): beginning it resets what the
     // last frame recorded, so a frame pays no allocate/free pair and has no "could not get a buffer" branch - the
     // object either exists (the device came up) or this device was never initialized. The frame is submitted and
     // finished before the call returns, which is what makes "read the pixels right after" mean what it says.
+    //
+    // AND A FRAME THAT STOPS HERE STILL OWES ITS ANSWER (see FrameRecording::unrunOutcome): it took the surface's
+    // image, so the picture did not arrive and the host is told `Lost` - the give-back returns the IMAGE, never the
+    // promise. The same two lines close the end-of-buffer and submission failures below; `Skipped` is left to a frame
+    // with no surface, and to the walk above that claimed no pass.
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -1936,8 +1985,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                           DiagnosticCategory::SubmissionFailed,
                                           u8"vk.frame.begin_failed",
                                           u8"vk: vkBeginCommandBuffer failed"));
-        giveBackWindowImage();
-        return PresentOutcome::Skipped;
+        recording.giveBackWindowImage();
+        return recording.unrunOutcome();
     }
 
     // A FRAME AND EVERY PASS IN IT ARE NAMED TO A CAPTURE TOOL (see Device::debugMarkers and Impl::beginLabel): without
@@ -1996,7 +2045,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     // - SOMEONE ELSE'S IMAGES go back to EXACTLY what they said: a sampled source or a shadow map may hold a picture an
     //   earlier frame wrote and nothing else can reproduce, so discarding it would be worse than the failure.
     // - AND THE WINDOW'S ACQUIRED IMAGE IS GIVEN BACK, because it was taken from the presentation engine and may not be
-    //   re-acquired with the semaphore its acquire signalled (WindowTarget::abandonFrame).
+    //   re-acquired with the semaphore its acquire signalled (FrameRecording::giveBackWindowImage, which returns the
+    //   image and keeps the frame's promise - that promise is what the caller's answer reads).
     const auto rewindUnrunFrame = [&]() {
         for (const FrameHead::Pass& item : frame_head.passes()) {
             // A WINDOW PASS OWES NOTHING HERE: its image is given back below, and the next acquire states its own
@@ -2014,7 +2064,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 moved.images->color_layouts[moved.color_index] = moved.previous;
             }
         }
-        giveBackWindowImage();
+        recording.giveBackWindowImage();
     };
     const std::span<const FrameHead::Pass> passes = frame_head.passes();
     constexpr float kPassLabelColor[4]{ 0.62F, 0.62F, 0.62F, 1.0F };
@@ -2181,10 +2231,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                                           u8"vk: vkEndCommandBuffer failed"));
         // NOTHING WAS SUBMITTED, SO NOTHING MOVED: the records this pass walk advanced are put back (see the lambdas
         // above), and the acquired window image is given back rather than left signalled and unpresented. The command
-        // buffer stays this driver's - the next frame's begin resets it.
+        // buffer stays this driver's - the next frame's begin resets it. The picture this frame promised did not
+        // arrive, and its answer says so (see FrameRecording::unrunOutcome).
         rewindUnrunFrame();
         owner.caches.endFrame(uploadBatch(), false);
-        return PresentOutcome::Skipped;
+        return recording.unrunOutcome();
     }
 
     // THE SUBMISSION IS THE 1.3 FORM, like every other queue-shaped statement this backend makes (see §2.7): the wait
@@ -2260,8 +2311,9 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             owner.clock.noteCompletion(submission);
         }
         // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
-        // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
-        // previous frame's value.
+        // the frame's device time (see FrameTiming). THE FIELD OPENED DISENGAGED (see where the books open), and this
+        // read is the only thing that engages it - so a frame the clock did not sample, and a read the driver would
+        // not answer, both stay absent rather than repeating a number this frame never measured.
         if (recording.per_pass_clock) {
             recording.stamp_values.resize(recording.query_count, 0U);
             const std::vector<std::uint64_t>& stamps = recording.stamp_values;
@@ -2293,12 +2345,6 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 }
                 books.timing = std::move(timing);
             }
-            else {
-                books.timing.reset();
-            }
-        }
-        else {
-            books.timing.reset();
         }
     }
     (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
@@ -2330,9 +2376,14 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     }
 
     // THE FRAME'S TAIL: the executor is what presents the frame it ran (see RenderFrameExecutor::executeFrame).
+    // THE ANSWER IS THE FRAME'S PROMISE, NOT THE IMAGE'S HOLD (see FrameRecording::picture_owed): a frame that took the
+    // surface's image owes it a picture, and only a present keeps that promise. The give-back above returns the IMAGE
+    // and deliberately keeps the promise, so the one failure a host must act on (`PresentOutcome::Lost`) is reachable
+    // on the paths it exists for - and a frame that never took an image answers `Skipped`, which is "there was nothing
+    // to present" (see PresentOutcome).
     PresentOutcome outcome = PresentOutcome::Skipped;
-    if (recording.window_acquired && recording.window != nullptr) {
-        outcome = completed ? recording.window->present() : PresentOutcome::Lost;
+    if (recording.picture_owed && recording.window != nullptr) {
+        outcome = completed ? recording.window->present() : recording.unrunOutcome();
         if (recording.window->deviceLost()) {
             // A present that found the device gone is the same session-level fact as a lost submit: one report, and
             // the frame's Lost outcome is what the host acts on (see PresentOutcome::Lost).
