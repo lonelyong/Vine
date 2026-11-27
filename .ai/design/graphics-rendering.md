@@ -424,7 +424,7 @@ two had already declared the target filled), and the second silenced a report a 
 
 | # | Feature | Notes |
 |---|---|---|
-| F20 | `ShaderProgram` | Vertex / Fragment stages + entry points; `addStage` / `setStage` / `clearStages` / `replaceStages` bump the revision. |
+| F20 | `ShaderProgram` | Vertex / Fragment stages + entry points; `addStage` / `setStage` / `clearStages` / `replaceStages` bump the revision. The list is the PROGRAM's to shape - any stage list is a legal value - and which stages a DRAW needs belongs to the draw: a content draw's pipeline states both, while a full-screen pass states its own vertex stage (see `vk-backend.md` §2.22). |
 | F21 | Built-in programs | forward / flat / gbuffer / deferred lighting / shadowed; `builtin_<role>.<stage>`. |
 | F22 | ABI | Vertex locations, `VinePushRange` (the 128 B projection + model-view a content draw hands its program, and the whole host-program contract - see `graphics-shader-params.md` §2.8) / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`. |
 | F23 | Transparency | TWO INPUTS, ONE RULE: the magnitude is the drawable's `opacity` × the material's own alpha × the base map's alpha, and the material's `AlphaMode` says what that product means (Opaque ignores it, Mask thresholds it, Blend uses it as the output alpha) - sorting and shading read the same pair (`graphics-material.md` §2.7). Blending is not a pipeline constant: `blendEnable` is baked false and switched per draw through `VK_EXT_extended_dynamic_state3` (`StateCommands`), and a draw in the transparent queue that authored no blend resolves to the default pair ENABLED (`resolveRenderState(..., transparent)`) - so the classification the sort used is the one that opens the blend. |

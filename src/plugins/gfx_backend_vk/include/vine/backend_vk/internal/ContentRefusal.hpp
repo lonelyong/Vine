@@ -24,6 +24,7 @@ enum class ContentRefusalCause : std::uint8_t
 {
     NoProgram,              // The drawable names no program and the frame has no default one either.
     ProgramRefused,         // A content program could not be turned into a pipeline for this pass.
+    ProgramStageMissing,    // The program declares no module for a stage a graphics pipeline states.
     FullscreenNoProgram,    // A full-screen draw names no program.
     FullscreenProgramRefused,  // A full-screen program could not be compiled.
     FullscreenPipelineRefused, // A full-screen pipeline could not be created for this pass.

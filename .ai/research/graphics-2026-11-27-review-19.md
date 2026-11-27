@@ -930,7 +930,7 @@ creates the modules, keeps the vertex answer, and caches the entry.
   `std::string`: `build/_deps/glslang-src/glslang/MachineIndependent/localintermediate.h:482-487`), so the temporary
   from `as_std_str()` at `ShaderCompiler.cpp:214` is safe.
 
-### 19.3 Z16 (medium-low) - a program the backend compiled nothing for is cached as compiled
+### 19.3 Z16 (medium-low) - a program the backend compiled nothing for is cached as compiled (**fixed 2026-11-27**: the requirement moved to `buildPipeline`, the missing stage has its own code, and a compute stage is refused instead of skipped - `vk-backend.md` 2.22)
 
 `ensureProgram` walks the description's stages and `continue`s on a compute stage (`ContentCaches.cpp:383-386`, with the
 comment "M2 has no compute path"). A description with no vertex and no fragment module therefore leaves the loop without
@@ -946,6 +946,26 @@ So a program that is empty, fragment-only or compute-only compiles "successfully
 `VK_NULL_HANDLE` to the driver - an invalid-handle call rather than a refusal, which is the one thing the module's
 `ContentRefusal` vocabulary exists to prevent. The fix belongs where the entry is decided: a cached entry with a null
 module is `failed` with a refusal code, and the existing episode rule says it once.
+
+> **Fixed 2026-11-27, and the second half of the finding was wrong.** `ensureContentPipeline` and
+> `ensureFullscreenPipeline` had refused a pair with a null module since before this review, so no invalid handle ever
+> reached the driver; the reviewer read `buildPipeline` and did not see the two guards one level up. What WAS wrong is
+> what the batch fixed: (1) the requirement was stated twice, in two `ensure*` functions, nowhere at the one place that
+> states modules to the API, and neither sentence named the absent stage; (2) the refusal arrived as
+> `vk.content.pipeline_refused` - "vkCreateGraphicsPipelines refused the state the draw resolves to" - which is false and
+> sends a host to blend/depth state; (3) a `Compute` stage was `continue`d past, so a compute-only program was cached as
+> compiled with no modules and reported as a missing GRAPHICS stage.
+>
+> The rule now lives in `buildPipeline` (the only site that hands modules to `vkCreateGraphicsPipelines`), which refuses
+> a stage pair with a hole, names the stage, and answers which failure it was - `ProgramStageMissing` or
+> `DriverRefused` - so a program fault keeps its own code (`vk.content.program_stage_missing`) and a state the driver
+> refused keeps `pipeline_refused` / `screen_pipeline_refused`. A compute stage is refused at the entry. A program stays a
+> VALUE: nothing about stage completeness is cached on `ProgramEntry`, because a fragment-only program is a whole
+> full-screen program.
+>
+> **The finding's own remedy was rejected.** Failing the program entry would refuse a legal full-screen draw for the rest
+> of the session (that path states its own vertex stage), and a verdict per (program, need) would be two answers under
+> one key. See `ADR-2026-11-27-a-graphics-pipeline-states-two-stages`.
 
 ### 19.4 Two caveats
 
@@ -1400,7 +1420,7 @@ unobserved, and it is recorded here so the next round starts from it rather than
 | `Z14` | R14 | low | `vk.window.presenter_missing` accuses the host of a foreign presenter when the window merely has no live chain - and the window's own reason is never reported there | `Device.cpp:1550-1560`; `WindowTarget.cpp:494-497` |
 
 | `Z15` | R15 | medium | a texture upload that fails mid-record destroys the image the caller's recording command buffer already holds copies and a barrier for, and the frame then submits that command buffer | `ContentImages.cpp:731-733`, `:903`; `:372-373`, `:421`, `:878-891` |
-| `Z16` | R17 | medium-low | a program with no vertex and no fragment module (empty, fragment-only or compute-only) is cached as successfully compiled, and the pipeline build hands `VK_NULL_HANDLE` to `vkCreateGraphicsPipelines` | `ContentCaches.cpp:383-386`, `:424-429`, `:852`, `:856`; `ShaderProgram.cpp:77-81` |
+| `Z16` | R17 | medium-low | a program with no vertex and no fragment module (empty, fragment-only or compute-only) is cached as successfully compiled, and the pipeline build hands `VK_NULL_HANDLE` to `vkCreateGraphicsPipelines` (**fixed 2026-11-27**, and the finding's second half did not hold: both `ensure*Pipeline` refused a moduless pair before the review - the live defects were the wrong code, the requirement stated twice and nowhere at the builder, and a compute stage dropped in silence - `vk-backend.md` 2.22 / C15 / P20) | `ContentCaches.cpp:383-386`, `:424-429`, `:852`, `:856`; `ShaderProgram.cpp:77-81` |
 | `Z17` | R18 | medium-low | a mouse release the surface never sees (window deactivated, platform window recreated mid-drag) leaves the button held and the manipulator dragging, so every later hover steers the camera and repaints | `SurfaceWindow.cpp:566-571`, `:586-596`, `:616`, `:998-1024`; `OrbitCameraManipulator.cpp:424-430`, `:469-473`; `InputRouter.cpp:13-15` |
 | `Z18` | R18 | low | three waits on the application thread, and only one is bounded: `SceneView` takes 250 ms and states why, the attach and first-picture waits take the default 5000 ms and discard the answer | `SceneView.cpp:163`; `SurfaceWindow.cpp:744`, `:915`; `RenderEngine.hpp:543`, `:550` |
 | `Z19` | R20 | medium-low | a window frame whose submit or fence failed answers `Skipped`, never `Lost`: `rewindUnrunFrame` clears `window_acquired` before the present block reads it, so the `Lost` branch is dead - and the swapchain repair and the lost-picture line both key on `Lost` | `Device.cpp:1889-1893`, `:2291`, `:2302-2305`; `RenderEngine.cpp:620-622`; `SurfaceWindow.cpp:941-957` |
@@ -1461,9 +1481,13 @@ unobserved, and it is recorded here so the next round starts from it rather than
    same need, and the drag and an arrow key only convert their own units into it (2.10 / F2 / F5 / R5 / P7 / T11;
    `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device.md`). The review's second branch (arrows travel) was rejected
    as `D7`.
-10. **`Z16`** - one refusal on the program entry, and the only finding whose failure hands the driver an invalid handle:
+10. ~~**`Z16`** - one refusal on the program entry, and the only finding whose failure hands the driver an invalid handle:
     `ensureProgram` already has the `failed` flag and the episode rule, so an entry with no vertex and no fragment module
-    becomes that flag instead of a cached success.
+    becomes that flag instead of a cached success.~~ **Done 2026-11-27, not as prescribed**: the invalid handle never
+    reached the driver (both `ensure*Pipeline` guarded it before the review), and failing the PROGRAM entry would refuse a
+    legal full-screen draw. The requirement moved to `buildPipeline` - the one place that states modules to the driver -
+    with its own code (`vk.content.program_stage_missing`) and a compute stage refused instead of dropped (2.22 / C15 /
+    P20 / T12; `ADR-2026-11-27-a-graphics-pipeline-states-two-stages.md`).
 11. **`Z13`** + **`Z14`** + **`Z3`** + **`Z4`** + **`Z5`** - the vocabulary round: the third fill remembers its refusal, the
     presenter's sentence names the window's cause, one refusal shape for the last verb, one true sentence about
     `frameContext`, and the placement in the share argument.

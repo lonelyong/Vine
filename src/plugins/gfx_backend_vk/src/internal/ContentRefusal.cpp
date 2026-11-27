@@ -14,6 +14,7 @@ const char8_t* contentRefusalCode(const ContentRefusalCause cause) noexcept
     switch (cause) {
     case ContentRefusalCause::NoProgram: return u8"vk.content.no_program";
     case ContentRefusalCause::ProgramRefused: return u8"vk.content.program_refused";
+    case ContentRefusalCause::ProgramStageMissing: return u8"vk.content.program_stage_missing";
     case ContentRefusalCause::FullscreenNoProgram: return u8"vk.content.screen_no_program";
     case ContentRefusalCause::FullscreenProgramRefused: return u8"vk.content.screen_program_refused";
     case ContentRefusalCause::FullscreenPipelineRefused: return u8"vk.content.screen_pipeline_refused";

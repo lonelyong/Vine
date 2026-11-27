@@ -3230,3 +3230,36 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   `AFirstPersonLookTurnsAboutTheEye` unchanged and still green. Mutation: arrows back on `orbit()` fails the case at its
   first assertion (the eye moved ~5 units for one key step). `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device`;
   `graphics-navigation.md` 2.10 / F2 / F5 / 4 / R5 / P7 / D7 / T11 / 9.3; the graphics guide.
+
+## 2026-11-27 - Z16: a graphics pipeline states two stages, and the builder is where that is required
+
+- **The finding is half wrong, and the wrong half is its remedy.** `Z16` said a program with no vertex/fragment module is
+  "cached as compiled" and the null handle reaches `vkCreateGraphicsPipelines`. The guards existed (`ensureContentPipeline`
+  / `ensureFullscreenPipeline`, older than the review - `git log -S "a content program needs a vertex and a fragment
+  stage"`), so the driver was never called invalidly. Its prescription - fail the PROGRAM ENTRY - would refuse a legal
+  use: a fragment-only program IS a whole full-screen program (that path states the engine's vertex stage itself).
+- **What was actually wrong (three things).** (1) The requirement was stated twice, in two ensure functions, with two
+  sentences neither of which named the absent stage, and NOT at `buildPipeline` - the only place a module reaches
+  `vkCreateGraphicsPipelines`. (2) A missing stage was reported as `vk.content.pipeline_refused` ("the driver refused the
+  state") - a false sentence sending a host to blend/depth state. (3) `ensureProgram` `continue`d past a Compute stage, so
+  a compute-only program was cached as compiled with no modules and reported as a missing GRAPHICS stage.
+- **The rule (2.22 / C15 / P20).** A program is a VALUE, not a verdict: any stage list is legal (`clearStages()` then
+  `addStage()`), and which stages a DRAW needs belongs to the draw. `buildPipeline` refuses a pair with a hole, names the
+  stage, and answers `PipelineFailure` (StageMissing / DriverRefused); the two ensure guards are deleted. The planners map
+  it to `vk.content.program_stage_missing` (new code) or their path's pipeline code.
+- **No stage disappears silently.** A Compute stage is refused at the entry with `vk.content.program_refused` and a
+  sentence saying this backend stages no compute program (M2 is where a compute pipeline states its own rule).
+- **Rejected.** The review's entry verdict (refuses a legal full-screen draw for the session, and per-need verdicts would
+  be two answers under one key); keeping the hole under `pipeline_refused` (false sentence); guard in the builder AND the
+  two ensure functions (three statements); validating in the engine's compile (a layer that does not state a pipeline's
+  stages answering for the API's requirement); refusing to describe a program without both stages (forbids a legal editing
+  state); a `declaresStage()` query each caller must remember. ADR options A-G.
+- **Residuals.** The refusal lands after the geometry upload (pipeline resolved last): one upload, once. Not an ABI
+  change - three internal signatures, one new cause; one new code, nothing renamed.
+- **Evidence.** `VkContentDrawTest.AProgramWithNoVertexStageIsRefusedAsAProgramFault` (the code, the sentence naming the
+  stage, the clear picture), `AFragmentOnlyProgramIsAWholeFullScreenProgram` (the same program is complete for a
+  full-screen pass - the case that fails under the review's shape), `AComputeStageIsRefusedRatherThanDropped`. Mutations:
+  every pipeline failure as `pipeline_refused` -> first case red; entry failed on a missing vertex module -> second case
+  red; builder guard removed -> the null handle reaches the driver and the draw is reported as a pipeline refusal.
+  `ADR-2026-11-27-a-graphics-pipeline-states-two-stages`; `vk-backend.md` 2.22 / C15 / P20 / T12 / 9.3;
+  `graphics-rendering.md` F20.

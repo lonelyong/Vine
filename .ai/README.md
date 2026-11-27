@@ -92,13 +92,20 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (109)
+## decisions/ — decision records (ADRs) (110)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-27-a-graphics-pipeline-states-two-stages.md` — **a graphics pipeline states two stages, and the builder is
+  where that is required**: a program is editable to any stage list, so "is this program drawable" is a question asked
+  where it is USED - a fragment-only program is a whole full-screen program and no content program at all. `buildPipeline`
+  (the one site that hands modules to `vkCreateGraphicsPipelines`) refuses a pair with a hole and answers which failure it
+  was, so the draw is reported as `vk.content.program_stage_missing` instead of as a state the driver refused; a compute
+  stage is refused rather than dropped silently. Rejected: the review's "fail the program entry" (it would refuse a legal
+  full-screen draw for the session) - review 19 `Z16`.
 - `ADR-2026-11-27-a-look-is-one-verb-whatever-the-device.md` — **a look is one verb, and a device only converts itself
   into it**: in `FirstPerson` the mouse drag turned the view about the eye while the arrow keys called `orbit()` - the
   turntable's verb - so the keyboard carried the eye round an arc of the orbit radius, and the design page said a third

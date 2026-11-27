@@ -47,6 +47,7 @@ vk.content.no_program               — the draw named no program and the device
 vk.content.no_geometry              — the draw carried no geometry description: it drew nothing
 vk.content.primitive_absent         — the draw names a primitive its geometry does not have: it drew nothing
 vk.content.program_refused          — the program could not be staged (compile or shader module); the loader's report says which stage
+vk.content.program_stage_missing    — the program declares no module for a stage a graphics pipeline states (this backend's is a vertex AND a fragment stage): the draw was skipped
 vk.content.geometry_refused         — the geometry's streams could not be formatted or uploaded: the draw was skipped
 vk.content.instance_stream_refused  — the draw's instance transforms could not become a vertex stream: the draw was skipped
 vk.content.pipeline_refused         — vkCreateGraphicsPipelines refused the state the draw resolves to: the draw was skipped

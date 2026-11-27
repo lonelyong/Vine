@@ -462,7 +462,13 @@ struct ContentCaches::Impl {
         const std::vector<std::string> defines = variant.defines();
         for (const vn::graphics::ShaderStage& stage : description->stages()) {
             if (stage.type == vn::graphics::ShaderStageType::Compute) {
-                continue; // M2 has no compute path
+                // NO STAGE IS DROPPED SILENTLY: this backend stages no compute program, and an entry that quietly
+                // ignored the stage would answer "compiled" for a program it cannot run - and the draw would be
+                // reported later as a missing graphics stage, which is not what is wrong (review 19 Z16). One refusal,
+                // with the real cause, cached like every other refusal (`failed`).
+                entry.failed = true;
+                why          = vn::String(u8"vk: this backend stages no compute program (the content path is graphics only)");
+                break;
             }
             SpirvModule spirv;
             if (!compileStage(stage, defines, spirv, why)) {
@@ -894,6 +900,8 @@ struct ContentCaches::Impl {
      *   states the attachment formats instead. Those formats are the key's COMPATIBILITY - the same value every target
      *   of that shape states - so the count, the colour formats and the depth/stencil format cannot disagree with the
      *   set a pass will actually attach (a render pass handle could only say "a set like mine").
+     * - BOTH STAGES MUST HAVE A MODULE, and that is answered here (see the guard below): this is the only place a module
+     *   reaches `vkCreateGraphicsPipelines`, so the requirement is stated once for every path instead of by each caller.
      *
      * @param key               The cache key (the portable identity plus the state this device bakes).
      * @param vertex            The compiled vertex module.
@@ -904,6 +912,7 @@ struct ContentCaches::Impl {
      * @param attributes        The vertex input attributes (empty for the full-screen triangle).
      * @param layout            The pipeline layout the program's descriptor sets agree with.
      * @param why               Receives the reason when the pipeline could not be built.
+     * @param failure           Receives WHICH failure it was (see PipelineFailure); written on every failure.
      * @return The pipeline's share, or empty.
      */
     [[nodiscard]] std::shared_ptr<PipelineHandle> buildPipeline(ContentPipelineKey                                    key,
@@ -914,8 +923,22 @@ struct ContentCaches::Impl {
                                                                 const std::vector<VkVertexInputBindingDescription>&   bindings,
                                                                 const std::vector<VkVertexInputAttributeDescription>& attributes,
                                                                 VkPipelineLayout                                      layout,
-                                                                vn::String&                                           why)
+                                                                vn::String&                                           why,
+                                                                PipelineFailure&                                      failure)
     {
+        // A GRAPHICS PIPELINE STATES BOTH STAGES, AND BOTH MUST HAVE A MODULE: Vulkan requires a vertex stage always and
+        // a fragment stage unless rasterisation is discarded (this backend never discards it), and handing
+        // VK_NULL_HANDLE to vkCreateGraphicsPipelines is an invalid-handle call, not a refusal. The SDK's verbs allow a
+        // program with any stage list (`clearStages`, a fragment-only file), so the requirement is asked HERE - the one
+        // place that states modules to the driver - instead of by each caller: it used to be two guards in two ensure
+        // functions, with two sentences, and neither named the stage that was absent (review 19 Z16).
+        if (vertex == VK_NULL_HANDLE || fragment == VK_NULL_HANDLE) {
+            failure = PipelineFailure::StageMissing;
+            why     = vertex == VK_NULL_HANDLE ? vn::String(u8"vk: the program declares no vertex stage, so there is no graphics pipeline to state")
+                                               : vn::String(u8"vk: the program declares no fragment stage, so there is no graphics pipeline to state");
+            return nullptr;
+        }
+
         const auto found = pipelines.find(key);
         if (found != pipelines.end()) {
             return found->second;
@@ -1076,7 +1099,10 @@ struct ContentCaches::Impl {
 
         VkPipeline pipeline = VK_NULL_HANDLE;
         if (table->vkCreateGraphicsPipelines(device, pipeline_cache, 1U, &info, nullptr, &pipeline) != VK_SUCCESS) {
-            why = vn::String(u8"vk: the content pipeline could not be built (see the loader's report)");
+            // THE SENTENCE IS THE PIPELINE'S, not the content path's: the full-screen path comes through here too, and it
+            // used to forward "the content pipeline could not be built" for a screen pipeline.
+            failure = PipelineFailure::DriverRefused;
+            why     = vn::String(u8"vk: the graphics pipeline could not be built (see the loader's report)");
             return nullptr;
         }
         ++created_;
@@ -1103,6 +1129,7 @@ struct ContentCaches::Impl {
      * @param compatibility     The target's pipeline compatibility (the key's shape half).
      * @param topology          The draw's effective topology (the SDK enum: the key carries it, the create-info maps it).
      * @param why               Receives the reason when the pipeline could not be built.
+     * @param failure           Receives which failure it was (see PipelineFailure).
      * @return The pipeline's share, or empty.
      */
     [[nodiscard]] std::shared_ptr<PipelineHandle> ensureContentPipeline(const ProgramEntry&                          program,
@@ -1111,13 +1138,9 @@ struct ContentCaches::Impl {
                                                                         bool                                         instanced,
                                                                         const vn::graphics::RenderPassCompatibility& compatibility,
                                                                         vn::graphics::Topology                       topology,
-                                                                        vn::String&                                  why)
+                                                                        vn::String&                                  why,
+                                                                        PipelineFailure&                             failure)
     {
-        if (program.vertex == VK_NULL_HANDLE || program.fragment == VK_NULL_HANDLE) {
-            why = vn::String(u8"vk: a content program needs a vertex and a fragment stage");
-            return nullptr;
-        }
-
         ContentPipelineKey key;
         key.identity.kind          = vn::graphics::DrawKind::Scene;
         key.identity.program       = vn::graphics::contentRefOf(program.description->id(), program.description->revision());
@@ -1197,7 +1220,8 @@ struct ContentCaches::Impl {
                              bindings,
                              attributes,
                              content_pipeline_layout,
-                             why);
+                             why,
+                             failure);
     }
 
     /**
@@ -1208,22 +1232,15 @@ struct ContentCaches::Impl {
      * @param vertex            The compiled full-screen vertex stage (see `fullscreen_vertex`).
      * @param compatibility     The destination's pipeline compatibility.
      * @param why               Receives the reason when the pipeline could not be built.
+     * @param failure           Receives which failure it was (see PipelineFailure).
      * @return The pipeline's share, or empty.
      */
     [[nodiscard]] std::shared_ptr<PipelineHandle> ensureFullscreenPipeline(const ProgramEntry&                          fragment,
                                                                            const ProgramEntry&                          vertex,
                                                                            const vn::graphics::RenderPassCompatibility& compatibility,
-                                                                           vn::String&                                  why)
+                                                                           vn::String&                                  why,
+                                                                           PipelineFailure&                             failure)
     {
-        if (vertex.vertex == VK_NULL_HANDLE) {
-            why = vn::String(u8"vk: the full-screen vertex stage could not be compiled");
-            return nullptr;
-        }
-        if (fragment.fragment == VK_NULL_HANDLE) {
-            why = vn::String(u8"vk: a full-screen program needs a fragment stage");
-            return nullptr;
-        }
-
         ContentPipelineKey key;
         key.identity.kind          = vn::graphics::DrawKind::Fullscreen;
         key.identity.program       = vn::graphics::contentRefOf(fragment.description->id(), fragment.description->revision());
@@ -1238,7 +1255,8 @@ struct ContentCaches::Impl {
                              {},
                              {},
                              fullscreen_pipeline_layout,
-                             why);
+                             why,
+                             failure);
     }
 
     /**
@@ -1348,12 +1366,17 @@ struct ContentCaches::Impl {
         // THE COUNT IS THE COMPATIBILITY'S (see buildPipeline): the blend commands the recorder issues and the colour
         // count the rendering instance states are the same number, because both are derived from this one value.
         plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
-        vn::String pipeline_why;
+        vn::String                            pipeline_why;
+        PipelineFailure                       pipeline_failure{ PipelineFailure::DriverRefused }; // written on every failure (see buildPipeline)
         const std::shared_ptr<PipelineHandle> pipeline_handle =
-            ensureContentPipeline(*compiled, *geometry, variant, instanced, compatibility, plan.resolved.topology, pipeline_why);
+            ensureContentPipeline(*compiled, *geometry, variant, instanced, compatibility, plan.resolved.topology, pipeline_why, pipeline_failure);
         if (pipeline_handle == nullptr) {
+            // A PROGRAM THAT RESOLVED NO MODULE FOR A STAGE IS NOT A PIPELINE THE DRIVER REFUSED (review 19 Z16): the two
+            // codes send a host to different places - the program's stage list, or the state the draw resolves to - so the
+            // level that failed names itself instead of every caller reporting "pipeline".
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           contentRefusalCode(ContentRefusalCause::PipelineRefused),
+                           contentRefusalCode(pipeline_failure == PipelineFailure::StageMissing ? ContentRefusalCause::ProgramStageMissing
+                                                                                                : ContentRefusalCause::PipelineRefused),
                            pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
@@ -1436,11 +1459,13 @@ struct ContentCaches::Impl {
         fullscreen_state.depth                         = vn::graphics::DepthPolicy::Disabled;
         plan.resolved          = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, fullscreen_state, vn::graphics::Topology::Triangles);
         plan.color_attachments = static_cast<std::uint32_t>(compatibility.device_color_formats.size());
-        vn::String pipeline_why;
-        const std::shared_ptr<PipelineHandle> pipeline_handle = ensureFullscreenPipeline(*fragment, *vertex, compatibility, pipeline_why);
+        vn::String                            pipeline_why;
+        PipelineFailure                       pipeline_failure{ PipelineFailure::DriverRefused }; // written on every failure (see buildPipeline)
+        const std::shared_ptr<PipelineHandle> pipeline_handle = ensureFullscreenPipeline(*fragment, *vertex, compatibility, pipeline_why, pipeline_failure);
         if (pipeline_handle == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           contentRefusalCode(ContentRefusalCause::FullscreenPipelineRefused),
+                           contentRefusalCode(pipeline_failure == PipelineFailure::StageMissing ? ContentRefusalCause::ProgramStageMissing
+                                                                                                : ContentRefusalCause::FullscreenPipelineRefused),
                            pipeline_why.empty() ? vn::String(u8"vk: the full-screen pipeline could not be built") : std::move(pipeline_why));
             return false;
         }

@@ -545,6 +545,37 @@ and every cache has a witness a test can read.**
   recorded and not yet proven, and they are deliberately NOT part of `live`.
 - **Cases**: `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` (§8 T10).
 
+### 2.22 A graphics pipeline states two stages, and the builder is where that is required (`G1` / `G4` / `G10`)
+
+- **What it is**: `vkCreateGraphicsPipelines` needs a module for every stage a pipeline states - a vertex stage always,
+  and a fragment stage unless rasterisation is discarded (this backend never discards it). A `ShaderProgram` is editable
+  to ANY stage list (`clearStages`, a fragment-only file, a compute stage), so "the program is complete" is not a
+  property of the program: `buildPipeline` asks for the two modules it is handed and refuses a pair with a hole, naming
+  the stage, before the driver sees it (review 19 `Z16`).
+- **Why the builder and not the program entry**: one description can be complete for one use and incomplete for another
+  - a fragment-only program IS a whole full-screen program (that path states the engine's canonical vertex stage) and is
+  no content program at all. A refusal remembered on the program entry would refuse the legal draw for the rest of the
+  session, and a refusal per (program, need) would be two answers under one key. So the requirement is stated where the
+  stages are stated to the API, and the two guards that used to sit in `ensureContentPipeline` /
+  `ensureFullscreenPipeline` (two sentences, neither naming the stage) are gone.
+- **Two failures, two codes**: the builder answers a `PipelineFailure`, so a hole in the program is reported as
+  `vk.content.program_stage_missing` (the repair is the program's stage list) while a state the driver refused keeps
+  `vk.content.pipeline_refused` / `vk.content.screen_pipeline_refused` (the repair is the state, and the loader's report
+  says what). Reporting both under one code sent a host to the blend/depth state for a defect in the program (§2.14).
+- **No stage is dropped silently**: a `Compute` stage used to be `continue`d past, so an entry that resolved NOTHING was
+  cached as compiled and the draw was reported as a missing *graphics* stage. This backend stages no compute program,
+  and that is the entry's own refusal now (`vk.content.program_refused`, a sentence that says so), cached like every
+  other failure.
+- **Boundary**: the rule is the GRAPHICS pipeline's. A compute pipeline (M2) states its own requirement, and the SDK keeps
+  allowing any stage list - an empty program is a legal editing state (`clearStages()` then `addStage()`) and a value,
+  not a claim about how it will be used (`graphics-rendering.md` F20).
+- **Cost, stated**: the refusal lands after the geometry upload, because the pipeline is resolved last (program ->
+  streams -> instance stream -> pipeline). That is one upload on the first frame that names such a program and nothing
+  after it; moving the check earlier would state the rule in a second place, which is the defect it removes.
+- **Cases**: `VkContentDrawTest.AProgramWithNoVertexStageIsRefusedAsAProgramFault`,
+  `VkContentDrawTest.AFragmentOnlyProgramIsAWholeFullScreenProgram`,
+  `VkContentDrawTest.AComputeStageIsRefusedRatherThanDropped` (§8 T12).
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -555,7 +586,7 @@ and every cache has a witness a test can read.**
 | F2 | Physical device selection | ordered by `VkPhysicalDeviceType`, ties keep the first seen | landed |
 | F3 | Window and swap chain | surface, FIFO, one present semaphore per image, a 1 s acquire timeout, rebuild | landed (Linux/X11) |
 | F4 | Offscreen targets | dynamic-rendering attachment sets, MRT, MSAA + depth resolve, borrowed depth, resize keeping the pipelines | landed |
-| F5 | Content drawing | program → SPIR-V → pipeline; state mapping; vertex / index / instance streams | landed |
+| F5 | Content drawing | program → SPIR-V → pipeline (the pipeline states a vertex AND a fragment module, §2.22); state mapping; vertex / index / instance streams | landed |
 | F6 | Fullscreen drawing | the screen ABI; depth forced to Disabled; binds the shadow map the pass resolved | landed |
 | F7 | Textures and samplers | revision cache, the 1×1 stand-in, uploads before the rendering instance | landed |
 | F8 | The constant ring | one persistently mapped buffer per frame, slices + dynamic offsets | landed |
@@ -847,9 +878,11 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   goes red above it); once published, a `code` is never reworded or reused (`scripts/diagnostic_codes.txt`).
 - **C13 Attribution is segmented, not the whole frame repeated**: a pass' time is the segment between its boundary and the previous one (including the uploads and
   transitions it asks for), so the segments sum to ≤ the whole frame; attributing the whole frame to every pass is wrong (`VkPassTimingTest` pins it).
-- **C14 A boundary is a wait**: a timestamp answers "when did everything before it finish", so the frame's START takes no wait (`kFrameClockStartStage`, nothing
-  before it belongs to the frame) and every other boundary - each pass' end and the frame's end - waits for `ALL_COMMANDS` (`kPassClockBoundaryStage`). A boundary
+- **C14 A boundary is a wait**: a timestamp answers "when did everything before it finish", so the frame's START takes no wait (`kFrameClockStartStage`, nothing  before it belongs to the frame) and every other boundary - each pass' end and the frame's end - waits for `ALL_COMMANDS` (`kPassClockBoundaryStage`). A boundary
   that does not wait measures when the command processor ARRIVED, not what the pass spent (see `P18`).
+- **C15 A graphics pipeline states no stage without a module**: no `VkShaderModule` handed to
+  `vkCreateGraphicsPipelines` is `VK_NULL_HANDLE` - `buildPipeline` refuses the pair and names the stage that is absent,
+  and the refusal is reported as a program fault, never as a state the driver refused (§2.22).
 
 ### 5.2 Requirements (R#)
 
@@ -1081,6 +1114,17 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   own book (`ContentImages`). A HOST-FILLED stream is the other kind and keeps the `FrameBuilds` rule (§2.17): its bytes
   exist immediately, so only the claim/publish half applies to it.
 
+### 6.20 P20 A program is a value, not a verdict
+
+- How it fails: a program is editable to any stage list, so a description that is complete for a full-screen pass is
+  incomplete for a content draw - and a refusal remembered on the PROGRAM then refuses the legal use too, for the rest of
+  the session (the shape review 19 `Z16` proposed, and the one this design rejects).
+- How to detect it: a full-screen draw whose fragment-only program compiles fine draws nothing, and the diagnostic says
+  the program is broken rather than the use.
+- How to prevent it: the requirement lives in `buildPipeline` (the pipeline that states the stages), the refusal is per
+  DRAW with `vk.content.program_stage_missing`, and nothing about stage completeness is cached on `ProgramEntry`
+  (`VkContentDrawTest.AFragmentOnlyProgramIsAWholeFullScreenProgram`).
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -1111,6 +1155,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T9 | readback | `OffscreenClearTest`, `ContentTargetTest`, `VkMemoryPoolTest.AReadbackGivesItsStagingBytesBack` |
 | T10 | content is resident only when its fill is proven | `VkPrepareUploadTest.APrepareWhoseSubmitFailsPublishesNothingAndTheNextFrameUploadsAgain` (a refused submit through `Device::refuseNextSubmit`; the mutation that publishes at record time turns it red - §2.21, §6.19) |
 | T11 | a table entry holds its key and ends when nobody else holds it | `VkBuiltinProgramTest.AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes` (the cache's share shows in `useCount`; the stream leaves at a frame end with no announcement) and `ARecycledAddressDoesNotInheritThePreviousInstanceBytes` (the picture is the fresh buffer's; under the old rule the previous matrices were drawn at the previous position - verified by reverting the share and the sweep) |
+| T12 | a pipeline never states a stage without a module, and an incomplete program is reported as a program fault (never as a state the driver refused) | `VkContentDrawTest.AProgramWithNoVertexStageIsRefusedAsAProgramFault` (the code, the sentence naming the stage, the clear picture), `AComputeStageIsRefusedRatherThanDropped`, `AFragmentOnlyProgramIsAWholeFullScreenProgram` (the same program is complete for a full-screen pass - §2.22) |
 
 ## 9. Status and Evolution
 
@@ -1119,7 +1164,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **197 cases / 44 suites**, `test_graphics` **642 / 82** (2026-11-24, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **234 cases / 47 suites**, `test_graphics` **708 / 87** (2026-11-27, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).
@@ -1162,6 +1207,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   residency at the next frame end (§2.5), where it previously stayed for the session. Nothing about the API changed, and a host that
   keeps the buffer and calls `releaseContent` sees exactly what it saw before.
 - **Cache file**: format version `1`; a mismatched version is refused (no migration, no guessing).
+- **Codes**: `vk.content.program_stage_missing` is new. No code was renamed or reused: a program whose stage list cannot
+  fill a graphics pipeline keeps its own cause, and the pipeline codes keep meaning "the driver refused this state".
 - **Device requirements**: a Vulkan **1.3** device (step 2 of `T60`'s batch, `ADR-2026-11-23` D4) with the
   `synchronization2` and `dynamicRendering` FEATURES enabled - a 1.3 device that does not offer them is refused with
   `vk.init.device_features_missing`, and an older one with `vk.init.api_version_low` - PLUS

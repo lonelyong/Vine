@@ -149,6 +149,18 @@ void main()
 }
 )";
 
+/// @brief Samples the CENTRE of binding 0 of set 0: the full-screen path binds a source's attachments at 0..N-1.
+constexpr const char8_t* kScreenSampleFragment = u8R"(
+#version 450
+layout(set = 0, binding = 0) uniform sampler2D vn_src;
+layout(location = 0) out vec4 out_color;
+
+void main()
+{
+    out_color = texture(vn_src, vec2(0.5, 0.5));
+}
+)";
+
 /// @brief Writes the packed ambient term: binding 6 is the light block.
 constexpr const char8_t* kLightFragment = u8R"(
 #version 450
@@ -201,6 +213,16 @@ void main()
 }
 )";
 
+/// @brief Writes nothing: a compute entry point (this backend stages no compute program, see ensureProgram).
+constexpr const char8_t* kComputeStage = u8R"(
+#version 450
+layout(local_size_x = 1) in;
+
+void main()
+{
+}
+)";
+
 /// @brief Builds the two-stage program above (fresh object per call, like every SDK factory).
 [[nodiscard]] intrusive_ptr<ShaderProgram> makeProgramWith(const char8_t* fragment_source)
 {
@@ -215,6 +237,15 @@ void main()
 [[nodiscard]] intrusive_ptr<ShaderProgram> makeProgram()
 {
     return makeProgramWith(kFragmentStage);
+}
+
+/// @brief Builds a program that declares ONE fragment stage: a whole full-screen program and no content program.
+[[nodiscard]] intrusive_ptr<ShaderProgram> makeFragmentOnlyProgram(const char8_t* fragment_source)
+{
+    auto program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program->setName(u8"vk_fragment_only_program");
+    program->addStage(ShaderStage{ ShaderStageType::Fragment, String(fragment_source), String(u8"main") });
+    return program;
 }
 
 /// @brief Builds an opaque material of one colour.
@@ -607,6 +638,61 @@ TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)
     backend->shutdown();
 }
 
+TEST(VkContentDrawTest, AProgramWithNoVertexStageIsRefusedAsAProgramFault)
+{
+    // A PROGRAM IS EDITABLE TO ANY STAGE LIST (clearStages, replaceStages, a fragment-only file), so "is it drawable" is
+    // a question asked where the program is USED, never a verdict cached on the program. A content draw states a vertex
+    // and a fragment stage; a program that resolved no vertex module has no pipeline to give it, and the refusal has to
+    // name the PROGRAM - reporting the blend/depth state (the pipeline code) sends a host to the wrong place, and handing
+    // VK_NULL_HANDLE to the driver is not a refusal at all (review 19 Z16).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    const intrusive_ptr<RenderTarget>  target        = makeTarget();
+    const intrusive_ptr<Geometry>      geometry      = makeTriangle();
+    const intrusive_ptr<ShaderProgram> fragment_only = makeFragmentOnlyProgram(kFragmentStage);
+
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+    command.program             = fragment_only;
+    command.program_description = fragment_only->description();
+
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(std::move(command));
+
+    DrawPacket draw;
+    draw.kind        = DrawKind::Scene;
+    draw.view.camera = identityCamera();
+    draw.commands    = commands;
+    (void)backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
+
+    bool saw_missing_stage = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        EXPECT_TRUE(diagnostic.code.std_u8str_view() != u8"vk.content.pipeline_refused")
+            << "a program's missing stage was reported as a state the driver refused";
+        if (diagnostic.code.std_u8str_view() != u8"vk.content.program_stage_missing") {
+            continue;
+        }
+        saw_missing_stage = true;
+        EXPECT_EQ(diagnostic.category, vn::graphics::DiagnosticCategory::CompileFailed) << "an incomplete program is a compile-side fault, not skipped content";
+        EXPECT_NE(diagnostic.message.std_u8str_view().find(u8"vertex"), std::u8string_view::npos) << "the sentence must name the stage that is absent";
+    }
+    EXPECT_TRUE(saw_missing_stage) << "the draw with a vertex-less program was not refused with its own code";
+
+    // NOTHING WAS DRAWN: the destination keeps the pass' clear colour, which is what "the draw was skipped" means.
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 0, 0, 255 }))
+        << "a draw whose program has no vertex stage drew something anyway";
+
+    backend->shutdown();
+}
+
 TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
 {
     // THE SAMPLING HALF OF M4: a material's base-colour slot is uploaded on the frame's own command buffer and bound
@@ -752,6 +838,113 @@ TEST(VkContentDrawTest, AFullscreenCopySamplesTheSourceTarget)
     EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
         << "the full-screen copy did not sample the source's drawn pixel";
     EXPECT_EQ(pixelAt(read.values, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 })) << "the full-screen copy did not sample the source's cleared corner";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}
+
+TEST(VkContentDrawTest, AComputeStageIsRefusedRatherThanDropped)
+{
+    // NO STAGE IS DROPPED SILENTLY. This backend stages no compute program, and the loop used to `continue` past the
+    // stage, so an entry that resolved NOTHING was cached as compiled and the draw was reported as a missing GRAPHICS
+    // stage - which is not what is wrong with it (review 19 Z16). The refusal names the program's own cause, and it is
+    // remembered like every other refusal, so the same program is reported once.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    auto compute_only = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    compute_only->setName(u8"vk_compute_only_program");
+    compute_only->addStage(ShaderStage{ ShaderStageType::Compute, String(kComputeStage), String(u8"main") });
+
+    const intrusive_ptr<RenderTarget> target   = makeTarget();
+    const intrusive_ptr<Geometry>     geometry = makeTriangle();
+
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+    command.program             = compute_only;
+    command.program_description = compute_only->description();
+
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(std::move(command));
+
+    DrawPacket draw;
+    draw.kind        = DrawKind::Scene;
+    draw.view.camera = identityCamera();
+    draw.commands    = commands;
+    (void)backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
+
+    bool saw_refusal = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        if (diagnostic.code.std_u8str_view() != u8"vk.content.program_refused") {
+            continue;
+        }
+        saw_refusal = true;
+        EXPECT_NE(diagnostic.message.std_u8str_view().find(u8"compute"), std::u8string_view::npos)
+            << "the sentence must say that compute is what this backend does not stage";
+    }
+    EXPECT_TRUE(saw_refusal) << "a compute-only program was dropped silently instead of refused";
+
+    backend->shutdown();
+}
+
+TEST(VkContentDrawTest, AFragmentOnlyProgramIsAWholeFullScreenProgram)
+{
+    // THE OTHER SIDE OF THE SAME RULE (review 19 Z16): a full-screen draw states its own vertex stage (the engine's
+    // canonical triangle), so a program with ONE fragment stage is COMPLETE for it. A rule written where the program is
+    // COMPILED - "an entry with no vertex module is failed" - would refuse this draw for ever: the program is not broken,
+    // the content use of it was. The requirement therefore belongs to the pipeline that states the stages.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>                source        = makeTarget();
+    const intrusive_ptr<ShaderProgram>               scene         = makeProgram();
+    const intrusive_ptr<Geometry>                    geometry      = makeTriangle();
+    const intrusive_ptr<Material>                    red           = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const intrusive_ptr<vn::graphics::ShaderProgram> fragment_only = makeFragmentOnlyProgram(kScreenSampleFragment);
+
+    DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+    command.program              = scene;
+    command.program_description  = scene->description();
+    command.material             = red;
+    command.material_description = red->description();
+
+    auto commands = std::make_shared<std::vector<DrawItem>>();
+    commands->push_back(std::move(command));
+
+    DrawPacket scene_draw;
+    scene_draw.kind        = DrawKind::Scene;
+    scene_draw.view.camera = identityCamera();
+    scene_draw.commands    = commands;
+    backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
+
+    const intrusive_ptr<RenderTarget> destination = makeTarget();
+
+    DrawPacket fullscreen_draw;
+    fullscreen_draw.kind                = DrawKind::Fullscreen;
+    fullscreen_draw.view.camera         = identityCamera();
+    fullscreen_draw.source              = source.get();
+    fullscreen_draw.program             = fragment_only;
+    fullscreen_draw.program_description = fragment_only->description();
+    const PresentOutcome outcome        = backend->executeFrame(fullscreenFrame(destination.get(), std::move(fullscreen_draw)));
+    EXPECT_EQ(outcome, PresentOutcome::Skipped);
+
+    const ColorReadback read = backend->readColorImage(destination.get(), 0);
+    ASSERT_TRUE(read.ok());
+    // THE ONE TEXEL THIS STAGE SAMPLES (uv 0.5, 0.5) lands on every pixel, so one probe proves the pass drew: the
+    // destination was never named by a scene packet, so red there is the fragment-only program's own work.
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+        << "the fragment-only program was refused for a draw that states its own vertex stage";
+    EXPECT_EQ(pixelAt(read.values, 2, 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+        << "the fragment-only program's full-screen pass did not cover the whole picture";
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);

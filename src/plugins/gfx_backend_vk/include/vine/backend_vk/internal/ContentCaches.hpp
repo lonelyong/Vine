@@ -90,6 +90,11 @@ VN_BACKEND_VK_NS_BEGIN
 class VN_BACKEND_VK_API ContentCaches final {
   public:
     /// @brief One program revision's compiled modules (the description is held so the key cannot be reused).
+    ///
+    /// A STAGE MAY BE ABSENT: the SDK's verbs allow any stage list (`clearStages`, a fragment-only file), so this value
+    /// answers what the text DID resolve and judges nothing. Whether that is enough is the pipeline's question (see
+    /// `buildPipeline`), because one description can be complete for one use and incomplete for another - a fragment-only
+    /// program is a whole full-screen program and no content program at all.
     struct ProgramEntry {
         vn::graphics::ShaderProgramDescriptionPtr description;
         VkShaderModule                            vertex{ VK_NULL_HANDLE };
@@ -116,6 +121,21 @@ class VN_BACKEND_VK_API ContentCaches final {
         {
             return !vertex_locations_known || std::binary_search(vertex_locations.begin(), vertex_locations.end(), location);
         }
+    };
+
+    /**
+     * @brief What stopped a graphics pipeline: the stages it was handed, or the driver (see `buildPipeline`).
+     *
+     * @details
+     * - THE BUILDER WRITES IT ON EVERY FAILURE, because the two failures send a host to different places: `StageMissing`
+     *   is a program whose text resolves no module for a stage the pipeline states (add the stage), while
+     *   `DriverRefused` is a state the driver refused (see the loader's report). Reporting both under one code sends a
+     *   host to the blend/depth state for a defect in the program.
+     */
+    enum class PipelineFailure : std::uint8_t
+    {
+        StageMissing,  // A program declares no module for a stage a graphics pipeline states; nothing reached the driver.
+        DriverRefused, // vkCreateGraphicsPipelines answered a failure.
     };
 
     /// @brief One uploaded vertex channel.

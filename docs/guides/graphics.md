@@ -121,6 +121,11 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   数据槽要线性格式。不符时画面照画（在一次材质修改后报一次 `DiagnosticCategory::MaterialSlot`），不会因为一个
   gamma 错就丢 drawable。
 - `ShaderProgram` —— 一个或多个 stage，带 `revision()`，所以"同一个对象、改了源码"能被发现。
+  **stage 列表是程序的自由**（`clearStages()` 后再 `addStage()` 是合法编辑状态，只有片段阶段的文件也是合法值）；
+  **"一次绘制需要哪些 stage"属于那次绘制**：内容绘制的管线同时声明顶点与片段两个 stage（所以两者都得有模块），
+  全屏绘制自己带引擎的顶点阶段（所以片段-only 程序对它是完整的）。缺阶段时报**程序自己的**成因：
+  `vk.content.program_stage_missing`（而不是"驱动拒绝了某个状态"）；`Compute` 阶段本后端未实现，也是显式拒绝
+  而不是悄悄丢掉（见 `.ai/design/vk-backend.md` §2.22）。
 - `Texture` —— 2D / Cube，按层填充（`setImage()` / `setFaceImage()` / `setLayer()`；编号一律用 `layer` 词汇）。每次填充都会
   `revision()++`，后端据此区分"同一张纹理、新像素"与"同一张纹理、同样像素"（只看指针做不到）。
 - `Light` —— ambient / directional / point / spot，带 `castShadow()` 与 `ShadowSettings{resolution, bias, filter}`
