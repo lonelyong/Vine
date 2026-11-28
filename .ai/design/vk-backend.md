@@ -41,13 +41,20 @@
   and needs an ADR; it is recorded in the backlog, not in the code.
 - **A dedicated transfer queue / queue-family ownership transfer** (audit F11): the gain under the synchronous submission model is tiny (`G8`).
 - **`VMA`**: no third-party dependency; the hand-written pool already covers today's consumers (§2.4, `MemoryAllocator`).
-- **Real-hardware evidence for Wayland** (backlog T13): both platform branches are implemented and both are measured on hardware - X11 through `XGetImage` and
-  Win32 through a `PrintWindow` compositor read, one shared instrument for `WindowPresentTest` (2026-11-23). Wayland is implemented against the WSI contract only.
+- **Wayland** (backlog T13): **NOT served** - there is no Wayland branch (`instanceExtension()` answers
+  `VK_KHR_xcb_surface` on Linux, and `WindowSystem` has one file per served platform: X11 and Win32), so a Wayland-only
+  host gets `UnsupportedSurface` from every window target and the session runs off-screen. Measured 2026-11-28 on a
+  host that has both `DISPLAY` and `WAYLAND_DISPLAY`: with `DISPLAY` unset `WindowSystem::open()` answers "no X display
+  is reachable (is DISPLAY set?)" and all eight `test_vk` window/probe cases SKIP, because the instrument connects with
+  `xcb_connect` - so the off-screen path itself is covered and the TRANSITION (a window refused, then frames on) is not.
+  The two SERVED branches are measured on hardware - X11 through `XGetImage` and Win32 through a `PrintWindow`
+  compositor read, one shared instrument for `WindowPresentTest` (2026-11-23).
 - **Becoming the default backend**: the gate is in `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`. **This backend is the one the application names
   today** — `app_shell`'s `chooseRenderBackend()` states `"vk"` (`VN_RENDER_BACKEND` overrides it) — and that is a host decision, not a verdict from the switch gate:
   the registry has **no** default to switch (an unknown name answers null, and several registered with none stated is a refusal that lists them —
-  `appfw-render-surface.md` 2.4 and its `D7`). What the gate still wants is a measured Wayland fallback and a performance reading it
-  accepts (backlog T35), so Windows does not ship before them.
+  `appfw-render-surface.md` 2.4 and its `D7`). What the gate still wants is the Wayland ANSWER (serve it, or record that a
+  Wayland-only host runs off-screen - backlog T13) and a performance reading it accepts (backlog T35), so Windows does not
+  ship before them.
 
 ### 1.4 One-paragraph conclusion
 
@@ -1341,8 +1348,12 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **Backlog `T35` (becoming the default backend)**'s gate (`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`): `releaseRenderTarget` really frees the
   attachments, `readDepthImage` and the device-loss report are landed; `releasePass` is a documented default no-op (`RenderDevice.hpp`), and the user page is
   `docs/guides/graphics-backends.md`; the Win32 branch is implemented and its presented pixels are asserted there (`../memory/graphics.md` 2026-11-23: `test_vk`
-  174/174, no skips, the window cases reading the compositor); **still missing** are a measured Wayland fallback and a performance reading the gate accepts.
-- **Backlog `T12` / `T13`**: reading pixels from a Windows window, and the Wayland fallback.
+  174/174, no skips, the window cases reading the compositor); **still missing** are the Wayland answer (T13: serve it, or
+  record "a Wayland-only host runs off-screen" and pin it with a case that needs no X - see 1.3) and a performance reading
+  the gate accepts.
+- **Backlog `T12` / `T13`**: `T12` landed 2026-11-23 (the Win32 pixel read through `PrintWindow`); `T13` is the Wayland
+  question - there is no Wayland branch in this backend (`instanceExtension()` is xcb on Linux), so what a Wayland-only
+  host gets is the off-screen session (1.3), measured 2026-11-28.
 - **`T60` (the retirement) landed 2026-11-23**: this backend is the one the retirement leaves in place. The floor is Vulkan 1.3 with `synchronization2` +
   `dynamicRendering`, the pipeline key has no state half, and the backend has no render-pass or framebuffer object left; the retired plugin's codes and the comparison
   documents went with it ([ADR-2026-11-23](../decisions/ADR-2026-11-23-retiring-the-reference-backend.md)).

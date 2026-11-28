@@ -96,7 +96,11 @@
 - push constant 128 B; reverse-Z (far = 0); the SDK's picture-CCW front face is `VK_FRONT_FACE_COUNTER_CLOCKWISE`
   (`StateMapping::kFrontFace`; measured by `VkContentDrawTest.TheFragmentStageSeesTheSdksFrontFace`, and the old
   `CLOCKWISE` value was inverted - see the review-17 follow-up below).
-- X11 / Win32 are measured on hardware; Wayland is implemented against the WSI contract only (backlog T13).
+- X11 / Win32 are measured on hardware; **Wayland is not served at all** - there is no Wayland branch
+  (`instanceExtension()` answers `VK_KHR_xcb_surface` on Linux), so a Wayland-only host answers `UnsupportedSurface`
+  from every window target and runs off-screen. Measured 2026-11-28 (`DISPLAY` unset, `WAYLAND_DISPLAY=wayland-0` on
+  WSLg): `open()` says "no X display is reachable" and all eight `test_vk` window/probe cases SKIP, because
+  `TestHostWindow`'s `TestDisplay` connects with `xcb_connect` - the suite cannot see a Wayland session at all (T13).
 - One frame in flight per driver (`Impl::kFramesInFlight = 1`), and a driver registers one `DeviceClock` window with that slot count.
 - Retirement window = `slots + 1`; `RetirementQueue::setSlots()` updates in place — do not assign a new queue (that zeroes the counters).
 
@@ -2101,7 +2105,9 @@
   whose red and blue bytes are EQUAL survive both: green and magenta for the picture, white for the instrument
   paint. That is also why the frame's clear moved from red to magenta.
 - **Consequence for T35's gate**: the platform item is closed; open are a measured Wayland fallback (T13) and a
-  performance reading the gate accepts.
+  performance reading the gate accepts. (**Corrected 2026-11-28**: T13's premise was wrong - there is no Wayland branch
+  in `gfx_backend_vk` at all, so nothing about Wayland is "implemented, unmeasured"; a Wayland-only host answers
+  `UnsupportedSurface` and runs off-screen. See the platform facts in §4 and `vk-backend.md` 1.3 / 9.2.)
 - **Three homes held one stale fact**: the user guide, `vk-backend.md` 1.3 / 9.2 / 9.3 and this plugin's
   `CMakeLists.txt` all still said "Win32 待实现 / only Linux/X11 ships". A platform claim is a MEASURED fact, so it
   moves only with a run to quote - this one came with the numbers above. Deleting `vsg` is a separate criterion
