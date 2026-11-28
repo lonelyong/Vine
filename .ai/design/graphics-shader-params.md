@@ -67,7 +67,7 @@ Dedup is not a discipline problem: a duplicated declaration is not in front of t
 | Buffer | Contents | Upload timing |
 |---|---|---|
 | view | NOT a block: the 128-byte `VinePushRange` (projection + model-view), filled per draw | per draw (2.8) |
-| draw | model matrix, opacity, point size, user slots | per draw (ring + dynamic offset) |
+| draw | world model matrix (published for a HOST stage; no built-in stage reads it - see `graphics-material.md` 2.12), opacity, point size, user slots | per draw (ring + dynamic offset) |
 | material | base colour / emissive / metallic·roughness·occlusion·alpha cutoff / flags | per material (after dedup) |
 | shadow | light-space matrix, shadow parameters | per pass |
 | lights | one ambient light + `kMaxLights` typed lights (directional / point / spot; position and direction in view space) | per view |
@@ -110,7 +110,10 @@ the range lives in a backend's private header any more.
 
 - The range is the whole contract ON PURPOSE: a host stage gets no separate model matrix, no normal matrix, no camera
   position, no inverse projection and no time, and a full-screen draw gets no range at all. A host that needs one of them
-  has no channel today - a boundary, not an oversight ([ADR](../decisions/ADR-2026-11-26-host-program-contract-is-the-push-range.md)).
+  has no channel **in this range** - a boundary, not an oversight
+  ([ADR](../decisions/ADR-2026-11-26-host-program-contract-is-the-push-range.md)). The world model is the one such value
+  with a home elsewhere: `VineDrawBlock::model` (set 1 binding 0), which a host stage that declares the block reads; no
+  built-in stage reads it (`graphics-material.md` 2.12, review 18 `Y8`).
 - `VineViewBlock` (view / inverse view / projection / view-proj / camera position / time, 288 B) is DELETED: no backend
   uploaded it and no shader declared it, so the block was a promise with no producer - the one thing a shape header must
   not be (`G8`, `G12`). The dead `buildViewBlock` references pointed at a function that was never written; the fold they

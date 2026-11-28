@@ -117,6 +117,10 @@
 - Vulkan NDC z is the depth (there is no OpenGL `z*0.5+0.5`); reverse-Z far = 0.0, so a depth clear must not clear to 1.0.
 - Dynamic `vkCmdSetPrimitiveTopology` may only stay inside the pipeline's topology class; `Topology` goes into `PipelineKey`.
 - `POINT_LIST` requires the vertex stage to write `gl_PointSize` statically; the built-in programs write 1.0.
+- **A normal is not a position**: `mat3(model_view) * n` is the normal transform only for a rigid or uniformly scaled
+  placement, and a non-uniform one is legal (scale vector / shear / instance matrix). Both content vertex stages call
+  `vnTransformNormal` (`shaders/vine_normal.glsl` - inverse transpose of the COMBINED model-view); the depth stage reads
+  no normal. `VineDrawBlock::model` is the host-readable world model and no built-in stage reads it (2026-11-28, `V2`/`Y8`).
 - **MSBuild's incremental build is not trustworthy after a large tree move**: after the 2026-11-23 fast-forward over 403
   commits, objects built against the old headers survived and this suite's binary mixed two vtables
   (`0xc0000005` at 0 ms in a case that passes alone). Delete `build/src`, `build/tests`, `build/tools` objects and rebuild,
@@ -445,6 +449,8 @@
 - New internal `ContentRegistry.{hpp,cpp}`: `Handle` (gen24|domain8|index32), typed `Id<Tag>`,
   `allocate<Tag>()`, generation/domain checks, 24-bit wraparound retirement slots; `ContentRef{id,rev}`;
   `ResidencyTable` (collectable/reclaim when `last_epoch < oldest_live`, revision is part of the key).
+  **Retired 2026-11-28**: the class and its three cases are deleted - the shipped backend keys by identity and ends
+  entries nobody holds (`graphics-content-lifecycle.md` 2.10, `vk-backend.md` 2.25); do not revive the epoch table.
 - Added 6 cases in `ContentRegistryTest` / `ResidencyTableTest` (stale handle, cross domain, duplicate release,
   collectable enumerable, revision key, touch extends life); `test_graphics` 559 pass.
 - **3b settled on B by design (public identity = `Handle`), first segment landed** (2026-11-11): new public
@@ -456,7 +462,8 @@
   Evidence: `test_graphics` 559 / `test_vsg` 537 / ctest 30/30. After the change **clean the old objects before building** (the `Node`/`RenderCommand` layout changed).
   Still not done: ① `Geometry`/`MaterialBase`/`ShaderProgram`'s own ids, so `ContentRef` becomes the only key (the geometry table is
   `(NodeId, rev)` and the material table still keys on the address = A1's residue in the backend); ② merging the plan row's geometry into `ContentRef geometry`;
-  ③ replacing `markUsed`/parking/`kept` with `ResidencyTable` epoch reclaim. Do not half-migrate `ContentStore` between those three steps.
+  ③ replacing `markUsed`/parking/`kept` with an epoch table (done for the reference backend, whose table is now retired:
+  the shipped backend sweeps by share count). Do not half-migrate `ContentStore` between those three steps.
 
 ### Step 4 (material identity; 2026-11-11)
 
@@ -3386,3 +3393,78 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
 - **Symptom -> cause map for the next reader.** A camera that turns on pure hover after a window loses focus, or after
   the dock reparents itself, is `Z17` (a press whose release never arrived), not a manipulator bug and not a routing
   bug.
+
+## 2026-11-28 - V2 + Y8: a normal is not a position (inverse transpose, one fragment, both content stages)
+
+- **The defect.** Both content vertex stages handed the shading `mat3(model_view) * normal`. That is the normal transform
+  only for a rigid or uniformly scaled placement, and a non-uniform one is legal (`PositionAttitudeTransform`'s scale
+  VECTOR, a shear from a non-uniform parent, an instance matrix). Measured with a probe fragment writing
+  `abs(normalize(vn_view_normal))`: a y-stretch of 16 turned `(0, 0.707, 0.707)` into `(0, 0.998, 0.062)`; the correct
+  answer is `(0, 0.062, 0.998)` - the surface was lit from the wrong side of the stretched axis, silently.
+- **The rule and its home.** `shaders/vine_normal.glsl` holds `vnTransformNormal(mat4 model_view, vec3 normal)` =
+  `transpose(inverse(mat3(model_view))) * normal`; `builtin_forward.vert` and `builtin_gbuffer.vert` include it and call
+  it with the COMBINED matrix (`vn_pc.modelView [× vn_InstanceModel]`), so an instanced non-uniform scale needs no second
+  path. The depth stage reads no normal and does not include it. The local was renamed `vn_model` -> `vn_model_view`
+  (it always held `view * model`).
+- **Why not a CPU normal matrix.** It cannot serve an instanced draw - the instance matrix is per-instance data and never
+  reaches the per-draw packing - so it would have been two rules. Cost of the chosen rule: one 3x3 inverse per vertex of
+  those two stages (stated in `graphics-material.md` 2.12 / N7).
+- **Y8's other half (doc truth, no ABI change).** `VineDrawBlock::model` is the one place the world model is published
+  (the push range carries `view * model` only): a host stage that declares the block reads it, and NO built-in stage does.
+  `vine_params.glsl` no longer says "the host rewrites" it; `ShaderAbi.hpp` states the contract. Removing the member
+  (80 -> 16 bytes) is an ABI decision for a later batch, recorded as a rejected option - not a per-frame saving invented
+  now.
+- **Witnesses.** `VkContentDrawTest.ANonUniformlyScaledDrawTransformsItsNormalByTheInverseTranspose` drives the SHIPPED
+  forward vertex stage (taken from `forwardProgram()->stages()`, not copied) with a probe fragment and reads three
+  placements: y-stretch `(0,16,254)` (defect: `(0,255,16)`), stretch behind a 30-degree turn `(0,113,228)` (defect:
+  `(0,212,141)`; plain inverse: `(0,58,248)`), rigid `(0,66,246)` (unchanged by the fix).
+  `EmbeddedShadersTest.TheContentVertexStagesTransformNormalsThroughTheOneFragment` pins that both stages carry the one
+  function and neither spells `vn_view_normal = mat3(`. `scripts/vn_shader_check.sh` covers the new fragment's include
+  matrix.
+- **Trap (paid for once in this batch).** `for (const ShaderStage& s : forwardProgram()->stages())` walks a span into a
+  temporary that dies before the loop body: the program reported "declares no vertex stage". Hold the
+  `intrusive_ptr` for the walk. Same class as "zero-copy borrow: who still holds it at the consuming moment".
+- **Docs.** `ADR-2026-11-28-the-normal-transform-is-the-inverse-transpose.md`; `graphics-material.md` 2.12 / F12 / C7 /
+  R5 / N7 / T8; `graphics-shader-params.md` §2.2 / §2.8.
+
+## 2026-11-28 - V4: no stage derives a normal, and four documents said one did
+
+- **The finding (review 11 `V4`, still open in review 18).** `Geometry::setNormals` said "when unset the renderer
+  derives normals from the positions"; `VertexAttribute::Normal` said "derived when the geometry authors none";
+  `loadMerged` dropped a partial normal array WHOLE on the strength of that promise ("an absent channel already means
+  derive them from the geometry to the renderer"). No stage derives one, in any layer.
+- **What the tree actually does.** The built-in SMOOTH stages read location 1; a geometry that authors none does not
+  put location 1 in the pipeline's vertex layout, so the stage reads undefined values. The FLAT program derives the
+  face normal from screen-space derivatives of the view position and needs no channel. `aiProcess_GenNormals` is
+  where the common import path really gets its normals, and a merged mesh whose meshes do not all provide them ends
+  with none - the silent case.
+- **The fix (documentation and comments only, no code).** `Geometry.hpp` / `ShaderAbi.hpp` / `MeshLoader.hpp` /
+  `MeshLoader.cpp` now state the contract; `graphics-geometry.md` F28's contract bullets lost the retired
+  `StreamUploads` vocabulary (a "shared binding cache" keyed by buffer+revision+offset+length and a "derived normal
+  cache") and describe the shipped rule: the entry holds the `GeometryDescription`, a stream records the buffer and
+  the revision its bytes came from (`detachStaleStreams`), a segment change is a new description, and an unstated
+  channel is simply absent - nothing is invented.
+- **Recorded, not built.** Backlog `T76`: a missing-normal fallback (derive per geometry from positions+indices, one
+  owner on the geometry side, or refuse/report a smooth draw whose normal input is absent). Trigger: the first
+  imported model without normals, or the first host-built geometry drawn with the default preset.
+- **Also confirmed closed from review 18's table** (no work left): `V1` (Z-up and no conversion settled by `Y6`);
+  `V3`'s documentation half (the §9.2 trigger now names the INSTANCE limit, and a mirrored NODE is served); `V6` (the
+  shadow's clip sentence now says -1..+1); `V10` (the sort-key comment says "growing away from the eye" since
+  `118e585b`). **Still open and needing the OWNER's decision**: `V5` (camera validation / named refusals), `V7` (light
+  falloff unit), `V8` (shadow bias), `V9` (Mask threshold multiplied by opacity).
+- **Gates.** Comments and `.ai` only; no behavioural change, so no build or suite was run. Doc gates 0/0/0/0.
+
+## 2026-11-28 - review 21 §6 closed: the sweep anchors on the share, not on the driver
+
+- **The open item.** Review 21 §6: the frame-end sweep runs at one driver's frame end while another driver may be
+  recording; "safe by construction (the recording driver holds the description)" had no case.
+- **The witness.** `VkMultiSessionTest.AFrameEndBesideARecordingDriverKeepsTheContentThatDriverNames`: driver B is held
+  inside its record by a refused packet (the `ContentSkipped` sink), the host drops the geometry handle, driver A's
+  frame ends run the sweep (the geometry row stays at 2 live, twice), then B finishes (the picture is still red - it
+  kept what it resolved) and the next frame end takes the row to 0 with its bytes. `rowOf` in the file reads the ledger
+  row a report carries.
+- **Mutations.** Withdraw regardless of the share (`<= 1U` -> `< 100U`): red at the FIRST residency assertion, because
+  even the warm-up frame's own draw list names the revision - a steady state pays the re-upload too. Geometry sweep
+  off: red at the tail only (`gone->live` 2, bytes 48 == 48). Both arms restored by reverse patch.
+- **Docs.** `graphics-content-lifecycle.md` §2.10 sentence + T13; `vk-backend.md` 2.25 + T17.
+- **Gate.** `test_vk` 242/242 (was 241); no other suite touched (the backend source was restored).

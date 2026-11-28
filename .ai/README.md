@@ -92,13 +92,20 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (110)
+## decisions/ — decision records (ADRs) (111)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-28-the-normal-transform-is-the-inverse-transpose.md` — **a normal is turned by the inverse transpose, in
+  one fragment both content stages include**: both built-in vertex stages multiplied the authored normal by the
+  placement's own upper 3x3, which is right only while the placement is rigid or uniformly scaled - and a non-uniform
+  placement is legal (a scale vector, a shear from a non-uniform parent, an instance matrix). `shaders/vine_normal.glsl`
+  now owns `vnTransformNormal`, called with the COMBINED model-view so an instanced scale needs no second path; rejected
+  a CPU normal matrix in the draw block (it cannot serve instanced draws), a variant bit, and removing
+  `VineDrawBlock::model` in the same batch (review 11 `V2`, review 18 `Y8`).
 - `ADR-2026-11-27-a-graphics-pipeline-states-two-stages.md` — **a graphics pipeline states two stages, and the builder is
   where that is required**: a program is editable to any stage list, so "is this program drawable" is a question asked
   where it is USED - a fragment-only program is a whole full-screen program and no content program at all. `buildPipeline`
@@ -384,7 +391,7 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (13)
+## research/ — research and proposals
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
@@ -558,6 +565,37 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   Two residuals recorded, neither fixed: a sampler cached by VALUE has no holder to ask (`Z26`), and a shape revision still
   re-uploads every channel because streams are per entry rather than shared by `StreamKey` (`Z28`, backlog `T74`). The
   content-lifecycle page's retired-mechanism names are backlog `T73`.
+- `graphics-2026-11-28-review-22.md` — the twenty-second pass, the CONTENT side of the dynamic scene review 21 opened: the
+  baked rows, the per-view memo, the publication and the light set asked what makes each stale and where the code learns
+  that the content moved. Three findings, **all fixed the same day with four cases and four mutations**: `Scene::setVisible(false)`
+  reached the collection, the bounding box and the ray walks but never the publication, so a hidden scene kept being
+  published and drawn while every query said "nothing" (`Z29` - `ensureRows` now empties the table under the same flag,
+  and `setVisible` no longer announces); `ensureRows` treated the ROOT's own content epoch as the baked table's identity,
+  so a tree built by the same builder reached the same number - replacing the root answered `Unchanged` with the old
+  tree's picture, a cleared-and-re-rooted scene could draw nothing forever, and the recorded raw node pointers outlived
+  the dropped tree (`Z30` - the table records `baked_root_` and the publication compares one `RowsVersion{table, epoch,
+  boxes, values}`, `table` moving on every rebuild and reset); and the edit batch's "picture the batch started from" was
+  really "the cached publication", which the batch's own `clear`/`setRoot` discarded (`Z31` - inside a batch the answer
+  is the previous PUBLICATION, the value `publish()` reports). §4 lists the eight mechanisms read and clean (lights as
+  describe-time values, `refreshValues`, the rows' shares, the serial-keyed chunk sharing, the memo ageing, the store's
+  sweep, the scene handle).
+- `graphics-2026-11-28-derived-state-census.md` — not a review round: a read-only census of every value the module keeps
+  between calls, asked three questions each (what is the key and where is it measured; who ends the entry; can the key
+  name a dead thing). Every row is one of four shapes - a source-revision value, a content-side table keyed by identity
+  plus a clock, a `(handle, revision)` key across the thread seam, an address key that holds what it names - except
+  `Scene::lightSet`, whose key is a `(Light* address, revision)` pair that neither holds the address nor notices the
+  list changing, so a replaced lighting can be served the old answer (`Z32`, fixed the same session with two cases and
+  three mutation arms - one load-bearing, two depth; review 22 §4 had
+  read this cache and asked whether an EDIT reaches the picture, not whether a REPLACEMENT can reuse the number and the
+  address). Two rows are accounted for rather than gaps: the sampler cache keyed by value (`Z26`) and the
+  `ResidencyTable` prototype, retired the same day with its acceptance rows repointed at the shipped mechanism's cases.
+  The four shapes the census derived are now the normative rule `graphics-architecture.md` 2.20.
+- `graphics-2026-11-28-review-23.md` — the twenty-third pass, on the LIVING CORPUS rather than the code: after the
+  reference backend retired, five living design pages still stated its mechanism as current (rows reclaimed per epoch, a
+  declaration index, a material arena, `StreamUploads` sharing, `PinnedResources`), so a reader met two answers to "how
+  does residency end". All five were converted to the shipped rule (an entry holds its key; the frame end ends what nobody
+  else names), `T73` was deleted, every replacement was checked against `ContentCaches` / `ContentImages` / `FrameScratch`,
+  and one unwitnessed diagnostic the conversion exposed (`vk.content.material_texture_skipped`) was recorded as `T75`.
 - `async-2026-11-27-review-1.md` — the first async pass: **what `Destroy` assumes, who owns a completion, and which thread
   the continuation runs on** (the 28 headers read line by line against the design page's contracts; the suite read by its
   index; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -

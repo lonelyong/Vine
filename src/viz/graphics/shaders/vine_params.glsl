@@ -63,10 +63,15 @@ const uint VN_ALPHA_MODE_BLEND  = 2u;
 #endif
 
 #ifdef VN_PARAM_DRAW
-// The per-drawable values: the model matrix and four scalars the host rewrites once per drawn command
-// instead of once per vertex. `params.x` is the drawable's effective opacity (scene x node x geometry);
-// `params.y` is the point size in framebuffer pixels (the vertex stages write it to gl_PointSize; 1.0 when
-// nobody authored one); z and w are reserved.
+// The per-drawable values, filled by the BACKEND once per recorded command (`packDrawBlock`) so a value that changes
+// per drawable costs one small write instead of a vertex-stream pass.
+// `model` is the drawable's world matrix (object -> world, column-major). It is the one place the world model is
+// published: the push range carries `view * model` only, so a HOST stage that needs the world matrix declares this
+// block and reads it. NO BUILT-IN STAGE READS `model` (review 18 Y8): the built-in vertex stages need the push
+// range's `model_view`, and their normal transform is derived from it in `vine_normal.glsl`.
+// `params.x` is the drawable's effective opacity (scene x node x geometry); `params.y` is the point size in framebuffer
+// pixels (the vertex stages write it to gl_PointSize; 1.0 when nobody authored one); z and w are reserved for the user
+// parameter slot.
 //
 // It is its OWN set (1) because it is bound PER DRAWABLE with a dynamic offset: the scene shares one buffer
 // and one descriptor set, and each draw selects its slot.

@@ -8,6 +8,7 @@
 // constants; the block's set is already visible to this stage, so the size costs one read, not a new binding.
 #define VN_PARAM_DRAW
 #include "vine_params.glsl"
+#include "vine_normal.glsl"
 layout(push_constant) uniform PushConstants
 {
     mat4 projection;
@@ -55,17 +56,19 @@ layout(location = 3) out vec2 vn_uv;
 void main()
 {
     // View space on purpose: the lights arrive in view space (VineLightsBlock),
-    // so the fragment stage never needs the world matrix and the model matrix
-    // stays the only per-drawable data the draw block carries. An instanced draw multiplies
+    // so the fragment stage never needs the world matrix. An instanced draw multiplies
     // the instance's local matrix on the right, which is exactly the drawn node's placement
     // in the drawable's frame.
-    mat4 vn_model = vn_pc.modelView;
+    mat4 vn_model_view = vn_pc.modelView;
 #ifdef VN_INSTANCED
-    vn_model = vn_model * vn_InstanceModel;
+    vn_model_view = vn_model_view * vn_InstanceModel;
 #endif
-    vec4 vn_view_position = vn_model * vec4(vn_Vertex, 1.0);
+    vec4 vn_view_position = vn_model_view * vec4(vn_Vertex, 1.0);
     vn_view_pos = vn_view_position.xyz;
-    vn_view_normal = mat3(vn_model) * vn_Normal;
+    // THE NORMAL IS NOT A POSITION (review 11 V2): a placement that scales its axes unevenly turns a normal by the
+    // inverse transpose, not by the matrix - and the one function that states that rule is vine_normal.glsl, which
+    // the G-buffer writer includes too, so the two paths cannot disagree about one placement.
+    vn_view_normal = vnTransformNormal(vn_model_view, vn_Normal);
 #ifdef VN_VERTEX_COLOR
     vn_color = vn_Color;
 #endif

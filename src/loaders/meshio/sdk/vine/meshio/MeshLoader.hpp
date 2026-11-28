@@ -195,8 +195,11 @@ class VN_MESHIO_API MeshLoader {
      * @details
      * - ATTRIBUTES follow the meshes: vertex colours are kept when at least one mesh authors them, and the vertices of
      *   the meshes that author none carry opaque white - the multiplicative identity the shading applies - so each part
-     *   looks the way it would on its own. Normals the source only partly provides are dropped whole and derived from
-     *   the geometry instead, because a zero normal is not "no normal". Texture coordinates are not kept by this entry.
+     *   looks the way it would on its own. Normals the source only partly provides are dropped whole, because a zero
+     *   normal is not "no normal" - the merged mesh then authors none, and NOBODY derives them: the built-in smooth
+     *   stages read the channel, so a consumer that needs smooth shading authors it (or uses the flat program, which
+     *   derives a face normal in the fragment stage and needs no channel). Texture coordinates are not kept by this
+     *   entry.
      * - The result is an TriangleMesh: every format this loader reads is triangulated on the way in, so there is
      *   one concrete type behind the Mesh handle.
      *

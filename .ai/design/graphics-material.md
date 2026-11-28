@@ -1,7 +1,7 @@
 # graphics material: one PBR model, a texture set, instances
 
 > **Status**: current (M1–M3 landed, M4 not done, see §9.1/§9.2)
-> **Last verified**: 2026-11-23
+> **Last verified**: 2026-11-28
 > **Scope**: the material data model, the texture set and sampling, instance overrides, upload dedup, forward/deferred consistency;
 > not the material DSL, runtime name reflection, bindless or IBL.
 > **Sources**: `Material.hpp` / `ShaderAbi.hpp` / `shaders/vine_params.glsl` (the material block), `vine_material.glsl`
@@ -100,9 +100,21 @@ This follows `Colorf`'s global linear-light convention.
 2.10 **A material carries no program** (`G5`): program resolution stays as it is; a material only provides parameters and a texture set. A user program reads the same
 `VineMaterialBlock`, no second material interface is introduced.
 
-2.11 **Upload by identity + composite revision** (`G10`): the material arena still deduplicates by object address + revision (`block_bytes` is still
-64 B, see F4); an instance's revision = the parent revision combined with its own revision, so a parent asset change automatically rewrites every instance once.
+2.11 **Upload by identity + composite revision** (`G10`): a material keeps no GPU entry - its values are packed into each draw's constant block (still
+64 B, see F4) and die with the frame; an instance's revision = the parent revision combined with its own revision, so a parent asset change re-resolves every instance once.
 An instance copies neither textures nor bytes beyond the block.
+
+2.12 **A normal turns by the inverse transpose, once for both paths** (`G1` `G4` `G10`; review 11 `V2`, review 18 `Y8`): the
+built-in vertex stages hand the shading the drawable's normal in VIEW space, and the transform is
+`transpose(inverse(mat3(model_view)))` with an instanced draw's matrix already folded into `model_view`. The matrix's own upper
+3x3 is the same DIRECTION only while the placement is rigid or uniformly scaled - and a non-uniform placement is legal (a
+`PositionAttitudeTransform` states a scale VECTOR, a non-uniform parent scale leaves a shear on a rotated child, and an instance
+matrix can carry a non-uniform scale without any node stating one). The old spelling therefore lit a legal draw from a direction
+its surface does not have, silently. The rule's one home is `shaders/vine_normal.glsl`, and BOTH content vertex stages include
+it (forward and G-buffer); the depth stage reads no normal and does not. The CPU-side alternative - a normal matrix in the draw
+block - cannot serve an instanced draw, whose matrix never reaches the per-draw packing, so the rule lives on the vertex stage;
+the cost is one 3x3 inverse per vertex of those two stages (stated, not hidden). `VineDrawBlock::model` stays the world model a
+host stage may read; no built-in stage reads it (`Y8`).
 
 ## 3. Features
 
@@ -112,7 +124,7 @@ An instance copies neither textures nor bytes beyond the block.
 |---|---|---|---|
 | F1 | `Material` asset | PBR factors + texture set + alpha mode; setters only move the revision | done |
 | F2 | `MaterialInstance` | References one asset, sparsely overrides factors / textures / alpha | done |
-| F3 | Texture set | Five semantic slots + a `Sampler` per slot + kind/format validation | done (format checks with F11) |
+| F3 | Texture set | Five semantic slots + a `Sampler` per slot; a slot that cannot be bound stays absent (its flag bit clear) | done (the absence is the only refusal, F11) |
 | F4 | Material block v2 | Still 64 B: base_color / emissive / params / flags | done |
 | F5 | forward PBR | GGX direct light + ambient, including normal/ORM/emissive slots | done |
 | F6 | deferred PBR | G-buffer reconstruction + the same BRDF + emissive/occlusion | done |
@@ -120,7 +132,8 @@ An instance copies neither textures nor bytes beyond the block.
 | F8 | import conversion | asset `Color/Phong/Pbr` → engine PBR, approximations removed | done |
 | F9 | variant | `VN_TEXTURED` binary bit + constant fallbacks | done |
 | F10 | upload dedup | composite instance revision; changing the asset rewrites instances | done |
-| F11 | diagnostics | missing slot / wrong format / Cube in a non-base slot / invalid override | done (missing-slot count; the rest once per material) |
+| F11 | diagnostics | a material texture that cannot be made resident leaves its slot absent and reports `vk.content.material_texture_skipped` once per episode | done (the block's slot bits say which maps are bound; there is no host-side kind/format validator) |
+| F12 | normal transform | the authored normal reaches both shading paths through the inverse transpose of the placement (instance matrix included) | done |
 
 ### 3.2 F1–F2 asset and instance
 
@@ -139,9 +152,9 @@ An instance copies neither textures nor bytes beyond the block.
 - **Behaviour**: `enum class TextureSlot` (five slots) + `TextureSlotBinding { TexturePtr texture; Sampler sampler{}; }`; bindings fixed
   (content set 0: material 0, five slots 1–5, lights 6, shadow 7/8); `metallic_roughness` packed per glTF (G = roughness,
   B = metallic), `occlusion` takes R.
-- **Constraint** (C2): a slot's kind and format follow §2.9; when illegal, report once per F11 and **do not** silently substitute a fallback image (the fallback is only for
-  "the slot is absent", never for "the slot is wrong").
-- **Requirement** (R2): each slot's `Sampler` enters `MaterialImages::acquire(texture, sampler, why)`'s by-value cache, equal state shares the
+- **Constraint** (C2): a slot the backend cannot bind stays **absent** (its flag bit clear) and reports F11's code; the shader uses the slot's constant fallback and **no**
+  other image is substituted (the fallback is only for "the slot is absent", never for "the slot is wrong").
+- **Requirement** (R2): each slot's `Sampler` becomes one device sampler through `ContentImages::samplerFor`'s by-value cache, equal state shares the
   sampler object; a `Sampler` containing NaN misses every frame (materials do no numeric cleaning, `Sampler.hpp`).
 
 ### 3.4 F4–F6 block and the two paths
@@ -161,6 +174,7 @@ An instance copies neither textures nor bytes beyond the block.
 - **Behaviour** (F5/F6): the diffuse term carries no 1/π — light intensity is the engine's own unit, and swapping the BRDF should not darken existing scenes by a factor of π (`G6`).
   roughness is a **perceptual value**, alpha = roughness²; the normal slot builds its tangent basis from screen-space derivatives in the UV channel and flips green after sampling (glTF is
   OpenGL-oriented, this engine's v points down); a Cube material has no UV and samples the base slot only; ambient is scaled only by occlusion, emissive is not shadowed.
+  The geometric normal both paths shade is the vertex normal turned by F12's rule, so a non-uniform placement reaches the BRDF correctly instead of being lit from a direction it does not have.
 
 ### 3.5 F7 alpha modes
 
@@ -197,10 +211,28 @@ An instance copies neither textures nor bytes beyond the block.
 ### 3.7 F9–F11 variants, upload and diagnostics
 
 - **Behaviour**: `ProgramVariant` gains `textured` (any slot present); the `diffuse_map` bit is replaced by `textured`.
-  An instance's composite revision makes the arena rewrite; diagnostics follow `DiagnosticsHandle`'s episode rule.
+  An instance's composite revision makes the next describe rebuild its resolved values; diagnostics follow `DiagnosticsHandle`'s episode rule.
 - **Constraint** (C6): `vn_shader_check.sh`'s combination count = existing bits × 1, it does not grow with the slot count;
   the five sampler declarations `ProgramAbi` scans appear with `VN_TEXTURED`.
 - **Acceptance** (T6): `EmbeddedShadersTest`'s variant matrix and `ProgramAbiTest`'s binding counts are updated together.
+
+### 3.8 F12 normal transform
+
+- **Behaviour**: both content vertex stages (`builtin_forward.vert`, `builtin_gbuffer.vert`) compute
+  `vn_model_view = vn_pc.model_view [× vn_InstanceModel]` once, place the vertex with it, and transform the authored normal with
+  `vnTransformNormal(vn_model_view, vn_Normal)` from `vine_normal.glsl`. The fragment stages normalise the interpolated result as
+  before; nothing about the varyings or their locations changed.
+- **Constraint** (C7): a normal is never transformed by the placement matrix itself; the one function in `vine_normal.glsl` is the
+  only place the rule is spelled, and both paths include it.
+- **Requirement** (R5): the combined matrix (instance included) is the argument, so a non-uniform instance scale needs no second
+  spelling and the forward picture and the G-buffer cannot disagree about one placement.
+- **Acceptance** (T8): `VkContentDrawTest.ANonUniformlyScaledDrawTransformsItsNormalByTheInverseTranspose` drives the SHIPPED
+  forward vertex stage with a probe fragment that writes `abs(normalize(vn_view_normal))`, and reads three placements in pixels
+  (y-stretched, the same stretch behind a 30-degree turn, and the turn alone); `EmbeddedShadersTest.TheContentVertexStagesTransformNormalsThroughTheOneFragment`
+  pins that both stages carry the one function and neither spells the raw 3x3.
+- **Caveat** (N7): a placement with a zero scale collapses its subtree (`PositionAttitudeTransform` states it); the normal along the
+  collapsed axis then has no inverse to take. The old spelling mapped it to zero as well, so the picture of a collapsed draw was
+  already undefined - the transform states that boundary rather than the normal function inventing a fallback.
 
 ## 4. Public Interface
 
@@ -237,6 +269,7 @@ An instance copies neither textures nor bytes beyond the block.
 | C4 | Mask does not enter the transparent queue; Blend goes through forward only. |
 | C5 | The import conversion happens in one place, `SceneBuild.cpp`. |
 | C6 | The variant count does not grow with the texture-slot count. |
+| C7 | A normal is turned by the inverse transpose of the combined model-view (instance matrix included), through `vine_normal.glsl`'s one function; never by the placement matrix itself. |
 
 ### 5.2 Requirements (R#)
 
@@ -246,6 +279,7 @@ An instance copies neither textures nor bytes beyond the block.
 | R2 | Samplers are cached by `Sampler` value; equal state shares one sampler object. |
 | R3 | forward and deferred share one BRDF and one light evaluation. |
 | R4 | The per-drawable transparency magnitude has one source, `vn_draw.params.x`; sorting and the blend switch read **the same** classification result. |
+| R5 | The normal transform takes the COMBINED model-view (instance matrix already folded in); a non-uniform instance scale is therefore covered by the same rule as a placed draw. |
 
 ### 5.3 Invariants (N#)
 
@@ -257,6 +291,7 @@ An instance copies neither textures nor bytes beyond the block.
 | N4 | deferred takes Opaque / Mask only; Blend can appear only in the forward overlay. |
 | N5 | The split between material alpha and drawable opacity is "mode / magnitude", do not substitute one for the other. |
 | N6 | base_color may be Cube, the other four slots may be D2 only; this is a kind contract, not an option. |
+| N7 | A zero scale on an axis collapses the placement's geometry, and the normal along that axis has no inverse transpose; the draw's picture is undefined there (the transform states the collapse). |
 
 ## 6. Caveats and Traps
 
@@ -287,7 +322,8 @@ An instance copies neither textures nor bytes beyond the block.
 | T4 | Mask discard and Blend sorting | `ShaderAbiTest.TheAlphaModeDecidesWhatTheMaterialsAlphaMeans` (the ABI) + `VkContentDrawTest.ABlendedDrawFollowsTheEngineOrder` (blend, pixel-checked) |
 | T5 | Import matches field by field | `SceneBuildTest.TheThreeSourceMaterialsBecomePbrFactorsAndPbrOpacityBecomesLeafOpacity` |
 | T6 | Variant matrix and binding counts in step | `EmbeddedShadersTest` / `ShaderAbiTest` |
-| T7 | The slot contract's decisions and reporting rhythm | `MaterialSlotCheckTest.*` / `ReportOnceTest.OnlyTheFirstCallOfAnEpisodeReports` |
+| T7 | The reporting rhythm | `ReportOnceTest.OnlyTheFirstCallOfAnEpisodeReports`; the per-slot refusal's code is registered in `scripts/diagnostic_codes.txt` (`vk.content.material_texture_skipped`) but has **no case yet** - backlog `T75` |
+| T8 | The normal transform is the inverse transpose, on both content stages | `VkContentDrawTest.ANonUniformlyScaledDrawTransformsItsNormalByTheInverseTranspose` (pixels: y-stretch / turned stretch / rigid) + `EmbeddedShadersTest.TheContentVertexStagesTransformNormalsThroughTheOneFragment` (both stages carry the one rule) |
 
 ## 9. Status and Evolution
 
@@ -301,8 +337,8 @@ forward and deferred reconstruct the same set of surfaces from their own inputs 
 
 ### 9.2 Known gaps / backlog
 
-- The landing took four steps: M1–M4 have all landed (F1/F3–F10); F11's per-material diagnostics are wired too (the decision is in `MaterialSlotCheck`,
-  the episode is one record per material in `ContentStore`, re-armed after a change).
+- The landing took four steps: M1–M4 have all landed (F1/F3–F10); F11's shipped diagnostic is the per-slot refusal (`vk.content.material_texture_skipped`,
+  one record per episode through `ReportOnce`, re-armed after a change), and it has no case yet (backlog `T75`).
 - The derivative tangent basis under mirrored UVs is a known approximation, not a bug; introduce a tangent channel when needed.
 - IBL, SSAO and transmission (KHR_materials_transmission) are outside this design.
 

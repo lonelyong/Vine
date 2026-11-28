@@ -45,6 +45,7 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 #include <vine/math/Matrix4x4.hpp>
+#include <vine/math/Transform3.hpp>
 #include <vine/math/Vector3.hpp>
 
 #include <vine/backend_vk/internal/ContentDraw.hpp>
@@ -213,6 +214,22 @@ void main()
 }
 )";
 
+/// @brief Writes the VIEW-SPACE normal the engine's own vertex stage produced, as a positive colour.
+///
+/// The built-in forward / G-buffer vertex stages hand the shading an interpolated view-space normal at location 1;
+/// writing its absolute value makes the pixel an exact statement of the direction the stage computed, so a placement
+/// whose normal transform is wrong is read as bytes instead of being argued about through a lighting term.
+constexpr const char8_t* kNormalProbeFragment = u8R"(
+#version 450
+layout(location = 1) in vec3 vn_view_normal;
+layout(location = 0) out vec4 out_color;
+
+void main()
+{
+    out_color = vec4(abs(normalize(vn_view_normal)), 1.0);
+}
+)";
+
 /// @brief Writes nothing: a compute entry point (this backend stages no compute program, see ensureProgram).
 constexpr const char8_t* kComputeStage = u8R"(
 #version 450
@@ -337,6 +354,44 @@ void main()
     })));
     geometry->bumpRevision();
     return geometry;
+}
+
+/// @brief The filling quad with an AUTHORED normal of its own (the geometry is only the coverage fixture).
+///
+/// The authored normal is deliberately independent of the quad's plane: what a vertex stage transforms is the
+/// attribute, and a direction with a component on every axis a placement can scale separately is what makes a
+/// non-uniform scale visible in the pixel.
+///
+/// @param nx X component of the authored normal.
+/// @param ny Y component of the authored normal.
+/// @param nz Z component of the authored normal.
+[[nodiscard]] intrusive_ptr<Geometry> makeFillingQuadWithNormal(float nx, float ny, float nz)
+{
+    auto geometry = makeFillingQuad(false);
+    geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(
+        std::vector<float>{ nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz })));
+    geometry->bumpRevision();
+    return geometry;
+}
+
+/// @brief Builds a program from the ENGINE'S OWN forward vertex stage and the normal probe fragment.
+///
+/// The stage is taken from the shipped program rather than from a copy of its text: what this program draws with is
+/// byte-for-byte the vertex stage `forwardProgram()` ships, so a change there cannot leave the probe behind.
+[[nodiscard]] intrusive_ptr<ShaderProgram> makeNormalProbeProgram()
+{
+    auto program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program->setName(u8"vk_normal_probe_program");
+    // The engine program is held for the whole walk: `stages()` is a view into it, and a temporary returned by
+    // forwardProgram() would be gone before the first stage is copied.
+    const intrusive_ptr<ShaderProgram> engine = vn::graphics::forwardProgram();
+    for (const ShaderStage& stage : engine->stages()) {
+        if (stage.type == ShaderStageType::Vertex) {
+            program->addStage(stage);
+        }
+    }
+    program->addStage(ShaderStage{ ShaderStageType::Fragment, String(kNormalProbeFragment), String(u8"main") });
+    return program;
 }
 
 /// @brief A 64x64 RGBA8 + D24 target.
@@ -1172,6 +1227,73 @@ TEST(VkContentDrawTest, AMirroredPlacementIsLitAsItsUnmirroredTwin)
     EXPECT_EQ(mirrored, lit) << "a mirrored placement is shaded as its unmirrored twin, not from behind";
     EXPECT_LT(unlit[1], lit[1]) << "the fixture can tell lit from unlit: a normal turned away from the light is darker";
     EXPECT_GT(lit[1], 0) << "the lit case is not the cleared target either";
+}
+
+TEST(VkContentDrawTest, ANonUniformlyScaledDrawTransformsItsNormalByTheInverseTranspose)
+{
+    // REVIEW 11 V2 / REVIEW 18 Y8: both built-in vertex stages handed the shading `mat3(model_view) * normal`, which
+    // is the normal transform only while the placement is rigid or UNIFORMLY scaled. A scale VECTOR is legal
+    // (PositionAttitudeTransform states one, and a shear is what a non-uniform parent scale does to a rotated child),
+    // and an instance matrix can carry one without any node stating it - so a legal draw was lit from a direction its
+    // surface does not have, with nothing to report it.
+    //
+    // THE PIXEL IS THE STAGE'S OWN ANSWER: the ENGINE'S forward vertex stage drives a fragment that writes
+    // `abs(normalize(vn_view_normal))`, so the readback states the direction that stage computed, in bytes, with no
+    // lighting term in the way.
+    //
+    // ONE authored normal (0, 1/sqrt2, 1/sqrt2), three placements:
+    //   - stretched on y only                      -> the inverse transpose turns it toward +z: (0, 16, 254)
+    //   - the same stretch behind a 30-degree turn  -> still toward +z, mixed:           (0, 113, 228)
+    //   - the turn alone (rigid)                   -> unchanged by the rule:             (0, 66, 246)
+    // The middle placement is what separates the inverse TRANSPOSE from a plain inverse (which answers (0, 58, 248));
+    // `mat3(model_view)` - today's spelling - answers (0, 212, 141) on it.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeNormalProbeProgram();
+    const intrusive_ptr<Geometry>      geometry = makeFillingQuadWithNormal(0.0F, 0.7071068F, 0.7071068F);
+
+    const auto render = [&](const vn::math::Mat4d& model) {
+        DrawItem draw_item(geometry, nullptr, model);
+        draw_item.program             = program;
+        draw_item.program_description = program->description();
+
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        commands->push_back(std::move(draw_item));
+
+        DrawPacket draw;
+        draw.kind        = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands    = commands;
+        backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
+
+        const ColorReadback read = backend->readColorImage(target.get(), 0);
+        EXPECT_TRUE(read.ok());
+        return pixelAt(read.values, kTargetSize / 2, kTargetSize / 2);
+    };
+
+    const vn::math::Mat4d stretched      = vn::math::scale<double>(1.0, 16.0, 1.0);
+    const vn::math::Mat4d turned         = vn::math::rotate(vn::math::Vec3d(1.0, 0.0, 0.0), 0.5235987755982988);
+    const std::array<int, 4> on_y        = render(stretched);
+    const std::array<int, 4> turned_bent = render(turned * stretched);
+    const std::array<int, 4> rigid       = render(turned);
+
+    EXPECT_NEAR(on_y[1], 16, 2) << "the y-only stretch left the normal where the raw 3x3 put it (a normal must turn "
+                                   "toward the stretched axis' inverse)";
+    EXPECT_NEAR(on_y[2], 254, 2) << "the inverse-transposed normal is almost +z for a 16x y stretch";
+    EXPECT_NEAR(turned_bent[1], 113, 2) << "a rotation behind the stretch must compose with the transpose, not cancel "
+                                           "it (the plain-inverse spelling answers ~58 here)";
+    EXPECT_NEAR(turned_bent[2], 228, 2) << "the composed direction is the inverse transpose of turn * stretch";
+    EXPECT_NEAR(rigid[1], 66, 2) << "a rigid placement was already right and the fix must not move it";
+    EXPECT_NEAR(rigid[2], 246, 2) << "a rigid placement's normal is the authored one turned by the rotation alone";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::CompileFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
 }
 
 TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)

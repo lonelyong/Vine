@@ -333,8 +333,9 @@ class MergedMeshBuilder final : private MeshBuilderBase {
         mesh->setPositions(std::move(sink_.positions));
         mesh->setIndices(std::move(sink_.indices));
         // A colour array exists only when some mesh AUTHORED one; the other vertices already carry the white that
-        // means "no colour channel" (see MeshSink). A partial NORMAL array is dropped instead of invented: an absent
-        // channel already means "derive them from the geometry" to the renderer.
+        // means "no colour channel" (see MeshSink). A partial NORMAL array is dropped instead of invented: a zero
+        // normal is not "no normal", and no stage derives one from an absent channel either (the built-in smooth
+        // stages READ it; the flat program's face normal comes from screen-space derivatives and needs none).
         if (sink_.any_mesh_has_colors) {
             mesh->setColors(std::move(sink_.colors));
         }

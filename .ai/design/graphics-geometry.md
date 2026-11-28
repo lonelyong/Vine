@@ -1,7 +1,7 @@
 # graphics geometry: channels, primitives, instances, revision
 
 > **Status**: current
-> **Last verified**: 2026-11-07
+> **Last verified**: 2026-11-28
 > **Scope**: the `Geometry` channel set, one `Primitive` draw, instance streams, revision and storage sharing.
 > **Sources**: `Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp` / `Mesh.hpp`.
 > **Backlog**: `../backlog/graphics.md`
@@ -173,8 +173,8 @@ primitive carries, and these sentences say what it deliberately does not.
 - A mesh has one fill entry point: the whole group `setPositions()` / `setNormals()` / `setTexcoords()` / `setColors()` / `setIndices()` (plus `setFaceOffsets()` for Mixed), with no incremental append.
 - `Mesh`'s `span` is borrowed; any growth invalidates existing views.
 - A channel holds a buffer, not a snapshot: after the source buffer grows the channel does not dangle, and the length and address are taken fresh.
-- A segment's identity enters two layers of cache key: the shared binding cache = buffer address + revision + offset + length; the derived normal cache adds the index first/count.
-- Derived quantities (zero-filled texcoords, a white opacity carrier, derived normals) still allocate real arrays of their own; vec4 positions deliberately do not enter the alias.
+- A channel's bytes and count come from ONE observation (`BufferSlice` resolves the run against the size the writer announced) and each uploaded stream records the BUFFER and the REVISION the bytes came from; a later frame that sees that revision move re-uploads (`detachStaleStreams`), and the segment (offset / count) is part of the geometry's `GeometryDescription`, so changing it is a new description rather than a second cache layer.
+- NOTHING IS INVENTED for a channel the geometry does not author: every non-empty channel is uploaded as authored, and an absent one is simply missing from the vertex layout, so a stage that reads that location reads UNDEFINED values. The retired backend's zero-filled texcoords, white opacity carrier and derived normals have no successor here - opacity is `VineDrawBlock::params.x` (`graphics-material.md` 2.7), a normal is the authored channel or the flat program's screen-space face normal (`Geometry.hpp` `setNormals`, review 11 `V4`).
 
 #### 3.6.4 F32 Triangle tree cache
 
@@ -416,7 +416,7 @@ primitive carries, and these sentences say what it deliberately does not.
 | # | Criterion |
 |---|---|
 | T1 | `PrimitiveInstancingTest` / `GeometryTest`. |
-| T2 | A revision is part of the residency key: `ResidencyTableTest.ARevisionIsPartOfTheKey` / `GeometryTest.BumpRevisionMovesForwardFromWhereverItIs` / `BufferTest.SetRevisionStaysForBytesWrittenOutsideTheBuffer`; an unchanged revision uploads nothing (`VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing`). |
+| T2 | A revision is part of the residency key: `VkResidenceWireTest.AVertexBufferThatAnnouncesANewRevisionIsUploadedAgain` / `GeometryTest.BumpRevisionMovesForwardFromWhereverItIs` / `BufferTest.SetRevisionStaysForBytesWrittenOutsideTheBuffer`; an unchanged revision uploads nothing (`VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing`). |
 | T3 | `MeshShapeTest` / `PrimitiveInstancingTest` / `VkVertexInputTest`. |
 | T4 | The device-level `PrimitiveInstancingTest.AnInstancedPrimitiveDrawsEveryPlacement` (the stream is declared once per primitive: `EachPrimitiveOwnsItsInstanceStream`) + `VkBuiltinProgramTest.EveryInstanceIsDrawnWhereItsMatrixPlacesIt`. |
 | T5 | `MeshShapeTest` verifies mesh storage and runtime types, including one positions buffer shared by two `Geometry`s. |

@@ -8,6 +8,7 @@
 // size, and a POINT_LIST pipeline needs this stage to write gl_PointSize statically.
 #define VN_PARAM_DRAW
 #include "vine_params.glsl"
+#include "vine_normal.glsl"
 layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } vn_pc;
 layout(location = 0) in vec3 vn_Vertex;
 layout(location = 1) in vec3 vn_Normal;
@@ -51,13 +52,16 @@ layout(location = 2) out vec2 vn_texcoord;
 #endif
 void main()
 {
-    mat4 vn_model = vn_pc.modelView;
+    mat4 vn_model_view = vn_pc.modelView;
 #ifdef VN_INSTANCED
-    vn_model = vn_model * vn_InstanceModel;
+    vn_model_view = vn_model_view * vn_InstanceModel;
 #endif
-    vec4 vn_view_position = vn_model * vec4(vn_Vertex, 1.0);
+    vec4 vn_view_position = vn_model_view * vec4(vn_Vertex, 1.0);
     vn_view_pos = vn_view_position.xyz;
-    vn_view_normal = mat3(vn_model) * vn_Normal;
+    // The same rule the forward stage states, from the same fragment (vine_normal.glsl): the instance matrix is part of
+    // the placement, so the inverse transpose is taken of the combined matrix and a non-uniform instance scale is
+    // handled without a second spelling.
+    vn_view_normal = vnTransformNormal(vn_model_view, vn_Normal);
 #ifdef VN_VERTEX_COLOR
     vn_color = vn_Color;
 #endif

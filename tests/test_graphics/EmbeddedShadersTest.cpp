@@ -311,6 +311,23 @@ TEST(EmbeddedShadersTest, TheContentVertexStagesSizeTheirPointsFromTheDrawBlock)
     }
 }
 
+TEST(EmbeddedShadersTest, TheContentVertexStagesTransformNormalsThroughTheOneFragment)
+{
+    // REVIEW 11 V2: a placement may scale its axes unevenly (a scale vector is legal, and an instance matrix can
+    // carry one), and then a normal turns by the INVERSE TRANSPOSE of the model-view - not by the matrix itself.
+    // Both content vertex stages have to state that one rule; a stage that lost the include still compiles, it just
+    // shades a direction the surface does not have, which is why the spelling is checked in the SHIPPED text.
+    for (const std::u8string_view source : { kBuiltinForwardVert, kBuiltinGbufferVert }) {
+        const std::string text = asByteString(source);
+        EXPECT_NE(text.find("vec3 vnTransformNormal("), std::string::npos)
+            << "the stage must carry vine_normal.glsl's one rule (its fragment was not inlined)";
+        EXPECT_NE(text.find("vn_view_normal = vnTransformNormal(vn_model_view, vn_Normal);"), std::string::npos)
+            << "the normal must go through that function with the instance matrix already folded into the placement";
+        EXPECT_EQ(text.find("vn_view_normal = mat3("), std::string::npos)
+            << "the raw upper-3x3 spelling is only the normal transform for a rigid or uniformly scaled placement";
+    }
+}
+
 TEST(EmbeddedShadersTest, TheMaterialSlotBitsAgreeWithTheBlockAbi)
 {
     // ShaderAbi.hpp is the C++ half of the material block (kMaterialFlagBaseColor .. kMaterialFlagEmissive,

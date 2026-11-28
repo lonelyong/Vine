@@ -485,7 +485,10 @@ class VN_GRAPHICS_API Geometry : public Node {
     /** @brief Sets the normals (location 1) by SHARING a vertex buffer, optionally a segment of one.
      *
      * @details
-     * - Optional either way: when unset the renderer derives normals from the positions.
+     * - Optional, and NOBODY DERIVES IT: the built-in SMOOTH programs read location 1, so a geometry that authors no
+     *   normals leaves their normal undefined (no stage computes one from the positions). The built-in FLAT program
+     *   (`BuiltinShaders::flatForwardProgram()`) shades from the face normal it derives in the fragment stage and
+     *   needs no channel; content whose smooth shading matters must author normals.
      * - The defaults state the WHOLE buffer; stating a vertex range states an arena's segment (the units
      *   are vertices and a count of 0 means "the rest", exactly as setPositions says).
      *

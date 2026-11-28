@@ -77,4 +77,5 @@ vn_declare_embedded_shaders(
         "${VN_SDK_SHADER_DIR}/vine_material.glsl"
         "${VN_SDK_SHADER_DIR}/vine_brdf.glsl"
         "${VN_SDK_SHADER_DIR}/vine_gbuffer.glsl"
+        "${VN_SDK_SHADER_DIR}/vine_normal.glsl"
 )

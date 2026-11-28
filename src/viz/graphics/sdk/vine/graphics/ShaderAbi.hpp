@@ -23,7 +23,7 @@ VN_GRAPHICS_NS_BEGIN
 enum class VertexAttribute
 {
     Position,      // Object-space position (the only required attribute).
-    Normal,        // Shading normal (derived when the geometry authors none).
+    Normal,        // Shading normal: the smooth stages read it; none is derived when the geometry authors none.
     Color,         // Optional per-vertex colour (only when the shader's defines ask for it).
     TexCoord0,     // Optional texture coordinate (only when the shader's defines ask for it).
     InstanceModel, // One instance's local model matrix (four consecutive locations).
@@ -113,7 +113,9 @@ constexpr bool isCanonicalAttributeLocation(std::uint32_t location) noexcept
  *   today.
  * - `model_view` is `view * model` for THIS drawable. The model matrix is already folded in, so the range carries no
  *   separate model matrix, no normal matrix, no camera position and no time: a host stage that needs them cannot ask
- *   this ABI (see the ADR for what a block-reading program would cost).
+ *   THIS ABI. The world model is the one such value with a home elsewhere - `VineDrawBlock::model` (set 1, binding 0),
+ *   which a host stage that declares the block reads; the range never does (see the ADR for what a block-reading
+ *   program costs).
  * - A FULL-SCREEN draw receives NO push range: its stages read the pass' inputs as bindings and draw a rectangle.
  * - Column-major, like every matrix in this ABI and in the math module. The size is a DEVICE limit: 128 bytes is
  *   inside Vulkan's guaranteed minimum push-constant size, which is why the contract is two matrices.
@@ -141,11 +143,20 @@ inline constexpr float kFarClipZ = 0.0F;
 /**
  * @brief Per-draw data block the built-in shading reads (L1 shape).
  *
- * @note The parameter slot's first two lanes are the engine's: `x` is the drawable's effective opacity (the
- *       ONE transparency channel, see BlendState) and `y` is the point size in framebuffer pixels (the resolved
- *       state item whose destination is this block - see RenderState::pointSize; the content vertex stages write
- *       it to `gl_PointSize`, and 1.0 means nobody authored one). `z` and `w` stay reserved for the user parameter
- *       slot (P10: material overrides / user parameters); until then they pack as zero.
+ * @details
+ * - `model` is the drawable's object -> world matrix (column-major), and it is THE ONE PLACE THE WORLD MODEL IS
+ *   PUBLISHED: the push range carries `view * model` and no separate model matrix (see VinePushRange), so a host stage
+ *   that needs the world matrix declares this block and reads `vn_draw.model`. The backend packs it for every
+ *   recorded command (`packDrawBlock`).
+ * - NO BUILT-IN STAGE READS `model` (review 18 Y8). The built-in vertex stages need the push range's `model_view`,
+ *   and their normal transform derives from it in `shaders/vine_normal.glsl`; the member is the host-facing half the
+ *   block publishes. It is packed for every draw either way - removing it is a decision for the batch that changes
+ *   this block's shape (an ABI change), not a per-frame saving invented here.
+ * - `params.x` is the drawable's effective opacity (the ONE transparency channel, see BlendState) and `params.y` is
+ *   the point size in framebuffer pixels (the resolved state item whose destination is this block - see
+ *   RenderState::pointSize; the content vertex stages write it to `gl_PointSize`, and 1.0 means nobody authored one).
+ *   `z` and `w` stay reserved for the user parameter slot (P10: material overrides / user parameters); until then
+ *   they pack as zero.
  */
 struct alignas(16) VineDrawBlock {
     std::array<float, 16> model{};  // Object -> world (column-major mat4).
