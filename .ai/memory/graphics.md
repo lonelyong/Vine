@@ -3296,7 +3296,11 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   suites. `ADR-2026-11-27-an-upload-is-prepared-then-recorded`; `vk-backend.md` 2.23 / C16 / P21 / T15 / D13 / 9.3.
 - **Trap.** A texture's staging request is written for the whole upload now, so a cube map asks the pool for one block
   sized to the request instead of six small ones - the cost model is unchanged in bytes, and `MemoryTest` is where a
-  future block-policy change would show it.
+  future block-policy change would show it. The same shape needs ONE contiguous run: a large upload can be refused on a
+  fragmented heap where six small requests would have fit, and `vk.memory.out_of_memory`'s "(largest run ...)" is how to
+  tell that trade from a real shortage (`vk-backend.md` 2.23 / `P21`). A refused texture upload is also NOT remembered
+  (no "this revision failed" field, unlike `InstanceStream::failed`): it is retried every frame the texture is bound,
+  one `VkBuffer` create/destroy and one refused `vkAllocateMemory` each - Z13's asymmetry on the other fill.
 
 ## 2026-11-27 - the validation layer runs here, and the first thing it found was a fixture
 

@@ -604,6 +604,12 @@ and every cache has a witness a test can read.**
   compute writeback) is prepared first and recorded second. A destroy that follows a recorded command is a RELEASE
   through the batch's books (`batchAbandoned`) or the park queue (`releaseLater`), never an immediate `vkDestroy*` -
   which is what those books exist for (`P17`, `P19`).
+- **What it costs** (`G10`): the staging is ONE contiguous range, so an upload's atomicity is "one free run of this
+  size" instead of "N holes of this size", and on a fragmented host-visible heap a large upload can be refused where
+  the per-layer shape would have found room in pieces. The bytes are unchanged and the pool states the evidence when it
+  refuses (`MemoryStats::largest_free_run`, reported in the `vk.memory.out_of_memory` sentence), and the property bought
+  in exchange is the one this point exists for: N separate allocations cannot be atomic, so the shape that can fail in
+  pieces IS the shape whose failure lands mid-recording (`P21` keeps the recognition test).
 - **A witness, not a comment**: the upload's barriers carry the frame's `RecordingTally` like every other frame-path
   barrier, so "a refused upload records nothing" is a number `Device::recordingNumbers()` answers. Before this the
   upload was the one recording path whose barriers no report counted.
@@ -1227,6 +1233,17 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   an immediate `vkDestroy*`. The failure has to be injected to be reached at all (`vkAllocateMemory` does not fail on a
   healthy machine): `Device::setMemoryBlockCreator` plus a texture whose staging exceeds the first host-visible block
   while its image still fits the first device-local one refuses the staging and nothing else.
+- **This rule's own cost, which is not a second defect**: staging is one contiguous range now (§2.23), so a large upload
+  needs one free run of its size - on a fragmented host-visible heap it is refused where per-layer requests would each
+  have found a hole. The refusal says which case it was: `vk.memory.out_of_memory` names the bytes asked for and, when
+  the pool still holds free bytes, "N free (largest run M)" beside the reserved/in-use totals - so "a large upload
+  refused while small ones succeed" is this trade, and "nothing free at all" is a real shortage.
+- **And the retry is per frame, which this path does not remember**: a refused entry was never published, so nothing is
+  left behind - but `ContentImages::viewFor` has no "this revision was refused" fact (the instance stream's `Failed`
+  revision, §2.5, is the shape that has one), so a texture that cannot be uploaded is attempted again on every frame it
+  is bound: the image, its device-local memory and its view are built and destroyed again, plus one created-then-destroyed
+  `VkBuffer` and the refused `vkAllocateMemory` - all of it per frame and per texture. The episode rule keeps the report
+  to one line, so the cost is the device calls, not the log.
 
 ### 6.22 P22 A give-back must not erase the answer
 
