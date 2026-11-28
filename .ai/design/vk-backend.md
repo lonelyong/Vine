@@ -656,6 +656,40 @@ and every cache has a witness a test can read.**
   Both mutations are recorded: answering from `window_acquired` again turns the first red, and putting the timing resets
   back inside `if (completed)` turns only the second's new assertion red.
 
+### 2.25 An entry that holds its key ends when nobody else names the key (`G1` / `G6` / `G10`)
+
+- **What it is**: the caches' four tables keep entries between frames, and every one of them holds the object its key is -
+  an instance stream holds the `Buffer` of its address, a geometry entry the `GeometryDescription` of its shape, a program
+  entry the `ShaderProgramDescription` (with the pipelines compiled for it), a texture entry the `Texture`. At a frame's end
+  `ContentCaches::endFrame` ends every entry whose key has **no holder other than the entry itself**
+  (`sweepUnheldStreams` / `sweepUnheldGeometries` / `sweepUnheldPrograms` / `ContentImages::sweepUnheldTextures`).
+  `useCount()` is the whole probe: naming a value requires a share, so the last share outside the cache is exactly "nobody
+  can ask for these bytes again". One withdrawal body per table serves both the host's announcement (`releaseContent`) and
+  the sweep, so "when does this entry end" has one answer.
+- **Why holdings and not a policy**: a time window picks a number nobody can defend, and re-deriving "is this content alive"
+  from the scene graph would put a second answer beside the host's own reference count (`G1`). The pin ADR
+  (`ADR-2026-11-10-gpu-residency-pinned-by-content`) already says residency follows live content; this is that sentence
+  implemented rather than approximated.
+- **Why the sweep had to become a rule, not a case**: a shape revision is a NEW IDENTITY (`Geometry::bumpRevision` builds the
+  next description, `DescriptionCache` keeps one), so `releaseContent(Geometry)` can only ever name the CURRENT revision - a
+  superseded one is unreachable from the host, and a DROPPED geometry has no object left to hand the verb at all. Ending them
+  by holdings is the only spelling that a host does not have to participate in; without it, a host that regenerates a shape
+  (the in-tree one is `FpsOverlay::writePattern`) keeps one entry's streams, the description and its own `Buffer<float>` per
+  regeneration for the session's life.
+- **What it deliberately does not end**: culling and hiding do not move a revision, so the geometry still holds its
+  description and the entry stays (F27 / F28 - becoming visible again retransmits nothing). A frame that is still recording,
+  a cached publication and a host-held command list all hold the description, so a sweep can never take what a submission may
+  still name - it is a stronger guard than the entry-share the park uses, and the park still decides *when* the objects go.
+- **Cost**: O(#resident entries) once per frame - one share count per entry and, for programs, a reused census vector (the
+  table is keyed by `(description, variant)`, so one revision holds one share per variant). It is the same order the stream
+  sweep already paid: a frame walks the entries that exist, never the content (§2.5's "holding is identity" argument).
+- **Boundary**: the sweep ends entries, it does not decide residency POLICY. `releaseContent` still exists for a host under
+  memory pressure that wants to keep its objects, and nothing here reintroduces a cap or a window (§2.15, `T27`).
+- **Cases**: `VkResidencyTest.ASupersededShapeLeavesTheResidencyItReplaced` (a kept command list holds the old shape, so the
+  entry stays; dropped, the next frame's end releases it) and `VkResidencyTest.ContentTheHostNoLongerHoldsLeavesResidencyBehind`
+  (a closed document's geometry, texture and pipeline leave while the open one's stay). Both are red with the sweep arms off,
+  and each arm restores exactly its own assertion (review 21 §2.4).
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -1027,14 +1061,18 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
   frame's answer, and the record loop of `Device::executeFrame` takes no lock
   (`VkMultiSessionTest.AReleaseBetweenTheClaimAndTheRecordStillDrawsTheSampledSource`,
   `AFrameKeepsTheSourceItReadsUntilTheFrameEnds`).
-- **N11 A table entry holds its key, and ends with it**: an instance stream's entry holds the `Buffer` its key is the address
-  of, and is withdrawn either on `releaseContent(Buffer)` or at the frame end where that share is the last one - so an
-  entry is never left keyed by an address the allocator may hand to a later object
+- **N11 A table entry holds its key, and ends with it**: every cache table whose key is an object holds that object, because
+  naming an entry must be impossible once nobody else can name what it describes - an instance stream holds the `Buffer` of its
+  address, a geometry entry the shape it describes, a program entry its revision (with the pipelines compiled for it), a
+  texture entry its texture. The entry ends either on the host's announcement (`releaseContent`) or **at a frame's end once
+  the key has no other holder** (§2.25; the rule used to be implemented for the instance stream alone, which is `review 19`'s
+  `Z13` half). The property both arms protect is the same one: an entry is never left keyed by an address or an identity the
+  caller may hand to a later object, and nothing resident outlives the content that asked for it
   (`VkBuiltinProgramTest.AnInstanceStreamHoldsItsBufferAndEndsWhenNobodyElseDoes`,
-  `ARecycledAddressDoesNotInheritThePreviousInstanceBytes`). **Residual:** a geometry entry is withdrawn by the host's
-  announcement only. Residency for scene content is the host's decision (`graphics-content-lifecycle.md` 2.3) and its
-  rows are what leave the tree; a `Buffer` is content DATA with no row that could say it is gone, which is why the
-  instance stream is the one entry whose end reads holdings.
+  `ARecycledAddressDoesNotInheritThePreviousInstanceBytes`, `VkResidencyTest.ASupersededShapeLeavesTheResidencyItReplaced`,
+  `ContentTheHostNoLongerHoldsLeavesResidencyBehind`). What the sweep does NOT cover: a geometry whose shape moved still
+  uploads every channel of the new revision, changed or not (`ContentCaches`' streams are per entry, not shared by
+  `StreamKey`; backlog `T74`), and a sampler cached by VALUE has no holder to ask (`Z26`, review 21 §4).
 
 ## 6. Caveats and Traps
 

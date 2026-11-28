@@ -404,7 +404,10 @@ TEST(VkResidenceWireTest, ARefusedBuildIsWithdrawnInsteadOfPublished)
     const intrusive_ptr<Geometry> big_geometry    = makeTriangle(kBigVertexCount);
 
     // THE RING, THE TARGET AND THE STAND-IN COME FIRST, so the refusal below is the geometry's own and nothing else.
-    (void)backend->executeFrame(drawingFrame(target.get(), programDraw(makeTriangle(), program)), nullptr);
+    // THIS first geometry is HELD BY THE CASE (not a temporary): the assertion below counts the keys that are resident,
+    // and a geometry the host no longer holds leaves residency at the frame's end (review 21's sweep).
+    const intrusive_ptr<Geometry> small = makeTriangle();
+    (void)backend->executeFrame(drawingFrame(target.get(), programDraw(small, program)), nullptr);
     ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
 
     const vn::graphics::GeometryDescriptionPtr description = big_geometry->description();

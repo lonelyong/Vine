@@ -106,6 +106,11 @@ The cost: the backend must keep a batch's staging alive until that batch's submi
     An entry itself leaves when "the host does not want it" and "no row still answers" hold at the same time (`ContentStore`'s `retireOwner`: mark and discard in one pass);
     material arena slots do not look at this entry, only at **rows**: the frame head asks the declaration index, and the slot is freed after the last row leaves.
     `markUsed` / release tokens / park / `kept` no longer exist (the rules of `ResidencyTable` moved onto rows, see ADR-2026-11-11 paragraph 3).
+    **The same three consequences in the shipped backend** (`vk-backend.md` 2.25, 2026-11-28): there are no rows - every cache entry holds the object its
+    key is, and the frame end ends the entries whose key has no other holder. A superseded revision (a shape edit builds a new identity the host can never
+    name again) and a dropped object leave that way; culled / hidden content keeps its entry because the geometry still holds the description it describes.
+    The mechanism names in this point (`ContentStore`, row epochs, the declaration index, `MaterialArena`) are the retired reference backend's record;
+    converting the point is backlog `T73`.
 
 ## 3. Features
 
@@ -155,10 +160,10 @@ The cost: the backend must keep a batch's staging alive until that batch's submi
 
 | # | Situation | Rows (tables) | Uploads (stream) | Halves / descriptor sets | Material slots | Triggered at |
 |---|---|---|---|---|---|---|
-| F23 | **material leaves the tree** | Marked at the next frame boundary after the host drops the reference; rows leave only after the epoch window | — | None (the set key does not include material) | After the row leaves, the frame head's pin scan frees the slot | the backend's content table / `releaseContent` |
-| F24 | **program leaves the tree** | Same as above | — | The half parks when program@rev is no longer answered by the table (the pipeline it drives goes with it; pooled variants are only evicted FIFO 65) | — | Same as above |
+| F23 | **material leaves the tree** | A material keeps nothing of its own here: its values are packed into each draw's uniform block, so the row and its GPU state are already the frame's (`vk-backend.md` 2.25) | — | None (the set key does not include material) | Nothing to free - the values lived in that frame's ring | the backend's content table |
+| F24 | **program leaves the tree** | Its compiled variants and every pipeline compiled for that revision go with it, at the frame end that finds the revision unheld (`VkResidencyTest.ContentTheHostNoLongerHoldsLeavesResidencyBehind`) | — | The pipelines are the compiled halves here; a LIVE revision's variants that no longer match a shape still wait for the program (`vk-backend.md` N11) | — | `ContentCaches::endFrame` |
 | F25 | **pass detaches** | The backend only has the identity: `releasePass` forgets the id (never reissues it) | — | **Not released** (session-level; it leaves only with the program or the layout); the input set falls back after one frame | — | `RenderEngine::removePass` → `device()->releasePass()` + the owned target's `releaseRenderTarget()` |
-| F26 | **geom leaves the tree** | Sweep-marked after the host drops the reference; rows leave after the epoch window ⇒ the pin disappears and the upload leaves through its own window | — | The last geometry row for the layout leaves the tree ⇒ `declaresLayout` disappears ⇒ the half parks (a program leaving the tree parks too) | `releaseAbandoned` |
+| F26 | **geom leaves the tree** | The host's last reference IS the announcement: the entry's share of the shape is then the last one, so the frame-end sweep withdraws the entry and its streams. The same sweep withdraws a **superseded** revision, which a shape edit produces and which `releaseContent` can never name | — | The last geometry holding a layout's pipeline shape leaves ⇒ the entry goes, and a program nobody holds takes its pipelines with it | — | `ContentCaches::endFrame` (`VkResidencyTest.ASupersededShapeLeavesTheResidencyItReplaced` / `ContentTheHostNoLongerHoldsLeavesResidencyBehind`) |
 | F27 | **geom hidden** (`setVisible(false)`) | **Kept** (the host still holds it) | **Kept**: the row is still there ⇒ the pin is still there; becoming visible again retransmits nothing | Kept | — | Affects collection only, triggers no release |
 | F28 | **geom culled** (outside the frustum, per view) | Kept | Same as F27 — culling is per view, but it does not change "who declared these bytes" | Kept | — | Same as above |
 
@@ -252,10 +257,11 @@ Upload staging **has no entry point**: it reclaims itself at the frame boundary 
 
 - How it fails: treating "not drawn this frame" as "the object is gone", and so either adding a release to the leave-the-tree path (culling churn ⇒ retransmit every frame),
   or, conversely, believing hidden content forgets its uploads and adding a time window to it.
-- How to detect it: `ContentCaches::Progress::stream_releases` only grows **after the row disappears**; for the same piece of geometry, "invisible → visible again" leaves
+- How to detect it: `ContentCaches::Progress::stream_releases` only grows once the geometry's ENTRY leaves; for the same piece of geometry, "invisible → visible again" leaves
   `stream_builds` **unchanged**, and so does `streams_live`.
-- How to prevent it: lifetime asks one question only — "is there still a live geometry row declaring these bytes?" (pin = buffer address + its current revision,
-  enumerated from the geometry rows published by `ContentStore::tablesFor`). To give residency back early, use explicit `releaseContent()`;
+- How to prevent it: lifetime asks one question only — "does anything but this cache still name this entry's key?" — and the frame end asks it
+  (`vk-backend.md` 2.25: a geometry entry holds the shape it describes, so a culled or hidden geometry still holds it, while a superseded or dropped one cannot).
+  To give residency back early while keeping the object, use explicit `releaseContent()`;
   do not add a time window / capacity cap (`G8`: that guesses on the host's behalf).
 
 ### 6.5 Swapping the instance stream is a **description** change, and the geometry must report the revision itself
@@ -307,6 +313,7 @@ Upload staging **has no entry point**: it reclaims itself at the frame boundary 
 | T9 | The six "no longer drawn" situations (§2.9 / F23–F28): leaving the tree and explicit release (`VkResidencyTest.ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItAgain`, `VkResidenceWireTest.AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`), one buffer of a shared set (`VkResidencyTest.ReleasingOneBufferLowersOnlyTheStreamsThatReadIt`), a program (`ReleasingAProgramLowersTheCompiledHalvesAndKeepsTheStreams`), a texture (`ReleasingATextureLowersTheImageResidency`), a target (`ReleasingATargetFreesItsAttachmentsAndTheNextFrameBuildsThemAgain`), and the park (`AReleaseIsHandedOverParkedAndDestroyedAfterTheFramesThatCouldNameIt`). Hidden / culled content is engine-side: it is absent from the frame, so no residency question is asked (`SceneTest.CollectCommandsCullsOutOfView`). |
 | T10 | The instance stream is a **declaration** too (§2.5 / §6.5): `PrimitiveInstancingTest.EachPrimitiveOwnsItsInstanceStream` (the primitive owns the slice) and `ResidencyTableTest.ARevisionIsPartOfTheKey` (a revision is part of the key, so a row declares the bytes of the revision it names). |
 | T11 | Per-frame uploads/releases are an **increment** in the report (T25/T29): `VkResidencyTest.TheSecondFrameOfTheSameContentBuildsNothing` (the first frame reports `stream_uploads == 2` with bytes > 0; the second reports 0) and `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (no frame has run ⇒ no numbers; the prepared frame's uploads are reused). |
+| T12 | Content that is **superseded or dropped** leaves residency by itself (`vk-backend.md` 2.25): `VkResidencyTest.ASupersededShapeLeavesTheResidencyItReplaced` (a command list that still names the old shape keeps it resident; dropped, the next frame's end releases the entry and its bytes go) and `VkResidencyTest.ContentTheHostNoLongerHoldsLeavesResidencyBehind` (a closed document's geometry, texture and pipeline leave, the open document's stay and still draw). |
 
 ## 9. Status and Evolution
 
@@ -315,6 +322,9 @@ Upload staging **has no entry point**: it reclaims itself at the frame boundary 
 Current design; features and interfaces are as the tables above. F16–F22 (upload staging) have landed: the shipped backend's frame tail releases that batch's
 staging once its command buffer has completed (`ContentCaches::endFrame` → `ContentImages::releaseFrame`; zero waiting, zero idle), the SDK side has **no**
 corresponding verb, and the model viewer needs to call nothing either (the `release_render_memory` command was deleted with it).
+
+The reclamation half landed 2026-11-28 (`vk-backend.md` 2.25): the frame end ends every cache entry whose key has no holder but the entry itself, so a
+superseded shape revision and a dropped object release their residency without a host verb. The page's remaining stale mechanism names are backlog `T73`.
 
 ### 9.2 Known gaps / backlog
 

@@ -853,3 +853,138 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     EXPECT_FALSE(backend->frameReport().retention->residency.has_value()) << "a shut-down device accounts for nothing";
     EXPECT_FALSE(backend->frameReport().memory.has_value()) << "a shut-down device holds no memory to account for";
 }
+
+TEST(VkResidencyTest, ASupersededShapeLeavesTheResidencyItReplaced)
+{
+    // A HOST THAT REGENERATES ITS DATA IS THE ORDINARY DYNAMIC SCENE, and the shape announcement is how it says so
+    // (FpsOverlay::writePattern is the in-tree one: a fresh positions buffer plus `bumpRevision()`). A shape revision is a
+    // NEW identity, so the entry built for the previous one is nobody's once the geometry has moved on - if the cache
+    // keeps it, every regeneration leaks one entry's streams, the description and the host's own bytes, for the
+    // session's life.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    Content                                     content  = makeContent();
+    const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const intrusive_ptr<RenderTarget>           target   = makeTarget();
+
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    const std::optional<ResidencyRow> before = rowOf(backend->frameReport(), ResidencyKind::Geometry);
+    ASSERT_TRUE(before.has_value());
+    ASSERT_EQ(before->live, 2U) << "the vertex and index streams are resident";
+
+    // A SECOND HOLDER OF THE OLD SHAPE: what a cached publication or a frame that is still recording has, and the reason
+    // the sweep may not simply drop everything the geometry moved on from.
+    DrawPacket held = sceneDraw(content, material);
+
+    // THE SHAPE MOVES: a NEW buffer (a regenerated mesh may not keep its vertex count, so the bytes cannot be edited in
+    // place) and the announcement that goes with it.
+    content.geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(
+        new vn::Buffer<float>(std::vector<float>{ -0.5F, -0.5F, 0.5F, 0.5F, -0.5F, 0.5F, 0.0F, 0.5F, 0.5F })));
+    content.geometry->bumpRevision();
+
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    const FrameReport replaced = backend->frameReport();
+    ASSERT_TRUE(replaced.uploads.has_value());
+    EXPECT_EQ(replaced.uploads->stream_uploads, 2U) << "the new revision's entry uploads its own streams";
+    const std::optional<ResidencyRow> both = rowOf(replaced, ResidencyKind::Geometry);
+    ASSERT_TRUE(both.has_value());
+    EXPECT_EQ(both->live, 4U) << "the old shape is still named, so it is still resident (and parked behind that hold)";
+
+    // NOTHING NAMES THE PREVIOUS SHAPE ANY MORE: its streams must leave at the frame end (the residency this backend
+    // promises for content that left - see vk-backend.md N11).
+    held = DrawPacket{};
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    const std::optional<ResidencyRow> after = rowOf(backend->frameReport(), ResidencyKind::Geometry);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->live, 2U) << "one shape is resident, not one per regeneration";
+    EXPECT_LT(after->bytes.value_or(0U), both->bytes.value_or(0U)) << "the superseded streams' bytes went with them";
+
+    // AND THE PICTURE IS STILL THE TRIANGLE THE CURRENT SHAPE STATES.
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+        << "the frame after the sweep draws the geometry that is still there";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}
+
+TEST(VkResidencyTest, ContentTheHostNoLongerHoldsLeavesResidencyBehind)
+{
+    // THE OTHER HALF OF THE SAME RULE (`graphics-content-lifecycle.md` 2.9's second switch): the host dropping the last
+    // reference is the host saying it does not want the object any more, and the residency that object owns leaves with
+    // it. Opening one document and then another is the shape: a cache that keeps the first one's uploads grows with the
+    // number of documents the session has ever opened.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    // The first document: its own program, geometry and a sampled texture.
+    Content first            = makeContent();
+    first.program            = makeProgramWith(kTextureFragment);
+    intrusive_ptr<vn::graphics::Material> first_material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    auto                                  image          = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::span<std::byte>            texel          = image->mipData(0);
+    texel[0] = std::byte{ 200U };
+    texel[1] = std::byte{ 0U };
+    texel[2] = std::byte{ 0U };
+    texel[3] = std::byte{ 255U };
+    auto first_texture = intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    first_texture->setImage(image);
+    first_material->setTexture(TextureSlot::BaseColor, first_texture);
+
+    const intrusive_ptr<RenderTarget> target = makeTarget();
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(first, first_material))), PresentOutcome::Skipped);
+    const FrameReport opened = backend->frameReport();
+    ASSERT_TRUE(opened.uploads.has_value());
+    EXPECT_EQ(opened.uploads->stream_uploads, 2U);
+    EXPECT_EQ(opened.uploads->texture_uploads, 1U);
+    ASSERT_EQ(rowOf(opened, ResidencyKind::Geometry)->live, 2U);
+    ASSERT_EQ(rowOf(opened, ResidencyKind::Textures)->live, 1U);
+    const std::uint32_t programs_open = rowOf(opened, ResidencyKind::Programs)->live;
+    ASSERT_GT(programs_open, 0U);
+
+    // THE SECOND DOCUMENT, and then the first document is destroyed - which is the only announcement such a host makes
+    // (there is no object left to hand `releaseContent`).
+    Content                                     second = makeContent();
+    const intrusive_ptr<vn::graphics::Material> plain  = makeMaterial(Colorf(0.0F, 1.0F, 0.0F, 1.0F));
+
+    first_texture  = nullptr;
+    first_material = nullptr;
+    first.program  = nullptr;
+    first.geometry = nullptr;
+    first.positions = nullptr;
+    first.indices   = nullptr;
+
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(second, plain))), PresentOutcome::Skipped);
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(second, plain))), PresentOutcome::Skipped);
+
+    const FrameReport closed = backend->frameReport();
+    const std::optional<ResidencyRow> geometry = rowOf(closed, ResidencyKind::Geometry);
+    const std::optional<ResidencyRow> textures = rowOf(closed, ResidencyKind::Textures);
+    const std::optional<ResidencyRow> programs = rowOf(closed, ResidencyKind::Programs);
+    ASSERT_TRUE(geometry.has_value());
+    ASSERT_TRUE(textures.has_value());
+    ASSERT_TRUE(programs.has_value());
+    EXPECT_EQ(geometry->live, 2U) << "the closed document's streams went with it; the open one's stayed";
+    EXPECT_EQ(textures->live, 0U) << "no material names that texture any more";
+    // THE SECOND DOCUMENT'S PROGRAM IS ONE PIPELINE OF ITS OWN, so the count stays 1 while the ledger says WHICH one: the
+    // closed document's pipeline was built and then retired.
+    EXPECT_EQ(programs->live, programs_open) << "one pipeline is resident - the open document's";
+    EXPECT_EQ(programs->built.value_or(0U), 2U) << "each document compiled its own program revision";
+    EXPECT_EQ(programs->retired.value_or(0U), 1U) << "the closed document's pipeline left with its program";
+
+    // THE SECOND DOCUMENT STILL DRAWS: a sweep that empties the cache would pass the counts above and lose the picture.
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(read.ok());
+    EXPECT_EQ(pixelAt(read.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 255, 0, 255 }));
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}

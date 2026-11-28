@@ -690,6 +690,35 @@ bool ContentImages::releaseTexture(const vn::graphics::Texture& texture)
     return true;
 }
 
+std::uint32_t ContentImages::sweepUnheldTextures() noexcept
+{
+    if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
+        return 0;
+    }
+    std::uint32_t withdrawn = 0;
+    for (auto entry = impl->textures.begin(); entry != impl->textures.end();) {
+        auto next = entry;
+        ++next;
+        const std::shared_ptr<Impl::Entry>& candidate = entry->second;
+        // THE ENTRY'S SHARE IS THE LAST ONE (see the header): a material slot or a pass' imported input holds its own,
+        // so a texture still named by content is never withdrawn here.
+        const bool unheld = candidate == nullptr || candidate->texture == nullptr || candidate->texture->useCount() <= 1U;
+        if (unheld) {
+            std::shared_ptr<Impl::Entry> doomed = std::move(entry->second);
+            impl->textures.erase(entry);
+            if (doomed != nullptr) {
+                impl->bytes_total -= doomed->bytes;
+                const std::weak_ptr<const void> named = doomed;
+                impl->releaseLater(named, [target = impl.get(), entry = std::move(doomed)]() mutable { target->destroyEntry(*entry); });
+            }
+            ++impl->released;
+            ++withdrawn;
+        }
+        entry = next;
+    }
+    return withdrawn;
+}
+
 void ContentImages::batchCompleted(const BatchId batch) noexcept
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {

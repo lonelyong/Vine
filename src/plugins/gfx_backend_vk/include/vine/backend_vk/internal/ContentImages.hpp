@@ -243,6 +243,26 @@ class VN_BACKEND_VK_API ContentImages final {
     bool releaseTexture(const vn::graphics::Texture& texture);
 
     /**
+     * @brief Drops every image whose TEXTURE nobody but this cache holds any more: the texture half of the frame-end
+     *        ownership sweep.
+     *
+     * @details
+     * - THE PROBE IS THE ENTRY'S OWN SHARE (see `Entry::texture`): the entry holds the texture so its address cannot be
+     *   recycled under the key, which also makes it an owner - so `useCount() == 1` means this entry is the last holder
+     *   and no host can ever ask for that image again. A material that names the texture holds a share of its own
+     *   (`TextureSlotBinding::texture`), and a pass' imported input does too (`ImageInput::byTexture`), so live content
+     *   keeps its images without this sweep having to know which kind of content it is.
+     * - WHY IT MUST EXIST. `releaseTexture` names the object, so a host that drops the last reference to a texture (a
+     *   document closing, a thumbnail replaced) has no way to name it any more - and without this arm the image, its
+     *   device memory and the host's own pixel data stay resident for the session.
+     * - WHERE: the frame's end, once, beside the stream / geometry / program sweeps (see `ContentCaches::endFrame`).
+     *   O(#resident textures) - one share count each.
+     *
+     * @return How many images were withdrawn.
+     */
+    std::uint32_t sweepUnheldTextures() noexcept;
+
+    /**
      * @brief Gets the view of @p texture, recording its upload into @p commands when it is new or changed.
      *
      * @details

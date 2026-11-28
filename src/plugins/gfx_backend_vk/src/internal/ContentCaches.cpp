@@ -187,7 +187,9 @@ struct ContentCaches::Impl {
     ContentImages images{};
 
     std::unordered_map<ProgramKey, ProgramEntry, ProgramKeyHash>                     programs;
-    std::unordered_map<const vn::graphics::GeometryDescription*, std::shared_ptr<GeometryEntry>> geometries;
+    /// One entry per geometry SHAPE; the entry holds the description its key is (see GeometryEntry / N11).
+    using GeometryTable = std::unordered_map<const vn::graphics::GeometryDescription*, std::shared_ptr<GeometryEntry>>;
+    GeometryTable geometries;
     /**
      * @brief One entry per INSTANCE buffer a command read, keyed by that buffer's address (see InstanceStream).
      *
@@ -202,6 +204,22 @@ struct ContentCaches::Impl {
     InstanceStreamTable instance_streams;
     /// The built pipelines, as SHARED HANDLES (see PipelineHandle): a frame that resolved one keeps it alive.
     std::unordered_map<ContentPipelineKey, std::shared_ptr<PipelineHandle>, ContentPipelineKeyHash> pipelines;
+
+    /**
+     * @brief One program revision's census: how many table entries name it, and how many shares its description carries.
+     *
+     * @details
+     * - WHY NOT "SHARE COUNT == 1" (the probe the geometry and stream sweeps use): this table is keyed by
+     *   `(description, variant)`, so ONE revision legitimately holds one share per compiled variant. "Nobody but this
+     *   cache names it" is therefore `shares == entries` for that revision, and asking it needs the entries counted.
+     */
+    struct ProgramCensus {
+        const vn::graphics::ShaderProgramDescription* description{ nullptr };
+        std::size_t                                   entries{ 0 };
+        unsigned long                                 shares{ 0 };
+    };
+    /// The sweep's working set, REUSED so a frame's end allocates nothing (see sweepUnheldPrograms).
+    std::vector<ProgramCensus> program_census{};
     /**
      * @brief WHO MAY BUILD a geometry: the device table two frame drivers share (F4, see `ResidencyClaims`).
      *
@@ -450,6 +468,184 @@ struct ContentCaches::Impl {
             }
             entry = next;
         }
+    }
+
+    /**
+     * @brief Withdraws ONE geometry entry: the table's share leaves now, its streams follow when the device says so.
+     *
+     * @details
+     * - TWO TRIGGERS, ONE BODY: the host's announcement (`ContentCaches::releaseGeometry`) and the frame-end sweep that
+     *   ends an entry whose SHAPE nobody but this cache names (`sweepUnheldGeometries`) - the division
+     *   `withdrawInstanceStream` already states for the same reason, because a second withdrawal body would be a second
+     *   answer to when an entry ends.
+     * - THE CLAIM IS FORGOTTEN FIRST, so after the withdrawal the table agrees with this cache (F4): a claim still in
+     *   flight over the key becomes STALE and cannot resurrect what nobody names any more (see
+     *   `ResidencyClaims::forget`), and the next frame finds `Absent` instead of a key this map does not hold.
+     * - THE OBJECTS ARE PARKED BEHIND THE ENTRY'S OWN SHARE: a frame that resolved the entry may still be recording what
+     *   its buffers are bound into, exactly as an announced release parks (see `releaseLater`).
+     *
+     * @param entry The table iterator for the entry this withdraws (erased by this call).
+     * @return How many stream buffers the entry still held (0 when it held none).
+     */
+    std::uint32_t withdrawGeometry(GeometryTable::iterator entry)
+    {
+        (void)residence.forget(entry->first);
+        std::shared_ptr<GeometryEntry> doomed = std::move(entry->second);
+        geometries.erase(entry);
+        if (doomed == nullptr) {
+            return 0;
+        }
+        const std::uint32_t live = liveStreams(*doomed);
+        stream_releases_ += live;
+        const std::weak_ptr<const void> named = doomed;
+        releaseLater(named, [target = this, entry = std::move(doomed)]() mutable { (void)target->destroyGeometryStreams(*entry); });
+        return live;
+    }
+
+    /**
+     * @brief Ends every geometry entry whose SHAPE this cache is the last holder of.
+     *
+     * @details
+     * - WHAT SAYS "NOBODY CAN ASK FOR THESE BYTES AGAIN": the description's own share count. A geometry holds the value
+     *   for the revision it is ON (`Geometry::description()` caches exactly one), a frame that is still recording holds
+     *   whatever its commands were built with, and a collection memo or a host-held command list holds whatever it may
+     *   draw again - so `useCount() == 1` means this entry's share is the last one, and no caller can ever name the key
+     *   again thorough content. That is the same probe `sweepUnheldStreams` uses for the `Buffer` its key names.
+     * - WHY THE TABLE HAS TO ASK. A SHAPE REVISION IS A NEW IDENTITY (`Geometry::bumpRevision` -> a new description),
+     *   and `releaseContent(Geometry)` can only name the CURRENT one - the superseded description is unreachable from
+     *   the host, so without this sweep every regeneration keeps one entry's streams (and, through the entry's hold on
+     *   the description, the host's own buffers) for the session's life. The in-tree host that does this is
+     *   `FpsOverlay::writePattern` (a fresh positions buffer plus `bumpRevision()` per published rate).
+     * - WHAT IT DOES NOT COVER: culling or hiding. Those do not move the revision, so the geometry still holds its
+     *   description and the entry stays - which is F27 / F28's promise (becoming visible again retransmits nothing).
+     * - WHERE: a frame's end, once, next to the stream sweep (`ContentCaches::endFrame`). The cost is O(#resident
+     *   entries) - a share count per entry, never a walk over content rows (the criterion `I4` states).
+     *
+     * @return How many entries were withdrawn.
+     */
+    std::uint32_t sweepUnheldGeometries()
+    {
+        std::uint32_t withdrawn = 0;
+        for (auto entry = geometries.begin(); entry != geometries.end();) {
+            auto next = entry;
+            ++next;
+            const GeometryEntry* const candidate = entry->second.get();
+            const bool unheld = candidate == nullptr || candidate->description == nullptr || candidate->description->useCount() <= 1U;
+            if (unheld) {
+                (void)withdrawGeometry(entry);
+                ++withdrawn;
+            }
+            entry = next;
+        }
+        return withdrawn;
+    }
+
+    /**
+     * @brief Withdraws ONE program revision: every compiled variant's modules and every pipeline built for it.
+     *
+     * @details
+     * - THE PIPELINES GO FIRST: they are keyed by the program's IDENTITY AND REVISION (see `ContentPipelineKey`), so once
+     *   the entries are gone they could never be looked up again - keeping them alive would be a leak nothing can name.
+     * - ONE TEXT MAY BE SEVERAL VARIANTS (see `ProgramVariant`), so the entry count is what says how many compiles this
+     *   description had; every one of them goes.
+     * - THE OBJECTS ARE PARKED behind their own shares (see `releaseLater`): a submitted frame may still be drawing with
+     *   the pipelines this withdrew, and a recording frame may hold the share it resolved. The shader modules are named
+     *   by no command buffer once their pipelines exist, so they need no share of their own.
+     *
+     * @param description The revision to withdraw (null answers 0).
+     * @return How many entries and pipelines were dropped.
+     */
+    std::size_t withdrawProgram(const vn::graphics::ShaderProgramDescription* description)
+    {
+        if (description == nullptr) {
+            return 0;
+        }
+        std::size_t dropped = 0;
+        const vn::graphics::ContentRef released = vn::graphics::contentRefOf(description->id(), description->revision());
+        std::vector<std::shared_ptr<PipelineHandle>> doomed_pipelines;
+        std::vector<VkShaderModule>                  modules;
+        for (auto it = pipelines.begin(); it != pipelines.end();) {
+            if (!(it->first.identity.program == released)) {
+                ++it;
+                continue;
+            }
+            doomed_pipelines.push_back(std::move(it->second));
+            it = pipelines.erase(it);
+            ++pipeline_releases_;
+            ++dropped;
+        }
+        for (auto it = programs.begin(); it != programs.end();) {
+            if (it->first.description != description) {
+                ++it;
+                continue;
+            }
+            if (it->second.vertex != VK_NULL_HANDLE) {
+                modules.push_back(it->second.vertex);
+            }
+            if (it->second.fragment != VK_NULL_HANDLE) {
+                modules.push_back(it->second.fragment);
+            }
+            it = programs.erase(it);
+            ++dropped;
+        }
+        for (std::shared_ptr<PipelineHandle>& handle : doomed_pipelines) {
+            const std::shared_ptr<PipelineHandle> doomed = std::move(handle);
+            const std::weak_ptr<const void>       named  = doomed;
+            releaseLater(named, [table = table, device = device, doomed]() {
+                if (doomed->pipeline != VK_NULL_HANDLE) {
+                    table->vkDestroyPipeline(device, doomed->pipeline, nullptr);
+                    doomed->pipeline = VK_NULL_HANDLE;
+                }
+            });
+        }
+        if (!modules.empty()) {
+            releaseLater(std::weak_ptr<const void>{}, [table = table, device = device, modules = std::move(modules)]() {
+                for (const VkShaderModule module : modules) {
+                    table->vkDestroyShaderModule(device, module, nullptr);
+                }
+            });
+        }
+        return dropped;
+    }
+
+    /**
+     * @brief Ends every program revision this cache is the last holder of - the program half of `sweepUnheldGeometries`.
+     *
+     * @details
+     * - WHAT IT ENDS: a program whose last non-cache share went (the `ShaderProgram` object was destroyed, or nobody
+     *   describes it any more) and, with it, every pipeline compiled for that revision - the residue `review 6` left
+     *   behind ("the old halves wait until the program or the layout disappears as well"; now the program's own
+     *   disappearance is enough for its variants).
+     * - THE CENSUS, NOT A SINGLE SHARE COUNT: see `ProgramCensus` - one revision holds one share per variant.
+     * - WHERE AND WHY IT COSTS O(#resident entries): the frame's end, next to the other two sweeps
+     *   (`ContentCaches::endFrame`), and the working vector is reused so a steady frame allocates nothing.
+     *
+     * @return How many entries and pipelines were withdrawn.
+     */
+    std::size_t sweepUnheldPrograms()
+    {
+        program_census.clear();
+        for (const auto& [key, entry] : programs) {
+            const unsigned long shares = entry.description != nullptr ? entry.description->useCount() : 0UL;
+            const auto          found  = std::find_if(program_census.begin(),
+                                             program_census.end(),
+                                             [description = key.description](const ProgramCensus& row) { return row.description == description; });
+            if (found == program_census.end()) {
+                program_census.push_back(ProgramCensus{ key.description, 1U, shares });
+            }
+            else {
+                ++found->entries;
+                found->shares = shares;
+            }
+        }
+        std::size_t withdrawn = 0;
+        for (const ProgramCensus& row : program_census) {
+            if (row.shares > static_cast<unsigned long>(row.entries)) {
+                continue; // a geometry, a pass or a host still names this revision
+            }
+            withdrawn += withdrawProgram(row.description);
+        }
+        return withdrawn;
     }
 
     /**
@@ -2133,23 +2329,16 @@ std::size_t ContentCaches::releaseGeometry(const vn::graphics::GeometryDescripti
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
         return 0;
     }
-    // THE KEY IS FORGOTTEN EVEN WHEN NOTHING WAS RESIDENT (F4): after an announcement the table must agree with the
-    // cache, or the next frame would find a key it may not claim. A claim still in flight over it becomes stale and
-    // cannot resurrect what the host let go (see ResidencyClaims::forget).
-    (void)impl->residence.forget(description);
     const auto found = impl->geometries.find(description);
     if (found == impl->geometries.end()) {
+        // THE KEY IS FORGOTTEN EVEN WHEN NOTHING WAS RESIDENT (F4): after an announcement the table must agree with the
+        // cache, or the next frame would find a key it may not claim. A claim still in flight over it becomes stale and
+        // cannot resurrect what the host let go (see ResidencyClaims::forget).
+        (void)impl->residence.forget(description);
         return 0; // nothing was resident: already released
     }
-    // THE ENTRY LEAVES THE CACHE NOW; ITS BUFFERS FOLLOW WHEN THE DEVICE SAYS THEY MAY (see releaseLater). The two
-    // questions are different: "is this content resident" is about the table, "may this object be destroyed" is about
-    // the queue AND about the frames that resolved the entry - which is why the act holds the entry itself and the park
-    // probes its share count before it destroys anything.
-    std::shared_ptr<GeometryEntry> doomed = std::move(found->second);
-    impl->geometries.erase(found);
-    impl->stream_releases_ += Impl::liveStreams(*doomed);
-    const std::weak_ptr<const void> named = doomed;
-    impl->releaseLater(named, [target = impl.get(), entry = std::move(doomed)]() mutable { (void)target->destroyGeometryStreams(*entry); });
+    // THE ENTRY LEAVES THE CACHE NOW; ITS BUFFERS FOLLOW WHEN THE DEVICE SAYS THEY MAY (see withdrawGeometry).
+    (void)impl->withdrawGeometry(found);
     return 1;
 }
 
@@ -2159,61 +2348,9 @@ std::size_t ContentCaches::releaseProgram(const vn::graphics::ShaderProgramDescr
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
         return 0;
     }
-    std::size_t dropped = 0;
-    // THE PIPELINES FIRST: they are keyed by the program's IDENTITY AND REVISION (see ContentPipelineKey), so once
-    // the entry is gone they could never be looked up again - keeping them alive would be a leak nothing can name.
-    const vn::graphics::ContentRef released = vn::graphics::contentRefOf(description->id(), description->revision());
-    std::vector<std::shared_ptr<PipelineHandle>> pipelines;
-    std::vector<VkShaderModule>                  modules;
-    for (auto it = impl->pipelines.begin(); it != impl->pipelines.end();) {
-        if (!(it->first.identity.program == released)) {
-            ++it;
-            continue;
-        }
-        pipelines.push_back(std::move(it->second));
-        it = impl->pipelines.erase(it);
-        ++impl->pipeline_releases_;
-        ++dropped;
-    }
-
-    // ONE TEXT MAY BE SEVERAL VARIANTS (see ProgramVariant): every compile of this description goes, and the entry
-    // count says how many. The pipelines above were keyed by the same pointer, so none can survive this.
-    for (auto it = impl->programs.begin(); it != impl->programs.end();) {
-        if (it->first.description != description) {
-            ++it;
-            continue;
-        }
-        if (it->second.vertex != VK_NULL_HANDLE) {
-            modules.push_back(it->second.vertex);
-        }
-        if (it->second.fragment != VK_NULL_HANDLE) {
-            modules.push_back(it->second.fragment);
-        }
-        it = impl->programs.erase(it);
-        ++dropped;
-    }
-    // THE OBJECTS LEAVE WHEN THE DEVICE SAYS THEY MAY (see releaseLater): a submitted frame may still be drawing with
-    // the pipelines this announcement forgot, AND a recording frame may hold the share it resolved - so each pipeline
-    // is parked behind its OWN share and destroyed only when no frame names it. The shader modules are named by no
-    // command buffer once their pipelines exist, so they need no share of their own.
-    for (std::shared_ptr<PipelineHandle>& handle : pipelines) {
-        const std::shared_ptr<PipelineHandle> doomed = std::move(handle);
-        const std::weak_ptr<const void>       named  = doomed;
-        impl->releaseLater(named, [table = impl->table, device = impl->device, doomed]() {
-            if (doomed->pipeline != VK_NULL_HANDLE) {
-                table->vkDestroyPipeline(device, doomed->pipeline, nullptr);
-                doomed->pipeline = VK_NULL_HANDLE;
-            }
-        });
-    }
-    if (!modules.empty()) {
-        impl->releaseLater(std::weak_ptr<const void>{}, [table = impl->table, device = impl->device, modules = std::move(modules)]() {
-            for (const VkShaderModule module : modules) {
-                table->vkDestroyShaderModule(device, module, nullptr);
-            }
-        });
-    }
-    return dropped;
+    // THE ONE WITHDRAWAL BODY IS THE CACHE'S (see Impl::withdrawProgram): this verb and the frame-end sweep that ends a
+    // revision nobody holds any more must not answer "when does a program leave" twice.
+    return impl->withdrawProgram(description);
 }
 
 std::size_t ContentCaches::releaseStreams(const void* buffer)
@@ -2353,10 +2490,15 @@ void ContentCaches::endFrame(const ContentImages::BatchId batch, const bool comp
         else {
             impl->images.batchAbandoned(batch);
         }
-        // AND THE OWNERSHIP A FRAME'S END SETTLES (see the header): an instance stream whose buffer nobody but this
-        // cache holds any more ends here. The batch's outcome does not enter it - holdings are a host fact, not a
-        // submission's.
+        // AND THE OWNERSHIP A FRAME'S END SETTLES (see the header): an entry that HOLDS ITS KEY ends once that key has
+        // no other holder, because nobody left can name it. One rule, four tables - an instance stream holds the
+        // `Buffer` its key is the address of, a geometry entry the shape it describes, a program entry the program
+        // revision (with its pipelines), a texture entry the texture. The batch's outcome does not enter it: holdings
+        // are a host fact, not a submission's.
         impl->sweepUnheldStreams();
+        impl->sweepUnheldGeometries();
+        impl->sweepUnheldPrograms();
+        impl->images.sweepUnheldTextures();
     }
 }
 

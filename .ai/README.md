@@ -384,7 +384,7 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (12)
+## research/ — research and proposals (13)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
@@ -543,6 +543,21 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   `VkWindowPresentTest.ARebuildThatFailsIsRetriedByTheNextFrame`, red under each of the two guards mutated back. `Z24`'s
   branch rides on the same lines and has NO witness on this machine (no driver here answers `SUBOPTIMAL` from an acquire),
   which is why this round adds one backlog entry, `T72`, for that case.
+- `graphics-2026-11-28-review-21.md` — the twenty-first pass: **resource lifetime in a dynamic scene** - every table the
+  backend keeps between frames (geometries, programs, pipelines, instance streams, textures, upload batches, the memory pool,
+  the frame scratch) asked one question: who can still name this entry, and where does the code learn that nobody can? One
+  finding, high, in three tables: `ContentCaches`' geometries / programs / pipelines and `ContentImages`' textures end only on
+  the host's `releaseContent`, and a shape revision is a NEW identity the host can never name again (a dropped object has no
+  object left to hand the verb at all) - so a host that regenerates a shape leaks one entry's streams, the description and its
+  own `Buffer<float>` per regeneration, which `FpsOverlay::writePattern` (and therefore `appfw`'s stats readout and the demo)
+  does on every published rate change (`Z25`). Fixed at the rule the backend already stated for the instance stream
+  (`N11`): an entry that holds its key ends at the frame end once the key has no other holder, now applied by
+  `sweepUnheldGeometries` / `sweepUnheldPrograms` / `ContentImages::sweepUnheldTextures` beside the stream sweep, with one
+  withdrawal body per table shared with `releaseContent` (`design/vk-backend.md` 2.25). Two new `VkResidencyTest` cases, three
+  mutations (each arm red on its own assertion), and one wire case corrected whose assertion was about the leak itself.
+  Two residuals recorded, neither fixed: a sampler cached by VALUE has no holder to ask (`Z26`), and a shape revision still
+  re-uploads every channel because streams are per entry rather than shared by `StreamKey` (`Z28`, backlog `T74`). The
+  content-lifecycle page's retired-mechanism names are backlog `T73`.
 - `async-2026-11-27-review-1.md` — the first async pass: **what `Destroy` assumes, who owns a completion, and which thread
   the continuation runs on** (the 28 headers read line by line against the design page's contracts; the suite read by its
   index; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -
