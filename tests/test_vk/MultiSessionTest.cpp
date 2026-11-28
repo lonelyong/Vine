@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -294,6 +295,20 @@ void main()
     const std::size_t offset = (static_cast<std::size_t>(kTargetSize / 2) * kTargetSize + kTargetSize / 2) * 4U;
     return { static_cast<int>(pixels[offset]), static_cast<int>(pixels[offset + 1U]), static_cast<int>(pixels[offset + 2U]),
              static_cast<int>(pixels[offset + 3U]) };
+}
+
+/// @brief The row @p kind of a report's ledger, or nothing when the report keeps no such row.
+[[nodiscard]] std::optional<vn::graphics::ResidencyRow> rowOf(const vn::graphics::FrameReport& report, const vn::graphics::ResidencyKind kind)
+{
+    if (!report.retention.has_value() || !report.retention->residency.has_value()) {
+        return std::nullopt;
+    }
+    for (const vn::graphics::ResidencyRow& row : report.retention->residency->rows()) {
+        if (row.kind == kind) {
+            return row;
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -1400,6 +1415,100 @@ TEST(VkMultiSessionTest, AFrameKeepsTheContentItResolvedUntilTheFrameEnds)
     const std::array<int, 4> centre = centreOf(read.values);
     EXPECT_GE(centre[0], 254) << "the recording frame lost its picture";
     EXPECT_LE(centre[1], 1);
+
+    device->releaseFrameDriver(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AFrameEndBesideARecordingDriverKeepsTheContentThatDriverNames)
+{
+    // THE SWEEP'S OTHER DRIVER (review 21 §6): every frame end runs the content sweeps (`ContentCaches::endFrame`), and
+    // two frame bodies overlap, so one driver's frame end walks the cache while the other driver is still recording.
+    // The probe is the description's share count and a recording frame's commands hold the description they were built
+    // with, so the entry must stay - the case pins the ANSWER residency gives while the other body records, which the
+    // parked destruction alone cannot witness (the picture would still draw if the entry had gone).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+    RenderFrameExecutor* const second = device->createFrameDriver();
+    ASSERT_NE(second, nullptr) << "the device handed out no second driver";
+
+    intrusive_ptr<Geometry>            geometry    = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program     = redProgram();
+    const intrusive_ptr<RenderTarget>  destination = makeTarget(u8"two_driver_sweep_draws_here");
+    const intrusive_ptr<RenderTarget>  other       = makeTarget(u8"two_driver_sweep_ends_here");
+
+    // BOTH DRIVERS WARM AND THE SHAPE RESIDENT: one vertex and one index stream.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(destination.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+    ASSERT_EQ(second->executeFrame(clearingFrame(other.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)), nullptr), PresentOutcome::Skipped);
+    const std::optional<vn::graphics::ResidencyRow> resident = rowOf(backend->frameReport(), vn::graphics::ResidencyKind::Geometry);
+    ASSERT_TRUE(resident.has_value()) << "residency is an answered question once a frame has run";
+    ASSERT_EQ(resident->live, 2U) << "the vertex and index streams are resident";
+    ASSERT_TRUE(resident->bytes.has_value()) << "a buffer's bytes are known";
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> go{ false };
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped || sink_entered.exchange(true)) {
+            return;
+        }
+        // HOLD THE RECORDING FRAME, BOUNDED: the frames below END while this body is still inside its record.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!go.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::vector<DrawPacket> draws;
+    draws.push_back(programDraw(geometry, program));
+    draws.push_back(programlessDraw(geometry)); // names no program: the refusal holds the frame at the sink
+
+    PresentOutcome outcome = PresentOutcome::Lost;
+    std::thread    recorder([&]() { outcome = second->executeFrame(drawingFrameWith(destination.get(), std::move(draws)), nullptr); });
+
+    const auto enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < enter_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(sink_entered.load()) << "the recording frame never reached its refusal";
+
+    // THE HOST LETS THE SHAPE GO WHILE THE OTHER DRIVER NAMES IT - no `releaseContent`, because there is no object left
+    // to hand it: the recording frame's commands are the only thing keeping the revision alive.
+    geometry = nullptr;
+
+    // EVERY ONE OF THESE FRAME ENDS RUNS THE SWEEP beside the recording body, and none may end the entry: the probe
+    // asks who names the description, and that body does.
+    for (int frame = 0; frame < 2; ++frame) {
+        ASSERT_EQ(backend->executeFrame(clearingFrame(other.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)), nullptr), PresentOutcome::Skipped);
+        const std::optional<vn::graphics::ResidencyRow> kept = rowOf(backend->frameReport(), vn::graphics::ResidencyKind::Geometry);
+        ASSERT_TRUE(kept.has_value());
+        EXPECT_EQ(kept->live, 2U) << "a frame end ended the revision a recording driver still names (frame " << frame << ")";
+    }
+
+    go.store(true, std::memory_order_release);
+    recorder.join();
+    EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the recording frame did not finish";
+    backend->setDiagnosticSink({});
+
+    // THE FRAME THAT OUTLIVED THE HOST'S HANDLE STILL DREW: it kept what it resolved.
+    const ColorReadback read = backend->readColorImage(destination.get(), 0);
+    ASSERT_TRUE(read.ok());
+    const std::array<int, 4> centre = centreOf(read.values);
+    EXPECT_GE(centre[0], 254) << "the recording frame lost its picture";
+    EXPECT_LE(centre[1], 1);
+
+    // ITS COMMANDS ARE GONE WITH IT, so the revision is the cache's alone and the NEXT frame end ends it - the half
+    // that proves the two frames above were green because the recording body named the revision, not because nothing
+    // sweeps.
+    ASSERT_EQ(backend->executeFrame(clearingFrame(other.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)), nullptr), PresentOutcome::Skipped);
+    const std::optional<vn::graphics::ResidencyRow> gone = rowOf(backend->frameReport(), vn::graphics::ResidencyKind::Geometry);
+    ASSERT_TRUE(gone.has_value());
+    EXPECT_EQ(gone->live, 0U) << "the sweep did not end the revision nobody names";
+    EXPECT_LT(gone->bytes.value_or(0U), resident->bytes.value_or(0U)) << "the streams' bytes went with the entry";
 
     device->releaseFrameDriver(*second);
     backend->shutdown();

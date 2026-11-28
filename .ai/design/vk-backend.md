@@ -680,6 +680,9 @@ and every cache has a witness a test can read.**
   description and the entry stays (F27 / F28 - becoming visible again retransmits nothing). A frame that is still recording,
   a cached publication and a host-held command list all hold the description, so a sweep can never take what a submission may
   still name - it is a stronger guard than the entry-share the park uses, and the park still decides *when* the objects go.
+  Neither does a second driver: a frame end on one driver runs while the other driver is still recording, and that body's
+  commands hold what they resolved, so the entry stays for the whole recording and ends at the first frame end after it
+  finished (`VkMultiSessionTest.AFrameEndBesideARecordingDriverKeepsTheContentThatDriverNames`).
 - **Cost**: O(#resident entries) once per frame - one share count per entry and, for programs, a reused census vector (the
   table is keyed by `(description, variant)`, so one revision holds one share per variant). It is the same order the stream
   sweep already paid: a frame walks the entries that exist, never the content (§2.5's "holding is identity" argument).
@@ -1356,6 +1359,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T14 | an unready presenter names its own cause | `VkWindowPresentTest.ADetachedPresenterAnswersItsOwnReasonInsteadOfAccusingTheHost` (`presentationState() == Detached`; the frame reports `vk.window.not_ready`, never `presenter_missing`) |
 | T15 | an upload records nothing when it is refused, and everything it names outlives the recording | `VkResidencyTest.ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage` (a staging block refused through `Device::setMemoryBlockCreator`: the frame spends exactly what an upload-free frame spends - `Device::recordingNumbers()` - the picture is the stand-in, and the frame after it uploads and samples the texture; the mutation that records the transition before the allocation turns those numbers red - §2.23, §6.21) |
 | T16 | a frame that did not run answers for itself: `Lost` when it owed the surface a picture, and no device time | `VkWindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` (a refused submit through `Device::refuseNextSubmit` on a real window: `Lost`, the image given back, and the NEXT frame presents - the mutation that answers from `window_acquired` again turns it red) and `VkDeviceClockTest.AFrameReportsItsDeviceTime` (a refused submit between two frames answers DISENGAGED, not the sampled frame's number; the mutation that puts the timing resets back inside `if (completed)` turns it red - §2.24, §6.22, `N7`) |
+| T17 | a frame end beside a recording driver keeps what that body names, and ends the entry once it is gone | `VkMultiSessionTest.AFrameEndBesideARecordingDriverKeepsTheContentThatDriverNames` (driver B is held inside its record by a refused packet while the host drops the shape and driver A's frame ends run the sweep: the geometry row stays at 2 live during the recording, and the next frame end after B finished takes it to 0 with its bytes; withdrawing regardless of the share reddens the keeping half, skipping the geometry sweep reddens the ending half - §2.25) |
 
 ## 9. Status and Evolution
 
