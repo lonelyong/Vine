@@ -396,6 +396,9 @@ struct FrameRecording {
     WindowTarget* window{ nullptr };
     /// Whether the window's image is STILL HELD, and therefore must be given back on every path that does not present.
     bool window_acquired{ false };
+    /// Whether this frame's window pass found no image (`acquire` failed once): a later window pass in the same frame
+    /// neither asks again (the rebuild it would start is the one that just failed) nor draws.
+    bool window_refused{ false };
     /// Whether this frame OWES the surface a picture: set with the acquire (which is the promise a present keeps), and
     /// NOT cleared by the give-back - see `giveBackWindowImage` and `unrunOutcome`.
     bool picture_owed{ false };
@@ -480,6 +483,7 @@ struct FrameRecording {
     {
         window           = nullptr;
         window_acquired  = false;
+        window_refused   = false;
         picture_owed     = false;
         claim_refused    = false;
         refused_pass     = false;
@@ -1564,6 +1568,25 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
         }
         return every;
     };
+    // THE WINDOW'S OWN SENTENCE, in ONE place (see WindowTarget::presentationState): the three states mean three
+    // different things with three different repairs, so the report names which one stopped the pass instead of accusing
+    // the host of a presenter it never named (review 19 `Z14`).
+    const auto report_window_state = [this](const WindowTarget& target) {
+        const WindowTarget::PresentationState state = target.presentationState();
+        owner.report(deviceDiagnostic(
+            DiagnosticSeverity::Warning,
+            DiagnosticCategory::UnsupportedRequest,
+            u8"vk.window.not_ready",
+            state == WindowTarget::PresentationState::Detached
+                ? vn::String(u8"vk: a window pass names this device's presenter, but the window is detached (its host window "
+                             u8"is gone, or the move to a new handle could not be rebuilt); the pass was left out")
+                : state == WindowTarget::PresentationState::NotAttached
+                    ? vn::String(u8"vk: a window pass names this device's presenter, but it was never attached to this device "
+                                 u8"(or its attach was refused); the pass was left out")
+                    : vn::String(u8"vk: a window pass names this device's presenter, but it has no live swapchain - the last "
+                                 u8"(re)build produced none, and its own refusal was reported when it happened; the pass was "
+                                 u8"left out")));
+    };
 
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
@@ -1608,31 +1631,23 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
                 recording.refused_pass = true;
                 continue;
             }
-            if (!recording.window->ready()) {
+            // THE WALK ASKS THE QUESTION ITS MODE NEEDS, AND NEITHER ONE IS "DOES A CHAIN EXIST?" (`G1`, review 20
+            // `Z23`). `ready()` answers whether a chain exists RIGHT NOW, and this backend's rebuild destroys the old
+            // chain before it builds the new one - so a rebuild that failed (a zero extent, a refused
+            // `vkCreateSwapchainKHR`, a refused depth-image allocation) leaves an attached target with no chain. Asked
+            // as a guard here, that fact ended the window for the session: the only call that could repair it - the
+            // acquire that rebuilds - never ran.
+            //   - A RECORDED FRAME needs an IMAGE, and `acquire` is the verb that gets one, including building the
+            //     chain the target owes: it is asked FIRST, and once per frame.
+            //   - A WARM-UP acquires nothing (`P11`), so it asks the chain: preparing a pass against one that does not
+            //     exist has nothing to prepare.
+            if (mode != PassMode::Record && !recording.window->ready()) {
                 if (owner.window_reports.not_ready.shouldReport()) {
-                    // THE WINDOW'S OWN STATE IN THE SENTENCE: the target knows which of its facts stopped the pass, and
-                    // the failure that produced the state (if any) was reported when it happened.
-                    const WindowTarget::PresentationState state = recording.window->presentationState();
-                    owner.report(deviceDiagnostic(
-                        DiagnosticSeverity::Warning,
-                        DiagnosticCategory::UnsupportedRequest,
-                        u8"vk.window.not_ready",
-                        state == WindowTarget::PresentationState::Detached
-                            ? vn::String(u8"vk: a window pass names this device's presenter, but the window is detached (its host window "
-                                         u8"is gone, or the move to a new handle could not be rebuilt); the pass was left out")
-                        : state == WindowTarget::PresentationState::NotAttached
-                            ? vn::String(u8"vk: a window pass names this device's presenter, but it was never attached to this device "
-                                         u8"(or its attach was refused); the pass was left out")
-                            : vn::String(u8"vk: a window pass names this device's presenter, but it has no live swapchain - the last "
-                                         u8"(re)build produced none, and its own refusal was reported when it happened; the pass was "
-                                         u8"left out")));
+                    report_window_state(*recording.window);
                 }
                 recording.refused_pass = true;
                 continue;
             }
-            owner.window_reports.presenter.rearm(); // the pass named a presenter this device handed out
-            owner.window_reports.not_ready.rearm(); // and that presenter has a live swapchain again
-            // THE WINDOW'S IMAGE IS TAKEN FOR A RECORDED FRAME ONLY: a warm-up acquires and presents nothing (P11).
             if (mode == PassMode::Record && !recording.window_acquired) {
                 vn::String why;
                 if (!recording.window->acquire(&why)) {
@@ -1643,13 +1658,25 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
                         (void)owner.note_device_lost(VK_ERROR_DEVICE_LOST, "vkAcquireNextImageKHR");
                         return PassWalk::DeviceLost;
                     }
-                    if (owner.window_reports.acquire.shouldReport()) {
+                    const WindowTarget::PresentationState state = recording.window->presentationState();
+                    if (state == WindowTarget::PresentationState::Detached || state == WindowTarget::PresentationState::NotAttached) {
+                        // THE WINDOW IS NOT A PLACE TO PRESENT: its own state is the answer, and the acquire's sentence
+                        // would only repeat it (review 19 `Z14`).
+                        if (owner.window_reports.not_ready.shouldReport()) {
+                            report_window_state(*recording.window);
+                        }
+                    }
+                    else if (owner.window_reports.acquire.shouldReport()) {
+                        // AN IMAGE THIS FRAME COULD NOT HAVE, with the cause the target itself reported: a chain that
+                        // exists but handed none out (a timeout, a surface error), or a rebuild that failed and named
+                        // the allocation it was refused.
                         owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
                                                       DiagnosticCategory::UnsupportedRequest,
                                                       u8"vk.window.acquire_failed",
                                                       why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why)));
                     }
-                    recording.refused_pass = true;
+                    recording.window_refused = true;
+                    recording.refused_pass   = true;
                     continue;
                 }
                 owner.window_reports.acquire.rearm(); // the image arrived: this episode is over
@@ -1658,6 +1685,16 @@ Device::FrameDriver::PassWalk Device::FrameDriver::claimPasses(const FrameDescri
                 recording.window_acquired = true;
                 recording.picture_owed    = true;
             }
+            if (mode == PassMode::Record && !recording.window_acquired) {
+                // A LATER WINDOW PASS IN A FRAME WHOSE ACQUIRE ALREADY FAILED: the refusal was reported once, and there
+                // is still no image to draw into.
+                recording.refused_pass = true;
+                continue;
+            }
+            // THIS PASS FOUND A PRESENTER IT CAN DRAW INTO: the two episodes that name the ways it could not are over
+            // (see ReportOnce - a condition is re-armed where it ends, not at shutdown).
+            owner.window_reports.presenter.rearm();
+            owner.window_reports.not_ready.rearm();
             if (!claim_pass_samples(draw, entry)) {
                 continue;
             }

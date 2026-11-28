@@ -384,7 +384,7 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (11)
+## research/ — research and proposals (12)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted. Every proposal and audit this tree carried has been converted except these records,
@@ -525,6 +525,24 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
+- `graphics-2026-11-28-review-20.md` — the twentieth pass: **review 19's five unread seams**, each asked one question -
+  the window's swapchain rebuild, the device-choice filter against the enable list, the recorder's shadow diff, the
+  pool's tests as oracles, and the appfw surface below the paint loop. Two findings, both in the rebuild: `acquire` asks
+  `ready()` (no chain) before `needs_recreate` (rebuild it) while `createSwapchain` destroys the old chain as its first
+  act, so one failed rebuild - a zero extent, a refused `vkCreateSwapchainKHR`, a refused depth-image allocation - ends
+  the window for the rest of the session, and the `Z19` repair ("the next frame re-announces the size") cannot fire
+  because a re-announced size only raises the flag the guard skipped (`Z23`, high); and `VK_SUBOPTIMAL_KHR` from the
+  acquire is a SUCCESS that `acquire` treats as a failure - dropping the image and paying a device idle plus a full
+  rebuild inside the same call - while `present` treats the same code as "presented, rebuild next time" (`Z24`). The
+  other three areas read clean with the property that makes them so: the filter and the enable list are one statement per
+  field and the capabilities are built from the values `pEnabledFeatures` carried; the recorder's shadow is reset exactly
+  once per command buffer, with the two rules an edit would break written beside it; and the pool's cases assert numbers
+  and not shapes. **Both were fixed the same day, in two places each** (§2.2 / §2.3 of the page): `destroySwapchain` raises
+  `needs_recreate` wherever a chain is removed, `acquire`'s guard asks the window rather than the chain, and the frame walk
+  asks a recorded frame for its image (the acquire, which repairs) while a warm-up still asks for the chain -
+  `VkWindowPresentTest.ARebuildThatFailsIsRetriedByTheNextFrame`, red under each of the two guards mutated back. `Z24`'s
+  branch rides on the same lines and has NO witness on this machine (no driver here answers `SUBOPTIMAL` from an acquire),
+  which is why this round adds one backlog entry, `T72`, for that case.
 - `async-2026-11-27-review-1.md` — the first async pass: **what `Destroy` assumes, who owns a completion, and which thread
   the continuation runs on** (the 28 headers read line by line against the design page's contracts; the suite read by its
   index, 183 green; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -

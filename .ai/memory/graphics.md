@@ -184,6 +184,18 @@
   When writing such a case, first ask “will the request really create a new block”: on an integrated device device-local and host-visible may be the **same**
   memory type, so a small target slices into an existing block and the injection point never triggers (the case uses 4096×4096 RGBA8 = 64 MiB to get past it).
 
+- **"No chain" is not "no window", and a rebuild destroys before it builds (2026-11-28, review 20 `Z23` / `Z24`)**: `WindowTarget::createSwapchain` waits
+  the device idle and destroys the OLD chain first, so every failure it can answer (a zero extent, a refused `vkCreateSwapchainKHR`, a refused depth image)
+  leaves an ATTACHED target with NO chain. Two guards made that one failure permanent by asking `ready()` ("a chain exists") where the question was "may this
+  run": `WindowTarget::acquire`'s guard and `claimPasses`'s window branch - so the only call that could repair the target was the call both guards stopped.
+  The rule now: `destroySwapchain` raises `needs_recreate` (the one function that removes a chain), `acquire`'s guard asks `attached && !detached` and BUILDS
+  what is owed, a RECORDED frame asks for its IMAGE (the acquire repairs), and a WARM-UP still asks for the CHAIN because it acquires nothing (`P11`).
+  Witness: `VkWindowPresentTest.ARebuildThatFailsIsRetriedByTheNextFrame`, red with either guard restored. **Writing that case has its own trap**: a rebuild of
+  the SAME extent re-uses the depth slice it has just released (the pool fills the hole, granularity page and all), so a refusal is only reachable when the
+  request grows past the pool's largest first-fill block - 64 MiB, i.e. a 4096×4096 D24S8 depth, hence the resized host window. Related: `VK_SUBOPTIMAL_KHR`
+  from an ACQUIRE is a success with a rebuild owed to the next call (the meaning `present` gives the same code); no driver on this machine produces it, so
+  `../backlog/graphics.md` `T72` holds the case.
+
 ## 6. Evidence and gates
 
 - **The frame report can answer "which pass is expensive" (2026-11-15, A5)**: in `FrameReport::timing`, `FrameTiming::passes` is `{pass name, gpu_micros}` in execution order,

@@ -704,11 +704,22 @@ and every cache has a witness a test can read.**
 
 - **Behaviour**: `WindowSystem` creates the surface (X11 / xcb); the swap chain is FIFO with `minImageCount + 1`, `currentTransform`, a composite-alpha fallback, and
   prefers BGRA8 / RGBA8 sRGB; **one present-wait semaphore per swap-chain image**; `vkAcquireNextImageKHR` has a 1 s timeout, and a timeout skips "this frame got no
-  image" and reports once per episode; `OUT_OF_DATE` / `SUBOPTIMAL` rebuild.
-- **An unready presenter names its own cause** (`G4`, review 19 `Z14`): a window pass whose presenter exists but has no
-  live swapchain answers `vk.window.not_ready` with the window's own state (`WindowTarget::presentationState`:
-  `Detached` / `NotAttached` / `NoSwapchain`), while `vk.window.presenter_missing` is kept for "no presenter this device
-  handed out" - the sentence used to accuse the host of a foreign presenter when the target's own rebuild had failed.
+  image" and reports once per episode; `OUT_OF_DATE` rebuilds and asks once more, while `SUBOPTIMAL` is an image WITH A REBUILD
+  OWED - the meaning `present` gives it, so the frame draws and presents from the chain it has and the next acquire replaces it
+  (review 20 `Z24`).
+- **A failed rebuild is a state, not an ending** (`G1`, review 20 `Z23`): a target that was ATTACHED owes a chain, and
+  `destroySwapchain` - the one function that removes one - raises `needs_recreate`, so an acquire that finds no chain builds it
+  instead of refusing. THE FRAME WALK ASKS THE QUESTION EACH MODE NEEDS: a recorded frame asks for its IMAGE (the acquire, which
+  is what repairs), a warm-up asks for the CHAIN (it acquires nothing, `P11`). Both used to ask `ready()` first, and because the
+  rebuild destroys the old chain BEFORE it builds the new one, one failed rebuild - a zero extent, a refused
+  `vkCreateSwapchainKHR`, a refused depth-image allocation - ended the window for the session.
+  Case: `VkWindowPresentTest.ARebuildThatFailsIsRetriedByTheNextFrame` (the refusal injected through
+  `Device::setMemoryBlockCreator`, the repair required of the next frame).
+- **An unready presenter names its own cause** (`G4`, review 19 `Z14`): a window pass whose presenter exists but cannot present
+  answers `vk.window.not_ready` with the window's own state (`WindowTarget::presentationState`: `Detached` / `NotAttached`, and
+  `NoSwapchain` for a warm-up - a recorded frame asks the acquire, whose failure is `vk.window.acquire_failed` with the target's
+  own sentence), while `vk.window.presenter_missing` is kept for "no presenter this device handed out" - the sentence used to
+  accuse the host of a foreign presenter when the target's own rebuild had failed.
 - **Constraints**: `C1`, `C2`, `R3`.
 - **Acceptance**: `WindowPresentTest`, `ProbeTest`; `T6` (a real host).
 - **Caveat**: `P13` (suspect the environment first when a window test goes red; the swap-chain semaphores are one per image and cannot be shared).

@@ -432,6 +432,83 @@ TEST(VkWindowPresentTest, AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePres
 #endif
 }
 
+TEST(VkWindowPresentTest, ARebuildThatFailsIsRetriedByTheNextFrame)
+{
+#if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)
+    GTEST_SKIP() << "this build has no window instrument (the xcb development package is missing)";
+#else
+    // REVIEW 20 / Z23. `createSwapchain` destroys the old chain as its FIRST act, so every way a rebuild can fail - a
+    // zero extent, a refused `vkCreateSwapchainKHR`, a refused depth-image allocation - leaves the target ATTACHED WITH
+    // NO CHAIN. None of those facts is about the window: it still has one, and the pool may serve the next attempt. The
+    // state used to be terminal anyway, because `acquire` asked `ready()` (does a chain exist?) before `needs_recreate`
+    // (build one), and the frame walk asked `ready()` before it called the acquire at all - so the only call that could
+    // repair the target was the call both guards stopped, and the window answered `Skipped` for the rest of the
+    // session. This case reaches that state through the door the failure class has (`Device::setMemoryBlockCreator`)
+    // and requires the next frame to present.
+    TestDisplay display;
+    if (!display.open()) {
+        GTEST_SKIP() << display.skipReason();
+    }
+    TestHostWindow window(display, kWindowWidth, kWindowHeight);
+    if (window.handle() == nullptr) {
+        GTEST_SKIP() << "a host window could not be created on this desktop";
+    }
+    ASSERT_TRUE(window.wasViewableAtCreation()) << "the fixture waits for a viewable window before a case presents anything";
+
+    const DeviceDesc desc{ DevicePresentation::Handle, window.handle() };
+    auto             backend = RenderBackendRegistry::instance().create(u8"vk", desc);
+    ASSERT_NE(backend, nullptr) << "the factory did not answer the vk backend";
+
+    SurfaceTargetResult                            result = SurfaceTargetResult::NoPresentation;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(window.handle(), &result);
+    ASSERT_NE(target, nullptr) << "createSurfaceTarget answered " << static_cast<int>(result);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+    auto* const window_target = dynamic_cast<vn::backend_vk::WindowTarget*>(target);
+    ASSERT_NE(window_target, nullptr);
+
+    const FrameDescription frame = windowFrame();
+    ASSERT_EQ(presentUntilReady(*backend, frame, target, 40), PresentOutcome::Presented);
+    ASSERT_EQ(window_target->presentationState(), vn::backend_vk::WindowTarget::PresentationState::Ready);
+
+    // THE REBUILD IS MADE TO FAIL, AND THE DEPTH IMAGE IS WHERE IT FAILS (see MemoryBlockSizes): the pool creates a
+    // block only when none of its free runs can hold the request, and that `vkAllocateMemory` is the one step of a
+    // rebuild a test can make fail. 4096x4096 D24S8 is 64 MiB - the pool's LARGEST first-fill block - and the block the
+    // first chain built has been used since, so the request is a block creation, which the installed creator refuses.
+    constexpr int kBigWindow = 4096;
+    ASSERT_TRUE(window.resize(kBigWindow, kBigWindow))
+        << "the fixture could not resize its window: a surface that keeps its size never asks for a new chain";
+    target->resize(kBigWindow, kBigWindow);
+
+    int refusals = 0;
+    device->setMemoryBlockCreator([&refusals](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        ++refusals;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    });
+    const PresentOutcome refused = backend->executeFrame(frame, target);
+    device->setMemoryBlockCreator({});
+    ASSERT_GT(refusals, 0) << "the injected refusal was never reached: the rebuild's depth image fitted an open block";
+    EXPECT_NE(refused, PresentOutcome::Presented) << "a frame whose chain could not be built presented a picture";
+    EXPECT_EQ(window_target->presentationState(), vn::backend_vk::WindowTarget::PresentationState::NoSwapchain)
+        << "the refused rebuild was supposed to leave the target attached with no chain (the old one is destroyed "
+           "before the new one is built) - that is the state this case is about";
+
+    // THE REPAIR IS THE NEXT FRAME: the target is still attached, so it owes a chain, and the pool serves it again.
+    EXPECT_EQ(presentUntilReady(*backend, frame, target, 40), PresentOutcome::Presented)
+        << "one failed rebuild ended the window for the session: the frame walk never asked the target for the chain "
+           "it owed";
+    EXPECT_EQ(window_target->presentationState(), vn::backend_vk::WindowTarget::PresentationState::Ready);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "validation reported something on the repair path";
+
+    backend->shutdown();
+#endif
+}
+
 TEST(VkWindowPresentTest, AWindowHandleMovesWithoutRebuildingTheDevice)
 {
 #if !defined(VN_TEST_HAVE_WINDOW_INSTRUMENT)

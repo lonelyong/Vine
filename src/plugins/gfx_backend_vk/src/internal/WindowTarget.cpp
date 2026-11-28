@@ -243,7 +243,12 @@ struct WindowTarget::Impl {
      */
     void destroySwapchainWhenIdle() noexcept
     {
-        if (device.device != VK_NULL_HANDLE && device.table != nullptr) {
+        // NOTHING THE QUEUE CAN STILL NAME, SO NOTHING TO STAND IT DOWN FOR: a target that lost its chain outright (a
+        // rebuild that failed) is in that state every frame until the pool serves it again, and waiting for a device
+        // that is already idle would put a stall on each retry (see WindowTarget::acquire).
+        const bool holds_nothing = swapchain == VK_NULL_HANDLE && depth == VK_NULL_HANDLE && depth_view == VK_NULL_HANDLE &&
+                                   views.empty() && render_finished.empty();
+        if (!holds_nothing && device.device != VK_NULL_HANDLE && device.table != nullptr) {
             (void)device.table->vkDeviceWaitIdle(device.device);
         }
         destroySwapchain();
@@ -255,6 +260,11 @@ struct WindowTarget::Impl {
      */
     void destroySwapchain() noexcept
     {
+        // THE CHAIN IS OWED FROM HERE ON (`G4`, review 20 `Z23`): this is the ONE function that removes a chain, so the
+        // flag that says "a build is due" is raised HERE rather than by each caller - `acquire` reads it to decide
+        // whether to rebuild, and a caller that raised it by hand could forget, leaving a target with no chain and
+        // nothing asking for one. Only a complete build (see createSwapchain) clears it.
+        needs_recreate = true;
         if (device.device != VK_NULL_HANDLE && device.table != nullptr) {
             if (depth_view != VK_NULL_HANDLE) {
                 device.table->vkDestroyImageView(device.device, depth_view, nullptr);
@@ -528,9 +538,16 @@ bool WindowTarget::acquire(vn::String* why)
         }
         return false;
     }
-    if (!ready()) {
+    // THE GUARD ASKS THE WINDOW, NOT THE CHAIN (`G1` / `G4`, review 20 `Z23`). `ready()` answers "a chain exists right
+    // now", and `createSwapchain` destroys the old chain BEFORE it builds the new one - so every way a rebuild can fail
+    // (a zero extent, a refused `vkCreateSwapchainKHR`, a refused depth-image allocation) left an attached target with
+    // no chain, and a guard on `ready()` refused it forever: the only call that could repair it was the call the guard
+    // stopped. An attached, undetached target OWES a chain, and `needs_recreate` is what says so (see destroySwapchain),
+    // so "there is none" is a state to repair here, never a reason to refuse.
+    if (!impl->attached || impl->detached) {
         if (why != nullptr) {
-            *why = vn::String(u8"vk: the window target has no live swapchain (a detached or failed window)");
+            *why = vn::String(u8"vk: the window target has no window to present on (its host window is gone, or it was "
+                              "never attached to this device)");
         }
         return false;
     }
@@ -552,9 +569,17 @@ bool WindowTarget::acquire(vn::String* why)
                                                                           impl->image_available,
                                                                           VK_NULL_HANDLE,
                                                                           &index);
-        if (result == VK_SUCCESS) {
+        // `VK_SUBOPTIMAL_KHR` IS A SUCCESS (the same meaning `present()` gives it): the image index and the semaphore
+        // signal are valid, and what the code states is that the chain no longer matches the surface - so this frame
+        // draws and presents from it, and the NEXT acquire builds the replacement. Answering it as a failure dropped a
+        // usable image, paid a device idle plus a full rebuild inside the frame, and made a second rebuild (with its own
+        // ways to fail) part of a healthy resize (review 20 `Z24`).
+        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
             impl->image_index    = index;
             impl->image_acquired = true;
+            if (result == VK_SUBOPTIMAL_KHR) {
+                impl->needs_recreate = true; // the chain is owed a replacement; the next acquire builds it
+            }
             return true;
         }
         if (result == VK_ERROR_DEVICE_LOST) {
@@ -567,7 +592,7 @@ bool WindowTarget::acquire(vn::String* why)
             }
             return false;
         }
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
             impl->needs_recreate = true;
             if (attempt == 0 && impl->createSwapchain(why)) {
                 continue;

@@ -46,6 +46,8 @@ struct WindowDevice {
  *   every target made through it.
  * - LIFECYCLE. @ref attach is called once the logical device exists; the first @ref acquire builds the swapchain, and
  *   a resize or an out-of-date answer rebuilds it (`vkDeviceWaitIdle` first, then the old swapchain is replaced).
+ *   A REBUILD THAT FAILS IS A STATE, NOT AN ENDING: the old chain is destroyed before the new one is built, so a
+ *   failure leaves the target attached with a chain OWED, and the next @ref acquire builds it (see @ref ready).
  *   A window the platform destroyed under the target leaves it DETACHED: every later call answers the truth instead
  *   of touching a dead surface.
  * - THE WINDOW PIXELS ARE THE SWAPCHAIN'S. A presented image cannot be read back (that is the platform's picture),
@@ -62,7 +64,7 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
         Ready,       // A swapchain and the depth image it draws with exist.
         Detached,    // No live host window: setWindowHandle(nullptr), or the move to a new handle could not be rebuilt.
         NotAttached, // attach() was never called, or it was refused.
-        NoSwapchain, // Attached, but the last swapchain (re)build produced none.
+        NoSwapchain, // Attached, but the last swapchain (re)build produced none: the next acquire builds one.
     };
 
   public:
@@ -132,11 +134,16 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
     [[nodiscard]] VkSurfaceKHR surfaceHandle() const noexcept;
 
     /**
-     * @brief Acquires the next image and makes sure the swapchain objects exist.
+     * @brief Acquires the next image, building the swapchain first when the target owes one.
      *
      * @details
-     * - Called once per frame by the device, before the window's passes are recorded. An out-of-date surface is
-     *   rebuilt here (once per call); a detached or failed target answers false and the frame presents nothing.
+     * - Called once per frame by the device, before the window's passes are recorded. It BUILDS WHAT THE TARGET OWES:
+     *   the first chain, the chain a resize asked for, and the chain a failed rebuild left missing (the rebuild
+     *   destroys the old chain before it builds the new one, so a failure leaves none - review 20 `Z23`).
+     * - ONLY A WINDOW THIS TARGET CANNOT PRESENT ON REFUSES: detached, or never attached. "There is no chain right
+     *   now" is not that - asking it as a guard is what used to make one failed rebuild permanent.
+     * - An out-of-date answer rebuilds and asks once more; a SUBOPTIMAL one is an image with a rebuild owed to the next
+     *   call (the same meaning @ref present gives it), so the frame draws and the chain follows on the next frame.
      *
      * @param why Receives the reason when no image could be acquired, or null.
      * @return true when @ref imageIndex names a recorded image.
