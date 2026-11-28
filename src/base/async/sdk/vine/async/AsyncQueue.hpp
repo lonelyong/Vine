@@ -15,7 +15,6 @@
 
 #include "Sleep.hpp"
 #include "Task.hpp"
-#include "WaiterList.hpp"
 
 VN_ASYNC_NS_BEGIN
 
@@ -330,14 +329,23 @@ class QueuePopAwaiter {
         return !state_->items.empty() || state_->closed;
     }
 
-    bool await_suspend(std::coroutine_handle<> h) noexcept
+    /**
+     * @brief Parks this pop in the popper list.
+     *
+     * @param h Coroutine to park.
+     * @return false when a value is already there (the caller takes it inline).
+     * @throws std::bad_alloc when the waiter list cannot grow; the coroutine is then not suspended, and the exception
+     *         reaches it from the `co_await` (the language resumes a coroutine whose await_suspend threw).
+     */
+    bool await_suspend(std::coroutine_handle<> h)
     {
         handle_ = h;
         std::lock_guard<std::mutex> lock(state_->mutex);
         if (!state_->items.empty() || state_->closed) {
             return false;
         }
-        return detail::tryRegisterWaiter(state_->poppers, h, failure_);
+        state_->poppers.push_back(h);
+        return true;
     }
 
     /**
@@ -354,10 +362,6 @@ class QueuePopAwaiter {
      */
     std::optional<T> await_resume()
     {
-        if (failure_) {
-            std::rethrow_exception(std::exchange(failure_, nullptr));
-        }
-
         std::optional<T> value;
         bool             closed = false;
         {
@@ -395,9 +399,6 @@ class QueuePopAwaiter {
   private:
     std::shared_ptr<AsyncQueueState<T>> state_;
     std::coroutine_handle<>             handle_{};
-
-    /// Why the waiter could not be registered; rethrown by await_resume().
-    std::exception_ptr failure_{};
 
     /// true when await_resume() took an item while a bounded pusher was parked.
     bool woke_peer_{ false };
@@ -452,37 +453,31 @@ class QueuePushAwaiter {
      * @brief Enqueues under the lock, or parks this push until room appears.
      *
      * @details
-     * - noexcept is required at a suspension point, so a failing enqueue (T's move constructor
-     *   or the deque's allocation) is captured in failure_ and rethrown from await_resume(), on
-     *   the coroutine's own stack. Letting it escape would terminate the process.
+     * - A failing enqueue (T's move constructor, the deque's allocation) and a failing registration both escape this
+     *   function: the language catches a throw from `await_suspend`, resumes the coroutine and rethrows at the
+     *   `co_await`, so either failure reaches the task as its error instead of terminating the process.
      * - A waiting popper is only recorded here; push() hands the item over by suspending at
      *   WakePeerAndContinue, never from this still-running frame.
      *
      * @param h Coroutine to park when the queue is full.
-     * @return false to resume inline, either because the value was enqueued or to report a failure.
+     * @return true to suspend; false to resume inline (enqueued, closed, or re-await).
+     * @throws Whatever the enqueue itself throws, and std::bad_alloc from the waiter list.
      */
-    bool await_suspend(std::coroutine_handle<> h) noexcept
+    bool await_suspend(std::coroutine_handle<> h)
     {
         handle_ = h;
-        try {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->closed) {
-                return false; // await_resume() reports the closed queue.
-            }
-            if (state_->capacity == 0 || state_->items.size() < state_->capacity) {
-                detail::enqueueLocked(state_, std::move(value_));
-                enqueued_  = true;
-                woke_peer_ = !state_->poppers.empty();
-            }
-            else {
-                return detail::tryRegisterWaiter(state_->pushers, h, failure_);
-            }
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->closed) {
+            return false; // await_resume() reports the closed queue.
         }
-        catch (...) {
-            failure_ = std::current_exception();
-            return false; // await_resume() rethrows the enqueue failure.
+        if (state_->capacity == 0 || state_->items.size() < state_->capacity) {
+            detail::enqueueLocked(state_, std::move(value_));
+            enqueued_  = true;
+            woke_peer_ = !state_->poppers.empty();
+            return false; // Enqueued under the lock; nothing left to wait for.
         }
-        return false; // Enqueued under the lock; nothing left to wait for.
+        state_->pushers.push_back(h);
+        return true;
     }
 
     /**
@@ -498,9 +493,6 @@ class QueuePushAwaiter {
      */
     bool await_resume()
     {
-        if (failure_) {
-            std::rethrow_exception(std::exchange(failure_, nullptr));
-        }
         if (enqueued_) {
             return true; // Already enqueued under the lock in await_suspend().
         }
@@ -545,9 +537,6 @@ class QueuePushAwaiter {
     std::shared_ptr<AsyncQueueState<T>> state_;
     T                                   value_;
     std::coroutine_handle<>             handle_{};
-
-    /// Why the waiter could not be registered; rethrown by await_resume().
-    std::exception_ptr failure_{};
 
     /// true once await_suspend() enqueued the value itself, so await_resume() has nothing left to do.
     bool enqueued_{ false };

@@ -3,14 +3,20 @@
 #include "async_global.hpp"
 
 #include <coroutine>
+#include <exception>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 
 #include <vine/ThreadPool.hpp>
 
 #include "Concepts.hpp"
 #include "Task.hpp"
+#include "TaskCompletionSource.hpp"
 
 VN_ASYNC_NS_BEGIN
 
@@ -36,12 +42,42 @@ class ThreadPoolScheduler {
 
     /**
      * @brief Awaiter that schedules the continuation onto a pool worker.
+     *
+     * @details
+     * - The queued resume is a **claim**, not a bare handle: a worker takes the handle out of the
+     *   claim under its lock, so a hop abandoned while it was still queued resumes nothing.
+     *   `~ScheduleAwaiter` withdraws it, which is what keeps a `Destroy` composition that lost its
+     *   race from leaving a resume of a freed frame in the pool's queue.
+     * - One window is left, and it is the framework contract of `async_global.hpp`: a frame is not
+     *   destroyed while the thread that took its handle is resuming it.
      */
     class ScheduleAwaiter {
       public:
         explicit ScheduleAwaiter(vn::ThreadPool& pool) noexcept
           : pool_(pool)
         {}
+
+        ScheduleAwaiter(const ScheduleAwaiter&)            = delete;
+        ScheduleAwaiter& operator=(const ScheduleAwaiter&) = delete;
+
+        /**
+         * @brief Withdraws a hop no worker has taken yet, so it never resumes a destroyed frame.
+         *
+         * @details
+         * - Runs when the awaiting coroutine is destroyed before its queued resume ran: a `Destroy`
+         *   composition that lost the race, a cancelled scope, a shutting-down caller.
+         * - The handle is cleared under the claim's lock, so a worker that arrives later finds
+         *   nothing and resumes nothing. A worker that already took the handle is inside the
+         *   resume, which is the one case `async_global.hpp` keeps out of this destructor's reach.
+         */
+        ~ScheduleAwaiter()
+        {
+            if (claim_) {
+                std::lock_guard<std::mutex> lock(claim_->mutex);
+                claim_->abandoned = true;
+                claim_->waiter    = {};
+            }
+        }
 
         [[nodiscard]]
         bool await_ready() const noexcept
@@ -57,16 +93,43 @@ class ThreadPoolScheduler {
          */
         void await_suspend(std::coroutine_handle<> h)
         {
+            auto claim     = std::make_shared<Claim>();
+            claim->waiter  = h;
             // The refusal is the pool's to report (ThreadPool::enqueue throws std::logic_error) and it propagates here:
             // the awaiter's promise is the thread it lands on, so resuming elsewhere or never resuming are both worse.
-            (void)pool_.enqueue([h]() mutable { h.resume(); });
+            (void)pool_.enqueue([claim]() {
+                std::coroutine_handle<> resume{};
+                {
+                    std::lock_guard<std::mutex> lock(claim->mutex);
+                    if (!claim->abandoned) {
+                        resume = std::exchange(claim->waiter, {});
+                    }
+                }
+                if (resume) {
+                    resume.resume(); // Never hold the claim's lock across the resume.
+                }
+            });
+            claim_ = std::move(claim);
         }
 
-        void await_resume() const noexcept
-        {}
+        /// Drops the claim: the hop landed, so nothing is left to withdraw.
+        void await_resume() noexcept
+        {
+            claim_.reset();
+        }
 
       private:
+        /// One queued resume: who to resume, and whether the awaiter took it back.
+        struct Claim {
+            std::mutex              mutex;
+            std::coroutine_handle<> waiter{};
+            bool                    abandoned{ false };
+        };
+
         vn::ThreadPool& pool_;
+
+        /// The claim of the hop in flight; empty before `await_suspend` and after the resume.
+        std::shared_ptr<Claim> claim_;
     };
 
     /**
@@ -87,12 +150,18 @@ class ThreadPoolScheduler {
 /**
  * @brief Runs a callable on a thread pool; the C# Task.Run equivalent.
  *
- * The returned task, when awaited, hops to a pool worker thread, invokes the
- * callable there, and yields its result (or void). Arguments are captured by
- * value into the task frame and moved into the callable, so a move-only
- * argument (std::unique_ptr, for example) works as long as the callable takes
- * it by value. Exceptions thrown by the callable propagate out of the returned
- * task.
+ * @details
+ * - The callable runs on a worker and the returned task completes from it: the awaiting coroutine is
+ *   parked on the pool's completion for the whole call, so a composition that owns this task owns a
+ *   **suspended** frame even while the callable runs. That is what makes `CancelPolicy::Destroy`
+ *   bounded here: abandoning the task frees the frame and drops the value, and the callable finishes
+ *   on its own thread (see `async-design.md` 2.10).
+ * - The work is queued when the task first runs, so a lazy task that is never awaited enqueues
+ *   nothing.
+ * - Arguments are moved into the queued work, so a move-only argument (std::unique_ptr, for
+ *   example) works as long as the callable takes it by value.
+ * - Exceptions thrown by the callable, and the pool's refusal to take the work, both surface as this
+ *   task's error.
  *
  * @tparam F Callable type.
  * @tparam Args Argument types.
@@ -105,20 +174,34 @@ template <typename F, typename... Args>
 [[nodiscard]]
 Task<std::invoke_result_t<F, Args...>> runOn(vn::ThreadPool& pool, F f, Args... args)
 {
-    // Hop to a pool worker before invoking the callable.
-    co_await ThreadPoolScheduler{ pool }.schedule();
+    using Result = std::invoke_result_t<F, Args...>;
 
-    // The stored callable and arguments are our own copies, so they are moved into the call: a
-    // by-value parameter that can only be moved (std::unique_ptr, a move-only payload struct)
-    // would not bind to an lvalue, and std::invoke_result_t<F, Args...> already describes the
-    // by-value call this performs.
-    if constexpr (std::is_void_v<std::invoke_result_t<F, Args...>>) {
-        std::invoke(std::move(f), std::move(args)...);
-        co_return;
-    }
-    else {
-        co_return std::invoke(std::move(f), std::move(args)...);
-    }
+    auto source = std::make_shared<TaskCompletionSource<Result>>();
+    // The callable and its arguments travel as one heap block so the queued closure is a copyable,
+    // const-callable lambda: ThreadPool::enqueue wraps what it is given in std::bind, whose call
+    // operator may be const, and a mutable capture would not survive that wrapper.
+    auto work = std::make_shared<std::tuple<F, Args...>>(std::move(f), std::move(args)...);
+
+    // A refusal (a stopped pool) is thrown on the coroutine's own stack, so it becomes this task's
+    // error exactly as it did when the hop reported it (design 2.7).
+    (void)pool.enqueue([source, work]() {
+        try {
+            if constexpr (std::is_void_v<Result>) {
+                std::apply([](F& callable, Args&... arguments) { std::invoke(std::move(callable), std::move(arguments)...); }, *work);
+                source->setResult();
+            }
+            else {
+                Result value = std::apply([](F& callable, Args&... arguments) -> Result { return std::invoke(std::move(callable), std::move(arguments)...); },
+                                          *work);
+                source->setResult(std::move(value));
+            }
+        }
+        catch (...) {
+            source->setException(std::current_exception());
+        }
+    });
+
+    co_return co_await source->task();
 }
 
 /**

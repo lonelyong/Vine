@@ -193,7 +193,22 @@ class Scope {
         // yet, so this is the last moment at which it can still be told what environment it lives
         // in (see currentStopToken()).
         detail::TaskEnvironment::setToken(task, source_.get_token());
-        detail::runScopeChild(state_, std::move(task));
+        try {
+            detail::runScopeChild(state_, std::move(task));
+        }
+        catch (...) {
+            // The child never came into existence (its frame could not be allocated): give the tick back, or the next
+            // join() waits for a child that was never spawned.
+            bool done_now = false;
+            {
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                done_now = (--state_->pending == 0);
+            }
+            if (done_now) {
+                state_->done.set();
+            }
+            throw;
+        }
     }
 
     /**

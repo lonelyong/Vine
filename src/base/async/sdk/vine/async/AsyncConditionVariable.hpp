@@ -183,7 +183,10 @@ inline CvWaiter::~CvWaiter() noexcept
  * Lifecycle (framework contract, see async_global.hpp): the internal mutex
  * protects the notified flag and the intrusive waiter list. The list stores
  * raw waiter pointers living in coroutine frames, so:
- *   - the CV must outlive every coroutine awaiting it;
+ *   - a waiting coroutine may be destroyed while queued (it unregisters itself), but not concurrently with the notify
+ *     that is resuming it (async_global.hpp);
+ *   - the condition variable object may be destroyed by a waiter released inside notify_one/notify_all - both take a
+ *     reference to the shared state for the whole call;
  *   - a coroutine must not be destroyed concurrently with the notify that
  *     resumes it (no concurrent destroy during the resume window);
  *   - resuming a waiter can synchronously destroy sibling waiters (a whenAny
@@ -257,24 +260,28 @@ class AsyncConditionVariable {
      */
     void notify_one() noexcept
     {
+        // One reference for the whole call: the waiter released here may be the object that destroys the condition
+        // variable, and the state has to outlive the wake-up it is doing.
+        auto state = state_;
+
         detail::CvWaiter* w = nullptr;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->head) {
-                w            = state_->head;
-                state_->head = w->next_;
-                if (!state_->head) {
-                    state_->tail = nullptr;
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (state->head) {
+                w            = state->head;
+                state->head = w->next_;
+                if (!state->head) {
+                    state->tail = nullptr;
                 }
                 else {
-                    state_->head->prev_ = nullptr;
+                    state->head->prev_ = nullptr;
                 }
                 w->next_   = nullptr;
                 w->prev_   = nullptr;
                 w->queued_ = false;
             }
             else {
-                state_->notified = true; // Preserve the notification.
+                state->notified = true; // Preserve the notification.
             }
         }
         if (w) {
@@ -312,27 +319,31 @@ class AsyncConditionVariable {
      */
     void notify_all() noexcept
     {
+        // One reference for the whole loop: a waiter released here may be the object that destroys the condition
+        // variable, and the next iteration still needs the mutex and the list.
+        auto state = state_;
+
         std::uint64_t boundary = 0;
         {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            if (!state_->head) {
-                state_->notified = true; // Preserve the notification.
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (!state->head) {
+                state->notified = true; // Preserve the notification.
                 return;
             }
-            boundary = ++state_->notify_epoch;
+            boundary = ++state->notify_epoch;
         }
         for (;;) {
             detail::CvWaiter* w = nullptr;
             {
-                std::lock_guard<std::mutex> lock(state_->mutex);
-                if (state_->head && state_->head->epoch_ < boundary) {
-                    w            = state_->head;
-                    state_->head = w->next_;
-                    if (!state_->head) {
-                        state_->tail = nullptr;
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (state->head && state->head->epoch_ < boundary) {
+                    w            = state->head;
+                    state->head = w->next_;
+                    if (!state->head) {
+                        state->tail = nullptr;
                     }
                     else {
-                        state_->head->prev_ = nullptr;
+                        state->head->prev_ = nullptr;
                     }
                     w->next_   = nullptr;
                     w->prev_   = nullptr;

@@ -474,6 +474,12 @@ Task<void> whenDriver(WhenMode mode, std::vector<AnyTask> tasks, CancellationTok
 
     const std::size_t count = tasks.size();
     if (count == 0) {
+        // "First of none" has no answer, and completing as a success without one would be the silent answer this
+        // module refuses everywhere else (design 2.7). Both whenAny spellings say so the same way: the typed overload
+        // throws here too, and whenAll - which only ever waits - keeps its identity answer.
+        if (mode == WhenMode::Any) {
+            throw std::invalid_argument("async::whenAny: empty task list");
+        }
         co_return;
     }
 

@@ -35,8 +35,9 @@ struct LatchState {
  * without suspending and isReady() reports true from the start. Thread-safe.
  *
  * Threading: countDown() may be called from any thread, and the waiters it releases are
- * resumed on the thread that called it. The latch must outlive every coroutine waiting on it
- * (a destroyed waiter unregisters itself, see AsyncEvent).
+ * resumed on the thread that called it. A destroyed waiter unregisters itself (see AsyncEvent),
+ * and the latch object itself may be destroyed by a waiter released inside that resume, because
+ * the call holds the shared state for its duration.
  */
 class AsyncLatch {
   public:
@@ -77,7 +78,11 @@ class AsyncLatch {
             ready = (state_->count == 0);
         }
         if (ready) {
-            state_->done.set();
+            // The latch itself may be destroyed by the last waiter released inside set(), so the state is held here for
+            // the duration of the call: the waiters keep their own reference while they wait, and this one covers the
+            // resume loop that ends their waits.
+            auto state = state_;
+            state->done.set();
         }
     }
 

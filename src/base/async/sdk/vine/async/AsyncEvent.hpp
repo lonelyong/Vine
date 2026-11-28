@@ -23,7 +23,10 @@ VN_ASYNC_NS_BEGIN
  * protects the set flag and the waiter list, NOT the coroutine frames. This
  * intrusive list stores raw Awaiter pointers that live in coroutine frames,
  * so it relies on the following contract:
- *   - the event must outlive every coroutine awaiting it;
+ *   - the event must outlive every coroutine awaiting it, and every set() that resumes one: the list
+ *     and its mutex ARE the event, so a waiter that destroys the event from inside the resume leaves
+ *     set() with nothing to continue on. (AsyncLatch and AsyncConditionVariable hold a reference to
+ *     their shared state for the whole call and do allow it; an intrusive event cannot.)
  *   - a coroutine must not be destroyed concurrently with the set() that
  *     resumes it (no concurrent destroy during the resume window);
  *   - abandoning a wait (destroying the awaiting coroutine while queued) is

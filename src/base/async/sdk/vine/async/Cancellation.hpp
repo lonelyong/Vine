@@ -35,6 +35,12 @@ class TaskCancelledException : public vn::Exception {
  *   what Rust's tokio::select! does ("cancelling the remaining branches", implemented as drop).
  *   The child must be safe to destroy at any suspension point, and it is never told it was
  *   dropped.
+ *   "Suspended" is a property a composition cannot read from a handle, so the specification is
+ *   about what the child is doing: a child parked in this module's own awaiters is suspended and
+ *   is freed; a child running its own code on another thread is not, and freeing it there is
+ *   undefined. `runOn` / `run` keep a callable's child parked while the work runs on a worker;
+ *   a coroutine that hopped with `scheduleOn` and then kept working is the caller's to guard
+ *   (`../design/async-design.md` 2.10).
  * - StopAndWait: the children are asked to stop through the environment token they were handed,
  *   and the composition stays parked until every one of them has finished. This is what Trio
  *   nurseries, Kotlin's coroutineScope and P2300/asio request_stop do, and it is what C#'s

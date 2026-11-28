@@ -15,7 +15,6 @@
 #include "Concepts.hpp"
 #include "DetachedTask.hpp"
 #include "Task.hpp"
-#include "WaiterList.hpp"
 
 VN_ASYNC_NS_BEGIN
 
@@ -157,7 +156,18 @@ class SharedTaskAwaiter {
      *
      * @return false to resume inline when already completed.
      */
-    bool await_suspend(std::coroutine_handle<> h) noexcept
+    /**
+     * @brief Registers as a waiter, starting the shared computation on the first one.
+     *
+     * @details
+     * - Both the start of the computation and the registration may allocate; either failure escapes and the language
+     *   resumes this coroutine and rethrows at the `co_await`, so it becomes the awaiting task's error.
+     *
+     * @param h Coroutine to park.
+     * @return false when the result is already there (the caller reads it inline).
+     * @throws std::bad_alloc when the waiter list cannot grow.
+     */
+    bool await_suspend(std::coroutine_handle<> h)
     {
         handle_           = h;
         bool should_start = false;
@@ -174,13 +184,12 @@ class SharedTaskAwaiter {
         if (should_start) {
             detail::runShared(state_);
         }
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            if (state_->completed) {
-                return false; // Completed during spawn; resume inline.
-            }
-            return detail::tryRegisterWaiter(state_->waiters, h, failure_);
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->completed) {
+            return false; // Completed during spawn; resume inline.
         }
+        state_->waiters.push_back(h);
+        return true;
     }
 
     /**
@@ -191,9 +200,6 @@ class SharedTaskAwaiter {
      */
     decltype(auto) await_resume()
     {
-        if (failure_) {
-            std::rethrow_exception(std::exchange(failure_, nullptr));
-        }
         if (state_->exception) {
             std::rethrow_exception(state_->exception);
         }
@@ -205,9 +211,6 @@ class SharedTaskAwaiter {
   private:
     std::shared_ptr<SharedTaskState<T>> state_;
     std::coroutine_handle<>             handle_{};
-
-    /// Why the waiter could not be registered; rethrown by await_resume().
-    std::exception_ptr failure_{};
 };
 
 } // namespace detail

@@ -35,10 +35,12 @@
 #include <chrono>
 #include <coroutine>
 #include <cstddef>
+#include <future>
 #include <memory>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -3444,12 +3446,28 @@ async::Task<void> pushAndCount(async::AsyncQueue<int>& queue, int value, std::at
 }
 
 /// Waiter container whose registration always fails, so the no-throw path can be exercised.
-struct FailingWaiters {
-    void push_back(std::coroutine_handle<>)
+/// Awaiter whose await_suspend throws: the language catches it, resumes the coroutine and rethrows at
+/// the co_await, which is why the waiter lists register directly instead of capturing a failure.
+struct ThrowingSuspend {
+    bool await_ready() const noexcept
+    {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<>) const
     {
         throw std::bad_alloc{};
     }
+
+    void await_resume() const noexcept
+    {}
 };
+
+async::Task<int> awaitThrowingSuspend()
+{
+    co_await ThrowingSuspend{};
+    co_return 1;
+}
 
 /// Awaiter whose await_suspend result is none of the three forms the language allows.
 struct IllegalSuspendResult {
@@ -3483,19 +3501,13 @@ static_assert(!async::Awaitable<NotAwaitable>);
 static_assert(!async::Awaitable<int>);
 static_assert(!async::Awaitable<void>);
 
-TEST(AsyncDetailTest, AThrowingWaiterListIsReportedInsteadOfEscaping)
+TEST(AsyncDetailTest, AThrowFromAwaitSuspendReachesTheCallerAsTheTaskError)
 {
-    // The waiter lists are std::vectors, so registering a waiter allocates inside await_suspend,
-    // which the awaiters declare noexcept: a thrown bad_alloc there would terminate the process,
-    // and letting it escape would leave the coroutine suspended with nothing holding it. The
-    // failure is captured and rethrown from await_resume() instead - on the coroutine's own
-    // stack, where unhandled_exception() turns it into the task's error.
-    FailingWaiters     waiters;
-    std::exception_ptr failure{};
-
-    EXPECT_FALSE(async::detail::tryRegisterWaiter(waiters, std::coroutine_handle<>{}, failure));
-    ASSERT_NE(failure, nullptr);
-    EXPECT_THROW(std::rethrow_exception(failure), std::bad_alloc);
+    // The waiter lists are std::vectors, so registering a waiter allocates inside await_suspend. That used to be
+    // handled by capturing the failure and rethrowing it from await_resume(), on the belief that an exception
+    // thrown from await_suspend terminates - it does not: the language catches it, resumes the coroutine and
+    // rethrows it at the co_await. This case is the rule the awaiters now rely on.
+    EXPECT_THROW(awaitThrowingSuspend().result(), std::bad_alloc);
 }
 
 TEST(WhenAnyTest, AValueThatCannotBeMovedBecomesTheCompositionsError)
@@ -4152,4 +4164,150 @@ TEST(ScopeTest, ABatchAfterRequestStopGetsAFreshUnrequestedToken)
     ASSERT_TRUE(seen.has_value());
     EXPECT_TRUE(seen->stop_possible()) << "the fresh batch must still be handed the scope's token";
     EXPECT_FALSE(seen->stop_requested()) << "the fresh batch inherited the previous batch's stop request";
+}
+
+// ---------------------------------------------------------------------------
+// What a composition may free, and the answers that used to have two spellings.
+// Each case below was red - or unreachable - before the change it pins.
+// ---------------------------------------------------------------------------
+
+int slowCallable(std::atomic<bool>& finished)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    finished.store(true, std::memory_order_release);
+    return 42;
+}
+
+async::Task<void> hopThenRecord(vn::ThreadPool& pool, std::atomic<bool>& resumed)
+{
+    co_await async::ThreadPoolScheduler{ pool }.schedule();
+    resumed.store(true, std::memory_order_release);
+    co_return;
+}
+
+async::Task<void> destroySourceOnWake(async::TaskCompletionSource<int>* source)
+{
+    EXPECT_EQ(co_await source->task(), 7);
+    delete source; // the completing side holds the state for the rest of its loop
+    co_return;
+}
+
+async::Task<void> destroyLatchOnWake(async::AsyncLatch* latch)
+{
+    co_await latch->wait();
+    delete latch;
+    co_return;
+}
+
+async::Task<int> cancelledAttempt(std::atomic<int>& attempts, std::stop_token token)
+{
+    attempts.fetch_add(1, std::memory_order_relaxed);
+    co_await async::sleepFor(std::chrono::milliseconds(1000), token);
+    co_return 1;
+}
+
+TEST(WithTimeoutTest, TimeoutWhileTheCallableRunsOnTheWorkerIsNotAFree)
+{
+    // The callable outlives the timeout. The composition abandons a task parked on the pool's completion, so
+    // the frame it frees is suspended although the callable is still running. Before this, the frame WAS the
+    // callable's stack: the timer thread freed it and the worker wrote its result into freed memory
+    // (ASan: heap-use-after-free at Task.hpp:71, on every run).
+    vn::ThreadPool    pool(1);
+    std::atomic<bool> finished{ false };
+
+    auto raced = async::withTimeout(async::runOn(pool, [&finished] { return slowCallable(finished); }),
+                                    std::chrono::milliseconds(50));
+    EXPECT_THROW(raced.result(), async::TimeoutException);
+
+    pool.stop(); // joins the worker, so the abandoned callable has finished by now
+    EXPECT_TRUE(finished.load(std::memory_order_acquire)) << "an abandoned callable still finishes on its own thread";
+}
+
+TEST(ThreadPoolSchedulerTest, AnAbandonedHopIsNeverResumed)
+{
+    // A hop is a queued resume of a frame the composition owns; losing the race frees that frame while the
+    // resume is still queued. The queue entry is a claim the awaiter withdraws, so the worker that arrives
+    // later resumes nothing. Before this, it resumed the freed frame (ASan: heap-use-after-free from the
+    // closure at ThreadPoolScheduler.hpp:62).
+    vn::ThreadPool    pool(1);
+    std::atomic<bool> resumed{ false };
+
+    auto gate     = std::make_shared<std::promise<void>>();
+    auto released = gate->get_future().share();
+    (void)pool.enqueue([released] { released.wait(); }); // the only worker is busy
+
+    std::vector<async::AnyTask> race;
+    race.push_back(hopThenRecord(pool, resumed));
+    race.push_back(noop());
+
+    async::whenAny(std::move(race)).result(); // the loser is destroyed with its hop still queued
+
+    gate->set_value();
+    pool.stop(); // drains the queue: the withdrawn hop runs here, and must resume nobody
+    EXPECT_FALSE(resumed.load(std::memory_order_acquire)) << "an abandoned hop resumed its coroutine";
+}
+
+TEST(WhenAnyTest, AnEmptyListHasOneAnswerForBothOverloads)
+{
+    // "First of none" has no answer. It used to complete as a success on the void overload while the typed
+    // one threw - two answers to one question.
+    EXPECT_THROW(async::whenAny(std::vector<async::AnyTask>{}).result(), std::invalid_argument);
+    EXPECT_THROW(async::whenAny(std::vector<async::Task<int>>{}).result(), std::invalid_argument);
+
+    // whenAll only ever waits, so an empty list is already satisfied.
+    EXPECT_NO_THROW(async::whenAll(std::vector<async::AnyTask>{}).result());
+}
+
+TEST(TaskCompletionSourceTest, AWaiterThatDestroysTheSourceInsideTheResume)
+{
+    // The completing call holds the shared state rather than a reference into the source, so a waiter whose
+    // wait ends by closing the session that owns the source is supported. Before, the loop re-locked the
+    // source's own member after the resume (ASan: heap-use-after-free at TaskCompletionSource.hpp:160).
+    auto* source = new async::TaskCompletionSource<int>();
+    {
+        async::Scope scope;
+        scope.spawn(destroySourceOnWake(source));
+        source->setResult(7); // resumes the waiter, which frees the source; the loop then finishes
+        scope.join().result();
+    }
+}
+
+TEST(AsyncLatchTest, ALatchDestroyedByItsLastWaiterDoesNotFreeItsState)
+{
+    // countDown() holds the shared state for the duration of the call, so the last waiter may close the latch
+    // it was waiting on; the resume loop's next iteration still needs the state.
+    auto* latch = new async::AsyncLatch(1);
+    {
+        async::Scope scope;
+        scope.spawn(destroyLatchOnWake(latch));
+        latch->countDown();
+        scope.join().result();
+    }
+}
+
+TEST(RetryTest, CancellationIsNotRetried)
+{
+    // A cancelled attempt used to be swallowed like any other failure: the loop slept its delay and built the
+    // next attempt on the same cancelled token, so a StopAndWait parent sat out attempts - 1 delays. The token
+    // is checked before each attempt and forwarded to the delay; a cancellation ends the loop at once.
+    std::stop_source source;
+    std::atomic<int> attempts{ 0 };
+
+    auto retried = async::retry([&] { return cancelledAttempt(attempts, source.get_token()); },
+                                4,
+                                std::chrono::milliseconds(200),
+                                source.get_token());
+
+    std::thread canceller([&source] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        source.request_stop();
+    });
+
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_THROW(retried.result(), async::TaskCancelledException);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    canceller.join();
+
+    EXPECT_EQ(attempts.load(), 1) << "a cancellation was retried";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(200)) << "the loop sat out its delay after a cancellation";
 }

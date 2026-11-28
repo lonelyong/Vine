@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "Task.hpp"
-#include "WaiterList.hpp"
 
 VN_ASYNC_NS_BEGIN
 
@@ -94,16 +93,24 @@ class TaskCompletionSourceAwaiter {
     /**
      * @brief Parks the coroutine until the source completes.
      *
+     * @details
+     * - Registering a waiter allocates, and that failure is not hidden here: it escapes and the language catches it,
+     *   resumes this coroutine and rethrows at the `co_await`, so it becomes the awaiting task's error exactly as a
+     *   failure one step earlier would (no waiter is left behind, because the coroutine was never suspended).
+     *
+     * @param h Coroutine to park.
      * @return false to resume inline when the source completed concurrently.
+     * @throws std::bad_alloc when the waiter list cannot grow.
      */
-    bool await_suspend(std::coroutine_handle<> h) noexcept
+    bool await_suspend(std::coroutine_handle<> h)
     {
         handle_ = h;
         std::lock_guard<std::mutex> lock(state_->mutex);
         if (state_->completed) {
             return false; // Already completed; do not suspend.
         }
-        return detail::tryRegisterWaiter(state_->waiters, h, failure_);
+        state_->waiters.push_back(h);
+        return true;
     }
 
     /**
@@ -119,9 +126,6 @@ class TaskCompletionSourceAwaiter {
      */
     T await_resume()
     {
-        if (failure_) {
-            std::rethrow_exception(std::exchange(failure_, nullptr));
-        }
         if (state_->exception) {
             std::rethrow_exception(state_->exception);
         }
@@ -137,22 +141,24 @@ class TaskCompletionSourceAwaiter {
 
   private:
     std::shared_ptr<TaskCompletionSourceState<T>> state_;
-    std::coroutine_handle<>      handle_{};
-
-    /// Why the waiter could not be registered; rethrown by await_resume().
-    std::exception_ptr failure_{};
+    std::coroutine_handle<>                       handle_{};
 };
 
 /**
  * @brief Resumes every registered waiter, popping one per lock.
  *
- * Waiters are popped from the shared list and resumed one at a time, never
- * holding a handle across a resume: a resumed waiter whose completion
- * destroys a still-suspended sibling (e.g. a whenAny winner) unregisters it
- * from the shared list, so the next iteration simply does not find it.
+ * @details
+ * - Waiters are popped from the shared list and resumed one at a time, never holding a handle across a resume: a
+ *   resumed waiter whose completion destroys a still-suspended sibling (e.g. a whenAny winner) unregisters it from the
+ *   shared list, so the next iteration simply does not find it.
+ * - The state is taken **by value**, not by reference into the caller: the resumed waiter may well be the object that
+ *   destroys the source, and the loop needs the mutex after the resume returns. The caller passes its member, one
+ *   reference count covers the whole loop, and the source is then free to die inside it.
+ *
+ * @param state State to drain; the caller's reference may go away during the loop.
  */
 template <typename T>
-inline void resumeWaitersOneByOne(const std::shared_ptr<TaskCompletionSourceState<T>>& state) noexcept
+inline void resumeWaitersOneByOne(std::shared_ptr<TaskCompletionSourceState<T>> state) noexcept
 {
     for (;;) {
         std::coroutine_handle<> h;
@@ -193,7 +199,9 @@ inline void resumeWaitersOneByOne(const std::shared_ptr<TaskCompletionSourceStat
  *
  * Threading: the internal state is mutex-guarded, so a completion may arrive from any thread - a
  * callback, an event handler, a worker - and concurrent awaits are supported. Waiters are
- * resumed on the thread that completes the source, and the source must outlive them.
+ * resumed on the thread that completes the source; the completing call holds its own reference to
+ * the shared state, so a waiter that closes its source from inside the resume is supported rather
+ * than merely forbidden (`resumeWaitersOneByOne` takes the state by value).
  */
 template <typename T>
 class TaskCompletionSource {

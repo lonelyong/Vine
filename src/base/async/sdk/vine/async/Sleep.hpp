@@ -443,11 +443,16 @@ class SleepAwaiter {
 /**
  * @brief Suspends the coroutine for the given duration.
  *
- * The wake-up is a deadline in the process-wide timer service, so a sleep
- * costs one timer entry rather than one OS thread, and one wake-up rather than
- * one per polling slice. Cancelling the token resumes the coroutine
- * immediately and await_resume throws TaskCancelledException; destroying the
- * awaiting task before the deadline abandons the wait safely.
+ * @details
+ * - The wake-up is a deadline in the process-wide timer service, so a sleep costs one timer entry
+ *   rather than one OS thread, and one wake-up rather than one per polling slice.
+ * - The continuation runs on **that timer thread** - after the deadline, after an early wake and
+ *   after a cancelled sleep - and one thread runs every timer in the process. Keep the code that
+ *   follows a `sleepFor` short, and use `scheduleOn` / `resumeOn` to get back to the thread a caller
+ *   wants. Blocking there (on the `result()` of another task, on a UI thread's queue) stalls every
+ *   sleep, every `withTimeout` and every queue hand-off in the process, including its own.
+ * - Cancelling the token resumes the coroutine immediately and await_resume throws
+ *   TaskCancelledException; destroying the awaiting task before the deadline abandons the wait safely.
  *
  * @param duration Sleep duration; zero or negative returns immediately.
  * @param token Optional cancellation token.
