@@ -30,12 +30,14 @@ namespace
     VkRenderingAttachmentInfo info{};
     info.sType               = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     info.imageView           = view;
-    info.imageLayout         = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    // THE LAYOUT IS THE TABLE'S ROW, NOT A SECOND SPELLING (see BarrierPlan): the barrier that reached this layout is
+    // built from the same row, so the instance and the command before it cannot disagree about where the image is.
+    info.imageLayout         = stateOf(ImageLayout::ColorAttachment).layout;
     // A RESOLVE IS THE PICTURE'S ONLY WRITER: `AVERAGE` is what a render pass' implicit colour resolve did, and it is
     // the only mode a single-sample picture can state without the sample position of every fragment.
     info.resolveMode         = resolve != VK_NULL_HANDLE ? VK_RESOLVE_MODE_AVERAGE_BIT : VK_RESOLVE_MODE_NONE;
     info.resolveImageView    = resolve;
-    info.resolveImageLayout  = resolve != VK_NULL_HANDLE ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    info.resolveImageLayout  = resolve != VK_NULL_HANDLE ? info.imageLayout : stateOf(ImageLayout::Undefined).layout;
     info.loadOp              = load;
     info.storeOp             = store;
     info.clearValue          = clear;
@@ -100,26 +102,18 @@ void beginRendering(const VolkDeviceTable&       table,
                     RecordingTally* const        tally)
 {
     // THE TRANSITIONS FIRST, ONE DEPENDENCY FOR THE WHOLE PASS (see the header). The destination is always the rendering
-    // layout; the source is the record the owner keeps for THAT image, which may be the same value - see the header's
-    // note on why that barrier is not a no-op. A role's three spans are the same length in the same order (see
-    // PassRole), so one index names the image, its view and its record. The batch is a stack array sized by the API's
-    // own attachment cap, and every role together fits: (colour + picture) attachments, plus depth and its picture.
-    std::array<VkImageMemoryBarrier2, kMaxColorAttachments * 2U + 2U> barriers{};
-    std::size_t                                                      barrier_count = 0U;
-    const auto append = [&barriers, &barrier_count](const VkImage image,
-                                                    const ImageLayout from,
-                                                    const ImageLayout to,
-                                                    const VkImageAspectFlags aspect) {
-        if (image == VK_NULL_HANDLE) {
-            return;
-        }
-        barriers[barrier_count++] = barrierBetween(image, stateOf(from), stateOf(to), aspect);
-    };
+    // layout; the source is the record the owner keeps for THAT image, which may be the same value - `order` appends
+    // that same-state barrier on purpose (see BarrierBatch). A role's three spans are the same length in the same
+    // order (see PassRole), so one index names the image, its view and its record. The batch is a stack array sized by
+    // the API's own attachment cap, and every role together fits: (colour + picture) attachments, plus depth and its
+    // picture.
+    std::array<VkImageMemoryBarrier2, kMaxColorAttachments * 2U + 2U> entry_storage{};
+    BarrierBatch                                                      entry(table, commands, entry_storage, tally);
     for (std::size_t index = 0; index < attachments.color.size(); ++index) {
-        append(attachments.color.images[index], attachments.color.from[index], ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT);
+        entry.order(attachments.color.images[index], attachments.color.from[index], ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT);
     }
     for (std::size_t index = 0; index < attachments.picture.size(); ++index) {
-        append(attachments.picture.images[index], attachments.picture.from[index], ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT);
+        entry.order(attachments.picture.images[index], attachments.picture.from[index], ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT);
     }
     // THE DEPTH PAIR: the attachment and the picture it resolves into are two images with two RECORDS - or, on a
     // single-sampled set, one image whose owner reports the same layout for both names, and then `depth_picture` names
@@ -128,12 +122,12 @@ void beginRendering(const VolkDeviceTable&       table,
     // transitions nothing - what it adds is the EXECUTION DEPENDENCY between the lender's pass and this one, which is
     // the half dynamic rendering does not insert.
     if (attachments.depth.present()) {
-        append(attachments.depth.image, attachments.depth.from, ImageLayout::DepthAttachment, attachments.depth_aspect);
+        entry.order(attachments.depth.image, attachments.depth.from, ImageLayout::DepthAttachment, attachments.depth_aspect);
     }
     if (attachments.depth_picture.present()) {
-        append(attachments.depth_picture.image, attachments.depth_picture.from, ImageLayout::DepthAttachment, attachments.depth_aspect);
+        entry.order(attachments.depth_picture.image, attachments.depth_picture.from, ImageLayout::DepthAttachment, attachments.depth_aspect);
     }
-    recordBarriers(table, commands, std::span<const VkImageMemoryBarrier2>(barriers.data(), barrier_count), tally);
+    entry.flush();
 
     // THE INSTANCE: one attachment per colour output location, and the depth attachment when the set has one.
     //
@@ -161,14 +155,15 @@ void beginRendering(const VolkDeviceTable&       table,
     depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     if (attachments.depth.view != VK_NULL_HANDLE) {
         depth.imageView = attachments.depth.view;
-        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        // THE SAME RULE AS THE COLOUR ROLES: the row the pass' barrier used is the row the instance states.
+        depth.imageLayout = stateOf(ImageLayout::DepthAttachment).layout;
         // THE DEPTH RESOLVE IS ONE FIELD PAIR now (`SAMPLE_ZERO`, the only mode that cannot change the picture), where a
         // render pass needed `VkSubpassDescriptionDepthStencilResolve` and the 1.2 creation entry point. It also makes
         // the sample buffer disposable: the resolve is the only reader.
         depth.resolveMode        = attachments.depth_picture.view != VK_NULL_HANDLE ? VK_RESOLVE_MODE_SAMPLE_ZERO_BIT : VK_RESOLVE_MODE_NONE;
         depth.resolveImageView   = attachments.depth_picture.view;
-        depth.resolveImageLayout = attachments.depth_picture.view != VK_NULL_HANDLE ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                                                                                     : VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.resolveImageLayout = attachments.depth_picture.view != VK_NULL_HANDLE ? depth.imageLayout
+                                                                                     : stateOf(ImageLayout::Undefined).layout;
         depth.loadOp             = loadOpOf(load.depth.load);
         depth.storeOp            = storeOpOf(depth_resolved ? vn::graphics::StoreOp::DontCare : load.depth.store);
         depth.clearValue         = load.depth.clear;

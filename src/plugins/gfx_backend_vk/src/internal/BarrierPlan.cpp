@@ -144,18 +144,32 @@ BarrierBatch::BarrierBatch(const VolkDeviceTable&              table,
 {
 }
 
-bool BarrierBatch::move(const VkImage image, ImageLayout& record, const ImageLayout to, const VkImageAspectFlags aspect) noexcept
+bool BarrierBatch::order(const VkImage image, const ImageLayout from, const ImageLayout to, const VkImageAspectFlags aspect) noexcept
 {
-    // THE SAME RULE AS transitionImage (see there): nothing to do when the record already states the target, and nothing
-    // to state for an absent image.
-    if (record == to || image == VK_NULL_HANDLE) {
+    // THE DEPENDENCY-ONLY APPEND (see the header): no record is written because nothing moves, and a same-state pair is
+    // appended on purpose - it is the execution dependency between two passes into one image. An absent image owes the
+    // queue nothing, and a full batch is the caller's sizing defect.
+    if (image == VK_NULL_HANDLE) {
         return false;
     }
     if (used_ >= storage_.size()) {
-        return false; // the caller sized the batch by the roles it states; a full batch is its defect, not the device's
+        return false;
     }
-    storage_[used_++] = barrierBetween(image, stateOf(record), stateOf(to), aspect);
-    record            = to;
+    storage_[used_++] = barrierBetween(image, stateOf(from), stateOf(to), aspect);
+    return true;
+}
+
+bool BarrierBatch::move(const VkImage image, ImageLayout& record, const ImageLayout to, const VkImageAspectFlags aspect) noexcept
+{
+    // THE SAME RULE AS transitionImage (see there): nothing to do when the record already states the target - and the
+    // append itself is `order`, so a move and an ordering build the barrier through the same verb.
+    if (record == to) {
+        return false;
+    }
+    if (!order(image, record, to, aspect)) {
+        return false;
+    }
+    record = to;
     return true;
 }
 

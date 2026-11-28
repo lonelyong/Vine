@@ -799,6 +799,89 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
     backend->shutdown();
 }
 
+TEST(VkContentDrawTest, ASamplerReadsTheMipLevelItsLodClampNames)
+{
+    // THE SAMPLER'S MIP STATE REACHES THE DEVICE: the SDK states `min_filter` and `mipmap_mode` as two axes
+    // (WebGPU's minFilter/mipmapFilter), and Vulkan composes them the same way - `minFilter` filters WITHIN a level
+    // and `mipmapMode` BETWEEN two (the spec's OpenGL-mapping note pairs VK_FILTER_LINEAR + MIPMAP_MODE_NEAREST with
+    // GL_LINEAR_MIPMAP_NEAREST) - while `min_lod` / `max_lod` / `lod_bias` decide WHICH level is read; Vulkan always
+    // mip-selects. Nothing pinned that those fields cross `samplerFor`: a mapping that dropped them would sample
+    // another level and every picture would still look right. The clamps force the level here, so the pixel cannot
+    // come from a derivative accident: level 1 is green, the base level red.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kTextureFragment);
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+
+    auto image = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(2, 2, vn::imaging::PixelFormat::Rgba8Unorm, 2));
+    const std::span<std::byte> base = image->mipData(0);
+    for (std::size_t texel = 0; texel < base.size(); texel += 4U) {
+        base[texel + 0U] = std::byte{ 255U };
+        base[texel + 1U] = std::byte{ 0U };
+        base[texel + 2U] = std::byte{ 0U };
+        base[texel + 3U] = std::byte{ 255U };
+    }
+    const std::span<std::byte> level_one = image->mipData(1); // 1 x 1
+    level_one[0]                          = std::byte{ 0U };
+    level_one[1]                          = std::byte{ 255U };
+    level_one[2]                          = std::byte{ 0U };
+    level_one[3]                          = std::byte{ 255U };
+
+    auto texture = intrusive_ptr<Texture2D>(new Texture2D(2, 2, vn::imaging::PixelFormat::Rgba8Unorm, 2));
+    texture->setImage(image);
+
+    const auto frameWith = [&](const vn::graphics::Sampler& sampler) {
+        const intrusive_ptr<Material> material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+        material->setTexture(TextureSlot::BaseColor, texture, sampler);
+
+        DrawItem command(geometry, nullptr, vn::math::Mat4d{});
+        command.program              = program;
+        command.program_description  = program->description();
+        command.material             = material;
+        command.material_description = material->description();
+
+        auto commands = std::make_shared<std::vector<DrawItem>>();
+        commands->push_back(std::move(command));
+
+        DrawPacket draw;
+        draw.kind        = DrawKind::Scene;
+        draw.view.camera = identityCamera();
+        draw.commands    = commands;
+        return drawingFrame(target.get(), std::move(draw));
+    };
+
+    // LEVEL 1: both clamps at 1, so every lookup reads the green level.
+    vn::graphics::Sampler level_1;
+    level_1.min_lod = 1.0F;
+    level_1.max_lod = 1.0F;
+    ASSERT_EQ(backend->executeFrame(frameWith(level_1), nullptr), PresentOutcome::Skipped);
+    const ColorReadback one = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(one.ok());
+    EXPECT_EQ(pixelAt(one.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
+        << "the LOD clamp named level 1 and the base level was sampled: the sampler's LOD range never reached the device";
+
+    // THE CONTROL: the same chain, the same texture, the clamps at 0 - a sampler that pins the base level must read
+    // it, so "always level 1" would fail here. (The spec states the apartness of that clamp too: maxLod 0 makes every
+    // lookup a magnification, so the MAG filter is what it applies - the colour read is the base level's either way.)
+    vn::graphics::Sampler level_0;
+    level_0.min_lod = 0.0F;
+    level_0.max_lod = 0.0F;
+    ASSERT_EQ(backend->executeFrame(frameWith(level_0), nullptr), PresentOutcome::Skipped);
+    const ColorReadback zero = backend->readColorImage(target.get(), 0);
+    ASSERT_TRUE(zero.ok());
+    EXPECT_EQ(pixelAt(zero.values, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+        << "a sampler pinned to level 0 read another level";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}
+
 TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
 {
     // THE LIGHT BLOCK (set 0 binding 6): an announced ambient light fills ambient = rgb + intensity, and the shader

@@ -37,7 +37,7 @@ struct VN_GRAPHICS_API Features {
      */
     enum class Feature : std::uint8_t
     {
-        /// The device can write timestamps, so per-pass GPU times can be measured and shown.
+        /// The device can write timestamps on the queue this backend runs on, so per-pass GPU times can be measured and shown.
         GpuTimings,
         /// Triangle rasterisation can be line/point, so a wireframe (or point) view mode draws something.
         Wireframe,
@@ -85,9 +85,9 @@ struct VN_GRAPHICS_API Features {
  * - Nothing here is enforced by the engine on the host's behalf: a request above a limit is REFUSED by the backend
  *   that would have to honour it (reported once), never silently lowered. A host reads these before it authors a
  *   pipeline, because only the host can decide what to do when the device cannot serve the shape it wants.
- * - ALL FOUR ARE DEVICE ANSWERS: they come from the physical-device limits the session was opened on, so they describe
+ * - ALL FIVE ARE DEVICE ANSWERS: they come from the physical-device limits the session was opened on, so they describe
  *   the machine rather than a backend's choice; a device without the capability reports the neutral value (1 sample,
- *   1 attachment, 1.0 width/anisotropy), which is a true answer rather than a missing one.
+ *   1 attachment, a 1-pixel extent, 1.0 width/anisotropy), which is a true answer rather than a missing one.
  */
 struct VN_GRAPHICS_API Limits {
     /// The largest anisotropic filtering factor the device honours (1 = no anisotropy).
@@ -116,6 +116,14 @@ struct VN_GRAPHICS_API Limits {
     /// A CEILING, not a promise the engine enforces: a declaration asking for more is refused by the backend that
     /// would have to build the attachment, with a diagnostic naming the count.
     std::uint32_t max_color_attachments{ 1 };
+
+    /// The largest width or height one render target may declare (1 = nothing was answered).
+    ///
+    /// A CEILING of the same kind as @ref max_color_attachments: a declaration above it is refused by the backend
+    /// that would have to build the attachments, with a diagnostic naming both numbers. It is the SMALLEST of the
+    /// device's image, framebuffer and viewport dimensions, because one target must fit all of them. Vulkan
+    /// guarantees 4096 in either dimension, so a conformant device answers at least that.
+    std::uint32_t max_target_extent{ 1 };
 };
 
 /**

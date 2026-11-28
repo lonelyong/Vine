@@ -596,6 +596,56 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   does residency end". All five were converted to the shipped rule (an entry holds its key; the frame end ends what nobody
   else names), `T73` was deleted, every replacement was checked against `ContentCaches` / `ContentImages` / `FrameScratch`,
   and one unwitnessed diagnostic the conversion exposed (`vk.content.material_texture_skipped`) was recorded as `T75`.
+- `graphics-2026-11-28-review-24.md` — the twenty-fourth pass, the public ABSTRACTION surface against peer engines (wgpu,
+  Diligent, Filament, three.js, assimp): device / frame driver / aggregate, the composition root, a frame as a value, a
+  view, a material, ownership, and the asset→geometry conversion, one verdict each. Every seam already answers with a peer
+  shape and states its deviation; `RenderBackend.hpp` lost the includes that named the pass model through it, and the one
+  finding - a conversion reports a count where a peer names the cause - is backlog `T77`.
+- `graphics-2026-11-28-review-25.md` — the twenty-fifth pass, the SHIPPED BACKEND's concepts: the unit map (which unit
+  owns which fact, state and lock) written down, then each public promise checked at the unit that owns it. Two limits
+  answered wider than the device can serve and were fixed - the colour-attachment ceiling was the API's 8 where Vulkan
+  only guarantees 4 (`TargetTable::Limits`, with a portable case), and `max_line_width` was not gated on `wideLines` -
+  and a point size has no reported ceiling at all (backlog `T78`, trigger: the point-cloud viewer).
+- `graphics-2026-11-28-review-26.md` — the twenty-sixth pass, the seam review 25 §6 named: `BarrierPlan`'s transition
+  vocabulary against `DynamicRendering`'s pass values, asked as ONE question - "which layout does this image hold at
+  this point". The answer had one home for the barrier and a second spelling at every other consumer (fourteen raw
+  `VK_IMAGE_LAYOUT_*` constants in seven files: rendering info, descriptors, copies, creation); every consumer now
+  reads the table's row, `BarrierBatch` gained the dependency-only `order` verb so a pass' entry
+  goes through the batch, `ReadbackStaging` takes the caller's layout instead of naming one, and
+  `scripts/check_vk_layout_literals.py` (ctest `vk_layout_literals`) fails the next literal outside `BarrierPlan`.
+- `graphics-2026-11-28-review-27.md` — the twenty-seventh pass, the seam review 26 §6 named: "which (set, binding) is
+  each descriptor slot". The numbers were spelled in six places, and the drift had already happened - `BuiltinShaders.hpp`
+  promised the shadowed deferred program at 5/6 while the generated text and the layout said 7/8. `ContentAbi.hpp` is now
+  the complete table (all sets, bindings and counts, with `static_assert` guards), the layout creation / descriptor writes
+  read it, the SDK promise states the real pair, and `scripts/check_vk_bindings.py` (ctest `vk_bindings`) compares the
+  GLSL texts and the engine's generator against it (mutations on either side redden it).
+- `graphics-2026-11-28-review-28.md` — the twenty-eighth pass, the seam review 27 §5 named: "what is this device's
+  limit". Four parties answered it - `VkPhysicalDeviceLimits`, `Capabilities::Limits`, `TargetTable::Limits` and
+  `DynamicRendering`'s stack arrays - and two findings came out: the extent ceiling was read by NOBODY (a target above
+  `maxImageDimension2D` reached `vkCreateImage`, and the driver's refusal was reported as "see the memory report"), and
+  the table's colour-attachment default was the API's 8 while its own doc called the API ceiling "never a substitute".
+  `Capabilities::limits.max_target_extent` is the minimum of the five device dimensions, `TargetTable::ensure` refuses
+  above it with `vk.target.extent_above_limit` and both numbers, the table's defaults are Vulkan's guaranteed floors, and
+  the two limits that sit under the floor (push range 128 B, `kTextureSlots + 1` samplers) are held by `static_assert`s
+  (mutation: the refusal loosened by one reddens exactly the new case).
+- `graphics-2026-11-28-review-29.md` — the twenty-ninth pass, the seam review 28 §6 named: "what does the surface
+  allow". Five of the swapchain request's fields were resolved inline in `createSwapchain`, one was never asked
+  (`imageUsage` against `supportedUsageFlags`, VUID-01276), and one legal surface answer - the `VK_FORMAT_UNDEFINED`
+  sentinel ("no preferred format") - was passed to the driver as an `imageFormat` (VUID-01273). `surfaceSwapchain` now
+  resolves the answers into one `SurfaceSwapchain` value (format pair, extent, image count, composite mode) with
+  `SurfaceRefusal` for the three refusals (`NoFormats`, `ZeroExtent`, `NoColorUsage`), `createSwapchain` fills the
+  request from it, and `test_vk/WindowSurfaceTest.cpp` pins the branches no desktop produces (mutation: neutering the
+  usage check or the sentinel substitution reddens exactly its own case). Same round: `T79` records a load-sensitive
+  pass-timing witness.
+- `graphics-2026-11-28-review-30.md` — the thirtieth pass, the seam review 29 §6 named: "what do the QUEUE FAMILY
+  properties allow". The frame clock was gated on the device-wide `timestampComputeAndGraphics` floor while the
+  chosen family's own `timestampValidBits` (0 = no support, 36..64 = supported) was read by nobody - so a device
+  whose graphics family can write timestamps still left `FrameTiming` DISENGAGED and `GpuTimings` off. The family's
+  answer is now read where the family is chosen and `queueWritesTimestamps(bits, period)` decides both the pool and
+  the feature; the two copy answers (`minImageTransferGranularity` = (1,1,1), at least one queue) are recorded as
+  pinned by the same `GRAPHICS_BIT` that selects the family, so the copy paths stay unchecked by construction
+  (mutations: the floor weakened to `> 0` reddens exactly the 20-bit case, and disabling only the pool reddens both
+  `VkPassTimingTest` cases - wgpu asks the same value the same way).
 - `async-2026-11-27-review-1.md` — the first async pass: **what `Destroy` assumes, who owns a completion, and which thread
   the continuation runs on** (the 28 headers read line by line against the design page's contracts; the suite read by its
   index; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -

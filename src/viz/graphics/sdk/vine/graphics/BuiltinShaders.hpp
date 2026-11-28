@@ -265,11 +265,12 @@ VN_GRAPHICS_API intrusive_ptr<ShaderProgram> deferredLightProgram();
  * @brief The deferred lighting program that also shades a shadow map.
  *
  * @details
- * - The same program with the shadow ABI added: it declares the map at binding 5 and its
- *   `VineShadowBlock` at binding 6 (a pipeline that asks for it must declare that map as an input of
- *   the lighting pass), and scales each light's diffuse term by the map. A NAMED variant rather than a
- *   boolean argument, because the two programs have different interfaces: whoever calls this one owes
- *   the map (see Light::isCastingShadow for the pipeline rule that decides between them).
+ * - The same program with the shadow ABI added: it declares the map at binding 7 and its
+ *   `VineShadowBlock` at binding 8 - the pair the full-screen ABI reserves after its five sampler
+ *   bindings (0..4) and the lights (6), and a pipeline that asks for it must declare that map as an
+ *   input of the lighting pass. It scales each light's diffuse term by the map. A NAMED variant rather
+ *   than a boolean argument, because the two programs have different interfaces: whoever calls this one
+ *   owes the map (see Light::isCastingShadow for the pipeline rule that decides between them).
  *
  * @return The fragment program, or null when the source no longer carries the markers the shadowed
  *         variant is built from.

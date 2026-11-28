@@ -3468,3 +3468,221 @@ The default demo lost its lighting and shadows after W3, and the cause was not t
   off: red at the tail only (`gone->live` 2, bytes 48 == 48). Both arms restored by reverse patch.
 - **Docs.** `graphics-content-lifecycle.md` §2.10 sentence + T13; `vk-backend.md` 2.25 + T17.
 - **Gate.** `test_vk` 242/242 (was 241); no other suite touched (the backend source was restored).
+
+## 2026-11-28 - peer probe of the sampler path: the mip model was right, and the trap is OpenGL's
+
+- **What was asked.** Iterate against industry practice: the SDK's `Sampler` states `min_filter` and `mipmap_mode` as
+  two axes plus `min_lod` / `max_lod` / `lod_bias` - WebGPU's shape - and the hypothesis was that the backend's
+  `info.minFilter = filterOf(sampler.min_filter)` (a plain `VK_FILTER_LINEAR`) silently disabled mip selection, the way
+  OpenGL's `GL_LINEAR` does. **The witness refuted it before any "fix" was written**: the new case passed against the
+  unchanged mapping.
+- **The rule that settles it (Vulkan spec, `chapters/samplers.adoc` "Mapping of OpenGL to Vulkan Filter Modes").**
+  `minFilter` and `mipmapMode` COMPOSE: `VK_FILTER_LINEAR` + `MIPMAP_MODE_NEAREST` corresponds to
+  `GL_LINEAR_MIPMAP_NEAREST`, and the spec says there is no Vulkan spelling of plain `GL_LINEAR`/`GL_NEAREST` -
+  Vulkan always mip-selects, level chosen by `mipmapMode` and `[minLod, maxLod]`, `minFilter` filtering only WITHIN a
+  level. So the backend's base-spelling mapping is correct and a `VK_FILTER_*_MIPMAP_*` value would state the mip half
+  twice. `maxLod = 0` pins the base level (spec: always-magnification, so the MAG filter applies - not "min filter at
+  level 0").
+- **Trap for the next round.** The GL model (one enum carrying both axes) is the wrong mental model for Vulkan, and it
+  produces a very plausible false finding. Rust/wgpu's `sampler` model is the same two-axis one the SDK uses.
+- **What landed (no behaviour change).** `VkContentDrawTest.ASamplerReadsTheMipLevelItsLodClampNames`: a 2-level image
+  (level 1 green, base red), `min_lod = max_lod = 1` reads green, the control (`max_lod = 0`) reads red; dropping the
+  LOD range from `samplerFor` reddens the first assertion (mutation run and restored; backend diff empty). A comment in
+  `samplerFor` and `vk-backend.md` §3.1.7 F7 + T18 state the composition rule so nobody "corrects" the mapping later.
+- **Gate.** `test_vk` 243/243 (was 242).
+
+## 2026-11-28 - review 24: the abstraction surface maps to the peers, and one conversion answers too little
+
+- **What the round asked.** One question per public abstraction: which peer-engine shape answers the same question,
+  and where do we differ? Peers: wgpu (device/queue), Diligent (`IRenderDevice` + `IDeviceContext`), Filament
+  (Engine/Renderer/View, Material/MaterialInstance), three.js (renderer/scene/camera), assimp (import errors).
+- **Verdicts (all "already stated"):** device/driver are separate contracts with a stateless aggregate
+  (`RenderBackend` adds only a destructor); the composition root keeps only composition (2.8's `detail::` mechanisms);
+  a frame is a declared value (2.2); a view is a value with a per-window `SceneView` controller (2.13); a material is
+  the Filament split plus a revision identity; ownership is one four-spelling vocabulary in `graphics_global.hpp`.
+- **The one finding (`T77`).** `sceneFromModel` counts skipped meshes/nodes, `geometryFromShape` answers null for an
+  unconvertible kind AND for malformed data alike - peers name the dropped item and the cause (assimp
+  `aiGetErrorString`; glTF loaders warn by name). Trigger: a host that reports an import to its user. No fix now
+  (no consumer).
+- **Landed.** `RenderBackend.hpp` now includes only the two contracts it composes (the pass model / frame value /
+  window target / diagnostics arrive through them); the class note states the rule. No semantics: `test_graphics`
+  714/714, `test_vk` 243/243, include hygiene 0/1174.
+- **Trap.** Do not read "the aggregate exists" as "the contracts are merged": they are separate types, and the
+  factory's inability to return a device alone is `T32`'s trigger, not a defect of the aggregate.
+
+## 2026-11-28 - review 25: the backend's unit map, and two limits answered wider than the device
+
+- **What the round did.** Wrote the backend's concept map down (unit -> fact -> state -> lock) and checked every
+  public promise (a `Capabilities` limit, a diagnostic cause, a plan value) at the unit that owns the fact.
+- **B1 (fixed, witnessed).** The colour-attachment refusal compared against the API's `kMaxColorAttachments` (8), not
+  the device's `maxColorAttachments` - which Vulkan only guarantees to be 4. A 5..8-attachment target on a 4-max
+  device passed the check and reached `VkRenderingInfo` with an invalid count (and the recorder's array is 8 wide).
+  `TargetTable::Limits::max_color_attachments` now carries the device answer and the ceiling is `min(device, 8)`; the
+  message and `DiagnosticLimit` name the request against the applied ceiling.
+  Witness: `VkContentTargetTest.ATargetAboveTheReportedColourAttachmentLimitIsRefusedNotDrawn` (reported limit + 1
+  attachments; one `vk.target.too_many_colors`, `requested/supported` pair, readback NotReady). Mutation: ceiling +1
+  -> the target is accepted and the case reddens at the refusal assertion.
+- **B2 (fixed, un-witnessable here).** `max_line_width` answered `lineWidthRange[1]` without the `wideLines` gate -
+  a limit is only reachable with the feature that legalises it (`max_anisotropy` already followed that rule). Now
+  `wideLines ? range : 1`. lavapipe offers the feature, so no case can produce the old answer on this machine.
+- **B3 (recorded, `T78`).** A point size has a state, a feature (`largePoints`) and no limit/clamp -
+  `Capabilities::Limits` reports the other two rasterisation ceilings. Trigger: a point-drawing host with a
+  user-chosen size (T23's viewer); the cost is a `Capabilities` field (ABI bump).
+- **Trap.** `makeTarget(N)` with N above the device ceiling became an ACCEPTED target under the mutation and the
+  frame still answered `Skipped` - the failure was the missing refusal, not an observable crash. Do not read
+  "the frame ran" as "the target was fine".
+- **Gates.** `test_vk` 244/244, `test_graphics` 714/714; doc gates 0/0/0/0.
+
+## 2026-11-28 - review 26: the layout question had one answer for the barrier and a second spelling everywhere else
+
+- **The seam.** Review 25 §6 named `BarrierPlan` vs `DynamicRendering`; asked as ONE question - "which layout does this
+  image hold at this point". Census: the rendering attachment info (`imageLayout` / `resolveImageLayout`), two
+  descriptor kinds, two copy commands and four creation `initialLayout`s each spelled a raw `VK_IMAGE_LAYOUT_*` - 14
+  places in 7 files, every one equal to a table row, nothing keeping them equal.
+- **Landed.** every consumer reads the table's `.layout` (`stateOf` / `transferReadState()` / `transferWriteState()`),
+  and a repeated consumer (a draw's five texture slots) takes it once;
+  `BarrierBatch::order` (append a barrier even between identical usages, never write a record) is the dependency-only
+  verb, `move` = record check + `order` + write-back, and `beginRendering` states the pass' entry through one batch
+  (`order` per role, one `flush`) - the recorder builds no barriers itself any more. `ReadbackStaging::recordCopy`
+  takes the caller's `transferReadState().layout` (the unit stays seam-free, C10 / E2).
+- **Gate.** `scripts/check_vk_layout_literals.py` (ctest `vk_layout_literals`): no `VK_IMAGE_LAYOUT_*` outside
+  `BarrierPlan.{hpp,cpp}`, and the table must still state all seven rows (a rename cannot silence it). Mutation: a
+  probe literal in `FrameScratch.cpp` reddens it (1 finding); removing it restores 0.
+- **Witness.** `BarrierPlanTest.ABatchOrdersASameStateBarrierButOnlyMovesAChangedOne` (pure: an equal record = move
+  false, `order` appends anyway, a full batch refuses and writes no record);
+  `APassEntryIsOneDependencyWhateverItWrites` guards the batch path on a device. Mutation: `order` refusing the
+  identical-state pair reddens exactly that case (1/8 in `BarrierPlanTest`); reverse patch restored byte-identical.
+- **Trap.** "The one place" written in a header is a claim, not a rule: it was true for barriers and false for 14
+  other consumers until the gate made the grep the judge. When a page says ONE PLACE, grep the spelling it names -
+  the consumers that restate it are usually in files the claiming header never had to include. Second trap, same
+  batch: marking a header-declared / .cpp-defined function `constexpr` makes it `inline` with no definition in the
+  callers - 19 `-Wundefined-inline` and a link error; drop the property, do not move the table for it.
+- **Next.** The binding numbers: the set layouts (FrameScratch), the shader ABI and the descriptor writes each spell
+  "1 = textures, 6 = lights, 7/8 = the shadow pair" - three files, one question, and a mismatch is a VUID rather than
+  a compile error.
+- **Gates.** `test_vk` 245/245, `test_graphics` 714/714; doc gates 0/0/0/0; `vk_layout_literals` 0.
+
+## 2026-11-28 - review 27: the binding numbers had already drifted (the SDK promised 5/6, the code did 7/8)
+
+- **The seam.** Review 26 §6 named the binding numbers. One question - "which (set, binding) is each descriptor slot" -
+  answered in six places: ContentAbi.hpp (only 3 of the numbers), ContentCaches' set layouts (literals 0, 1+slot, 6,
+  set1's 0), FrameScratch's writes (0, 1, 6), ContentDraw's offset-order comment (digits), the shipped GLSL
+  (vine_params / vine_alpha / vine_material), and BuiltinShaders.cpp's `shadowBindings(0u, 7u, ...)` calls.
+- **The drift was real, in prose first.** `BuiltinShaders.hpp` documented the shadowed deferred program's map at
+  binding 5 and its block at 6 while every piece of code said 7/8. A reader following that sentence would sample the
+  depth slot as a shadow map. (The code copies agreed with each other only because they were written once.)
+- **Landed.** `ContentAbi.hpp` is the complete table (`kContentSet`, `kMaterialBinding`, `kTextureBindingBase`,
+  `kTextureSlots`, `kLightsBinding`, `kShadowMapBinding`, `kShadowBlockBinding`, `kFullscreenSamplerBindingBase`,
+  `kFullscreenSamplerBindings`, `kDrawSet`, `kDrawBinding`) + three `static_assert` guards (slots fit before lights;
+  block == map + 1, which the engine's generator states; full-screen samplers end before lights). ContentCaches and
+  FrameScratch read only the table; ContentDraw's offset comments cite names; the SDK doc states 7/8.
+- **Gate.** `scripts/check_vk_bindings.py` (ctest `vk_bindings`): parses the constants from ContentAbi.hpp and the slot
+  order from MaterialValues.hpp, then compares `vine_params.glsl`'s three blocks, every `vn_<slot>Map` sampler, and
+  BuiltinShaders.cpp's `shadowBindings(...)` call - never restating a number, and a missing constant/block/slot/call
+  is a finding too. Mutation: lights 6->5 in vine_params + generator 7u->5u => 2 findings, restored byte-identical
+  (`git diff` empty for both files).
+- **Trap.** Do not "solve" a cross-language number by injecting `#define`s from C++ into the GLSL: the shipped shaders
+  must compile STANDALONE (vn_shader_check.sh), so a backend preamble would make them backend-only. The honest fix is
+  one C++ home + a gate that reads both sides.
+- **What stays.** The recorder's `pDynamicOffsets` arrays are hand-ordered: Vulkan matches offsets by order, both sets
+  use binding 0, so a table-driven loop needs (set, binding) pairs plus a switch - more machinery than the array.
+- **Gates.** `test_vk` 245/245, `test_graphics` 714/714, `vk_bindings`/`vk_layout_literals`/`vk_exposure` green, build
+  0 warnings, doc gates 0/0/0/0.
+- **Next.** "What is this device's limit": VkPhysicalDeviceLimits -> Capabilities::Limits -> TargetTable::Limits ->
+  DynamicRendering's stack arrays; three owners and a trust assumption, one question.
+
+## 2026-11-28 - review 28: the extent ceiling was read by nobody, and a default was the API ceiling
+
+- **The seam.** Review 27 §5 named "what is this device's limit". Four parties answered: `VkPhysicalDeviceLimits` (the
+  driver), `Capabilities::Limits` (the SDK answer), `TargetTable::Limits` (its copy of the sample set + colour ceiling)
+  and `DynamicRendering`'s stack arrays (trusting the API cap of 8).
+- **Finding A1 (live).** `createAttachments` refused only `<= 0` extents and more than 8 colours: a target wider than
+  `maxImageDimension2D` (llvmpipe here: 16384) reached `vkCreateImage` - VUID-VkImageCreateInfo-extent-00944 - and a
+  driver refusal surfaced as `vk.target.build_failed` "see the memory report" (wrong cause). Industry keeps the request
+  at the object's own seam: wgpu validates `size` against `limits.max_texture_dimension_2d` at `create_texture`,
+  Diligent validates `TextureDesc` against `DeviceProperties::MaxTexture2DDimension`, and Vulkan's own table has a
+  Minimum column (4096 / 4) beside the Maximum one (8) - two different facts.
+- **Landed.** `Capabilities::limits.max_target_extent` = min(maxImageDimension2D, maxFramebufferWidth/Height,
+  maxViewportDimensions[0..1]), read once in `Device::initialize`; `TargetTable::Limits` gained it; `ensure` refuses
+  above it (`vk.target.extent_above_limit`, one episode, `DiagnosticLimit{requested, supported}`) before any
+  `vkCreateImage`; `RenderTarget::setSize` points at it.
+- **Finding A2 (latent).** `TargetTable::Limits::max_color_attachments` defaulted to the API's 8 while its own comment
+  said the API ceiling is "never a substitute"; `close()` resets to that default, so the next opener that forgot the
+  field could accept 5..8 attachments on a 4-attachment device - the defect review 25 B1 fixed, reachable again. The
+  defaults are now Vulkan's FLOORS (4 attachments, 4096 extent). WebGPU's `Limits::default()` is the base set every
+  adapter supports - same rule.
+- **Finding A3 (cross-check).** Two limits sit under the device floor and need no ask; now stated as `static_assert`s in
+  `ContentAbi.hpp`: push range 128 B (`maxPushConstantsSize` floor 128), samplers `kTextureSlots + 1 <= 16` (floor 16).
+- **Witness.** `VkContentTargetTest.ATargetAboveTheReportedExtentLimitIsRefusedNotDrawn` reads the REPORTED ceiling and
+  declares ceiling + 1 -> holds on any device; asserts one diagnostic, requested/supported, readback NotReady.
+  Mutation: `widest_extent > ceiling` -> `> ceiling + 1` reddens exactly that case; restored byte-identical, 246/246.
+- **Trap.** A default value in an "internal" limits struct is still an ANSWER: a table opened without the device's
+  number literally accepted what the device may not serve. When a struct states a ceiling, its default must come from
+  the spec's Minimum column, never the Maximum.
+- **Not fixed, recorded.** The sample and borrow refusals use `UnsupportedRequest` while `TargetBuildFailed`'s
+  definition ("an off-screen RenderTarget could not be built") covers them; six cases count that category, so aligning
+  it is a host-visible contract change and its own decision.
+- **Gates.** `test_vk` 246/246, `test_graphics` 714/714, `vk_bindings` / `vk_layout_literals` / `vk_exposure` green,
+  diagnostics 115/115 codes, doc gates 0/0/0/0, build 0 warnings.
+- **Next.** The same question one layer up: "what does the SURFACE allow" - `VkSurfaceCapabilitiesKHR`'s
+  currentExtent / min-maxImageExtent / imageCount / supportedUsageFlags against what `WindowTarget` asks for.
+
+## 2026-11-28 - review 29: the surface's answers, and the two we assumed
+
+- **The seam.** Review 28 §6 named "what does the SURFACE allow". The swapchain request has seven fields a surface
+  answers; five were resolved inline in `createSwapchain` (extent, count, composite, format preference, transform), one
+  was never asked and one legal answer was passed through.
+- **Finding S1 (live).** `info.imageUsage = COLOR_ATTACHMENT` without consulting `supportedUsageFlags`
+  (VUID-VkSwapchainCreateInfoKHR-imageUsage-01276): a surface whose images are not colour attachments has no window
+  target, and the fact arrived as `vkCreateSwapchainKHR` failing with "refused the window's surface" - a sentence
+  naming no cause.
+- **Finding S2 (live).** `chooseSurfaceFormat` returned the format list's first entry verbatim, and one legal entry is
+  `VK_FORMAT_UNDEFINED` ("the application chooses"), which `imageFormat` may not be (VUID-01273). Substituted with the
+  classic `B8G8R8A8_UNORM` + `SRGB_NONLINEAR` pair, the same fallback vk-bootstrap uses.
+- **Landed.** `surfaceSwapchain(capabilities, formats, w, h)` (pure function, `WindowTarget.hpp/.cpp`) resolves the
+  answers into `SurfaceSwapchain{ format, extent, image_count, composite_alpha, refusal }` with
+  `SurfaceRefusal { None, NoFormats, ZeroExtent, NoColorUsage }`; `createSwapchain` fills `VkSwapchainCreateInfoKHR` from
+  the value and maps a refusal to its sentence. `chooseSurfaceFormat` and the inline derivation are gone.
+- **Witness.** `test_vk/WindowSurfaceTest.cpp` (8 synthetic cases, no window needed): the surface's own extent, the
+  free-surface clamp into min/maxImageExtent, the minImageCount+1 cap, the sRGB preference, the sentinel substitution,
+  the composite fallback, and the three refusals. Mutations: usage check neutered -> exactly that case red; sentinel
+  substitution gated to >1 entries -> exactly that case red; both restored byte-identical.
+- **Trap.** Every field of an API create-info struct that the platform ANSWERS is a VUID waiting if the code assumes it:
+  the review's two findings are exactly the spec's two VUIDs for this struct, and both had been invisible because
+  desktop surfaces always say "yes". A pure resolution function is what lets a test produce the answers hardware never
+  gives.
+- **What stays.** FIFO (guaranteed), `preTransform = currentTransform` (the transform the engine applies),
+  `imageArrayLayers = 1` (guaranteed >= 1), `oldSwapchain = NULL` after a device idle (the deliberate stall a resize
+  pays), and one usage bit (window pixels are read through the platform capture, never a transfer).
+- **Flake recorded (T79).** `VkPassTimingTest.AHeavyPassReportsMoreTimeThanACheapOne` went red twice in five sequential
+  full-suite runs in a loaded window; 20/20 lone, 3/3 quiet full and 10/10 under 8-way CPU load were green. Unrelated
+  to this seam; the backlog entry says capture the failing numbers before touching the threshold.
+- **Gates.** `test_vk` 254/254 (48 suites), `test_graphics` 714/714, `VkWindowPresentTest` 7/7, static gates 0, build
+  0 warnings.
+- **Next.** "What do the QUEUE FAMILY properties allow": `timestampValidBits` (never read - a family with 0 valid bits
+  makes every timestamp query result undefined), `minImageTransferGranularity`, the family flags.
+
+## 2026-11-28 - review 30: the clock asked the device, not the queue family
+
+- **Landed.** The chosen family's `timestampValidBits` is read where the family is chosen (`Candidate::timestamp_valid_bits`
+  -> `Impl::timestamp_valid_bits`), and `queueWritesTimestamps(bits, period)` (`DeviceChoice.hpp`, `>= 36 && period > 0`)
+  decides BOTH the timestamp query pool and `GpuTimings`. Before: both read the device-wide `timestampComputeAndGraphics`,
+  so a mixed device whose chosen graphics family supports timestamps kept `FrameTiming` DISENGAGED and the feature off.
+- **Why 36, not >0.** Vulkan defines `timestampValidBits` as 0 or 36..64 ("The valid range for the count is 36 to 64
+  bits, or a value of 0"); wgpu spells the same rule with the same comment. A sub-36 count is not a legal answer, and a
+  clock wrapping there corrupts tick subtraction.
+- **Examined, pinned, not read.** `minImageTransferGranularity` must be (1,1,1) for a family carrying graphics/compute,
+  and `queueCount` must be at least 1; the selection requires `GRAPHICS_BIT` and every copy (frame uploads, readbacks)
+  records in a pool of that family at offset 0 with the image's own extent - inside the granularity by construction.
+  Stated at the selection (a transfer-only family would have to read it), no runtime ask (G8: no conformant device can
+  fail it).
+- **Witness.** Four new `VkDeviceChoiceTest` cases: 0 bits -> off (whatever the device promises), 36/64 -> on (the case
+  the old gate refused), 20 -> off, zero period -> off. Mutations: `>= 36U` -> `> 0U` reddens exactly the 20-bit case;
+  the pool gate set to `queueWritesTimestamps(0U, period)` with `GpuTimings` on the real rule reddens both
+  `VkPassTimingTest` cases. Restored byte-identical (`cmp` clean).
+- **Trap.** Zeroing the carried field turns `GpuTimings` OFF, and the real-device agreement case then SKIPS - a silent
+  coverage loss, not a red. The real-device case can only witness a feature advertised without a report (the wiring), so
+  the wiring mutation is the one to run there.
+- **Gates.** `test_vk` 258/258 (48 suites), `test_graphics` 714/714, doc + static gates 0, build 0 warnings.
+- **Next.** "What does the memory heap allow": `memoryHeaps[].size` and `maxMemoryAllocationCount` are read by nobody;
+  the pool can only learn "out of device memory" from the driver after the attempt.

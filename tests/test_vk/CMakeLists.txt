@@ -36,6 +36,7 @@ add_executable(${TEST_NAME}
         VariantTest.cpp
         VertexInputTest.cpp
         WindowPresentTest.cpp
+        WindowSurfaceTest.cpp
 
         # The SDK backend seam's device-free facts (the frame gate among them): ONE source compiled into every
         # binary that links the seam, not a copy per backend.
@@ -107,3 +108,18 @@ add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 add_test(NAME vk_exposure
 	COMMAND ${Python3_EXECUTABLE} scripts/check_vk_exposure.py --root ${CMAKE_SOURCE_DIR})
 set_tests_properties(vk_exposure PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# THE LAYOUT SPELLING LIVES IN ONE TABLE (.ai/design/vk-backend.md 2.7): the rendering instance, descriptors, copies
+# and image creation read BarrierPlan's rows instead of spelling VK_IMAGE_LAYOUT_* again. A new literal outside the
+# table is how a barrier and the command after it start disagreeing about where an image is, so the check runs with
+# ctest beside the exposure gate.
+add_test(NAME vk_layout_literals
+	COMMAND ${Python3_EXECUTABLE} scripts/check_vk_layout_literals.py --root ${CMAKE_SOURCE_DIR})
+set_tests_properties(vk_layout_literals PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# THE BINDING NUMBERS HAVE ONE C++ HOME AND THE GLSL SIDE IS CHECKED AGAINST IT (.ai/design/vk-backend.md 2.26): the
+# set layouts and the descriptor writes are built from `ContentAbi.hpp`, and the shader texts / the engine's shadow
+# generator cannot include it - a mismatch is a VUID at pipeline creation rather than a compile error.
+add_test(NAME vk_bindings
+	COMMAND ${Python3_EXECUTABLE} scripts/check_vk_bindings.py --root ${CMAKE_SOURCE_DIR})
+set_tests_properties(vk_bindings PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

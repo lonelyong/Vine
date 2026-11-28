@@ -32,7 +32,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   answer: one lock for the map, one set of claim books, one release path - and `Device` only forwards.
  * - WHAT IT OWNS. The map from the host's `RenderTarget` (its address is the identity a frame names) to the
  *   `TargetObjects` the device built for it, the CJK-shaped claim books (`claimed` / `refused` / `released` / `live`),
- *   and the seven refusal episodes a build can speak through (`ensure`).
+ *   and the eight refusal episodes a build can speak through (`ensure`).
  * - WHAT IT DOES NOT OWN. The Vulkan device, queue and memory pool (borrowed through `open`), and the park queue a
  *   released record goes to (borrowed as `Park`): whether an image may really be destroyed is dated against the
  *   device's completion watermark, which is the device's clock, not the table's. `release` removes the entry and hands
@@ -79,12 +79,22 @@ class VN_BACKEND_VK_API TargetTable final {
      * @details
      * - `supported_sample_counts` is the BIT SET the colour and depth attachments both offer; a request is refused
      *   against it rather than lowered (ADR-2026-11-14-sample-count-refused-not-lowered).
+     * - EVERY DEFAULT BELOW IS THE FLOOR VULKAN GUARANTEES, NEVER A CEILING THE API ALLOWS: a table that was never
+     *   handed a device's answer must under-promise (refuse what the device might serve) instead of accepting what it
+     *   may not (`G4`; review 28). The API ceiling is not a substitute for the device's own number.
      */
     struct Limits {
         std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT }; ///< The counts both attachments offer.
         bool          depth_resolve_supported{ false };                 ///< A multisampled depth can be resolved the way this backend states it (`sample0`).
         /// Bit `1u << static_cast<std::uint32_t>(format)` for every colour format the device can build (see `buildableColorFormats`).
         std::uint32_t buildable_color_formats{ 0U };
+        /// The DEVICE's `maxColorAttachments` (see `Capabilities::limits.max_color_attachments`): Vulkan guarantees
+        /// only 4, so the API's `kMaxColorAttachments` is a ceiling on this value, never a substitute for it - and the
+        /// default is that guaranteed 4, never the API's 8.
+        std::uint32_t max_color_attachments{ 4U };
+        /// The largest width or height a build accepts (see `Capabilities::limits.max_target_extent`): the smallest of
+        /// the device's image, framebuffer and viewport dimensions; the default is Vulkan's guaranteed 4096.
+        std::uint32_t max_target_extent{ 4096U };
     };
 
     /**
@@ -314,6 +324,7 @@ class VN_BACKEND_VK_API TargetTable final {
     Park   park_{};
 
     vn::graphics::ReportOnce size_unknown_report_{};
+    vn::graphics::ReportOnce extent_report_{};
     vn::graphics::ReportOnce samples_report_{};
     vn::graphics::ReportOnce samples_depth_report_{};
     vn::graphics::ReportOnce borrow_samples_report_{};

@@ -7,6 +7,10 @@
  * while a capable device sat in the list. The fix is a filter (`candidateRefusal`) applied to every candidate before
  * the ranking, and this file pins the predicate itself: two real GPUs are not available in CI, and a fabricated
  * `DeviceOffer` is what makes "the capable second device survives" a case instead of a hope on the test machine.
+ *
+ * THE SECOND DECISION PINNED HERE IS THE QUEUE CLOCK (review 30): `queueWritesTimestamps` answers from the CHOSEN
+ * queue family's `timestampValidBits` and the device's period, and no CI machine has the shape that separates it from
+ * the device-wide `timestampComputeAndGraphics` floor - so the rule is pinned over fabricated answers, like the floor.
  */
 
 #include <gtest/gtest.h>
@@ -19,6 +23,7 @@ namespace
 using vn::backend_vk::candidateRefusal;
 using vn::backend_vk::DeviceOffer;
 using vn::backend_vk::FloorRefusal;
+using vn::backend_vk::queueWritesTimestamps;
 
 /// @brief The offer of a device that meets every floor (each case below changes exactly one fact).
 [[nodiscard]] DeviceOffer capableOffer()
@@ -99,4 +104,32 @@ TEST(VkDeviceChoiceTest, ACapableSecondDeviceSurvivesTheFilterTheRankedFirstOneD
 
     const DeviceOffer second = capableOffer();
     EXPECT_EQ(candidateRefusal(second), FloorRefusal::None) << "the capable second device must survive the filter";
+}
+
+TEST(VkDeviceChoiceTest, TheFamilysZeroBitsAnswerNoClockWhateverTheDeviceReports)
+{
+    // THE DEVICE-WIDE BOOL IS NOT THIS ANSWER: `timestampComputeAndGraphics` may be true with this family's count at 0
+    // (it only promises the families that carry GRAPHICS or COMPUTE - and 0 is the family's "no timestamps" answer).
+    EXPECT_FALSE(queueWritesTimestamps(0U, 1.0F));
+}
+
+TEST(VkDeviceChoiceTest, TheFamilysLowestLegalAnswerIsAUsableClock)
+{
+    // 36 IS THE SMALLEST COUNT VULKAN DEFINES ("36 to 64, or 0"): a family that answers it can time a frame, which is
+    // the case the old device-wide gate refused whenever `timestampComputeAndGraphics` was false.
+    EXPECT_TRUE(queueWritesTimestamps(36U, 1.0F));
+    EXPECT_TRUE(queueWritesTimestamps(64U, 1.0F));
+}
+
+TEST(VkDeviceChoiceTest, ABitCountVulkanDoesNotDefineIsNotAClock)
+{
+    // THE RULE IS THE SPEC'S FLOOR, NOT "> 0": a count between 1 and 35 is an answer Vulkan does not define, and a
+    // clock that wrapped there would make the frame's delta arithmetic read as a negative or a tiny time.
+    EXPECT_FALSE(queueWritesTimestamps(20U, 1.0F));
+}
+
+TEST(VkDeviceChoiceTest, ATickWithoutAPeriodIsNotAClock)
+{
+    // Ticks become nanoseconds through `timestampPeriod`: valid bits alone are not a clock.
+    EXPECT_FALSE(queueWritesTimestamps(36U, 0.0F));
 }

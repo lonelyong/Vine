@@ -112,14 +112,17 @@ class VN_BACKEND_VK_API ReadbackStaging final
      *
      * @details
      * - The region is mip 0 of layer 0 of the whole extent, tightly packed (`bufferRowLength` / `bufferImageHeight`
-     *   0), READ from `TRANSFER_SRC_OPTIMAL` - the layout the caller transitioned the image into.
+     *   0), READ from @p layout - the layout the caller transitioned the image into, passed in because the layout
+     *   vocabulary belongs to the caller's side (this unit names no render-seam type; see C10).
      *
-     * @param image  The image to copy (must be in `TRANSFER_SRC_OPTIMAL`).
+     * @param image  The image to copy.
      * @param aspect The ONE aspect to copy (a depth copy names `DEPTH`: the stencil half is not a depth, and nothing
      *               here decodes it).
      * @param extent The extent copied (the target's width/height, depth 1).
+     * @param layout The layout the image is in (the caller's `transferReadState().layout`; Vulkan requires the copy to
+     *               name the image's actual layout).
      */
-    void recordCopy(VkImage image, VkImageAspectFlags aspect, VkExtent3D extent) noexcept;
+    void recordCopy(VkImage image, VkImageAspectFlags aspect, VkExtent3D extent, VkImageLayout layout) noexcept;
 
     /**
      * @brief Ends the command buffer, submits it on @p queue under @p submit_lock, waits for the copy's OWN fence and

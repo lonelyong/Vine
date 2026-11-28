@@ -232,9 +232,13 @@ struct PassAttachmentOps {
  *   IDENTICAL states is part of the batch on purpose: it is the execution dependency between this pass and the previous
  *   one into the same image, which is the half Vulkan does not insert for dynamic rendering.
  * - ONE DEPENDENCY, NOT ONE PER ATTACHMENT. Every attachment barrier this pass needs is stated in ONE `VkDependencyInfo`
- *   (see `recordBarriers`): a seven-attachment multisampled set states one command, not seven. Vulkan's model is that a
- *   dependency orders two sets of accesses; splitting it per image says the same thing more expensively, and the count
- *   is a number this backend publishes (see `RecordingTally`).
+ *   - one `BarrierBatch` (`order`, then a single `flush`): a seven-attachment multisampled set states one command, not
+ *   seven. Vulkan's model is that a dependency orders two sets of accesses; splitting it per image says the same thing
+ *   more expensively, and the count is a number this backend publishes (see `RecordingTally`).
+ * - THE INSTANCE NAMES THE TABLE'S ROWS, NOT A SPELLING OF ITS OWN. Its `imageLayout` / `resolveImageLayout` are
+ *   `stateOf(ImageLayout::ColorAttachment)`'s and `stateOf(ImageLayout::DepthAttachment)`'s `.layout` - the same rows
+ *   the entry barriers are built from - so "which layout does this image hold when rendering" has one answer in the
+ *   module (see `BarrierPlan`).
  * - CALLER OWNS THE BOOKKEEPING. The `from` values a role carries are the facts the owner tracks, one per image (see
  *   `TargetObjects` and `WindowTarget`); after this call every attachment is in the rendering layout, so the owner
  *   stores exactly that.

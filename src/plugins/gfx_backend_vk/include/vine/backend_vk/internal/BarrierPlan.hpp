@@ -35,6 +35,12 @@ VN_BACKEND_VK_NS_BEGIN
  * - THE TABLE IS PURE. No device, no allocation, no state: the table answers the same thing on a machine with no Vulkan
  *   loader, which is what makes it testable before anything can be drawn. `recordBarrier` takes the device table
  *   because a recording call needs one; it keeps no state of its own.
+ * - ONE SPELLING, EVERY CONSUMER (`G1` / `G12`). A barrier is not the only command that states a layout: the rendering
+ *   instance, a descriptor's `imageLayout`, a copy's layout and an image's `initialLayout` all tell the device where an
+ *   image is or must be, and each of them used to spell `VK_IMAGE_LAYOUT_*` again - fourteen places that had to be kept
+ *   equal by memory. Every such consumer now reads the row's `.layout`, so the barrier that moves an image and the
+ *   command that follows it cannot disagree, and `scripts/check_vk_layout_literals.py` fails ctest when a new literal
+ *   appears outside this file.
  *
  * @note Not thread-safe only in the sense that every function here is stateless; they may be called from any thread.
  */
@@ -92,6 +98,9 @@ struct RecordingTally {
  * - AN ATTACHMENT ROW STATES BOTH HALVES OF ITS ACCESS, read and write: under dynamic rendering there is no subpass
  *   dependency to order a pass' LOAD (or its blend read) after the previous write, so a barrier that named only the
  *   write would leave the read unordered (see `DynamicRendering`).
+ * - THE CALLERS ARE NOT ONLY BARRIERS: a rendering attachment's `imageLayout`, a descriptor's, a copy's and an image's
+ *   `initialLayout` read this row too, so a consumer that needs the value repeatedly should take it once (see
+ *   `ContentDraw`'s slots).
  *
  * @param usage What the image is used for (see `ImageLayout`).
  * @return The layout, stages and access mask for @p usage.
@@ -271,7 +280,7 @@ void recordBarrier(const VolkDeviceTable& table,
  *   mis-state) its record.
  * - NOTHING HAPPENS WHEN NOTHING MOVES: @p record already stating @p to answers false and records no barrier. A
  *   caller that needs the DEPENDENCY without a layout change (two passes into one attachment) is not this verb - that
- *   barrier belongs to `DynamicRendering::beginRendering`, which records it deliberately.
+ *   barrier is a `BarrierBatch::order`, which `DynamicRendering::beginRendering` states for every attachment.
  * - The barrier itself is `barrierBetween`, so the barriers of `to` and `from` are the table's two rows and cannot be
  *   paired with another usage's stages or accesses.
  *
@@ -304,8 +313,13 @@ bool transitionImage(const VolkDeviceTable& table,
  *   it wrong, which is a defect in the caller rather than a device answer.
  * - AN ALREADY-CORRECT RECORD MOVES NOTHING: `move` answers false and appends no barrier, and the caller should not
  *   log a rewind for it.
+ * - TWO VERBS, TWO QUESTIONS (`G1`). `move` TRANSITIONS an image and writes its record; `order` states ONLY the
+ *   dependency and appends even when the two usages are identical. The second is not a convenience: under dynamic
+ *   rendering a pass into an attachment an earlier pass wrote states the SAME layout twice, and that barrier IS the
+ *   ordering between the two passes (`DynamicRendering::beginRendering` states every attachment of a pass this way).
+ *   Before this verb the recorder assembled the same `VkImageMemoryBarrier2` array by hand - one rule in two files.
  * - @ref flush is explicit (no destructor): recording a command from a destructor hides the moment a dependency reaches
- *   the command buffer, and the one caller here has exactly one place to state it.
+ *   the command buffer, and every caller here has exactly one place to state it.
  *
  * @warning Not thread-safe: one frame at a time (the SDK's per-driver contract).
  */
@@ -335,6 +349,24 @@ class BarrierBatch final {
      * @return true when a barrier was appended (i.e. @p record differed from @p to and there was room).
      */
     bool move(VkImage image, ImageLayout& record, ImageLayout to, VkImageAspectFlags aspect) noexcept;
+
+    /**
+     * @brief Appends a barrier between @p from and @p to WITHOUT moving anything: the dependency is the whole job.
+     *
+     * @details
+     * - THE DEPENDENCY-ONLY VERB (see the class note): the barrier is appended even when @p from and @p to are the same
+     *   usage - that case is the execution dependency between two passes into one image, which dynamic rendering does
+     *   not insert. No record is written, because ordering an image does not move it; the caller keeps stating its own
+     *   records.
+     * - An absent image appends nothing: a role that names no image owes the queue no dependency.
+     *
+     * @param image  The image to order (null appends nothing).
+     * @param from   The usage the image is in.
+     * @param to     The usage the image is about to be used for.
+     * @param aspect The aspect mask (colour, or depth for a depth image).
+     * @return true when a barrier was appended (i.e. @p image named one and there was room).
+     */
+    bool order(VkImage image, ImageLayout from, ImageLayout to, VkImageAspectFlags aspect) noexcept;
 
     /** @brief Records everything appended so far as ONE dependency, then empties the batch (idempotent). */
     void flush() noexcept;

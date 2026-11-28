@@ -18,10 +18,12 @@ VN_BACKEND_VK_NS_BEGIN
  * @brief The numbers and the two buffer verbs the content path's halves share: the ABI as this backend implements it.
  *
  * @details
- * - ONE HOME FOR THE ABI CONSTANTS. The engine's content ABI is stated by the SDK (`kTextureSlotCount`, the shadow
- *   bindings, the full-screen binding order) and this backend spells the deviceless half of it here, so the cache side
- *   (which packs the layouts) and the frame scratch (which builds the descriptor sets) cannot drift apart: the set the
- *   scratch writes must agree with the layout the caches created, and both name these numbers.
+ * - ONE HOME FOR THE ABI CONSTANTS, AND FOUR PARTIES THAT MUST AGREE. The numbers below are stated by the set LAYOUTS
+ *   the caches create, the descriptor WRITES the frame scratch records, the dynamic-offset ORDER the recorder supplies,
+ *   and the GLSL the engine compiles (`vine_params.glsl`, the texture slots, `BuiltinShaders`' generated shadow pair) -
+ *   so this header is the C++ home, and `scripts/check_vk_bindings.py` (ctest `vk_bindings`) reads the GLSL side and
+ *   the engine's generator against it. Before the sweep the numbers were spelled independently, and the SDK's own
+ *   header had already drifted: it documented the shadow pair at 5/6 while the generated text and the layout said 7/8.
  * - THE HOST-VISIBLE BUFFER PAIR. Streams (cache side) and the uniform ring (scratch side) both upload into the
  *   device's memory pool the same way, so the two verbs are free functions over borrowed device state rather than a
  *   member of either class - one implementation, and neither side owns the pool.
@@ -49,18 +51,56 @@ inline constexpr std::uint64_t kSetRetentionFrames = 600U;
 /// @brief How often unused sets are swept (a frame count; sweeping every frame would be pointless work).
 inline constexpr std::uint64_t kSetSweepIntervalFrames = 120U;
 
-/// @brief The content ABI's texture-slot count (see `TextureSlot`), i.e. set 0 bindings 1..5.
+/// @brief Set 0 of a content or full-screen program: material (content only), the slots, the lights, the shadow pair.
+inline constexpr std::uint32_t kContentSet = 0U;
+
+/// @brief Set 0's material block (`VineMaterialBlock`), declared by `vine_params.glsl` (content programs only).
+inline constexpr std::uint32_t kMaterialBinding = 0U;
+
+/// @brief Set 0's first texture slot; slot S of `TextureSlot` sits at `kTextureBindingBase + S`.
+inline constexpr std::uint32_t kTextureBindingBase = 1U;
+
+/// @brief The content ABI's texture-slot count (see `TextureSlot`): the slots occupy this many consecutive bindings.
 inline constexpr std::uint32_t kTextureSlots = vn::graphics::kTextureSlotCount;
 
-/// @brief The content set's SHADOW bindings: the engine's forward ABI puts the map at 7 and its block at 8.
+/// @brief Set 0's light block (`VineLightsBlock`) - the ONE binding the content and the full-screen paths share.
+inline constexpr std::uint32_t kLightsBinding = 6U;
+
+/// @brief Set 0's shadow map: `forwardFragmentSource()` and the shadowed full-screen variant declare it here.
 ///
-/// The engine's `forwardFragmentSource()` declares both UNCONDITIONALLY (its `vn_shadow.params.x` is the runtime
-/// switch), so a backend that wants its own forward programs must offer the binding even while it casts no shadow.
-inline constexpr std::uint32_t kShadowMapBinding   = 7U;
+/// The engine's `forwardFragmentSource()` declares both shadow bindings UNCONDITIONALLY (its `vn_shadow.params.x` is
+/// the runtime switch), so a backend that wants its own forward programs must offer the binding even while it casts
+/// no shadow.
+inline constexpr std::uint32_t kShadowMapBinding = 7U;
+
+/// @brief Set 0's shadow block; `BuiltinShaders::shadowBindings` states the block at the map's binding plus one.
 inline constexpr std::uint32_t kShadowBlockBinding = 8U;
 
-/// @brief The full-screen ABI's sampler bindings: bindings 0..4 (four colour attachments and depth).
+/// @brief The full-screen ABI's first sampler binding: attachment N of the source is sampled at `base + N`.
+inline constexpr std::uint32_t kFullscreenSamplerBindingBase = 0U;
+
+/// @brief The full-screen ABI's sampler bindings: the canonical G-buffer's four colour attachments and its depth.
 inline constexpr std::uint32_t kFullscreenSamplerBindings = 5U;
+
+/// @brief Set 1: the per-draw block (`VineDrawBlock`), declared by `vine_params.glsl`.
+inline constexpr std::uint32_t kDrawSet = 1U;
+
+/// @brief Set 1's only binding.
+inline constexpr std::uint32_t kDrawBinding = 0U;
+
+// THE TABLE'S OWN ARITHMETIC, AS COMPILE-TIME GUARDS. The slots fit between the material and the lights, the shadow
+// block follows its map (the engine's generator states `+ 1`), and the full-screen samplers end before the lights - the
+// gap at 5 is the depth slot's, which the lights' shared spelling leaves free.
+static_assert(kTextureBindingBase + kTextureSlots <= kLightsBinding,
+              "the texture slots must fit between the material and the lights");
+static_assert(kShadowBlockBinding == kShadowMapBinding + 1U,
+              "BuiltinShaders::shadowBindings states the shadow block at the map's binding + 1");
+static_assert(kFullscreenSamplerBindingBase + kFullscreenSamplerBindings <= kLightsBinding,
+              "the full-screen samplers must fit before the lights");
+// AND THE TABLE FITS UNDER THE DEVICE'S FLOOR, so no sampler count has to be asked at `initialize`: Vulkan guarantees
+// `maxPerStageDescriptorSamplers >= 16`, and a content pass binds the texture slots plus the shadow map.
+static_assert(kTextureSlots + 1U <= 16U,
+              "Vulkan guarantees maxPerStageDescriptorSamplers >= 16: the texture slots and the shadow map must fit under it");
 
 /**
  * @brief How a shadow map is read: nearest texels, clamped to the edge, no mip interpolation.
@@ -94,7 +134,10 @@ inline constexpr vn::graphics::Sampler kShadowSampler{
  *   `view * model` - see ContentDraw's `pushConstantsOf`).
  */
 using PushRangeConstants = vn::graphics::VinePushRange;
-static_assert(sizeof(PushRangeConstants) == 128U, "the push range is two mat4");
+// THE SIZE IS UNDER THE DEVICE'S FLOOR, NOT AT ITS CEILING: Vulkan guarantees `maxPushConstantsSize >= 128`, so a
+// 128-byte range is accepted by every device this backend can come up on, and no limit has to be asked. A range that
+// grew past this would have to be checked against the device at `initialize` instead.
+static_assert(sizeof(PushRangeConstants) == 128U, "the push range is two mat4, and Vulkan guarantees 128 bytes of push constants");
 
 /**
  * @brief Rounds @p value up to the next multiple of @p alignment.

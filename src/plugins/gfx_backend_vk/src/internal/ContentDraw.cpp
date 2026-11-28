@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/FrameScratch.hpp>
@@ -453,14 +454,16 @@ void ContentDraw::record(const DrawScope&                         scope,
         const vn::graphics::MaterialParameters* material_values = plan.material != nullptr ? &plan.material->values() : nullptr;
 
         // THE SLOTS: the frame head resolved each one (uploaded view or the stand-in), and the presence bits are the
-        // shading's own switch - a slot the cache could not serve stays absent rather than reading stale bytes.
+        // shading's own switch - a slot the cache could not serve stays absent rather than reading stale bytes. The
+        // layout is the table's SAMPLED ROW, taken once: every slot of every draw is in the same usage (see BarrierPlan).
+        const VkImageLayout                              sampled_layout = stateOf(ImageLayout::ShaderReadOnly).layout;
         std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
         std::uint32_t                                    texture_flags = 0U;
         for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
             const FrameHead::SlotBinding& binding = plan.slots[slot_index];
             slots[slot_index].sampler     = binding.sampler;
             slots[slot_index].imageView   = binding.view;
-            slots[slot_index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            slots[slot_index].imageLayout = sampled_layout;
             if (binding.present) {
                 texture_flags |= 1U << slot_index;
             }
@@ -526,8 +529,8 @@ void ContentDraw::record(const DrawScope&                         scope,
                         dynamic.polygon_offset.factor,
                         command.reversesWinding());
         const VkDescriptorSet sets[2]{ content_set, draw_set };
-        // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets: material (0), lights
-        // (6) and the shadow block (8) of set 0, then the draw block (0) of set 1.
+        // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets - the order the table in
+        // ContentAbi names: the material, the lights and the shadow block of set 0, then the draw block of set 1.
         const std::uint32_t offsets[4]{ static_cast<std::uint32_t>(slice),
                                         static_cast<std::uint32_t>(slice + scratch.lightsOffset()),
                                         static_cast<std::uint32_t>(slice + scratch.shadowOffset()),
@@ -631,12 +634,14 @@ void ContentDraw::recordFullscreen(const DrawScope&                scope,
     const VkRect2D&       scissor  = scope.scissor;
 
     // THE SLOTS: binding N is the source's attachment N; a binding past the source's count reads the fallback (a
-    // full-screen program only declares the bindings its own ABI states, so nothing reads them).
+    // full-screen program only declares the bindings its own ABI states, so nothing reads them). The layout is the same
+    // SAMPLED ROW the source's entry moves name, taken once (see BarrierPlan).
+    const VkImageLayout                              sampled_layout = stateOf(ImageLayout::ShaderReadOnly).layout;
     std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
     for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
         slots[slot_index].sampler     = head.fallback_sampler;
         slots[slot_index].imageView   = slot_index < source.views.size() ? source.views[slot_index] : head.fallback_view;
-        slots[slot_index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        slots[slot_index].imageLayout = sampled_layout;
     }
 
     vn::graphics::VineLightsBlock lights_block{};
@@ -679,7 +684,7 @@ void ContentDraw::recordFullscreen(const DrawScope&                scope,
     // at the far plane, so it states zero rather than the pass' polygon offset. It also states the SDK's front face
     // (false): a full-screen rectangle is generated in clip space and carries no placement to mirror.
     recordCallState(commands, viewport, scissor, resolved, plan.color_attachments, 0.0F, 0.0F, false);
-    // The full-screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
+    // The full-screen set's dynamic bindings are the lights and the shadow block, in binding order (see ContentAbi).
     const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + scratch.lightsOffset()),
                                      static_cast<std::uint32_t>(slice + scratch.shadowOffset()) };
     caches.table().vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, caches.fullscreenPipelineLayout(), 0U, 1U, &set, 2U, offsets);

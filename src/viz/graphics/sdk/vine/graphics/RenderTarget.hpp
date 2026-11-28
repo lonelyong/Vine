@@ -176,8 +176,11 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
 
     /** @brief Sets the render target dimensions.
      *
-     * @note The size is maintained by the target's owner at the appropriate time (e.g. on a surface resize the code
-     *       that created the target calls this with the size it wants).
+     * @note
+     * - The size is maintained by the target's owner at the appropriate time (e.g. on a surface resize the code that
+     *   created the target calls this with the size it wants).
+     * - The device states how large a target may be: `Capabilities::limits.max_target_extent` is the largest width or
+     *   height one target may declare, and a larger declaration is refused (reported once) rather than clamped.
      *
      * @param w Width in pixels.
      * @param h Height in pixels.

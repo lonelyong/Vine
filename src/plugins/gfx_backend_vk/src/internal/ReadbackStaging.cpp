@@ -93,13 +93,15 @@ VkCommandBuffer ReadbackStaging::commands() const noexcept
     return commands_;
 }
 
-void ReadbackStaging::recordCopy(const VkImage image, const VkImageAspectFlags aspect, const VkExtent3D extent) noexcept
+void ReadbackStaging::recordCopy(const VkImage image, const VkImageAspectFlags aspect, const VkExtent3D extent, const VkImageLayout layout) noexcept
 {
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = aspect;
     region.imageSubresource.layerCount = 1U;
     region.imageExtent                 = extent;
-    table_->vkCmdCopyImageToBuffer(commands_, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer_, 1U, &region);
+    // THE LAYOUT IS THE CALLER'S FACT (see the header): the caller moved the image there through the barrier table, and
+    // this unit records the copy that reads it - naming no layout of its own.
+    table_->vkCmdCopyImageToBuffer(commands_, image, layout, buffer_, 1U, &region);
 }
 
 StagingRun ReadbackStaging::run(const VkQueue queue, std::mutex& submit_lock) noexcept

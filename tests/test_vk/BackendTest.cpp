@@ -119,6 +119,9 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
         << "the pool's bookkeeping is this backend's own";
     // THE DEVICE'S OWN COLOUR SLOT COUNT: Vulkan guarantees at least 4, and an MRT pass may use every one.
     EXPECT_GE(capabilities.limits.max_color_attachments, 4U);
+    // THE EXTENT CEILING IS THE SMALLEST OF THE DEVICE'S FIVE DIMENSION ANSWERS (see
+    // Capabilities::limits.max_target_extent): Vulkan guarantees 4096 for each, so no conformant device answers less.
+    EXPECT_GE(capabilities.limits.max_target_extent, 4096U);
 
     // IDEMPOTENT, and back to a fresh object: the SDK requires a device whose surface is recreated to take this path.
     backend->shutdown();

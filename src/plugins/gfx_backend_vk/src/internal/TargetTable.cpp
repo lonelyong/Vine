@@ -150,8 +150,9 @@ void TargetTable::open(const Device device, const Limits limits, Report report, 
     limits_ = limits;
     report_ = std::move(report);
     park_   = std::move(park);
-    // A NEW SESSION SAYS NOTHING IT SAID BEFORE: the eight refusals are episodes of THIS session's build.
+    // A NEW SESSION SAYS NOTHING IT SAID BEFORE: the nine refusals are episodes of THIS session's build.
     size_unknown_report_.rearm();
+    extent_report_.rearm();
     samples_report_.rearm();
     samples_depth_report_.rearm();
     borrow_samples_report_.rearm();
@@ -202,6 +203,33 @@ std::shared_ptr<TargetObjects> TargetTable::ensure(const vn::graphics::RenderTar
         // A USABLE EXTENT EXISTS: the "unusable extent" episode is over (see ReportOnce). It is a different fact from
         // the sample-count refusals below, so it has an episode of its own.
         size_unknown_report_.rearm();
+        // A DECLARATION ABOVE THE DEVICE'S CEILING IS NOT A TARGET (`G4`; review 28): an attachment is an image, the
+        // pass states a framebuffer extent and a viewport, and the DEVICE's answer for all three is one number
+        // (`Capabilities::limits.max_target_extent`, the smallest of them). A larger declaration is refused here,
+        // once per episode, instead of reaching `vkCreateImage` as an invalid extent whose failure shape is the
+        // driver's (and whose report would blame the memory).
+        const std::uint32_t widest_extent =
+            static_cast<std::uint32_t>(wanted.width > wanted.height ? wanted.width : wanted.height);
+        if (widest_extent > limits_.max_target_extent) {
+            if (extent_report_.shouldReport()) {
+                if (report_) {
+                    report_(targetDiagnostic(target,
+                                             vn::graphics::DiagnosticSeverity::Warning,
+                                             vn::graphics::DiagnosticCategory::TargetBuildFailed,
+                                             u8"vk.target.extent_above_limit",
+                                             vn::String(u8"vk: a target asks for ") +
+                                                 numberText(static_cast<std::uint32_t>(wanted.width)) + u8"x" +
+                                                 numberText(static_cast<std::uint32_t>(wanted.height)) +
+                                                 u8" pixels, above what this device allows (up to " +
+                                                 numberText(limits_.max_target_extent) +
+                                                 u8" in either dimension; see Capabilities::limits.max_target_extent); "
+                                                 u8"it was not built",
+                                             vn::graphics::DiagnosticLimit{ widest_extent, limits_.max_target_extent }));
+                }
+            }
+            return nullptr;
+        }
+        extent_report_.rearm(); // a declaration inside the limit: the episode is over
     }
     // A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the target states the number of
     // samples it is drawn with, and `wanted.shape.samples` is that number - never another one. A count this device
@@ -334,19 +362,27 @@ std::shared_ptr<TargetObjects> TargetTable::ensure(const vn::graphics::RenderTar
         wanted.shape.device_depth_format = source->second->desc.shape.device_depth_format;
     }
 
-    // A SHAPE WITH MORE COLOUR ATTACHMENTS THAN THE API ALLOWS IS NOT A TARGET (`G4`): `maxColorAttachments` is at most
-    // 8 in Vulkan, and the recorder's attachment-info array is a stack value of exactly that size (`kMaxColorAttachments`).
-    // Refused here, once per episode, so the pass naming it is skipped and no half-target is built.
-    if (wanted.shape.device_color_formats.size() > kMaxColorAttachments) {
+    // A SHAPE WITH MORE COLOUR ATTACHMENTS THAN THE DEVICE (OR THE API) ALLOWS IS NOT A TARGET (`G4`): Vulkan only
+    // GUARANTEES 4 colour attachments, and the API's 8 (`kMaxColorAttachments`) is the ceiling the recorder's stack
+    // arrays are sized by - so the answer is the smaller of the device's own `maxColorAttachments` and that ceiling.
+    // A device that offers 4 must refuse the 5..8 range instead of letting a pass reach `VkRenderingInfo` with a count
+    // the driver refuses (review 25 `B1`). Refused here, once per episode, so the pass naming it is skipped and no
+    // half-target is built.
+    const std::size_t color_ceiling = std::min<std::size_t>(limits_.max_color_attachments, kMaxColorAttachments);
+    if (wanted.shape.device_color_formats.size() > color_ceiling) {
         if (too_many_colors_report_.shouldReport()) {
             if (report_) {
                 report_(targetDiagnostic(target,
                                          vn::graphics::DiagnosticSeverity::Warning,
                                          vn::graphics::DiagnosticCategory::TargetBuildFailed,
                                          u8"vk.target.too_many_colors",
-                                         vn::String(u8"vk: a target asks for more than ") +
-                                             numberText(static_cast<std::uint32_t>(kMaxColorAttachments)) +
-                                             u8" colour attachments, which is the most Vulkan allows; it was not built"));
+                                         vn::String(u8"vk: a target asks for ") +
+                                             numberText(static_cast<std::uint32_t>(wanted.shape.device_color_formats.size())) +
+                                             u8" colour attachments, above what this device allows (up to " +
+                                             numberText(static_cast<std::uint32_t>(color_ceiling)) +
+                                             u8"; see Capabilities::limits.max_color_attachments); it was not built",
+                                         vn::graphics::DiagnosticLimit{ static_cast<std::uint64_t>(wanted.shape.device_color_formats.size()),
+                                                                        static_cast<std::uint64_t>(color_ceiling) }));
             }
         }
         return nullptr;

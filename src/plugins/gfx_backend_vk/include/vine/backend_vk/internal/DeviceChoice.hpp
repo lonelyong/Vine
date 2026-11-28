@@ -75,4 +75,27 @@ enum class FloorRefusal : std::uint8_t
     return FloorRefusal::None;
 }
 
+/**
+ * @brief Whether the session's queue family can write the timestamps the frame clock reads.
+ *
+ * @details
+ * - THE FAMILY ANSWERS, NOT THE DEVICE (review 30). `VkPhysicalDeviceLimits::timestampComputeAndGraphics` is a
+ *   device-wide FLOOR - "all queues that advertise GRAPHICS_BIT or COMPUTE_BIT support timestampValidBits of at least
+ *   36" - so a false there describes the machine, not the one family this backend records on.
+ *   `VkQueueFamilyProperties::timestampValidBits` is that family's own answer, and Vulkan defines it as either 0 (no
+ *   timestamp support) or 36..64, so 36 is the smallest USABLE answer; below it no legal answer exists.
+ * - THE PERIOD IS THE OTHER HALF: a timestamp is ticks, and `VkPhysicalDeviceLimits::timestampPeriod` is what turns them
+ *   into nanoseconds - a zero period is not a clock whatever the valid bits say.
+ * - The peers ask the same question of the same value: wgpu's Vulkan backend enables its timestamp features from the
+ *   chosen graphics family's `timestamp_valid_bits >= 36` ("Vulkan strictly defines this as either 36-64, or zero").
+ *
+ * @param timestamp_valid_bits `VkQueueFamilyProperties::timestampValidBits` of the CHOSEN family.
+ * @param timestamp_period The chosen device's `VkPhysicalDeviceLimits::timestampPeriod`, in nanoseconds.
+ * @return true when a timestamp written on this family carries a usable value this backend can convert.
+ */
+[[nodiscard]] inline bool queueWritesTimestamps(const std::uint32_t timestamp_valid_bits, const float timestamp_period) noexcept
+{
+    return timestamp_valid_bits >= 36U && timestamp_period > 0.0F;
+}
+
 VN_BACKEND_VK_NS_END

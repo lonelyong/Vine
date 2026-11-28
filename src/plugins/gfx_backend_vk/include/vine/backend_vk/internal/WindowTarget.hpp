@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include <volk.h>
 
@@ -253,5 +254,69 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
 
     std::unique_ptr<Impl> impl;
 };
+
+/**
+ * @brief Why a surface allows no swapchain this backend can draw into (see `surfaceSwapchain`).
+ */
+enum class SurfaceRefusal : std::uint8_t
+{
+    None,          ///< The surface allows one; every field of `SurfaceSwapchain` may be requested.
+    NoFormats,     ///< The surface offers no format pair at all.
+    ZeroExtent,    ///< The extent the surface dictates (or clamps to) is zero - a minimised window.
+    NoColorUsage,  ///< The surface's images cannot be colour attachments, so nothing can be drawn into them.
+};
+
+/**
+ * @brief What ONE swapchain of this surface may be: the surface's answers resolved into one request.
+ *
+ * @details
+ * - THE SURFACE IS THE AUTHORITY (review 29). `VkSurfaceCapabilitiesKHR` states the extent the presentation engine
+ *   presents at, the image count it allows, the composite modes it supports and the usages its images permit, and the
+ *   format list states the format pairs it prefers. This value is those answers RESOLVED: every field is one the
+ *   surface states, so `VkSwapchainCreateInfoKHR` is filled from it without a second check anywhere else.
+ * - THE ONE ANSWER IT REFUSES TO RESOLVE is a surface that cannot be drawn into (see @ref refusal): every pass this
+ *   backend records draws into the window's image, so a surface without colour-attachment usage has no window target,
+ *   and that is a named refusal rather than a driver error whose sentence names nothing.
+ */
+struct SurfaceSwapchain {
+    VkSurfaceFormatKHR          format{};      ///< The format pair to request; never `VK_FORMAT_UNDEFINED`.
+    VkExtent2D                  extent{};      ///< The image extent to request (the surface's own, or the announced size clamped into its range).
+    std::uint32_t               image_count{ 0U }; ///< At least the surface's minimum, at most its maximum (when it states one).
+    VkCompositeAlphaFlagBitsKHR composite_alpha{ VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR }; ///< A mode `supportedCompositeAlpha` states.
+    SurfaceRefusal              refusal{ SurfaceRefusal::None }; ///< `None` when every field above may be requested.
+
+    /** @brief Answers whether the surface allows a swapchain at all, i.e. whether the fields above are usable. */
+    [[nodiscard]] bool ok() const noexcept
+    {
+        return refusal == SurfaceRefusal::None;
+    }
+};
+
+/**
+ * @brief Resolves a surface's answers into the swapchain ONE window may request (see `SurfaceSwapchain`).
+ *
+ * @details
+ * - EXTENT: a windowed surface states `currentExtent` and the chain follows it (the presentation engine owns the
+ *   window's size); a free surface (`currentExtent` is `UINT32_MAX`) takes the announced size CLAMPED into
+ *   `minImageExtent`..`maxImageExtent`, and an unannounced size falls back to 64x64 before that clamp.
+ * - FORMAT: the surface's preferred 8-bit sRGB pair, else the first pair it lists; the `VK_FORMAT_UNDEFINED` sentinel
+ *   (the spec's "no preferred format" answer) becomes the classic `B8G8R8A8_UNORM` + `SRGB_NONLINEAR` pair, because
+ *   `VkSwapchainCreateInfoKHR::imageFormat` may not be `VK_FORMAT_UNDEFINED`.
+ * - COUNT: `minImageCount + 1` (one image presenting while the next is drawn), capped by `maxImageCount` when the
+ *   surface states a cap (0 means none).
+ * - COMPOSITE ALPHA: `OPAQUE` when supported, else the first mode the surface states in POST / PRE / INHERIT order -
+ *   the picture is the same, so a stated mode beats refusing.
+ * - What it never resolves is a surface that cannot be drawn into (see `SurfaceRefusal::NoColorUsage`).
+ *
+ * @param capabilities  The surface's answers (`vkGetPhysicalDeviceSurfaceCapabilitiesKHR`).
+ * @param formats       The format pairs the surface offers, in its preferred order.
+ * @param wanted_width  The announced width for a free surface (0 takes the 64-pixel fallback).
+ * @param wanted_height The announced height for a free surface (0 takes the 64-pixel fallback).
+ * @return The request, or the refusal that says why the surface allows none.
+ */
+[[nodiscard]] SurfaceSwapchain surfaceSwapchain(const VkSurfaceCapabilitiesKHR& capabilities,
+                                                std::span<const VkSurfaceFormatKHR> formats,
+                                                std::uint32_t wanted_width,
+                                                std::uint32_t wanted_height) noexcept;
 
 VN_BACKEND_VK_NS_END

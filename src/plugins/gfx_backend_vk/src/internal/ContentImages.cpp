@@ -327,7 +327,9 @@ struct ContentImages::Impl {
         info.arrayLayers   = layers;
         info.format        = format;
         info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // A NEW IMAGE IS BORN IN THE TABLE'S Undefined ROW (see BarrierPlan): the record the upload starts from states
+        // the same usage, so creation and the first barrier cannot disagree.
+        info.initialLayout = stateOf(ImageLayout::Undefined).layout;
         info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         info.samples       = VK_SAMPLE_COUNT_1_BIT;
         info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
@@ -518,7 +520,9 @@ struct ContentImages::Impl {
         const VkImageMemoryBarrier2 to_transfer = barrierBetween(entry.image, from, to, staged.range);
         recordBarrier(*table, commands, to_transfer, tally);
 
-        table->vkCmdCopyBufferToImage(commands, staged.buffer, entry.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        // THE COPY NAMES THE ROW THE BARRIER ABOVE MOVED THE IMAGE INTO (`to`), not a second spelling of it (see
+        // BarrierPlan).
+        table->vkCmdCopyBufferToImage(commands, staged.buffer, entry.image, to.layout,
                                       static_cast<std::uint32_t>(staged.regions.size()), staged.regions.data());
 
         // THE SAME RANGE THE UPLOAD WRITES (every layer and mip): a single-subresource transition here would leave the
@@ -894,6 +898,13 @@ VkSampler ContentImages::samplerFor(const vn::graphics::Sampler& sampler)
     VkSamplerCreateInfo info{};
     info.sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     info.magFilter               = filterOf(sampler.mag_filter);
+    // THE MIPMAP AXIS IS `mipmapMode`'S, NOT THE MIN FILTER'S (Vulkan's composition, unlike OpenGL's single enum):
+    // `minFilter` filters WITHIN a level and `mipmapMode` BETWEEN two (the spec's OpenGL-mapping note pairs
+    // `VK_FILTER_LINEAR` + `MIPMAP_MODE_NEAREST` with `GL_LINEAR_MIPMAP_NEAREST`), while `minLod` / `maxLod` /
+    // `mipLodBias` below choose the level - Vulkan always mip-selects when the view has levels. So the base
+    // spelling here is the whole mapping, and a `VK_FILTER_*_MIPMAP_*` value would state the mip half twice.
+    // A host pins the base level with `maxLod = 0` (the spec defines that as always-magnification, so the MAG
+    // filter is what such a sampler applies). Witness: `VkContentDrawTest.ASamplerReadsTheMipLevelItsLodClampNames`.
     info.minFilter               = filterOf(sampler.min_filter);
     info.mipmapMode              = mipmapModeOf(sampler.mipmap_mode);
     info.addressModeU            = addressModeOf(sampler.address_u);
@@ -949,7 +960,8 @@ ContentImages::TextureView ContentImages::ensureFallback(const VkCommandBuffer c
     info.arrayLayers   = 1U;
     info.format        = VK_FORMAT_R8G8B8A8_UNORM;
     info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // THE SAME BIRTH LAYOUT as a texture revision (see createTextureImage and BarrierPlan).
+    info.initialLayout = stateOf(ImageLayout::Undefined).layout;
     info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     info.samples       = VK_SAMPLE_COUNT_1_BIT;
     info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;

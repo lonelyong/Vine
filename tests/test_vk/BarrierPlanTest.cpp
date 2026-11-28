@@ -15,6 +15,7 @@
 #include <vine/graphics/DrawState.hpp>
 
 using vn::backend_vk::barrierFor;
+using vn::backend_vk::BarrierBatch;
 using vn::backend_vk::ImageLayout;
 using vn::backend_vk::ImageState;
 using vn::backend_vk::loadOpOf;
@@ -80,6 +81,55 @@ TEST(BarrierPlanTest, ASameStateBarrierStillCarriesTheDependency)
         << "the pass' depth test is what reads the attachment";
     EXPECT_NE(barrier.dstAccessMask & VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT, 0U)
         << "a LOAD (and the depth test) reads, so the destination scope must include the read";
+}
+
+TEST(BarrierPlanTest, ABatchOrdersASameStateBarrierButOnlyMovesAChangedOne)
+{
+    // THE SPLIT BETWEEN THE BATCH'S TWO VERBS (see BarrierBatch): `move` answers false when the record already states the
+    // target, while `order` appends that very barrier - it is the execution dependency between two passes into one
+    // image, which `DynamicRendering::beginRendering` states for every attachment. A batch is pure until it is flushed,
+    // so both verbs are checkable with no device: only the append count and the appended values are observed here.
+    std::array<VkImageMemoryBarrier2, 4U> storage{};
+    VolkDeviceTable                      no_table{}; // only flush() would touch it, and this case never flushes
+    BarrierBatch                         batch(no_table, VK_NULL_HANDLE, storage);
+
+    const VkImage image = reinterpret_cast<VkImage>(static_cast<std::uint64_t>(0x1234));
+
+    // Two identical usages move nothing...
+    ImageLayout record = ImageLayout::ColorAttachment;
+    EXPECT_FALSE(batch.move(image, record, ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT));
+    EXPECT_EQ(batch.size(), 0U) << "a record that already states the target moves nothing";
+    EXPECT_EQ(record, ImageLayout::ColorAttachment);
+
+    // ... but the DEPENDENCY is still stateable, and `order` appends it even though the layouts are equal.
+    EXPECT_TRUE(batch.order(image, ImageLayout::ColorAttachment, ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT));
+    ASSERT_EQ(batch.size(), 1U);
+    EXPECT_EQ(storage[0].oldLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    EXPECT_EQ(storage[0].newLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    EXPECT_NE(storage[0].srcStageMask, 0U);
+    EXPECT_NE(storage[0].dstStageMask, 0U);
+    EXPECT_NE(storage[0].srcAccessMask, 0U);
+    EXPECT_NE(storage[0].dstAccessMask, 0U) << "the ordering a same-state barrier adds IS the access scope between passes";
+
+    // A move appends once and writes the record it moved; the append itself is the same verb.
+    EXPECT_TRUE(batch.move(image, record, ImageLayout::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT));
+    ASSERT_EQ(batch.size(), 2U);
+    EXPECT_EQ(record, ImageLayout::ShaderReadOnly);
+    EXPECT_EQ(storage[1].oldLayout, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    EXPECT_EQ(storage[1].newLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // An absent image appends nothing...
+    EXPECT_FALSE(batch.order(VK_NULL_HANDLE, ImageLayout::Undefined, ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT));
+    EXPECT_EQ(batch.size(), 2U);
+
+    // ... and a full batch refuses without writing a record or running past the caller's storage.
+    EXPECT_TRUE(batch.order(image, ImageLayout::Undefined, ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT));
+    EXPECT_TRUE(batch.order(image, ImageLayout::Undefined, ImageLayout::ColorAttachment, VK_IMAGE_ASPECT_COLOR_BIT));
+    EXPECT_EQ(batch.size(), 4U);
+    ImageLayout overflow_record = ImageLayout::Undefined;
+    EXPECT_FALSE(batch.move(image, overflow_record, ImageLayout::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT))
+        << "the caller sized the batch by the moves it states; a full batch is its defect, not the device's";
+    EXPECT_EQ(overflow_record, ImageLayout::Undefined) << "a refused move writes no record";
 }
 
 TEST(BarrierPlanTest, ATransitionCarriesBothSidesOfTheTable)

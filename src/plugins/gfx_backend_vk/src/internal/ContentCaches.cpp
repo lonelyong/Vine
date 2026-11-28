@@ -32,8 +32,13 @@ namespace
 
 using detail::alignedUp;
 using detail::kDefaultUniformAlignment;
+using detail::kDrawBinding;
+using detail::kFullscreenSamplerBindingBase;
+using detail::kLightsBinding;
+using detail::kMaterialBinding;
 using detail::kShadowBlockBinding;
 using detail::kShadowMapBinding;
+using detail::kTextureBindingBase;
 using detail::kTextureSlots;
 using detail::vertexFormatOf;
 using vn::graphics::ProgramVariant;
@@ -1975,18 +1980,18 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     // THE CONTENT SET (set 0): material at 0, the five slots at 1-5, lights at 6 - the engine's arrangement, which is
     // also the one vine_params.glsl declares.
     VkDescriptorSetLayoutBinding content_bindings[9]{};
-    content_bindings[0].binding         = 0U;
+    content_bindings[0].binding         = kMaterialBinding;
     content_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     content_bindings[0].descriptorCount = 1U;
     content_bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
         VkDescriptorSetLayoutBinding& binding = content_bindings[1U + slot];
-        binding.binding                       = 1U + slot;
+        binding.binding                       = kTextureBindingBase + slot;
         binding.descriptorType                = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         binding.descriptorCount               = 1U;
         binding.stageFlags                    = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     }
-    content_bindings[6].binding         = 6U;
+    content_bindings[6].binding         = kLightsBinding;
     content_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     content_bindings[6].descriptorCount = 1U;
     content_bindings[6].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -2012,7 +2017,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
 
     // THE DRAW SET (set 1): the per-draw block at binding 0.
     VkDescriptorSetLayoutBinding draw_binding{};
-    draw_binding.binding         = 0U;
+    draw_binding.binding         = kDrawBinding;
     draw_binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     draw_binding.descriptorCount = 1U;
     draw_binding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -2028,12 +2033,12 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     // shading states both, so the layout has to offer them (see FrameScratch::buildFullscreenSet for what is bound there).
     VkDescriptorSetLayoutBinding fullscreen_bindings[8]{};
     for (std::uint32_t slot = 0; slot < detail::kFullscreenSamplerBindings; ++slot) {
-        fullscreen_bindings[slot].binding         = slot;
+        fullscreen_bindings[slot].binding         = kFullscreenSamplerBindingBase + slot;
         fullscreen_bindings[slot].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         fullscreen_bindings[slot].descriptorCount = 1U;
         fullscreen_bindings[slot].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     }
-    fullscreen_bindings[5].binding         = 6U;
+    fullscreen_bindings[5].binding         = kLightsBinding;
     fullscreen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     fullscreen_bindings[5].descriptorCount = 1U;
     fullscreen_bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;

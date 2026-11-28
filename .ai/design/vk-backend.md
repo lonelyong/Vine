@@ -1,12 +1,13 @@
 # the vk backend: a render backend straight onto Vulkan
 
 > **Status**: current
-> **Last verified**: 2026-11-23
+> **Last verified**: 2026-11-28
 > **Scope**: the `gfx_backend_vk` plugin (registered as `"vk"`) — a **straight-to-Vulkan** implementation of `RenderBackend`: device and queues,
 > targets and windows, content drawing, the device memory pool, the pipeline cache, reports and diagnostics. It does **not** cover the SDK seam itself (see `graphics-*`)
 > or the retired reference backend (record: `vsg-backend.md`).
 > **Sources**: `src/plugins/gfx_backend_vk/include/vine/backend_vk/**` (the contract), `tests/test_vk/**` (behaviour),
-> `scripts/check_vk_exposure.py` (the exposure boundary), `scripts/measure_graphics_claims.py` (re-derives the case / suite counts quoted here)
+> `scripts/check_vk_exposure.py` (the exposure boundary), `scripts/check_vk_layout_literals.py` (the layout spelling),
+> `scripts/measure_graphics_claims.py` (re-derives the case / suite counts quoted here)
 > **Backlog**: `../backlog/graphics.md`
 >
 > **Numbering**: this page's `F#` / `C#` / `R#` / `N#` / `P#` / `D#` / `T#` are **this module's** stable ids; an audit finding is written
@@ -22,7 +23,7 @@
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
 - Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
-  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **197 cases / 44 suites** (2026-11-24).
+  cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **258 cases / 48 suites** (2026-11-28).
 
 ### 1.2 Goals
 
@@ -177,7 +178,19 @@ and every cache has a witness a test can read.**
   borrow/resolve indirection. Before this, every site assembled the pair by hand (`barrierBetween(stateOf(record), …)`
   then `record = to`), which is the shape that shipped VUID 09588 and 09592: the barrier and the record drifted and the
   next pass stated a layout the image had never been in. A new mover calls one of those two verbs; a caller that needs a
-  same-layout dependency (two passes into one attachment) is `beginRendering`'s job, not theirs.
+  same-layout dependency (two passes into one attachment) is `BarrierBatch::order`'s job (see `beginRendering`), not theirs.
+- **A LAYOUT IS ONE SPELLING, AND EVERY COMMAND THAT NAMES ONE READS THE TABLE**: the barrier is not the only command
+  that states where an image is - the rendering attachment info (`imageLayout` / `resolveImageLayout`), a descriptor's
+  `imageLayout`, a copy's layout argument and an image's creation `initialLayout` name one too, and each used to spell a
+  raw `VK_IMAGE_LAYOUT_*` constant of its own (fourteen places in seven files when the seam was audited, review 26). They
+  now read `stateOf(...).layout` / `transferReadState()` / `transferWriteState()` - and a consumer that repeats the value
+  (a draw's texture slots) takes it once - so a row and its consumer cannot drift, and
+  `scripts/check_vk_layout_literals.py` (ctest `vk_layout_literals`)
+  fails the next literal placed outside `BarrierPlan.{hpp,cpp}`. The WRITE-BACKS stay with their callers
+  (`TargetObjects::beginPass` / `WindowTarget::beginPass` store the USAGE after the instance opened): that is the pass
+  model's role→usage rule, and the Vulkan layout behind it still lives only in the table. `ReadbackStaging` is the one
+  consumer outside the frame path: it records the copy in the caller's `transferReadState().layout` because the unit
+  names no render-seam type at all (`C10` / E2).
 - **LOAD AND STORE ARE PER ATTACHMENT, AND THE STORE IS DERIVED WHERE THE RESOLVE IS KNOWN**: `PassAttachmentOps` carries one
   `ResolvedAttachment` (the seam's `LoadOp` / `StoreOp` plus the clear value) for EACH colour attachment and one for depth,
   and `beginRendering` DOWNGRADES a resolved role to `DontCare` - a multisampled pass' sample buffers, and a depth that
@@ -453,10 +466,11 @@ and every cache has a witness a test can read.**
 ### 2.19 The recording path is batched, shadowed and named (`G10` / `G11`)
 
 - **What it is**: three facts that used to be conventions are mechanisms with numbers.
-  * **ONE DEPENDENCY PER PASS ENTRY** (`BarrierPlan::recordBarriers` + `BarrierBatch`): `DynamicRendering::beginRendering`
-    states every attachment barrier of a pass in ONE `VkDependencyInfo`, and a pass' sampled-source moves are one
-    dependency per source. Before this, a seven-attachment multisampled pass issued seven `vkCmdPipelineBarrier2` calls
-    that each said the same thing about a different image - the same ordering, stated expensively.
+  * **ONE DEPENDENCY PER PASS ENTRY** (`BarrierPlan::BarrierBatch`): `DynamicRendering::beginRendering` states every
+    attachment barrier of a pass in ONE `VkDependencyInfo` through one batch (`order` per attachment, one `flush`), and
+    a pass' sampled-source moves are one dependency per source (`move` + `flush`). Before this, a seven-attachment
+    multisampled pass issued seven `vkCmdPipelineBarrier2` calls that each said the same thing about a different image -
+    the same ordering, stated expensively.
   * **A STATE COMMAND IS ISSUED WHEN THE STATE CHANGES** (`ContentDraw::RecordedState`): viewport, scissor, line width,
     depth bias, cull, front face, polygon mode, depth test/write/compare and blend are diffed against what this frame's
     command buffer already holds. The viewport and the scissor are PASS facts (they are computed from the pass'
@@ -693,6 +707,116 @@ and every cache has a witness a test can read.**
   (a closed document's geometry, texture and pipeline leave while the open one's stay). Both are red with the sweep arms off,
   and each arm restores exactly its own assertion (review 21 §2.4).
 
+### 2.26 The binding numbers are one table, and the shader texts are checked against it (`G1` / `G12`)
+
+- **What it is**: `ContentAbi.hpp` states every `(set, binding)` the engine's shader ABI uses - the content set's material
+  (`kMaterialBinding`), its texture slots (`kTextureBindingBase` + `TextureSlot`), the lights (`kLightsBinding`), the shadow
+  pair (`kShadowMapBinding` / `kShadowBlockBinding`); the full-screen set's samplers (`kFullscreenSamplerBindingBase`..) with
+  the SAME lights and shadow pair; and set 1's per-draw block (`kDrawSet` / `kDrawBinding`). The set layouts
+  (`ContentCaches::create`), the descriptor writes (`FrameScratch::buildContentSet` / `buildFullscreenSet` / `buildDrawSet`)
+  and the recorder's offset order (`ContentDraw`) read those names; the table's own arithmetic is held by `static_assert`
+  (the slots fit between the material and the lights, the shadow block is the map's binding + 1, the full-screen samplers
+  end before the lights).
+- **Why the GLSL needs a gate and not only the header**: a shader number cannot be included from C++ - the shipped sources
+  must also compile standalone through `scripts/vn_shader_check.sh` - so `scripts/check_vk_bindings.py` (ctest
+  `vk_bindings`) READS BOTH SIDES and compares: `vine_params.glsl`'s three blocks, the `vn_<slot>Map` samplers against the
+  `TextureSlot` order, and the engine's `shadowBindings(<set>, <map binding>)` generator call. A mismatch cannot fail a
+  build: the pipeline is created, the descriptor is written, and the shader reads whatever sits where it declared - a VUID
+  only with the validation layer installed, and a plausible picture on a software rasteriser.
+- **Why it was worth doing now**: the seam had already drifted. `BuiltinShaders.hpp` documented the shadowed deferred
+  program's map at binding 5 and its block at 6 while the generated text and the full-screen layout said 7/8 (review 27);
+  the same numbers were also spelled as literals in the set-layout creation and in the descriptor writes.
+- **Boundary**: the gate compares numbers and never restates them - it parses the constants from `ContentAbi.hpp` and the
+  slot order from `MaterialValues.hpp` - and a constant, block, slot or generator call that disappears is a finding too, so
+  a rename cannot silently shrink what is covered.
+- **What deliberately stays**: the recorder's two `pDynamicOffsets` arrays are hand-ordered by the layouts' binding order
+  (Vulkan matches offsets by order, not by name), because both sets use binding 0 - a table-driven loop would need
+  `(set, binding)` pairs and a switch to pick each slice offset, which is more machinery than the four-line array it would
+  replace.
+- **Cases**: `ctest -R vk_bindings` (mutation: the lights moved to binding 5 in `vine_params.glsl` and the generator's map
+  moved to 5 both redden, one finding each) - plus every device case, because the whole picture rests on the bindings it
+  checks.
+
+### 2.27 A device limit is read once, refused against, and defaulted to a floor (`G1` / `G4` / `G10`)
+
+- **What it is**: every `VkPhysicalDeviceLimits` field this backend consumes is read in `Device::initialize` and forwarded
+  as a NUMBER - `Capabilities::Limits` states it to the host, and `TargetTable::Limits` carries the ones a build compares
+  against (the sample-count set, the colour-attachment ceiling, the extent ceiling). `properties.limits.` appears in that
+  function and nowhere else, which is the same rule `check_vk_exposure.py` applies to `Vk*` in the shell, one level down.
+- **Why ONE number for the extent**: an attachment is an image (`maxImageDimension2D`), the pass states a framebuffer
+  extent (`maxFramebufferWidth` / `maxFramebufferHeight`) and a viewport (`maxViewportDimensions`), and one target must
+  fit all of them - so `Capabilities::limits.max_target_extent` is their MINIMUM, read once. A declaration above it is
+  refused by `TargetTable::ensure` (`vk.target.extent_above_limit`, one episode, `DiagnosticLimit{ requested, supported }`)
+  before `vkCreateImage` could receive a spec-invalid extent whose failure shape is the driver's and whose report would
+  blame the memory. Zero extents keep their own episode (`vk.target.size_unknown`).
+- **Why the defaults are FLOORS**: `TargetTable::Limits`' defaults are what Vulkan GUARANTEES (4 colour attachments, 4096
+  in either dimension, 1 sample), never what it ALLOWS (`maxColorAttachments`' maximum is the API's 8). The count default
+  used to be that 8 while the field's own doc said the API ceiling is "never a substitute" for the device's answer - a
+  table built without the device's number would have accepted the 5..8 range on a 4-attachment device, which is the
+  defect review 25 `B1` fixed on the live path. A default that under-promises refuses what the device might serve; one
+  that over-promises draws what it may not.
+- **Why two limits need no ask at all**: the push range is 128 B (Vulkan guarantees `maxPushConstantsSize >= 128`) and a
+  content pass binds `kTextureSlots + 1` samplers (guaranteed `maxPerStageDescriptorSamplers >= 16`), so the guarantee is
+  written as a `static_assert` in `ContentAbi.hpp` - a table that outgrew the floor fails the BUILD instead of failing
+  on some device.
+- **Boundary**: `DynamicRendering`'s stack arrays are sized by the API's 8 (`kMaxColorAttachments`) and trust the table to
+  have refused more (review 25 `B1`); the extent has no API ceiling, so it is the device's answer alone.
+- **Cases**: `VkContentTargetTest.ATargetAboveTheReportedExtentLimitIsRefusedNotDrawn` (the request is the REPORTED
+  ceiling + 1, so the case holds on any device; exactly one diagnostic with both numbers, and nothing built) plus
+  `BackendTest`'s assertion that the answer is at least the guaranteed 4096 (`T21`).
+
+### 2.28 The surface is the authority for what a swapchain may be (`G4` / `G12`)
+
+- **What it is**: `surfaceSwapchain(capabilities, formats, announced width, announced height)` resolves
+  `VkSurfaceCapabilitiesKHR` and the format list into ONE value (`SurfaceSwapchain`: format pair, extent, image count,
+  composite mode), and `WindowTarget::Impl::createSwapchain` fills `VkSwapchainCreateInfoKHR` from it - every field is
+  one the surface STATES, so the request restates nothing and asks for nothing the surface refused (review 29).
+- **Why it is a pure function**: no desktop produces the interesting answers, so the branches live in a value a test can
+  drive (`VkWindowSurfaceTest`, `T22`): the `VK_FORMAT_UNDEFINED` sentinel, a free surface's clamp
+  (`currentExtent` = `UINT32_MAX` into `minImageExtent`..`maxImageExtent`), the `minImageCount + 1` cap, and the
+  composite fallback.
+- **Why a refusal is a value**: every window pass draws into the image, so a surface whose `supportedUsageFlags` has no
+  `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT` has no window target at all. Asking the usage before requesting it turns that
+  into `SurfaceRefusal::NoColorUsage` (the acquire's `why` says it), instead of a `vkCreateSwapchainKHR` failure whose
+  sentence names nothing. `NoFormats` and `ZeroExtent` are the other two, each with its own sentence.
+- **Why the sentinel is substituted**: `VK_FORMAT_UNDEFINED` is the spec's "no preferred format" answer, not a format -
+  `imageFormat` may not be UNDEFINED - so the classic `B8G8R8A8_UNORM` + `SRGB_NONLINEAR` pair is chosen, the same
+  fallback vk-bootstrap uses.
+- **What needs no resolve**: `presentMode = FIFO` (guaranteed), `preTransform = capabilities.currentTransform` (the
+  transform the presentation engine applies), `imageArrayLayers = 1` (Vulkan guarantees at least one), and the window's
+  pixels are read through the platform's capture, never a transfer - so the usage is exactly one bit.
+- **Boundary**: an off-screen target's extent ceiling is the DEVICE's answer (§2.27); a window's is the SURFACE's
+  (`currentExtent` / `min-maxImageExtent`), and `surfaceSwapchain` is where the second one lives.
+
+### 2.29 The frame clock is the queue family's answer, not the device's floor (`G1` / `G4` / `G12`)
+
+- **What it is**: `Device::initialize` reads the CHOSEN family's `VkQueueFamilyProperties::timestampValidBits` where the
+  family is chosen, carries it beside `queue_family`, and `queueWritesTimestamps(valid_bits, timestampPeriod)` - the one
+  rule - decides both whether the query pool is engaged and whether `Features::GpuTimings` is advertised.
+- **Why the device-wide bool was the wrong question**: `VkPhysicalDeviceLimits::timestampComputeAndGraphics` promises
+  timestamps on ALL graphics and compute queues, so a false only says that promise does not hold for the whole machine.
+  The family's own `timestampValidBits` is the answer for the queue every frame records on - Vulkan defines it as 0 (no
+  support) or 36..64 - so the old gate refused the clock on a device whose chosen graphics family can write timestamps.
+  That is review 28's shape in the mirror: a capability refused, where that round found a limit trusted.
+- **Why 36, not "> 0"**: the spec's non-zero range starts at 36, so a count below it is an answer Vulkan does not
+  define, and a clock that wrapped there would make the frame's tick arithmetic read as a negative or a tiny time. The
+  period is the other half of the rule - ticks become nanoseconds through `timestampPeriod`.
+- **Why one rule for two consumers**: a feature that answers YES beside a report that is always DISENGAGED is the
+  defect `Capabilities.hpp` warns about; the pool and the feature now call the same predicate, and `VkPassTimingTest`
+  asserts the agreement on a real device (disabling only the pool turns its two cases red).
+- **The family's two COPY answers need no read**: the `GRAPHICS_BIT` that qualifies the family pins them -
+  `minImageTransferGranularity` must be (1,1,1) and `queueCount` at least one (`VkQueueFamilyProperties`) - so every
+  upload and readback (recorded in command pools of this family, at offset 0 with the image's own extent) is inside the
+  granularity by construction, and queue index 0 exists without asking. A future transfer-only family would have to read
+  both answers; the selection's comment says so where such a change would land.
+- **Grounding**: wgpu's Vulkan backend enables its timestamp features from the chosen graphics family's
+  `timestamp_valid_bits >= 36` ("Vulkan strictly defines this as either 36-64, or zero"), a value its adapter refuses
+  without - the same per-family question this backend now asks; the spec's `VkPhysicalDeviceLimits` page states the
+  device-wide floor and `VkQueueFamilyProperties` the family's answer.
+- **Cases**: `VkDeviceChoiceTest`'s four clock cases (0 bits answer no clock whatever the device reports, 36/64 are a
+  usable clock, 20 bits is not a clock, a zero period is not a clock; the `>= 36` → `> 0` mutation reddens exactly the
+  20-bit case) plus `VkPassTimingTest` on a real device (`T23`).
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -711,7 +835,7 @@ and every cache has a witness a test can read.**
 | F10 | Device memory pool | blocks + slices, usage / kind, granularity, whole-block mapping | landed |
 | F11 | Readback | colour (RGBA8) and depth (D32); its own pool and fence; one counted wait per readback | landed |
 | F12 | Pipeline cache | a session `VkPipelineCache` + a device-keyed cross-session file | landed |
-| F13 | Device clock | `FrameTiming` (sampled every 30 frames) | landed |
+| F13 | Device clock | `FrameTiming` (sampled every 30 frames; engaged from the chosen family's timestamp bits, §2.29) | landed |
 | F14 | Reports and diagnostics | `FrameReport`, `PrepareReport`, driver messages, `ReportOnce` | landed |
 | F15 | The exposure boundary | zero `Vk*` in the shell; the `Handles` escape hatch; the gate script | landed |
 
@@ -739,11 +863,17 @@ and every cache has a witness a test can read.**
 
 ### 3.1.3 F3 Window and swap chain
 
-- **Behaviour**: `WindowSystem` creates the surface (X11 / xcb); the swap chain is FIFO with `minImageCount + 1`, `currentTransform`, a composite-alpha fallback, and
-  prefers BGRA8 / RGBA8 sRGB; **one present-wait semaphore per swap-chain image**; `vkAcquireNextImageKHR` has a 1 s timeout, and a timeout skips "this frame got no
+- **Behaviour**: `WindowSystem` creates the surface (X11 / xcb); the swap chain is FIFO, and its format pair, extent,
+  image count and composite mode are the surface's own answers, resolved once (see the next bullet); **one present-wait
+  semaphore per swap-chain image**; `vkAcquireNextImageKHR` has a 1 s timeout, and a timeout skips "this frame got no
   image" and reports once per episode; `OUT_OF_DATE` rebuilds and asks once more, while `SUBOPTIMAL` is an image WITH A REBUILD
   OWED - the meaning `present` gives it, so the frame draws and presents from the chain it has and the next acquire replaces it
   (review 20 `Z24`).
+- **The surface states what the chain may be** (`G4`, review 29): `surfaceSwapchain` resolves the surface's capabilities
+  and format list into ONE value (`SurfaceSwapchain`: format pair, extent, image count, composite mode), and
+  `createSwapchain` fills `VkSwapchainCreateInfoKHR` from it - §2.28. Two answers that used to be assumed became
+  explicit: the `VK_FORMAT_UNDEFINED` sentinel resolves to the classic pair, and a surface whose images cannot be colour
+  attachments is refused as `SurfaceRefusal::NoColorUsage` before the create, not inside the driver.
 - **A failed rebuild is a state, not an ending** (`G1`, review 20 `Z23`): a target that was ATTACHED owes a chain, and
   `destroySwapchain` - the one function that removes one - raises `needs_recreate`, so an acquire that finds no chain builds it
   instead of refusing. THE FRAME WALK ASKS THE QUESTION EACH MODE NEEDS: a recorded frame asks for its IMAGE (the acquire, which
@@ -758,7 +888,7 @@ and every cache has a witness a test can read.**
   own sentence), while `vk.window.presenter_missing` is kept for "no presenter this device handed out" - the sentence used to
   accuse the host of a foreign presenter when the target's own rebuild had failed.
 - **Constraints**: `C1`, `C2`, `R3`.
-- **Acceptance**: `WindowPresentTest`, `ProbeTest`; `T6` (a real host).
+- **Acceptance**: `WindowPresentTest`, `ProbeTest`, `WindowSurfaceTest` (the synthetic surface answers, `T22`); `T6` (a real host).
 - **Caveat**: `P13` (suspect the environment first when a window test goes red; the swap-chain semaphores are one per image and cannot be shared).
 
 ### 3.1.4 F4 Offscreen targets
@@ -832,8 +962,13 @@ and every cache has a witness a test can read.**
 
 - **Behaviour**: `ContentImages` caches the image / view by `Texture` address + revision; samplers are cached by `Sampler` value; a missing slot binds the 1×1 white
   stand-in and clears the material's slot; an upload (barrier + `vkCmdCopyBufferToImage`) may only be recorded **before** the render pass.
+  The sampler's mip state is Vulkan's COMPOSITION, not a fold: `minFilter` filters within a level, `mipmapMode` between two (the spec's
+  OpenGL-mapping note pairs `VK_FILTER_LINEAR` + `MIPMAP_MODE_NEAREST` with `GL_LINEAR_MIPMAP_NEAREST`), and `minLod` / `maxLod` / `mipLodBias`
+  choose the level - Vulkan always mip-selects when the view has levels, so a `VK_FILTER_*_MIPMAP_*` value would state the mip half twice,
+  and `maxLod = 0` is what pins the base level (the spec defines it as always-magnification, so the MAG filter applies).
 - **Constraints**: `C5`, `N1`.
-- **Acceptance**: `ResidencyTest`, `ContentDrawTest`'s texture-sampling cases, `PrepareUploadTest`.
+- **Acceptance**: `ResidencyTest`, `ContentDrawTest`'s texture-sampling cases (including `ASamplerReadsTheMipLevelItsLodClampNames`,
+  which forces level 1 with the clamp and reads the base level back with the control sampler), `PrepareUploadTest`.
 - **Caveat**: `P5`.
 
 ### 3.1.8 F8 The constant ring
@@ -975,17 +1110,17 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | `ContentDraw` | content / fullscreen recording, programs and pipelines, the ring, the set cache, the pipeline cache object | F5 / F6 / F8 / F9 / F12; the state shadow and `stateCommands()` (the recording path's witness) are its; `DrawScope` is what one pass records with (§2.20) |
 | `ContentImages` | texture revisions, samplers, the stand-in, the per-driver upload batch and its two outcomes (`batchCompleted` / `batchAbandoned`) | F7 / §2.21 |
 | `PassTarget` | WHERE one pass draws: an off-screen set or the window's acquired image, as one value with the facts and the verbs a pass needs | §2.20 |
-| `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) | F4 / §2.18 |
+| `TargetTable` | host target → object (map + shape + build / rebuild / repair) + the per-frame lease + release / park + the wait-free value snapshot (`peek`) + the device facts a build checks (sample set, colour ceiling, extent ceiling) | F4 / §2.18 / §2.27 |
 | `TargetObjects` | an offscreen target's attachment set: images, views and the layout each one is in (`beginPass` / `endPass`) | F4 |
-| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions, `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `resolveAttachmentOps` (the per-attachment load/store rule, one place) | F4 / §2.7 |
-| `WindowTarget` / `WindowSystem` | the swap chain and the surface (per-image layout record, `beginPass` / `endPass`) | F3 |
+| `DynamicRendering` | one dynamic-rendering instance: the attachment transitions (through `BarrierBatch::order`), `vkCmdBeginRendering` / `vkCmdEndRendering`, the resolve fields, and `resolveAttachmentOps` (the per-attachment load/store rule, one place) | F4 / §2.7 |
+| `WindowTarget` / `WindowSystem` | the swap chain and the surface (per-image layout record, `beginPass` / `endPass`), and the surface's answers resolved into the request (`surfaceSwapchain`, `SurfaceSwapchain`) | F3 / §2.28 |
 | `MemoryAllocator` | the device memory pool (blocks / slices / mapping) | F10 |
 | `PipelineCacheFile` | the cache file format, validation, the atomic write | F12 |
-| `ReadbackStaging` | one readback's staging sequence | F11 |
-| `BarrierPlan.hpp` / `StateMapping` | `stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf` / the clock's boundary stages; `recordBarriers` and `BarrierBatch` state a pass' moves as ONE dependency | §2.7 / §2.19 |
+| `ReadbackStaging` | one readback's staging sequence (the copy states the caller's `transferReadState().layout`; the unit names no render-seam type) | F11 |
+| `BarrierPlan.hpp` / `StateMapping` | `stateOf` / `barrierBetween` / `loadOpOf` / `storeOpOf` / the clock's boundary stages; `recordBarriers` and `BarrierBatch` (`move` = transition + record, `order` = dependency only) state a pass' moves as ONE dependency, and it is the only file that spells a `VK_IMAGE_LAYOUT_*` | §2.7 / §2.19 |
 | `ShaderCompiler.hpp` | `compileStage` + `SpirvModule` (glslang); the variant's define names (the variant VALUE itself is the SDK's `ProgramVariant`) | F5 |
 | `Handles` (`internal/` + `support/`) | the escape hatch | F15 |
-| `ContentAbi.hpp` | the content block layout this backend packs (offsets are the SDK's ABI) | F5, `graphics-material.md` |
+| `ContentAbi.hpp` | the content block layout this backend packs (offsets are the SDK's ABI) AND the binding table every set layout / descriptor write / offset order reads; the GLSL side is checked against it (ctest `vk_bindings`) | F5 / F6 / §2.26, `graphics-material.md` |
 | `SampleCounts.hpp` | which sample counts this device builds, and the refusal when one is asked for | F4, `ADR-2026-11-14` |
 | `NumberText.hpp` | the number spelling every refusal uses, so a report's digits read the same everywhere | §2.13 |
 | `backend_vk_global.hpp` | the export macro and the namespace the plugin is built under | F15 |
@@ -1035,7 +1170,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **R4** The witnesses are readable numbers: every conclusion about the cost model and the caches has a number on `Device`, and a test reads it instead of counting
   driver calls.
 - **R5** Every gate green: `check_ai_docs --strict`, `check_design_docs`, `check_cross_refs`, `check_doc_symbols`, `check_include_hygiene`, `check_api_style`,
-  `check_public_docs`, `check_export_annotations`, `check_vk_exposure`, `check_diagnostic_formats`.
+  `check_public_docs`, `check_export_annotations`, `check_vk_exposure`, `check_vk_layout_literals`, `check_vk_bindings`, `check_diagnostic_formats`.
 - **R6** Mutations are load-bearing: every guard has a record that "remove it and the matching case goes red".
 
 ### 5.3 Invariants (N#)
@@ -1343,7 +1478,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 
 | # | Criterion | Case / command |
 |---|---|---|
-| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 237 cases / 47 suites on 2026-11-27); `ctest -R test_vk` |
+| T1 | the whole behaviour | `build/bin/test_vk` (the whole suite — 258 cases / 48 suites on 2026-11-28); `ctest -R test_vk` |
 | T2 | the rendered region is exactly what the commands promise | the `Probe` cases in `test_vk` (`VkContentDrawTest`, `VkContentTargetTest`, `VkShadowTest` compare read-back pixels) |
 | T3 | the exposure boundary and the seam-free low level | `ctest -R vk_exposure` (V2 / V4 / V5 / V6 / E1 / E2, `scripts/check_vk_exposure.py`) |
 | T4 | the cost model does not regress | `VkUniformRingTest.*`, `VkMemoryPoolTest.ASteadyFrameAllocatesNothing` (turning the cache off must go red) |
@@ -1360,6 +1495,13 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 | T15 | an upload records nothing when it is refused, and everything it names outlives the recording | `VkResidencyTest.ARefusedTextureUploadRecordsNothingSoTheFrameNamesNoDestroyedImage` (a staging block refused through `Device::setMemoryBlockCreator`: the frame spends exactly what an upload-free frame spends - `Device::recordingNumbers()` - the picture is the stand-in, and the frame after it uploads and samples the texture; the mutation that records the transition before the allocation turns those numbers red - §2.23, §6.21) |
 | T16 | a frame that did not run answers for itself: `Lost` when it owed the surface a picture, and no device time | `VkWindowPresentTest.AFrameWhoseSubmitIsRefusedAnswersLostAndTheNextOnePresents` (a refused submit through `Device::refuseNextSubmit` on a real window: `Lost`, the image given back, and the NEXT frame presents - the mutation that answers from `window_acquired` again turns it red) and `VkDeviceClockTest.AFrameReportsItsDeviceTime` (a refused submit between two frames answers DISENGAGED, not the sampled frame's number; the mutation that puts the timing resets back inside `if (completed)` turns it red - §2.24, §6.22, `N7`) |
 | T17 | a frame end beside a recording driver keeps what that body names, and ends the entry once it is gone | `VkMultiSessionTest.AFrameEndBesideARecordingDriverKeepsTheContentThatDriverNames` (driver B is held inside its record by a refused packet while the host drops the shape and driver A's frame ends run the sweep: the geometry row stays at 2 live during the recording, and the next frame end after B finished takes it to 0 with its bytes; withdrawing regardless of the share reddens the keeping half, skipping the geometry sweep reddens the ending half - §2.25) |
+| T18 | a sampler's LOD range reaches the device, so a mip chain is read at the level the host names | `VkContentDrawTest.ASamplerReadsTheMipLevelItsLodClampNames` (a 2-level image: level 1 green, base red; `min_lod = max_lod = 1` reads green and the control sampler with both clamps at 0 reads red; dropping the range from `samplerFor` reddens the first assertion - §3.1.7 F7) |
+| T19 | a layout is stated once: every device-facing consumer reads the barrier table's row, and a pass' entry is one batch | `ctest -R vk_layout_literals` (`scripts/check_vk_layout_literals.py`: no `VK_IMAGE_LAYOUT_*` outside `BarrierPlan.{hpp,cpp}`, and the table still states all seven rows) and `BarrierPlanTest.ABatchOrdersASameStateBarrierButOnlyMovesAChangedOne` (the batch's two verbs: `order` appends a same-state dependency, `move` refuses it and writes no record when full) - §2.7 |
+| T20 | the binding numbers have one C++ home and the shader texts agree with it | `ctest -R vk_bindings` (`scripts/check_vk_bindings.py`: `vine_params.glsl`'s blocks, the slot samplers in `TextureSlot` order and `BuiltinShaders.cpp`'s `shadowBindings(...)` call against `ContentAbi.hpp`; moving the lights or the shadow map in either text reddens it) - §2.26 |
+
+| T21 | a declaration above the device's extent ceiling is refused with both numbers, and the ceiling itself is at least Vulkan's floor | `VkContentTargetTest.ATargetAboveTheReportedExtentLimitIsRefusedNotDrawn` (request = reported ceiling + 1; one `vk.target.extent_above_limit` with `requested` / `supported`, readback NotReady) and `BackendTest`'s `max_target_extent >= 4096` - §2.27 |
+| T22 | a surface's answers become one request, and the answers no desktop gives are pinned | `VkWindowSurfaceTest.*` (8 synthetic cases: the surface's own extent, the free-surface clamp, the image-count cap, the sRGB preference, the `VK_FORMAT_UNDEFINED` sentinel, the composite fallback, and the `NoColorUsage` / `ZeroExtent` / `NoFormats` refusals) - §2.28 |
+| T23 | the clock and `GpuTimings` read the CHOSEN family's timestamp bits (and the period), and the advertised feature always has a report behind it | `VkDeviceChoiceTest.TheFamilysZeroBitsAnswerNoClockWhateverTheDeviceReports` / `TheFamilysLowestLegalAnswerIsAUsableClock` / `ABitCountVulkanDoesNotDefineIsNotAClock` / `ATickWithoutAPeriodIsNotAClock` (fabricated answers; the `>= 36` → `> 0` mutation reddens exactly the 20-bit case) and `VkPassTimingTest` (with the pool disabled while the feature stays on, both cases redden) - §2.29 |
 
 ## 9. Status and Evolution
 
@@ -1368,7 +1510,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - Audit items F1 / F2 / F4 / F7 / F8 / F9 / F10 / F12 are landed (F9 / F10 as of the 1.3 floor and `T11`); F5 / F11 / F13 are kept as
   follow-up per §1.3. Several drivers are entirely landed, with the shape in §2.11 and `graphics-sessions.md`; **today's three TSan
   readings are in `graphics-threading.md` R18.**
-- `test_vk` **237 cases / 47 suites**, `test_graphics` **710 / 87** (2026-11-27, `--gtest_list_tests`). The target map, the shapes and the leases are one
+- `test_vk` **258 cases / 48 suites**, `test_graphics` **714 / 86** (2026-11-28, `--gtest_list_tests`). The target map, the shapes and the leases are one
   `TargetTable` (`TargetTableTest`); the frame head has a storage witness, and the light vector is not one copy per pass.
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** — an old `.so` loads, then fails inside the first virtual call,
   and only a rebuild tells that apart from a regression (backlog `T65`, `ADR-2026-11-23` D5).
@@ -1449,6 +1591,8 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - `tests/test_vk/**`: behaviour; `tests/test_vk/FrameRecordTest.cpp`: the five frame-shape facts the retired parity
   suite had no successor for (the other ten already had a `test_vk` case; see `ADR-2026-11-23` D4 step 4).
 - `scripts/check_vk_exposure.py`: the exposure-boundary gate.
+- `scripts/check_vk_layout_literals.py`: the layout-spelling gate (§2.7, ctest `vk_layout_literals`).
+- `scripts/check_vk_bindings.py`: the binding-table gate (§2.26, ctest `vk_bindings`).
 
 ### 10.2 Documents and ADRs
 

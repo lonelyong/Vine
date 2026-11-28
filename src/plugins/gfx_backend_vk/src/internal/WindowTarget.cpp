@@ -24,33 +24,82 @@ constexpr VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
 /// @brief How long an acquire waits for the presentation engine before the frame is skipped (see WindowTarget::acquire).
 constexpr std::uint64_t kAcquireTimeoutNanoseconds = 1'000'000'000ULL;
 
-/**
- * @brief Chooses the swapchain format: an 8-bit sRGB format when the surface offers one.
- *
- * @details
- * - sRGB is what the engine's linear shading wants a window to decode (the off-screen targets are the linear
- *   spellings); a surface without one still presents, in its first offered format.
- *
- * @param formats The surface's formats (not empty).
- * @return The chosen format and colour space.
- */
-[[nodiscard]] VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) noexcept
-{
-    for (const VkSurfaceFormatKHR& format : formats) {
-        if (format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
-            (format.format == VK_FORMAT_B8G8R8A8_SRGB || format.format == VK_FORMAT_R8G8B8A8_SRGB)) {
-            return format;
-        }
-    }
-    for (const VkSurfaceFormatKHR& format : formats) {
-        if (format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-            return format;
-        }
-    }
-    return formats.front();
-}
-
 } // namespace
+
+SurfaceSwapchain surfaceSwapchain(const VkSurfaceCapabilitiesKHR& capabilities,
+                                  const std::span<const VkSurfaceFormatKHR> formats,
+                                  const std::uint32_t wanted_width,
+                                  const std::uint32_t wanted_height) noexcept
+{
+    SurfaceSwapchain shape{};
+    if (formats.empty()) {
+        shape.refusal = SurfaceRefusal::NoFormats;
+        return shape;
+    }
+
+    // THE SURFACE'S ORDER IS ITS PREFERENCE, narrowed by what the engine's linear shading wants a window to decode (the
+    // off-screen targets are the linear spellings): an 8-bit sRGB pair first, else any sRGB colour space, else the first
+    // entry - which is what the picture was presented with before this value existed.
+    shape.format = formats.front();
+    for (const VkSurfaceFormatKHR& offered : formats) {
+        if (offered.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            shape.format = offered;
+            break;
+        }
+    }
+    for (const VkSurfaceFormatKHR& offered : formats) {
+        if (offered.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
+            (offered.format == VK_FORMAT_B8G8R8A8_SRGB || offered.format == VK_FORMAT_R8G8B8A8_SRGB)) {
+            shape.format = offered;
+            break;
+        }
+    }
+    // THE UNDEFINED SENTINEL IS "NO PREFERRED FORMAT", NOT A FORMAT (review 29): a surface may answer with one entry
+    // whose format is UNDEFINED meaning the application chooses, and `VkSwapchainCreateInfoKHR::imageFormat` may not be
+    // UNDEFINED - so the classic 8-bit pair is chosen here, the same one vk-bootstrap falls back to.
+    if (shape.format.format == VK_FORMAT_UNDEFINED) {
+        shape.format = VkSurfaceFormatKHR{ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+    }
+
+    // EXTENT: a windowed surface states one (and follows it); a free one takes the announced size.
+    if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
+        shape.extent = capabilities.currentExtent;
+    }
+    else {
+        const std::uint32_t announced_width  = wanted_width > 0U ? wanted_width : 64U;
+        const std::uint32_t announced_height = wanted_height > 0U ? wanted_height : 64U;
+        shape.extent.width  = std::clamp(announced_width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+        shape.extent.height = std::clamp(announced_height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+    }
+    if (shape.extent.width == 0U || shape.extent.height == 0U) {
+        shape.refusal = SurfaceRefusal::ZeroExtent;
+        return shape;
+    }
+
+    // ONE IMAGE PRESENTING WHILE THE NEXT IS DRAWN, inside the range the surface states (`maxImageCount` 0 = no cap).
+    shape.image_count = capabilities.minImageCount + 1U;
+    if (capabilities.maxImageCount > 0U && shape.image_count > capabilities.maxImageCount) {
+        shape.image_count = capabilities.maxImageCount;
+    }
+
+    shape.composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if ((capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) == 0U) {
+        // Take the first supported mode rather than failing: the picture is the same.
+        const VkCompositeAlphaFlagsKHR supported = capabilities.supportedCompositeAlpha;
+        shape.composite_alpha = (supported & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) != 0U ? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
+                                : (supported & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) != 0U ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+                                                                                                : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    }
+
+    // THE ONE ANSWER THAT IS A REFUSAL (review 29): every pass this backend records draws into the window's image, so a
+    // surface whose images are not colour attachments has no window target - said here, once, instead of surfacing as
+    // a `vkCreateSwapchainKHR` failure whose sentence names no cause.
+    if ((capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0U) {
+        shape.refusal = SurfaceRefusal::NoColorUsage;
+        return shape;
+    }
+    return shape;
+}
 
 struct WindowTarget::Impl {
     WindowDevice device{};
@@ -180,7 +229,8 @@ struct WindowTarget::Impl {
         depth_info.arrayLayers   = 1U;
         depth_info.format        = kDepthFormat;
         depth_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-        depth_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // THE CREATION LAYOUT IS THE TABLE'S Undefined ROW, the same value the depth record starts at (see BarrierPlan).
+        depth_info.initialLayout = stateOf(ImageLayout::Undefined).layout;
         depth_info.usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         depth_info.samples       = VK_SAMPLE_COUNT_1_BIT;
         depth_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
@@ -334,53 +384,49 @@ struct WindowTarget::Impl {
             }
             return false;
         }
-        const VkSurfaceFormatKHR chosen = chooseSurfaceFormat(formats);
-        format                          = chosen.format;
-        color_space                     = chosen.colorSpace;
-
-        // EXTENT: a windowed surface states one (and follows it); a free one takes the announced size.
-        if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
-            extent = capabilities.currentExtent;
-        }
-        else {
-            const std::uint32_t wanted_width  = requested_width > 0 ? static_cast<std::uint32_t>(requested_width) : 64U;
-            const std::uint32_t wanted_height = requested_height > 0 ? static_cast<std::uint32_t>(requested_height) : 64U;
-            extent.width  = std::clamp(wanted_width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-            extent.height = std::clamp(wanted_height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-        }
-        if (extent.width == 0U || extent.height == 0U) {
+        // WHAT THIS SURFACE MAY BE, AS ONE VALUE (see `surfaceSwapchain`, review 29): the format pair, the extent, the
+        // image count and a composite mode, every one of them the surface's own answer - so the request below restates
+        // nothing it has not read, and refuses before `vkCreateSwapchainKHR` what the surface already said no to.
+        const SurfaceSwapchain shape =
+            surfaceSwapchain(capabilities,
+                             formats,
+                             requested_width > 0 ? static_cast<std::uint32_t>(requested_width) : 0U,
+                             requested_height > 0 ? static_cast<std::uint32_t>(requested_height) : 0U);
+        if (!shape.ok()) {
             if (why != nullptr) {
-                *why = vn::String(u8"vk: the window surface has a zero extent");
+                switch (shape.refusal) {
+                case SurfaceRefusal::NoFormats: *why = vn::String(u8"vk: the window surface offers no formats"); break;
+                case SurfaceRefusal::ZeroExtent: *why = vn::String(u8"vk: the window surface has a zero extent"); break;
+                case SurfaceRefusal::NoColorUsage:
+                    *why = vn::String(u8"vk: the window surface's images cannot be drawn into (its supportedUsageFlags "
+                                      u8"has no VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)");
+                    break;
+                case SurfaceRefusal::None: break; // unreachable: ok() answered false
+                }
             }
             return false;
         }
-
-        std::uint32_t image_count = capabilities.minImageCount + 1U;
-        if (capabilities.maxImageCount > 0U && image_count > capabilities.maxImageCount) {
-            image_count = capabilities.maxImageCount;
-        }
-
-        VkCompositeAlphaFlagBitsKHR composite = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        if ((capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) == 0U) {
-            // Take the first supported mode rather than failing: the picture is the same.
-            const VkCompositeAlphaFlagsKHR supported = capabilities.supportedCompositeAlpha;
-            composite = (supported & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) != 0U ? VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR
-                        : (supported & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) != 0U ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-                                                                                          : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-        }
+        format      = shape.format.format;
+        color_space = shape.format.colorSpace;
+        extent      = shape.extent;
 
         VkSwapchainCreateInfoKHR info{};
         info.sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         info.surface          = surface;
-        info.minImageCount    = image_count;
+        info.minImageCount    = shape.image_count;
         info.imageFormat      = format;
         info.imageColorSpace  = color_space;
         info.imageExtent      = extent;
         info.imageArrayLayers = 1U;
+        // THE ONE USAGE THE SHAPE CHECKED (see `surfaceSwapchain`): colour attachment is what every window pass draws
+        // into, and the window's pixels are read through the platform's capture, never a transfer - so one bit is the
+        // whole request and `supportedUsageFlags` was asked before it was made.
         info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        // THE SURFACE'S OWN CURRENT TRANSFORM: it is the transform the presentation engine applies, so it is one the
+        // surface supports, and stating it is what lets the engine present without a second rotation.
         info.preTransform     = capabilities.currentTransform;
-        info.compositeAlpha   = composite;
+        info.compositeAlpha   = shape.composite_alpha;
         info.presentMode      = VK_PRESENT_MODE_FIFO_KHR;
         info.clipped          = VK_TRUE;
         info.oldSwapchain     = VK_NULL_HANDLE;

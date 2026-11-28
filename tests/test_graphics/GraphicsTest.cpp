@@ -4461,6 +4461,7 @@ TEST(CapabilitiesTest, TheLimitsAreOneValueAndTheFeaturesAnother)
     const Capabilities defaults;
     EXPECT_FLOAT_EQ(defaults.limits.max_anisotropy, 1.0F) << "an unanswered limit promises no anisotropy";
     EXPECT_EQ(defaults.limits.max_color_attachments, 1U) << "and one attachment";
+    EXPECT_EQ(defaults.limits.max_target_extent, 1U) << "and a one-pixel extent, the smallest a target can be";
     EXPECT_FALSE(defaults.features.supports(Features::Feature::Wireframe)) << "the two values answer separately";
 
     auto backend                              = intrusive_ptr<MockBackend>(new MockBackend());

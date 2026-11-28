@@ -924,10 +924,24 @@ struct Device::Impl {
      * - THE TICK IS THE DEVICE'S; THE QUERY POOL IS THE DRIVER'S (see `Device::FrameDriver`). A frame's GPU time is one
      *   pair of queries written around its command buffer, and which pool holds them is a per-driver fact - while what
      *   a tick is worth is a property of this GPU that never changes.
-     * - A device that does not report `timestampComputeAndGraphics` leaves this 0, its drivers keep no pool, and the
-     *   report answers timing DISENGAGED rather than a fabricated zero (see FrameTiming).
+     * - A clock the session cannot USE stays 0, its drivers keep no pool, and the report answers timing DISENGAGED
+     *   rather than a fabricated zero (see FrameTiming): the chosen family reported no timestamp bits, or the device a
+     *   zero period (the one rule is `queueWritesTimestamps`, review 30).
      */
     float timestamp_period{ 0.0F };
+
+    /**
+     * @brief The chosen queue family's timestamp answer (`VkQueueFamilyProperties::timestampValidBits`, review 30).
+     *
+     * @details
+     * - THIS FAMILY, NOT THE DEVICE: `timestampComputeAndGraphics` is the device-wide floor ("all graphics and compute
+     *   queues support at least 36 bits"), and reading the floor's absence as "this queue cannot" left the frame clock
+     *   off on devices whose chosen graphics family does support timestamps. Vulkan defines the family's value as 0
+     *   (no support) or 36..64, and `queueWritesTimestamps` is the one place the pair (bits, period) becomes a decision.
+     * - IT NEVER CHANGES for the session: the family is chosen once in `initialize`, and the one queue every frame
+     *   records on is created from it.
+     */
+    std::uint32_t timestamp_valid_bits{ 0 };
 
     /// M2's content path, DEVICE HALF: compiled programs, uploaded streams, pipelines, the shared layouts and the
     /// image cache. The frame's own half (the uniform ring and the descriptor pool) is each driver's `FrameScratch`.
@@ -3019,6 +3033,7 @@ bool Device::initialize()
     struct Candidate {
         VkPhysicalDevice device{ VK_NULL_HANDLE };
         std::uint32_t    queue_family{ 0 };
+        std::uint32_t    timestamp_valid_bits{ 0 }; ///< The serving family's answer (`queueWritesTimestamps`).
         int              rank{ -1 };
         FloorRefusal     refusal{ FloorRefusal::None };
         bool             has_swapchain{ false };
@@ -3068,6 +3083,12 @@ bool Device::initialize()
         }
         std::vector<VkQueueFamilyProperties> families(family_count);
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, families.data());
+        // THE FIRST FAMILY THAT DRAWS (and presents, when a window is named). THE BIT THAT QUALIFIES IT ALSO SETTLES ITS
+        // TWO COPY ANSWERS (`G4`, review 30): a family that carries GRAPHICS_BIT must report (1,1,1)
+        // `minImageTransferGranularity` and at least one queue (VkQueueFamilyProperties) - so every copy this backend
+        // records (uploads and readbacks, in command pools of this family, at offset 0 with the image's own extent) is
+        // inside the granularity, and queue index 0 exists without asking. A future transfer-only family would have to
+        // read both answers; this is where that would go. The TIMESTAMP bits are not pinned that way and are read below.
         std::uint32_t serving_family = std::numeric_limits<std::uint32_t>::max();
         for (std::uint32_t index = 0; index < family_count; ++index) {
             if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0U) {
@@ -3093,9 +3114,10 @@ bool Device::initialize()
         VkPhysicalDeviceProperties candidate_properties{};
         vkGetPhysicalDeviceProperties(candidate, &candidate_properties);
         Candidate facts;
-        facts.device       = candidate;
-        facts.queue_family = serving_family;
-        facts.rank         = deviceTypeRank(candidate_properties.deviceType);
+        facts.device                = candidate;
+        facts.queue_family          = serving_family;
+        facts.timestamp_valid_bits  = families[serving_family].timestampValidBits;
+        facts.rank                  = deviceTypeRank(candidate_properties.deviceType);
 
         VkPhysicalDeviceVulkan13Features candidate_vk13{};
         candidate_vk13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -3177,8 +3199,9 @@ bool Device::initialize()
         shutdown();
         return false;
     }
-    impl->physical     = chosen.device;
-    impl->queue_family = chosen.queue_family;
+    impl->physical             = chosen.device;
+    impl->queue_family         = chosen.queue_family;
+    impl->timestamp_valid_bits = chosen.timestamp_valid_bits; // the family's answer, carried with the family (review 30)
 
     // THE CHOSEN DEVICE'S PROPERTIES, ONCE: the pipeline cache's key and the capabilities all describe the SAME device,
     // so they read one value (see PipelineCacheKey).
@@ -3355,9 +3378,11 @@ bool Device::initialize()
     }
 
     // THE DEVICE CLOCK (see FrameTiming): the frame's own pair to start; the per-pass boundaries are added by the first
-    // frame that needs them, between frames (see ensureTimestampQueries).
+    // frame that needs them, between frames (see ensureTimestampQueries). THE QUESTION IS THE CHOSEN FAMILY'S (review
+    // 30): `timestampComputeAndGraphics` is a device-wide floor, and `queueWritesTimestamps` reads the family's own
+    // `timestampValidBits` beside the period - one rule, the same one `GpuTimings` below advertises.
     impl->timestamp_period = properties.limits.timestampPeriod;
-    if (properties.limits.timestampComputeAndGraphics != VK_FALSE && impl->timestamp_period > 0.0F) {
+    if (queueWritesTimestamps(impl->timestamp_valid_bits, impl->timestamp_period)) {
         impl->session->timestamps = impl->session->ensureTimestampQueries(2U);
     }
 
@@ -3375,9 +3400,9 @@ bool Device::initialize()
     if (wanted_features.samplerAnisotropy == VK_TRUE && properties.limits.maxSamplerAnisotropy > 1.0F) {
         impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::AnisotropicFiltering);
     }
-    // GPU TIMINGS IS A DEVICE FACT, not a promise this backend measures anything yet (see Feature::GpuTimings): the
-    // device can write timestamps for graphics and compute work.
-    if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
+    // GPU TIMINGS ANSWERS FOR THE QUEUE THIS BACKEND RUNS ON (review 30): the same `queueWritesTimestamps` the clock
+    // above engages, so the advertised feature and the report that carries the timings can never disagree.
+    if (queueWritesTimestamps(impl->timestamp_valid_bits, impl->timestamp_period)) {
         impl->caps.features.bits |= vn::graphics::Features::bit(vn::graphics::Features::Feature::GpuTimings);
     }
     // THE POOL ACCOUNTS FOR ITSELF (see Feature::MemoryUsage): every block it reserves and every slice it hands out is
@@ -3394,10 +3419,26 @@ bool Device::initialize()
     // THE LIMITS TRAVEL BESIDE THE BITS, and each is the device's own answer: "anisotropy exists" and "how much of
     // it" are different facts, and so are "wide lines are allowed" and "how wide".
     impl->caps.limits.max_anisotropy          = impl->caps.features.supports(vn::graphics::Features::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
-    impl->caps.limits.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
+    // THE RANGE IS ONLY USABLE WITH THE FEATURE THAT LEGALISES IT (`wideLines`): a device without it draws 1-pixel
+    // lines whatever `lineWidthRange` says, so the limit is the same gate `max_anisotropy` states above - a limit
+    // earns its number only when the switch beside it is on (review 25 `B2`).
+    impl->caps.limits.max_line_width          = (wanted_features.wideLines == VK_TRUE && properties.limits.lineWidthRange[1] > 0.0F)
+                                                    ? properties.limits.lineWidthRange[1]
+                                                    : 1.0F;
     // THE DEVICE'S OWN COUNT: an off-full-screen pass here can reference as many colour attachments as the device
     // takes, and capping that below what the device offers would be an amputation nothing in this backend needs.
     impl->caps.limits.max_color_attachments   = properties.limits.maxColorAttachments;
+    // THE EXTENT A TARGET MAY DECLARE IS THE SMALLEST OF FIVE ANSWERS (review 28): an attachment is an image
+    // (`maxImageDimension2D`), the pass states a framebuffer extent (`maxFramebufferWidth` / `maxFramebufferHeight`)
+    // and a viewport (`maxViewportDimensions`), and one target must fit all of them - so the ceiling is their minimum,
+    // read once here and refused by the table that builds the target, never handed to `vkCreateImage` as an extent
+    // whose failure shape is the driver's. Vulkan guarantees 4096 for each, so a conformant device answers at least
+    // that.
+    impl->caps.limits.max_target_extent = std::min({ properties.limits.maxImageDimension2D,
+                                                     properties.limits.maxFramebufferWidth,
+                                                     properties.limits.maxFramebufferHeight,
+                                                     properties.limits.maxViewportDimensions[0],
+                                                     properties.limits.maxViewportDimensions[1] });
 
     // THE PIPELINE CACHE FILE (see PipelineCacheFile): a cache is valid for ONE device and driver identity, so the key
     // is read here and the file is refused unless it states the same one. A refused file is a slower start, never a
@@ -3484,7 +3525,7 @@ bool Device::initialize()
     // caller can do half of it.
     impl->target_table.open(
         TargetTable::Device{ impl->device, &impl->device_table, &impl->allocator },
-        TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported, buildableColorFormats(impl->physical) },
+        TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported, buildableColorFormats(impl->physical), impl->caps.limits.max_color_attachments, impl->caps.limits.max_target_extent },
         [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); },
         [impl = impl.get()](std::shared_ptr<TargetObjects> doomed) {
             // THE RECORD IS THE SUBJECT OF THE RELEASE (see Impl::releaseLater): a pass handle or a
@@ -4112,7 +4153,7 @@ Device::copyImageToHost(ReadbackStaging& staging, VkImage image, VkImageAspectFl
     // attachment of the set moves. The starting layout is never `Undefined` - the caller refused a target no pass has
     // drawn into before it got here.
     recordBarrier(impl->device_table, staging.commands(), barrierBetween(image, stateOf(current), transferReadState(), aspect));
-    staging.recordCopy(image, aspect, extent);
+    staging.recordCopy(image, aspect, extent, transferReadState().layout);
     recordBarrier(impl->device_table, staging.commands(), barrierBetween(image, transferReadState(), stateOf(current), aspect));
 
     const StagingRun run = staging.run(impl->queue, impl->queue_submit);

@@ -312,7 +312,9 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
     image_create.mipLevels     = 1U;
     image_create.arrayLayers   = 1U;
     image_create.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    image_create.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // THE CREATION LAYOUT IS THE TABLE'S Undefined ROW: the records below start at the same usage, so an image is born
+    // where its record says it is (see BarrierPlan).
+    image_create.initialLayout = stateOf(ImageLayout::Undefined).layout;
     image_create.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     image_create.samples       = VK_SAMPLE_COUNT_1_BIT;
     image_create.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;

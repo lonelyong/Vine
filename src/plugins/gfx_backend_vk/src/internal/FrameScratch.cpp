@@ -6,6 +6,8 @@
 #include <memory>
 #include <utility>
 
+#include <vine/backend_vk/internal/BarrierPlan.hpp>
+
 #include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/MaterialAbi.hpp>
@@ -229,7 +231,9 @@ struct FrameScratch::Impl {
         VkDescriptorImageInfo shadow_map{};
         shadow_map.sampler     = shadow_sampler;
         shadow_map.imageView   = shadow_view;
-        shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // THE SHADOW PAIR STATES THE TABLE'S SAMPLED ROW (see BarrierPlan): the pass moved the picture there through the
+        // same row, so the descriptor and the barrier cannot disagree.
+        shadow_map.imageLayout = stateOf(ImageLayout::ShaderReadOnly).layout;
 
         VkDescriptorBufferInfo shadow_info{};
         shadow_info.buffer = ring.buffer;
@@ -239,19 +243,19 @@ struct FrameScratch::Impl {
         VkWriteDescriptorSet writes[3]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
-        writes[0].dstBinding      = 0U;
+        writes[0].dstBinding      = detail::kMaterialBinding;
         writes[0].descriptorCount = 1U;
         writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[0].pBufferInfo     = &material_info;
         writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[1].dstSet          = set;
-        writes[1].dstBinding      = 1U;
+        writes[1].dstBinding      = detail::kTextureBindingBase;
         writes[1].descriptorCount = detail::kTextureSlots;
         writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[1].pImageInfo      = slots.data();
         writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[2].dstSet          = set;
-        writes[2].dstBinding      = 6U;
+        writes[2].dstBinding      = detail::kLightsBinding;
         writes[2].descriptorCount = 1U;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[2].pBufferInfo     = &lights_info;
@@ -280,7 +284,7 @@ struct FrameScratch::Impl {
         VkWriteDescriptorSet write{};
         write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         write.dstSet          = set;
-        write.dstBinding      = 0U;
+        write.dstBinding      = detail::kDrawBinding;
         write.descriptorCount = 1U;
         write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         write.pBufferInfo     = &draw_info;
@@ -318,7 +322,8 @@ struct FrameScratch::Impl {
         VkDescriptorImageInfo shadow_map{};
         shadow_map.sampler     = shadow_sampler;
         shadow_map.imageView   = shadow_view;
-        shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // THE SAME SAMPLED ROW as the content set (see buildContentSet and BarrierPlan).
+        shadow_map.imageLayout = stateOf(ImageLayout::ShaderReadOnly).layout;
 
         VkDescriptorBufferInfo shadow_info{};
         shadow_info.buffer = ring.buffer;
@@ -328,13 +333,13 @@ struct FrameScratch::Impl {
         VkWriteDescriptorSet writes[2]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
-        writes[0].dstBinding      = 0U;
+        writes[0].dstBinding      = detail::kFullscreenSamplerBindingBase;
         writes[0].descriptorCount = detail::kTextureSlots;
         writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[0].pImageInfo      = slots.data();
         writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[1].dstSet          = set;
-        writes[1].dstBinding      = 6U;
+        writes[1].dstBinding      = detail::kLightsBinding;
         writes[1].descriptorCount = 1U;
         writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[1].pBufferInfo     = &lights_info;
@@ -698,3 +703,4 @@ std::uint64_t FrameScratch::setsLive() const noexcept
 }
 
 VN_BACKEND_VK_NS_END
+

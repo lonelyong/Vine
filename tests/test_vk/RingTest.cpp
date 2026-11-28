@@ -319,7 +319,7 @@ TEST(VkDeviceClockTest, AFrameReportsItsDeviceTime)
     (void)backend->executeFrame(frame, nullptr);
     const vn::graphics::FrameReport first = backend->frameReport();
     if (!first.timing.has_value()) {
-        GTEST_SKIP() << "this device reports no timestamp clock (timestampComputeAndGraphics is false)";
+        GTEST_SKIP() << "this device reports no timestamp clock (its chosen queue family answers no timestamp bits, or the device no period)";
     }
     EXPECT_GT(first.timing->gpu_micros, 0U) << "a frame that ran cannot have cost no device time";
 

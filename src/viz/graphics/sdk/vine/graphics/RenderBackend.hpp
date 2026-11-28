@@ -1,21 +1,13 @@
 #pragma once
 #include "graphics_global.hpp"
 
-#include <optional>
-#include <vector>
-
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "Diagnostics.hpp"
-#include "FrameDescription.hpp"
-#include "FrameReport.hpp"
 #include "RenderDevice.hpp"
 #include "RenderFrameExecutor.hpp"
-#include "RenderPass.hpp"
-#include "WindowPresentTarget.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -44,6 +36,13 @@ class RenderTarget;
  *   arguments of a frame, what may be retained, the threading rules and the failure rules.
  * - RenderBackend is reference-counted: factories return an intrusive_ptr and RenderEngine keeps its own reference,
  *   so ownership and lifetime are explicit.
+ *
+ * @note
+ * - THIS HEADER NAMES EXACTLY THE TWO CONTRACTS IT COMPOSES (review 24): the pass model, the frame value and the
+ *   window target reach a host through their own headers (RenderPass.hpp, FrameDescription.hpp,
+ *   WindowPresentTarget.hpp, each of which the base contracts already include where they use them). A host that
+ *   drives a device without the pass model therefore does not have to compile it in - the same ordering caveat
+ *   `graphics-architecture.md` 2.15 gives for a public fact.
  */
 class VN_GRAPHICS_API RenderBackend : public Object, public RefCounted<RenderBackend>, public RenderDevice, public RenderFrameExecutor {
     VN_OBJECT_META_DECL;

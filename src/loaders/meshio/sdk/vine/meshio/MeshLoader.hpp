@@ -259,3 +259,4 @@ class VN_MESHIO_API MeshLoader {
 };
 
 VN_MESHIO_NS_END
+

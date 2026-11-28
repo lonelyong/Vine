@@ -929,6 +929,109 @@ TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
     backend->shutdown();
 }
 
+TEST(VkContentTargetTest, ATargetAboveTheReportedColourAttachmentLimitIsRefusedNotDrawn)
+{
+    // A LIMIT'S CEILING IS THE DEVICE'S (review 25 `B1`): `Capabilities::limits.max_color_attachments` says how many
+    // colour attachments a target may carry, and the contract is that a declaration asking for more is REFUSED with a
+    // diagnostic naming the count (`Capabilities::Limits`). Vulkan only GUARANTEES 4, while the API's 8 is just the
+    // recorder's array bound - a backend that checked 8 alone would hand a 5..8-attachment pass to a 4-attachment
+    // device as an invalid `VkRenderingInfo`. The request is one over the REPORTED limit, so this case holds on any
+    // device (on a 4-attachment device it pins the branch a hard-coded 8 would miss).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const std::uint32_t ceiling = backend->capabilities().limits.max_color_attachments;
+    ASSERT_GE(ceiling, 1U) << "the limit is the device's own answer";
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(static_cast<int>(ceiling) + 1);
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(kRedFragment);
+    const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.0F);
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    AttachmentPolicy clear;
+    clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped)
+        << "a target this device cannot build skips its pass, it does not fail the frame";
+
+    // NAMED ONCE, WITH THE PAIR A HOST ACTS ON: one warning per episode, and its `limit` states the request against
+    // the ceiling the backend really applied.
+    const auto refusal = std::find_if(reported.begin(), reported.end(), [](const vn::graphics::RenderDiagnostic& diagnostic) {
+        return diagnostic.code == vn::String(u8"vk.target.too_many_colors");
+    });
+    ASSERT_NE(refusal, reported.end()) << "the refused target was not named";
+    EXPECT_EQ(std::count_if(reported.begin(), reported.end(), [](const vn::graphics::RenderDiagnostic& diagnostic) {
+                  return diagnostic.code == vn::String(u8"vk.target.too_many_colors");
+              }),
+              1)
+        << "the refusal was reported more than once";
+    ASSERT_TRUE(refusal->limit.has_value());
+    EXPECT_EQ(refusal->limit->requested, static_cast<std::uint64_t>(ceiling) + 1U);
+    EXPECT_EQ(refusal->limit->supported, static_cast<std::uint64_t>(ceiling));
+
+    // AND NOTHING WAS BUILT: the target has no image to read back.
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    EXPECT_EQ(read.status, vn::graphics::ReadbackStatus::NotReady);
+
+    backend->setDiagnosticSink({});
+    backend->shutdown();
+}
+
+TEST(VkContentTargetTest, ATargetAboveTheReportedExtentLimitIsRefusedNotDrawn)
+{
+    // THE EXTENT CEILING IS THE DEVICE'S ANSWER (review 28): `Capabilities::limits.max_target_extent` is the largest
+    // width or height one target may declare - the SMALLEST of the device's image, framebuffer and viewport
+    // dimensions - and a declaration above it is REFUSED with both numbers, instead of reaching `vkCreateImage` as an
+    // invalid extent whose failure shape is the driver's. The request is one past the REPORTED ceiling, so this case
+    // holds on any device.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const std::uint32_t ceiling = backend->capabilities().limits.max_target_extent;
+    ASSERT_GE(ceiling, 4096U) << "Vulkan guarantees 4096 in either dimension";
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(1, static_cast<int>(ceiling) + 1, 16);
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(kRedFragment);
+    const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.0F);
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    AttachmentPolicy clear;
+    clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped)
+        << "a target this device cannot build skips its pass, it does not fail the frame";
+
+    // NAMED ONCE, WITH THE PAIR A HOST ACTS ON: one warning per episode, and its `limit` states the request against
+    // the ceiling the backend really applied (the larger side of the declaration).
+    const auto refusal = std::find_if(reported.begin(), reported.end(), [](const vn::graphics::RenderDiagnostic& diagnostic) {
+        return diagnostic.code == vn::String(u8"vk.target.extent_above_limit");
+    });
+    ASSERT_NE(refusal, reported.end()) << "the refused target was not named";
+    EXPECT_EQ(std::count_if(reported.begin(), reported.end(), [](const vn::graphics::RenderDiagnostic& diagnostic) {
+                  return diagnostic.code == vn::String(u8"vk.target.extent_above_limit");
+              }),
+              1)
+        << "the refusal was reported more than once";
+    ASSERT_TRUE(refusal->limit.has_value());
+    EXPECT_EQ(refusal->limit->requested, static_cast<std::uint64_t>(ceiling) + 1U);
+    EXPECT_EQ(refusal->limit->supported, static_cast<std::uint64_t>(ceiling));
+
+    // AND NOTHING WAS BUILT: the target has no image to read back.
+    const ColorReadback read = backend->readColorImage(target.get(), 0);
+    EXPECT_EQ(read.status, vn::graphics::ReadbackStatus::NotReady);
+
+    backend->setDiagnosticSink({});
+    backend->shutdown();
+}
+
 TEST(VkContentTargetTest, AColourFormatBuildsExactlyWhenTheDeviceBacksItAndTheEightBitFamilyReadsBack)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });

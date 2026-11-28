@@ -102,11 +102,12 @@ TEST(VkPassTimingTest, TheReportAttributesTheFrameToThePassesThatSpentIt)
     // lets this case read the clock without driving thirty frames first.
     (void)backend->executeFrame(twoPassFrame(first_pass, first_target.get(), second_pass, second_target.get()), nullptr);
 
-    // THE ADVERTISED FEATURE AND THE REPORT MUST AGREE. This backend answers `GpuTimings` from the device, so a
-    // session that answers it true has to fill `FrameTiming` - otherwise a host that branched on the feature shows a
-    // clock that never moves (`Capabilities.hpp`: a feature says whether, the report part says whether this backend
-    // measures). Skipping on the OBSERVATION (no timing) would quietly hide exactly that regression, so the skip is
-    // tied to the feature instead, and the presence of the report part is asserted.
+    // THE ADVERTISED FEATURE AND THE REPORT MUST AGREE. This backend answers `GpuTimings` from the CHOSEN queue
+    // family's timestamp bits and the device's period (review 30), so a session that answers it true has to fill
+    // `FrameTiming` - otherwise a host that branched on the feature shows a clock that never moves (`Capabilities.hpp`:
+    // a feature says whether, the report part says whether this backend measures). Skipping on the OBSERVATION (no
+    // timing) would quietly hide exactly that regression, so the skip is tied to the feature instead, and the presence
+    // of the report part is asserted.
     const bool timed = backend->capabilities().features.supports(vn::graphics::Features::Feature::GpuTimings);
     const vn::graphics::FrameReport report = backend->executor().frameReport();
     if (!timed) {
