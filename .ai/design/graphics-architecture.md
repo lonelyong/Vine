@@ -1,7 +1,7 @@
 # graphics architecture: device, engine, chain, one frame
 
 > **Status**: current
-> **Last verified**: 2026-11-27
+> **Last verified**: 2026-11-28
 > **Scope**: the layering of device/window/area/view/engine, and one frame's compilation and scheduling.
 > **Sources**: `RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsHandle.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`.
@@ -143,15 +143,12 @@ is a destructor and a refusal would be a silent drop. It satisfies `G4` / `G6`; 
 | A **backend** (and, for a second API FAMILY such as D3D12 or Metal, also its `check_<family>_exposure` gate over the SDK's family spelling and its own shader translation - the SDK keeps ONE shader source language, review 8 `P4`) | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`) | implement `RenderBackend`'s two halves, state the ABI handshake, add its own `test_*`, a `check_*_exposure` gate, and its registration |
 
 2.12 **`Content*` names only the content model and identity** (naming, `G12`): the `Content*` prefix belongs to **content objects themselves** — `ContentId` /
-    `ContentRef` / `ContentRegistry` / `ContentDeclarations` / `ContentStore` (the device's "identity + row" table). GPU objects compiled or cached from content are named by **what they are**, without the `Content` prefix: `CompiledPrograms` (the compiled half of each
-    (program, revision, layout, variant)), `BindingSets` (the descriptor sets built from declarations),
-    `PushRange` (fills the members of one declared push range by name).
-    Why: a prefix used on "descriptor set", "push constants" and "compiled half" stops saying anything (`G12`), and `ContentPush` reads
-    like a content object while it is actually the fill rule for push bytes. Boundary: the other `Content*` names (`ContentStore` / `ContentCaches` /
-    `ContentDraw` / `ContentImages` / `ContentPipeline` / `ContentAssembly` / `ContentPass` / `ContentFacts` /
-    `ContentSources`) **stay** — they at least say they handle content (renaming item by item is churn, `G8`); new names follow this rule.
-    Spelling note: the research document's `E-08` suggested `PushConstants`, not adopted — the name reads as a content object while the type is
-    the fill rule for one declared range (`G12`); `PushRange` says the fact this unit owns (one declared range and its named members).
+    `ContentRef` / `ContentRegistry` — and to the backend units that handle content by definition (`ContentCaches` / `ContentDraw` / `ContentImages`).
+    GPU objects themselves are named by **what they are**, without the `Content` prefix: `FrameScratch` (the frame's constant ring), `RetirementQueue`
+    (the park), `TargetTable` (a target's objects), `ResidencyClaims` (who may build a key).
+    Why: a prefix used on "descriptor set", "compiled half" or "the frame's ring" stops saying anything (`G12`) - the name states the fact the unit owns
+    (a target's objects, who may build a key, the park). Boundary: the names that say they handle content keep the prefix
+    (`ContentCaches` / `ContentDraw` / `ContentImages` / `ContentRefusalCause`) - renaming them item by item is churn (`G8`); new names follow this rule.
 
 2.13 **`SceneView` is a per-window controller, not a `View` value** (naming, `G12`): the class owns one window's view state - camera, content scene,
     manipulator, input, the surface size it follows and the `PassChain` it ADOPTS - and answers "which pass draws me" for the area that presents it.
@@ -298,6 +295,29 @@ is a destructor and a refusal would be a silent drop. It satisfies `G4` / `G6`; 
     `GraphicsObjects` (a build-tree target, never installed, never `vn::`), never a file list, and the helper stops the
     configure if a setting on the shipping image is missing from the compiling one
     ([ADR-2026-11-27](../decisions/ADR-2026-11-27-a-module-test-links-the-modules-objects.md)).
+
+2.20 **A derived value names its input's IDENTITY, never a stand-in** (`G1` / `G10`): a cache, a baked table or a
+    mirror may answer a later question from an older answer only while it can name the thing that answer was computed
+    from. Four spellings cover the module, and a new table chooses one of them:
+    - **a source-revision value**: the key is the source's own `revision()`, measured inside the same lock that builds
+      the value (the rule behind `Geometry::description`, `MaterialValues::description` and `ShaderProgram::description`,
+      one home in `detail::DescriptionCache`);
+    - **a content-side table**: identity PLUS the clock the content moved on - the baked rows record their root's
+      `NodeId` and compare its `contentEpoch`, because two trees built by one builder reach the same epoch (review 22
+      `Z30`) - and a table whose input is a LIST ends when the list changes, because a freed member's address can be
+      handed to the next one (the light set, census 2026-11-28 `Z32`);
+    - **a key across the thread seam**: `(ContentId, revision)` (`ContentRef`) - a handle's generation makes a recycled
+      address a different key (`../decisions/ADR-2026-11-11-content-identity-is-a-handle.md`);
+    - **a backend table**: it HOLDS the object its address key names, so the address cannot be recycled while the entry
+      is queryable, and it ends at the frame end once that share is the last (`../decisions/ADR-2026-11-09-address-keys-hold-the-object.md`,
+      review 21 `Z25`).
+    Why: a counter or an address owned by the input's tree collides across inputs, and an address is recycled by the
+    next object of the same size; both failures are silent - the picture is wrong and every counter reports health.
+    Boundary: a per-instance number may be compared inside its own object (a `MaterialInstance`'s composite revision);
+    what no table may do is compare one as if it named a value. The census that derived the four shapes from every table
+    in the module is `../research/graphics-2026-11-28-derived-state-census.md` §3; the witnesses are
+    `SceneTest.AReplacedRootIsNeverServedFromThePreviousTablesEpoch`,
+    `SceneTest.AReplacedLightListDoesNotReuseTheOldAnswer` and the `VkResidencyTest` pair named in review 21 §2.3.
 
 ## 3. Features
 

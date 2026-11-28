@@ -1,7 +1,7 @@
 # graphics frame pipeline
 
 > **Status**: current — the takeover is complete (§9.3), and the shapes below are the ones in use.
-> **Last verified**: 2026-11-16
+> **Last verified**: 2026-11-28
 > **Scope**: the shape, identity, lifetime and plan semantics of the four layers content → snapshot → derivation → execution. It excludes the geometry / picking
 > algorithms, the material model, backend implementation details (`vk-backend.md`) and the threading contract's migration-era state (`graphics-threading.md`).
 > **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/ResidencyClaims.hpp`,
@@ -149,7 +149,7 @@
 | address + version (the engine table) | deleted | handle + generation + revision (2.5 / 2.7) |
 | mirror + delta (`ContentMirror` / `DeltaChannel`) | deleted | one `publish` swapping the pointer (`R9`) |
 | memo + epoch (`DrawListMemo` / `Version`) | deleted | a Snapshot is a value and derivation is pure (`R14`) |
-| reference counting (`markUsed`) | deleted | row-level epoch reclamation (`F5`) |
+| reference counting (`markUsed`) | deleted | held entries + the frame-end holder sweep (`F4` / `F5`) |
 | parking window (`parked` / `kept`) | half kept | GPU objects are still replaced (pipelines / descriptor sets / buffers), but **residency** no longer depends on it (`I4`) |
 
 ### 2.11 Five `Frame*` values, five questions
@@ -197,8 +197,8 @@
 | F1 | Snapshot publication | a copy-on-write row table in chunks + material values + a spatial index + the light set, swapped in one pointer exchange | landed: `ScenePublisher::publish` compiles a `detail::SceneSnapshot`, and frame compilation makes `SnapshotSource` answer each draw through `PublicationStore::sourceFor` (`EngineCompile.cpp`); an unpublished scene is refused with `engine.compile.unpublished_scene` and the live tree is not read back |
 | F2 | Pure derivation `select` | `selectSnapshot(snapshot, view)` equals the live collection item by item | landed: each view's draw list is the one `selectSnapshot` run `SnapshotSource` performs (`ScenePublisher.cpp`: there is no second walk over live rows); `T8` proves it pure (serial / concurrent / after the content is cleared, the same result) |
 | F3 | Content identity and generation | `Handle` + typed id + `ContentRef`; a stale handle answers gone; the content ROOT carries one too (`Scene::id()`), which is what the publication channel's override is keyed by | landed (the scene's id: review 19 `Z6`) |
-| F4 | The engine table keeps residency by `(id, revision)` | the fact tables get a row per ref; an old frame reads the old version | landed |
-| F5 | Row-level epoch reclamation | a row is reclaimed at "the last frame a plan hit it"; an entry leaves when "the host does not want it ∧ no row names it" | landed |
+| F4 | Residency follows the references | a snapshot row holds the shape / values it names, and a backend entry is ended by the frame end whose sweep finds no other holder (`graphics-content-lifecycle.md` 2.10, `vk-backend.md` 2.25) | landed (the reference backend's engine-wide row table is retired with it; no engine-side content table exists) |
+| F5 | An entry ends when nobody else names its key | `releaseContent` forgets it now and parks its objects; the frame-end sweep ends what has no outside holder - culling and hiding move no holding, so they end nothing | landed |
 | F6 | A plan is a value | a by-name difference at a frame boundary + plan validation with stable codes | landed: `Plan` + `validatePlan` + `applyPlan` (session and scope forms, `PlanResult` three states) + `plan()` / `planFor(owner)`; `Target` is still an explicit `RenderTarget` handle |
 | F7 | Preparation entry point | `prepare()` answers what is needed; after it, recording's `builds` delta is 0 | landed: one planner (`ContentCaches::planDraw`) answers preparation and the frame head; `RenderEngine::prepare()` → `prepareFrame(value)` pre-builds halves / sets / uploads / pipeline identity from the same answer |
 | F9 | `publish` returns a result | an explicit "not published" inside a batch, no null | landed: the public `Scene::publish()` has three states (`Posted`/`Unchanged`/`InsideBatch`); the old four-state `PublishOutcome` is gone |
@@ -222,6 +222,20 @@
   comparison mean "the select would read the same placement". `RowOwn::Body` is deliberately not compared: a body
   change rebuilds the table (fresh serials, `RowRefresh::RebuildTable`).
 - **Constraints** (`C1` / `C2`): anything the content side changes after publication leaves in-flight frames untouched.
+- **The table names the ROOT it describes** (`G1`, review 22 `Z30`). The derived rows carry `baked_root_` (the root's
+  `NodeId`), and `ensureRows` compares it once per collect: a content EPOCH is a counter the described tree owns - it
+  starts at 0 for every node, and two trees built by the same builder reach the same number - so an epoch alone let a
+  scene that adopted a new root be served the previous tree's rows (through raw `SceneBake::nodes` pointers that tree
+  no longer owns), with `publish()` answering `Unchanged`. The publication compares one value, `RowsVersion{table,
+  epoch, boxes, values}`, where `table` moves on every rebuild and every reset: the epoch stays the cheap "did a node
+  announce" clock for the incremental path, and a cleared table is "not built", never "built and empty".
+- **The scene's own visibility gates the publication** (`G1`, review 22 `Z29`). `Scene::setVisible(false)` reaches the
+  collection, the bounding box and the ray walks AND the rows the publication is built from (an empty table), so the
+  query and the picture a frame draws answer the same thing. It releases nothing: the live objects keep their own share
+  of every description, so showing the scene again retransmits nothing (`graphics-content-lifecycle.md` F27 / F28).
+- **Inside an edit batch the answer is the PREVIOUS PUBLICATION** (review 22 `Z31`), the same value `publish()` answers
+  `InsideBatch` with: a query and a frame agree on "the state the batch started from" without depending on a cache
+  surviving the batch's own edits (a clear or a root swap inside the batch used to discard it).
 - **Requirements** (`R9` / `R10` / `R13`): one atomic pointer swap; cost O(changed chunks + changed material values); the snapshot can be exported as a text summary.
 - **Acceptance** (`T1` / `T2` / `T3`): `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` - an edit is a new publication that shares every 32-row chunk but the one it
   touched, i.e. publishes in O(changed); the wall-clock figure the case prints is a measured record (`../memory/graphics.md`), not a gate;
@@ -261,15 +275,18 @@
 - **Acceptance** (`T5` / `T17`): `ContentRegistryTest.AStaleHandleAnswersGone` (implemented); an item-by-item diff of the old frame.
 - **Caveat** (`P1`): **a reference that carries only an id is not an immutable value** — it pushes the version question to the engine table and breaks `R9` outright.
 
-### 3.5 F4 The engine table and F5 row-level reclamation
+### 3.5 F4 Residency follows the references, and F5 the holder sweep
 
-- **Behaviour**: the fact tables (geometry / material / program) get a row per `(id, revision)`; a row is reclaimed at "the last frame a plan hit it", and an
-  entry's arena / upload / texture residency is answered by the declaration index.
-- **Constraints** (`C3`): only the engine thread builds and reclaims tables.
+- **Behaviour**: there is no engine-side content table: a snapshot row holds the shape and values it names (`RowOwn::Body`'s owning shares), and the
+  backend keys an entry by the immutable value it was built from and holds that value. Residency therefore follows who names a value, and
+  `ContentCaches::endFrame` ends every entry whose last outside holder is gone (`graphics-content-lifecycle.md` 2.10, `vk-backend.md` 2.25).
+- **Constraints** (`C3`): the sweep runs on the thread that answers the frame (the backend's frame end), never on a content thread.
 - **Requirements** (`R22` / `R23`): residency ⟺ a live snapshot reference; predictable after preparation.
-- **Acceptance** (`T6` / `T25`): `ResidencyTableTest.TheCollectableSetIsEnumerable`;
+- **Acceptance** (`T6` / `T25`): `VkResidencyTest.ASupersededShapeLeavesTheResidencyItReplaced` /
+  `ContentTheHostNoLongerHoldsLeavesResidencyBehind`;
   holding an old snapshot outside the Session and submitting again does not UAF.
-- **Caveat** (`P6`): a row's lifetime and a GPU resource's lifetime are not the same number — a row may leave a frame later than the resource (an in-flight plan still reads it).
+- **Caveat** (`P6`): an entry's lifetime and its GPU objects' lifetime are not the same instant — the entry is forgotten now, and the objects park
+  until the completion watermark has passed every frame that could name them (F2 / N4).
 
 ### 3.6 F6 A plan is a value
 
@@ -604,7 +621,7 @@
 | T3 | a batch = one publication | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` | implemented |
 | T4 | a prototype folds once and placement is counted separately | `SnapshotTest.APrototypeFoldsOnceAndIsPlacedNTimes` | not done |
 | T5 | a stale handle answers gone | `ContentRegistryTest.AStaleHandleAnswersGone` | implemented |
-| T6 | residency = live snapshot references | `ResidencyTableTest.TheCollectableSetIsEnumerable` | implemented |
+| T6 | residency = live snapshot references | `VkResidencyTest.ASupersededShapeLeavesTheResidencyItReplaced` / `ContentTheHostNoLongerHoldsLeavesResidencyBehind` | implemented |
 | T7 | the plan difference | `PlanTest.APassIsAddedWithoutAnyAddCall` | implemented |
 | T8 | derivation is pure | `SelectTest.SameInputSameList` (the same snapshot repeated, other views interleaved, after the scene is cleared, and 8 threads × 32 rounds concurrently item by item equal to serial); `R15`'s fold count is pinned by `GraphicsTest`'s `contentCollect*` cases | implemented |
 | T9 | the sort is a total order | `SelectTest.TheSortKeyIsATotalOrder` + `SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth` + `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin` | implemented |
@@ -669,7 +686,7 @@ A step that breaks its own `K` ⇒ that step is rolled back and the conclusion i
 
 ### 9.1 Current status
 
-- **Landed**: F1 (snapshot publication), F2 (pure derivation), F3 (identity), F4 (the engine table by ref), F5 (row-level epoch reclamation),
+- **Landed**: F1 (snapshot publication), F2 (pure derivation), F3 (identity), F4 (residency follows the references), F5 (the holder sweep at the frame end),
   F6 (a plan is a value), F7 (the preparation entry point: the answer + the pre-build), F9 (publication's three-state answer + the snapshot handle), F11 (the total-order sort key).
   `SnapshotSource` answers every draw of Published mode, and `Scene::collectDrawItems` is Direct mode's direct path;
   the plan lives in `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp` (`applyPlan`); preparation lives in the executor's `prepareFrame`:

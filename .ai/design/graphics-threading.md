@@ -4,7 +4,7 @@
 > "an immutable snapshot produced by one publication" and "two atomic revisions". The history (why it used to be that way, which option was rejected) is in
 > `../decisions/ADR-2026-11-12-adopt-graphics-next.md`, `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`
 > and git history; the `C1–C15` and `N1–N14` entries that only served the deleted mechanism are retired, and their numbers are not reused (see §5.1, §5.3).
-> **Last verified**: 2026-11-27
+> **Last verified**: 2026-11-28
 > **Scope**: who owns what of one frame's work on each of the two threads — what the content side and the engine side own, which values may cross the seam, who owns the surface and the swap chain,
 > where parallelism sits, and how shutdown finishes.
 > **Excludes** appfw's general async (`appfw-startup-phases.md`, `async-design.md`) and the Vulkan synchronisation details (`vk-backend.md`).
@@ -153,7 +153,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | Qt Quick | the GUI thread owns `QSGNode` | the render thread `sync()`s its own copy every frame | **O(n) sync per frame**; this design avoids it with publication |
 | Godot | main-thread nodes | `RenderingServer` through `CommandQueueMT` + RID | likewise a command queue + stable handles; RID ≈ this design's `NodeId` |
 | Unity | `Transform` is only a handle, the native layer is authoritative | the render side processes transform changes in batches | likewise "batch the changes", which confirms that "publish per batch" is necessary |
-| wgpu / Dawn | the application thread submits commands | internally tracks resource lifetimes | borrows "internal references and user references kept apart"; this repository uses `PinnedResources` + a retirement queue |
+| wgpu / Dawn | the application thread submits commands | internally tracks resource lifetimes | borrows "internal references and user references kept apart"; this repository uses held cache entries + a retirement queue |
 
 - **Why not a per-frame extract**: the extract/`sync()` shape is an O(drawables) copy every frame, whereas this design's goal is precisely to take the **per-frame**
   cost off the UI thread; one publication pays O(the changed part) only when **editing**.

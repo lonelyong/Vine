@@ -589,6 +589,158 @@ ViewDependence resolveView(const Node& node, const Mat4d& parent_world, const Vi
     return vn::graphics::localToWorldForView(*placement, parent_world, view, world);
 }
 
+TEST(SceneTest, AReplacedRootIsNeverServedFromThePreviousTablesEpoch)
+{
+    // REVIEW 22 `Z30`. The derived rows were validated against a counter the ROOT TREE owns, and two trees built by
+    // the same builder reach the same number - so a scene that adopted a new root was served the previous tree's
+    // rows: `publish()` answered `Unchanged` and the frame kept drawing the old content, through node pointers that
+    // tree no longer owns. The table must name the root it describes.
+    const auto build_tree = [](const vn::String& name) {
+        auto root = intrusive_ptr<Group>(new Group());
+        auto tri  = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, name);
+        root->addChild(tri);
+        return std::pair<intrusive_ptr<Group>, NodeId>{ root, tri->children().front()->id() };
+    };
+
+    Scene scene;
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    auto [first, first_leaf] = build_tree(u8"first");
+    scene.setRoot(first);
+    ASSERT_TRUE(scene.publish().posted());
+    const auto first_picture = scene.collectDrawItems(&cam);
+    ASSERT_EQ(first_picture->size(), 1u);
+    EXPECT_EQ(first_picture->front().node, first_leaf);
+    const std::uint64_t first_epoch = first->contentEpoch();
+
+    // The scene becomes the only holder of the old tree: a stale table would now read freed nodes, which is the
+    // lifetime half of this finding.
+    first = nullptr;
+
+    auto [second, second_leaf] = build_tree(u8"second");
+    scene.setRoot(second);
+    EXPECT_EQ(second->contentEpoch(), first_epoch)
+        << "the premise: one builder, one announcement count - the collision this case exists for";
+    EXPECT_TRUE(scene.publish().posted()) << "a new tree is a new publication, not 'unchanged'";
+
+    const auto second_picture = scene.collectDrawItems(&cam);
+    ASSERT_EQ(second_picture->size(), 1u);
+    EXPECT_EQ(second_picture->front().node, second_leaf) << "the picture must describe the root the scene has";
+    EXPECT_NE(second_picture->front().node, first_leaf);
+}
+
+TEST(SceneTest, AClearedSceneDoesNotInheritItsOldTablesAnswer)
+{
+    // REVIEW 22 `Z30`, the variant that draws NOTHING ever after: `clear()` emptied the rows but the recorded epoch
+    // stayed, so a root whose counter matched was served the EMPTY table - the new content never appeared, and every
+    // `publish()` said `Unchanged`. The emptied table must be "not built", not "built and empty".
+    const auto build_tree = [](const vn::String& name) {
+        auto root = intrusive_ptr<Group>(new Group());
+        auto tri  = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, name);
+        root->addChild(tri);
+        return std::pair<intrusive_ptr<Group>, NodeId>{ root, tri->children().front()->id() };
+    };
+
+    Scene scene;
+    Camera cam;
+    setupLookAtCamera(cam);
+
+    auto [first, first_leaf] = build_tree(u8"first");
+    scene.setRoot(first);
+    ASSERT_TRUE(scene.publish().posted());
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->front().node, first_leaf);
+    const std::uint64_t first_epoch = first->contentEpoch();
+
+    // Clearing and publishing is what a pane does between documents: the picture is empty, and that answer is posted.
+    scene.clear();
+    ASSERT_TRUE(scene.publish().posted());
+    ASSERT_TRUE(scene.collectDrawItems(&cam)->empty());
+
+    auto [second, second_leaf] = build_tree(u8"second");
+    scene.setRoot(second);
+    EXPECT_EQ(second->contentEpoch(), first_epoch) << "the premise, as above";
+    EXPECT_TRUE(scene.publish().posted()) << "the cleared table must not answer for the next root";
+    const auto picture = scene.collectDrawItems(&cam);
+    ASSERT_EQ(picture->size(), 1u) << "the new content is drawn on the first collect after the swap";
+    EXPECT_EQ(picture->front().node, second_leaf);
+}
+
+TEST(SceneTest, AnEditBatchAnswersThePublishedPictureWhateverTheBatchEdited)
+{
+    // REVIEW 22 `Z31`. The batch's promise - "the answer is the picture the batch started from" - was implemented as
+    // "the cached publication", and a clear or a root swap inside the batch discarded that cache, so a mid-batch
+    // query answered the half-edited tree. The answer is the PREVIOUS PUBLICATION: the value `publish()` reports.
+    Scene scene;
+    Camera cam;
+    setupLookAtCamera(cam);
+    auto root = setIdentityRoot(scene);
+    auto tri  = makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr, u8"tri");
+    root->addChild(tri);
+
+    ASSERT_TRUE(scene.publish().posted());
+    ASSERT_EQ(scene.collectDrawItems(&cam)->size(), 1u);
+
+    scene.beginEdit();
+    root->removeChild(tri.get()); // half a configuration
+    EXPECT_EQ(scene.publish().status, ScenePublishStatus::InsideBatch);
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u)
+        << "mid-batch the query answers the published picture, not the half-edited tree";
+
+    scene.setRoot(nullptr); // the batch even empties the scene - the answer must not depend on the cache
+    EXPECT_EQ(scene.collectDrawItems(&cam)->size(), 1u) << "the batch holds even a root drop back";
+
+    scene.endEdit();
+    EXPECT_TRUE(scene.publish().posted());
+    EXPECT_TRUE(scene.collectDrawItems(&cam)->empty()) << "and after the batch the edit lands, in one publication";
+}
+
+TEST(SceneTest, AReplacedLightListDoesNotReuseTheOldAnswer)
+{
+    // CENSUS 2026-11-28 `Z32`. The light set was keyed by each light's (address, revision) and no list mutator ended
+    // it. A removed light is freed by the same call, so the next light can land on its address - and a fresh light's
+    // revision starts at 1, an EDIT COUNT two differently-configured lights can share. The list is the cache's input:
+    // a list edit must end the answer.
+    //
+    // remove + add of the SAME pointer states the rule without depending on the allocator: the address and the
+    // revision match by construction, so only "a list edit ends the cache" can make the answer a new value.
+    Scene scene;
+    auto  light = intrusive_ptr<Light>(new Light());
+    scene.addLight(light);
+
+    const auto before = scene.lightSet();
+    ASSERT_NE(before, nullptr);
+
+    scene.removeLight(light.get());
+    scene.addLight(light);
+    const auto after = scene.lightSet();
+
+    ASSERT_NE(after, nullptr);
+    EXPECT_NE(after.get(), before.get())
+        << "the list changed; a value derived from the list must not be handed out for the new one";
+}
+
+TEST(SceneTest, ReplacingTheLightingBuildsTheNewSet)
+{
+    // The product spelling of `Z32`: `setLighting` frees the old lights and builds fresh ones, and a fresh light's
+    // revision starts at 1 - so a cache that survived the replacement could match a new light by address and number
+    // and keep lighting the picture with the previous rig. The answer is a new set per replacement.
+    Scene scene;
+    scene.setLighting(LightRig::directionalFromView(Vec3d(0.0, 0.0, 1.0)));
+    const auto first = scene.lightSet();
+    ASSERT_NE(first, nullptr);
+
+    scene.setLighting(LightRig::directionalFromView(Vec3d(0.0, 1.0, 0.0)));
+    const auto second = scene.lightSet();
+    ASSERT_NE(second, nullptr);
+
+    EXPECT_NE(second.get(), first.get()) << "a replaced lighting is a new list, whatever the addresses say";
+    ASSERT_EQ(second->size(), 1u);
+    EXPECT_TRUE(second->values()[0].has_direction);
+    EXPECT_DOUBLE_EQ(second->values()[0].direction.y, 1.0) << "the scene is lit by the rig it now has";
+}
+
 TEST(DrawItemTest, AMirroredPlacementReversesTheAuthoredWinding)
 {
     // graphics-scene.md 2.13: the front face is the AUTHORED one, so a placement that reflects has to be REPORTED and a
@@ -12643,6 +12795,56 @@ TEST(RenderEngineTest, AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStarted
     (void)scene->publish();
     ASSERT_TRUE(engine->frame().ran());
     EXPECT_NEAR(joint_x(), 0.2, 1e-9);
+}
+
+TEST(RenderEngineTest, AHiddenScenePublishesAnEmptyPicture)
+{
+    // REVIEW 22 `Z29`. The scene's own visibility gated the collection, the box and the ray walks but never the
+    // publication, so a hidden scene kept being DRAWN while every query said "nothing". The publication is the
+    // picture, so the flag has to reach it - and hiding must not withdraw residency (the entry stays held by the live
+    // objects, the same share story VkResidencyTest's hidden-content cases pin down).
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*camera);
+    PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+
+    const auto command_count = [&engine]() -> std::size_t {
+        const auto& draws = engine->frameDescription().passes.at(0).draw;
+        if (!draws.has_value() || draws->packets.empty() || draws->packets[0].commands == nullptr) {
+            return 0;
+        }
+        return draws->packets[0].commands->size();
+    };
+
+    ASSERT_TRUE(scene->publish().posted());
+    ASSERT_TRUE(engine->frame().ran());
+    ASSERT_EQ(command_count(), 1u);
+
+    scene->setVisible(false);
+    EXPECT_TRUE(scene->collectDrawItems(camera.get())->empty()) << "the query says nothing";
+    EXPECT_TRUE(scene->publish().posted()) << "a hidden scene posts the empty picture";
+    ASSERT_TRUE(engine->frame().ran());
+    EXPECT_EQ(command_count(), 0u) << "and the picture a frame draws says the same";
+
+    // THE STEADY STATE OF "NOTHING TO DRAW" IS FREE: the version moved once, when the table emptied, so a second
+    // publish while hidden is `Unchanged` and no new empty publication is built per frame.
+    EXPECT_EQ(scene->publish().status, ScenePublishStatus::Unchanged);
+    ASSERT_TRUE(engine->frame().ran());
+    EXPECT_EQ(command_count(), 0u);
+
+    scene->setVisible(true);
+    EXPECT_TRUE(scene->publish().posted());
+    ASSERT_TRUE(engine->frame().ran());
+    EXPECT_EQ(command_count(), 1u) << "showing it again draws the content it never lost";
 }
 
 TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)

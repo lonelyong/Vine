@@ -18,17 +18,13 @@ std::atomic<std::uint64_t> s_next_revision{ 1 };
 } // namespace
 
 SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
-                                   std::uint64_t           epoch,
-                                   std::uint64_t           boxes,
-                                   std::uint64_t           values,
+                                   const RowsVersion&      version,
                                    const SceneSnapshotPtr& previous)
 {
     auto snapshot        = std::make_shared<SceneSnapshot>();
     snapshot->row_count  = rows.rows.size();
     snapshot->revision   = s_next_revision.fetch_add(1, std::memory_order_relaxed);
-    snapshot->epoch      = epoch;
-    snapshot->boxes      = boxes;
-    snapshot->values     = values;
+    snapshot->version    = version;
     snapshot->identities.reserve(snapshot->row_count);
     snapshot->node_epochs.reserve(snapshot->row_count);
 
@@ -43,9 +39,11 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
     snapshot->chunks.reserve(chunk_count);
 
     // A box or value refresh edits rows in place without moving a node epoch, so those versions disable sharing
-    // entirely rather than serving a stale chunk.
+    // entirely rather than serving a stale chunk; a different TABLE (another root, or a cleared one) shares nothing
+    // either - the version says so instead of a row count that happens to agree.
     const bool may_share = previous != nullptr && have_epochs && previous->row_count == snapshot->row_count &&
-                           previous->boxes == boxes && previous->values == values &&
+                           previous->version.table == version.table &&
+                           previous->version.boxes == version.boxes && previous->version.values == version.values &&
                            previous->chunks.size() == chunk_count;
 
     for (std::size_t chunk = 0; chunk < chunk_count; ++chunk) {

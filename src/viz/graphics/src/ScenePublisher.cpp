@@ -22,6 +22,22 @@ namespace detail
     return kNoCommands;
 }
 
+/**
+ * @brief The one empty publication ("nothing to draw"), shared rather than built.
+ *
+ * @details
+ * - What a mid-batch query answers before the scene ever published: `publish()` reports an empty handle there (nothing
+ *   was `Posted`), and selecting from this value answers the same "nothing". One allocation for the whole process,
+ *   like `noCommands`.
+ *
+ * @return The shared empty publication.
+ */
+[[nodiscard]] SceneSnapshotPtr emptyPublication()
+{
+    static const auto kEmpty = std::make_shared<const SceneSnapshot>();
+    return kEmpty;
+}
+
 namespace
 {
 /// @brief Bumps every bounds stamp in @p node's subtree (a scene-level invalidation).
@@ -53,7 +69,10 @@ ScenePublisher::collectDrawItems(const vn::graphics::View& view) const
     // "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same answer,
     // and the check runs BEFORE any cache lookup on purpose: a list built while the node was still this scene's
     // root must not answer for a scene that no longer draws it (see Scene::setRoot).
-    if (!scene_.visible_ || !scene_.hasRootedRoot()) {
+    //
+    // NOT INSIDE AN EDIT BATCH: there the answer is the previous PUBLICATION (see snapshot), whatever the live flags
+    // say - the batch holds every edit back, a root swap and a hide included, exactly as `publish()` reports it.
+    if (edit_depth_ == 0 && (!scene_.visible_ || !scene_.hasRootedRoot())) {
         return noCommands();
     }
 
@@ -62,8 +81,8 @@ ScenePublisher::collectDrawItems(const vn::graphics::View& view) const
     // function the frame's source also runs. The direct walk (`selectFromBake` over the live rows) is gone, so a
     // rule change is one edit, not two (G1 / G5).
     //
-    // INSIDE AN EDIT BATCH the answer is the picture the batch started from, exactly as `publish()` reports it: one
-    // publication per batch is the contract a frame rests on, and the content query says the same thing.
+    // INSIDE AN EDIT BATCH the answer is the previous publication, exactly as `publish()` reports it: one publication
+    // per batch is the contract a frame rests on, and the content query says the same thing.
     const SceneSnapshotPtr current = snapshot();
 
     // The memo is the same `DrawListMemo` the frame's source uses, keyed by the publication's revision: a new
@@ -134,8 +153,8 @@ void ScenePublisher::endEdit()
         --edit_depth_;
     }
     // The version is NOT forced up here: nothing has been collected yet, so `bake_epoch_` may be behind the graph. The
-    // next collection catches the pair up (see ensureRows) - and that collection is the one a frame's publication
-    // reads, which is exactly where the whole batch has to be visible.
+    // next collection catches the published version up (see ensureRows) - and that collection is the one a frame's
+    // publication reads, which is exactly where the whole batch has to be visible.
 }
 
 void ScenePublisher::setContentFrame(std::uint64_t frame)
@@ -156,9 +175,11 @@ void ScenePublisher::setContentFrame(std::uint64_t frame)
 void ScenePublisher::invalidateContent()
 {
     if (scene_.root_ != nullptr) {
-        // Scene-level facts (a swapped root, scene visibility / opacity, an edit no setter could see) are announced
-        // on the root's own subtree epoch: the memo then drops its entries at the next collect, and the per-entry
-        // revision below is still the key that says which scene version a list was built for.
+        // WHAT THIS VERB IS FOR: an edit no setter could see (bytes written through a buffer, a custom node's own
+        // state), plus the scene-level facts a REBUILD reads from the authored side - the scene's opacity is folded
+        // into the table at build time. It is NOT needed for the two facts the derived side reads itself: the root
+        // (the identity guard, see ensureRows) and the scene's visibility (read where the table is built), and
+        // announcing for those would invalidate every node's box for a switch no node states.
         scene_.root_->announceContentChange();
         // The bounds caches are per node and keyed by ANNOUNCEMENTS, and the built-in setters already announce - so
         // what this reaches is the edit they could not see: data written through a buffer, a custom node's own state.
@@ -170,44 +191,60 @@ void ScenePublisher::invalidateContent()
 
 SceneSnapshotPtr ScenePublisher::snapshot() const
 {
-    // Ensuring the rows is what makes the answer CURRENT: the build is keyed by the epoch, and the refresh is what
-    // notices a box or material value that moved under it. Inside an edit batch the PUBLISHED pair stays where it
-    // was, so this returns the previous cached snapshot (or builds the pre-batch one on first use).
+    // INSIDE AN EDIT BATCH THE ANSWER IS THE PREVIOUS PUBLICATION - one value, the one `publish()` answers
+    // `InsideBatch` with - so a query, a mirror and a frame agree on "the state the batch started from" no matter
+    // what the batch has edited so far (review 22 `Z31`). Building from the live rows here used to let a clear or a
+    // root swap inside the batch discard the cache, and the query then answered the half-edited tree.
+    if (edit_depth_ > 0) {
+        return published_snapshot_.valid() ? published_snapshot_.published() : emptyPublication();
+    }
+
+    // Ensuring the rows is what makes the answer CURRENT: the build is keyed by the version, and the refresh is what
+    // notices a box or material value that moved under it. The version compared is the PUBLISHED one, and that is
+    // what keeps the edit batch's promise: it only advances outside a batch (see ensureRows).
     (void)ensureRows();
-    const std::uint64_t epoch  = published_epoch_;
-    const std::uint64_t boxes  = published_boxes_;
-    const std::uint64_t values = published_values_;
+    const RowsVersion version = published_version_;
 
     SceneBake* rows = content_bake_.get();
     if (rows == nullptr) {
-        return makeSceneSnapshot(SceneBake{}, epoch, boxes, values, nullptr);
+        return makeSceneSnapshot(SceneBake{}, version, nullptr);
     }
     const SceneSnapshotPtr& cached = publication_cache_;
-    if (cached != nullptr && cached->epoch == epoch && cached->boxes == boxes && cached->values == values) {
+    if (cached != nullptr && cached->version == version) {
         return cached; // nothing moved: the previous publication is still the answer
     }
 
-    SceneSnapshotPtr published = makeSceneSnapshot(*rows, epoch, boxes, values, cached);
+    SceneSnapshotPtr published = makeSceneSnapshot(*rows, version, cached);
     publication_cache_         = published;
     return published;
 }
 
 const SceneBake& ScenePublisher::ensureRows() const
 {
-    // A scene with no rooted root DRAWS NOTHING (see collectDrawItems), so its rows are empty - and that is a
-    // state, not an error: a publication of such a scene is an empty table and the frame stays correct. This is the
-    // total contract of this function; a caller (the publication) has no business repeating the guard.
-    if (!scene_.hasRootedRoot()) {
+    // A SCENE THAT DRAWS NOTHING HAS AN EMPTY TABLE, and "nothing" is two states with ONE answer (review 22 `Z29`):
+    // no rooted root (see Scene::setRoot) and a scene whose own visibility is off. The flag is read HERE - where the
+    // table is built - so the publication a frame draws and the content query say the same thing about it: a hidden
+    // scene's next publication is empty, and because the live objects keep their own share of every description,
+    // becoming visible again retransmits nothing (graphics-content-lifecycle.md F27 / F28).
+    if (!scene_.visible_ || !scene_.hasRootedRoot()) {
         return resetToEmpty();
     }
 
-    // THE GRAPH HALF, ONCE PER EPOCH: every node's own facts, then the one fold over them (see DrawListBake.hpp).
-    // A moved camera then pays the VIEW half only - the layer prune, the frustum test and the sort - instead of
-    // recomputing every matrix and every fold, which is what a collection used to cost per view
-    // (measured: SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera). It is a named step because a collection
-    // is not the only reader of the rows any more: the publication is built from them (see snapshot).
+    // WHICH TABLE IS THIS - THE ROOT'S IDENTITY, NOT ITS COUNTER (review 22 `Z30`). A content epoch is a number the
+    // described tree owns: it starts at 0 for every node, and two trees built by the same builder reach the same value
+    // - so a scene that adopts a new tree would be served the previous tree's rows, through raw node pointers that
+    // tree no longer owns. With the identity matched, the epoch is the cheap "did a node announce" clock, and the two
+    // generations below cover the edits no node announced.
+    const NodeId        root  = scene_.root_->id();
     const std::uint64_t epoch = scene_.root_->contentEpoch();
-    if (content_bake_ == nullptr || bake_epoch_ != epoch) {
+    if (content_bake_ == nullptr || baked_root_ != root) {
+        // A DIFFERENT TREE IS A DIFFERENT TABLE: there is nothing to bring up to date in place, so the incremental
+        // path is not even asked (its node record describes the old tree).
+        rebuildRows();
+        bake_epoch_ = epoch;
+        ++content_bake_count_;
+    }
+    else if (bake_epoch_ != epoch) {
         // THE INCREMENTAL PATH FIRST, and the full build only when it cannot account for the edit (see
         // refreshChangedRows: it never guesses).
         if (!refreshChangedRows()) {
@@ -223,19 +260,17 @@ const SceneBake& ScenePublisher::ensureRows() const
     if (refreshBoxes(*content_bake_) > 0U) {
         ++box_generation_;
     }
-    // WHAT A PUBLICATION IS TOLD. The two numbers above are this scene's own (a query wants them current); the pair
-    // below is the version a publication compares, and it only advances OUTSIDE an edit batch (see beginEdit): a frame
-    // that lands in the middle of one publishes nothing, so the publication keeps the state the batch started from, and
-    // the whole batch becomes ONE publication in the frame after the outermost endEdit.
+    // WHAT A PUBLICATION IS TOLD. The generations above are this scene's own (a query wants them current); the version
+    // below is the one a publication compares, and it only advances OUTSIDE an edit batch (see beginEdit): a frame
+    // that lands in the middle of one publishes nothing, so the publication keeps the state the batch started from,
+    // and the whole batch becomes ONE publication in the frame after the outermost endEdit.
     if (edit_depth_ == 0 && refreshValues(*content_bake_) > 0U) {
         // The values a row carries moved (see refreshValues): nothing on the graph announced it, so the version a
         // publication compares moves here, and the publication built from it is a new memo key for both readers.
         ++value_generation_;
     }
     if (edit_depth_ == 0) {
-        published_epoch_  = bake_epoch_;
-        published_boxes_  = box_generation_;
-        published_values_ = value_generation_;
+        published_version_ = RowsVersion{ table_generation_, bake_epoch_, box_generation_, value_generation_ };
     }
     return *content_bake_;
 }
@@ -245,19 +280,32 @@ const SceneBake& ScenePublisher::resetToEmpty() const
     if (content_bake_ == nullptr) {
         content_bake_ = std::make_unique<SceneBake>();
     }
+    // AN ALREADY EMPTY TABLE STAYS WHERE IT IS. A hidden (or rootless) scene is asked on every collect, and moving the
+    // version each time would build a new empty publication per frame - an allocation and a memo key that never
+    // repeats. The steady state of "nothing to draw" must be free, exactly like an unchanged visible scene.
+    if (content_bake_->rows.empty() && content_bake_->nodes.empty() && baked_root_.isNull()) {
+        return *content_bake_;
+    }
     content_bake_->rows.clear();
     content_bake_->nodes.clear();
     content_bake_->node_epochs.clear();
     // The previous publication must not answer for an empty table: a scene that stopped drawing hands out an empty
     // picture, not the last one it had.
     publication_cache_.reset();
+    // AN EMPTY TABLE IS A TABLE OF ITS OWN: the generation moves and the recorded root is forgotten, so a scene that
+    // is cleared (or hidden) and then re-rooted cannot inherit "nothing to draw" - the identity guard in ensureRows
+    // rebuilds, and the version moves for every reader (review 22 `Z30`'s cleared-scene variant).
+    ++table_generation_;
+    baked_root_ = NodeId{};
     return *content_bake_;
 }
 
 ScenePublisher::GraphScan ScenePublisher::rowsStillMatchTheGraph() const
 {
     GraphScan scan;
-    if (content_bake_ == nullptr || content_bake_->rows.empty() || content_bake_->rows[0].identity != scene_.root_->id() ||
+    // THE TABLE'S ROOT is not re-checked here: `ensureRows` owns that answer (`baked_root_`, review 22 `Z30`), so
+    // this scan only asks whether the SHAPE below that root still lines up with the graph.
+    if (content_bake_ == nullptr || content_bake_->rows.empty() ||
         content_bake_->nodes.size() != content_bake_->rows.size() ||
         content_bake_->node_epochs.size() != content_bake_->rows.size()) {
         return scan;
@@ -360,6 +408,11 @@ bool ScenePublisher::refreshChangedRows() const
 
 void ScenePublisher::rebuildRows() const
 {
+    // A FRESH TABLE SAYS SO TWICE: its generation moves, so a publication built from it can never be mistaken for the
+    // previous table's (see RowsVersion); and it records WHICH root it describes, so the next collect can tell "the
+    // same tree, edited" from "a different tree" (review 22 `Z30`).
+    ++table_generation_;
+    baked_root_ = scene_.root_->id();
     // The serial counter is carried across the rebuild: a fresh table must not hand out numbers the last publication
     // already used for other values (see SceneBake::next_serial). The previous publication stays where it is - it
     // belongs to the publisher, not to the table that is being replaced.

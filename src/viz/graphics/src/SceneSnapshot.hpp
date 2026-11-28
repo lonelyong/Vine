@@ -16,6 +16,40 @@ namespace detail
 {
 
 /**
+ * @brief THE ROWS' VERSION: which table they came from, and the three clocks that move under it.
+ *
+ * @details
+ * - ONE VALUE, ONE COMPARISON (`G1`): a cached publication is still the answer iff this value equals the one it was
+ *   built with, and the memo's key is the publication it belongs to - so the question "did the rows move" is asked
+ *   once, of one value, instead of field by field at every reader.
+ * - `table` makes the version a TABLE IDENTITY rather than a clock. `epoch` and the two generations are counters the
+ *   described tree (or the publisher's own refresh steps) owns, and two different trees reach the same number -
+ *   a tree built by the same builder counts the same announcements. `table` moves on every rebuild and every reset
+ *   instead, so a replaced or cleared root is a different table even when its epoch happens to agree (review 22
+ *   `Z30`).
+ * - `epoch` still carries what a rebuild cannot see for free: the INCREMENTAL edit path re-folds rows in place, and
+ *   that path bumps the root's epoch without replacing the table.
+ */
+struct RowsVersion {
+    std::uint64_t table{ 0 };  ///< The table generation: moves on every rebuild and every reset.
+    std::uint64_t epoch{ 0 };  ///< The root's content epoch when the rows were last brought up to date.
+    std::uint64_t boxes{ 0 };  ///< How many box refreshes moved under the rows (see refreshBoxes).
+    std::uint64_t values{ 0 }; ///< How many material / program value refreshes moved under the rows (see refreshValues).
+
+    /**
+     * @brief Whether @p other is the same rows state.
+     *
+     * @details
+     * - Defaulted on purpose, like every version value here: a field added to it joins the comparison by
+     *   construction, and a hand-written list is a list somebody forgets.
+     *
+     * @param other The value to compare against.
+     * @return true when every part is equal.
+     */
+    [[nodiscard]] bool operator==(const RowsVersion& other) const = default;
+};
+
+/**
  * @brief An immutable, chunked view of one Scene publication.
  *
  * @details
@@ -45,9 +79,9 @@ struct SceneSnapshot {
     /// A publication id, unique for every newly built snapshot (see `makeSceneSnapshot`). It is the one state key a
     /// collected-list memo needs: two snapshots are different even when their row counts happen to agree.
     std::uint64_t                                        revision{ 0 };
-    std::uint64_t                                        epoch{ 0 };
-    std::uint64_t                                        boxes{ 0 };
-    std::uint64_t                                        values{ 0 };
+    /// Which rows state this publication IS (see RowsVersion): what a next publication compares, and what says a
+    /// cached one is still the answer.
+    RowsVersion                                          version{};
 
     /** @brief Returns the row at @p index; the index must be below row_count. */
     [[nodiscard]] const Row& row(std::size_t index) const
@@ -62,16 +96,12 @@ using SceneSnapshotPtr = std::shared_ptr<const SceneSnapshot>;
  * @brief Builds a snapshot from the scene's rows, sharing unchanged chunks with @p previous.
  *
  * @param rows      The current rows (read only).
- * @param epoch     The scene's published content epoch.
- * @param boxes     The scene's box generation.
- * @param values    The scene's value generation (materials and program texts).
+ * @param version   The rows state this snapshot IS (see RowsVersion); the caller compares it to decide "cached".
  * @param previous  The snapshot this one may share chunks with, or null for a full copy.
  * @return The new snapshot; never null.
  */
 [[nodiscard]] SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
-                                                 std::uint64_t           epoch,
-                                                 std::uint64_t           boxes,
-                                                 std::uint64_t           values,
+                                                 const RowsVersion&      version,
                                                  const SceneSnapshotPtr& previous);
 
 /**

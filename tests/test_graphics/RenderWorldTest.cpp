@@ -323,7 +323,8 @@ TEST(SnapshotTest, APlacementThatMovedOutsideTheFoldIsNotShared)
 
     SceneBake bake;
     buildRows(*root, bake);
-    const auto first = vn::graphics::detail::makeSceneSnapshot(bake, 1U, 0U, 0U, nullptr);
+    const auto first =
+        vn::graphics::detail::makeSceneSnapshot(bake, vn::graphics::detail::RowsVersion{ 1U, 1U, 0U, 0U }, nullptr);
     ASSERT_GE(first->chunks.size(), 2U) << "the fixture must span several chunks, or sharing says nothing";
 
     std::size_t billboard_row = 0U;
@@ -336,7 +337,8 @@ TEST(SnapshotTest, APlacementThatMovedOutsideTheFoldIsNotShared)
     ASSERT_LT(billboard_row, vn::graphics::detail::SceneSnapshot::kRowsPerChunk) << "the fixture puts the billboard in the first chunk";
 
     bake.rows[billboard_row].own.fold.placement = vn::graphics::ViewPlacementPtr(new IdlePlacement());
-    const auto second = vn::graphics::detail::makeSceneSnapshot(bake, 2U, 0U, 0U, first);
+    const auto second =
+        vn::graphics::detail::makeSceneSnapshot(bake, vn::graphics::detail::RowsVersion{ 1U, 2U, 0U, 0U }, first);
 
     EXPECT_EQ(second->row(billboard_row).own.fold.placement.get(), bake.rows[billboard_row].own.fold.placement.get())
         << "the publication shared a chunk whose select input moved: it would draw the previous placement";

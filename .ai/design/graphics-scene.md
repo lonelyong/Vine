@@ -1,7 +1,7 @@
 # graphics scene graph: nodes, state, collection, layers, picking
 
 > **Status**: current (the relation between collection and snapshots is in `graphics-threading.md` §2.2)
-> **Last verified**: 2026-11-27
+> **Last verified**: 2026-11-28
 > **Scope**: strict tree, state folding, collection memo, layers and picking.
 > **Sources**: `Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
 > `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`; the derived half lives in `src/viz/graphics/src/ScenePublisher.hpp`.
@@ -31,6 +31,9 @@ This file defines the current design of the graphics scene graph: nodes, state, 
 
 2.1 **Strict tree**: `Group::addChild` detaches from the old parent automatically and refuses cycles; in one traversal a node has exactly one world matrix.
 2.2 **Folding rules fixed**: visibility is a hard gate, opacity multiplies, layer and drawOrder follow nearest declaration wins, state overrides per item.
+    The gate is absolute on both sides of the publication boundary: a hidden node states no row, and the SCENE's own
+    `setVisible(false)` empties the rows a publication is built from - so the collection, the box, the ray walks and the
+    picture a frame draws all answer "nothing", while nothing is released (review 22 `Z29`).
 2.3 **State has one resolution point**: `resolveRenderState(authored, pass, data_topology, transparent)` is the one
 implementation of the priority table (`pass override > content > defaults`), and it answers the effective
 assembly beside the state. `transparent` is `DrawItem::isTransparent()`'s answer - the same question the sort asks - and it
@@ -207,10 +210,10 @@ such accessor" was the defect that recorded this (review 18 `Y12`).
 
 | Interface | Purpose |
 |---|---|
-| `Scene::setRoot()` / `root()` / `clear()` | Content root (a node that is already elsewhere is detached first) |
-| `Scene::setVisible()` / `setOpacity()` | Scene-level folding |
+| `Scene::setRoot()` / `root()` / `clear()` | Content root (a node that is already elsewhere is detached first); the derived table names its root by identity, so a swapped tree is a new picture, never the old tree's answer (review 22 `Z30`) |
+| `Scene::setVisible()` / `setOpacity()` | Scene-level folding; `setVisible(false)` empties the published picture too, and releases nothing (review 22 `Z29`) |
 | `Scene::addLight()` / `lights()` / `setLighting()` | Lights |
-| `Scene::lightSet()` | One **immutable shared value** of the lights (`LightSet`): cached by each light's `revision()`, zero copies when describing a pass (B11) |
+| `Scene::lightSet()` | One **immutable shared value** of the lights (`LightSet`): cached by every light's `(identity, revision)` while the list is unchanged, and dropped by every list mutator - a removed light's address can be handed to the next one (census 2026-11-28 `Z32`); zero copies when describing a pass (B11) |
 | `Scene::collectDrawItems()` | Collection |
 | `DrawItem::reversesWinding()` | Derived placement fact: the command's model matrix reflects, so what it draws is the authored winding reversed — the backend states the other front face for it (§2.13) |
 | `Scene::boundingBox(mask)` | Visible content box |

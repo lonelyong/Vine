@@ -143,7 +143,10 @@ void Scene::setVisible(bool visible)
         return; // no content change: keep the frame's memo usable
     }
     visible_ = visible;
-    invalidateContent();
+    // NO ANNOUNCEMENT, AND NO WALK. The flag is read where the derived table is built (ScenePublisher::ensureRows), so
+    // hiding a scene empties its next publication by the same call that would have rebuilt it, and showing it again
+    // rebuilds from the tree that never left - while an announcement here would invalidate every node's box for a
+    // switch no node states (review 22 `Z29`).
 }
 
 float Scene::opacity() const
@@ -184,7 +187,9 @@ void Scene::setRoot(intrusive_ptr<Node> root)
     }
     root_ = std::move(root);
     detail::announceLayerChange();
-    invalidateContent();
+    // NO CONTENT ANNOUNCEMENT: the derived table records WHICH root it describes (`ScenePublisher::baked_root_`), so
+    // the swap is caught by identity on the next collect - and announcing on the new tree would invalidate every box
+    // of a tree that is only now being adopted (review 22 `Z30`).
 }
 
 bool Scene::hasRootedRoot() const
@@ -205,9 +210,21 @@ void Scene::clear()
     if (root_ == nullptr) {
         return;
     }
+    // The table follows the root by IDENTITY (see ScenePublisher::ensureRows): dropping the share here is all it takes
+    // for the next collect to answer an empty picture, and the publication cache is reset then (review 22 `Z30`).
     root_.reset();
     detail::announceLayerChange();
-    invalidateContent();
+}
+
+void Scene::invalidateLightSet() noexcept
+{
+    // THE LIST IS THE CACHE'S IDENTITY (census 2026-11-28 `Z32`): `light_key_` names each light by ADDRESS, and a list
+    // mutator is the one moment those addresses can die. Dropping the cached answer here keeps the invariant that an
+    // address is only ever compared while the list still holds the light it names - which is also why this is a reset
+    // and not a hold: a content-side table never keeps an authored object alive (see the census §4, and `SceneBake`'s
+    // node record, which holds no node either).
+    light_set_.reset();
+    light_key_.clear();
 }
 
 void Scene::addLight(intrusive_ptr<Light> light)
@@ -216,6 +233,7 @@ void Scene::addLight(intrusive_ptr<Light> light)
         return;
     }
     lights_.emplace_back(std::move(light));
+    invalidateLightSet();
 }
 
 void Scene::removeLight(raw_ptr<Light> light)
@@ -226,12 +244,14 @@ void Scene::removeLight(raw_ptr<Light> light)
     auto it = std::find_if(lights_.begin(), lights_.end(), [light](const LightPtr& ptr) { return ptr.get() == light; });
     if (it != lights_.end()) {
         lights_.erase(it);
+        invalidateLightSet();
     }
 }
 
 void Scene::clearLights()
 {
     lights_.clear();
+    invalidateLightSet();
 }
 
 void Scene::addLighting(const LightRig& rig)
@@ -259,6 +279,9 @@ std::shared_ptr<const LightSet> Scene::lightSet() const
 {
     // THE KEY IS THE LIST ITSELF, AS IDENTITY + REVISION: a light's setters write fields in place (nothing on the graph
     // announces it), so the revision is what tells "the same eight lights" from "the same eight lights, one recoloured".
+    // A LIST EDIT IS NOT COMPARED AT ALL: every mutator dropped this cache (see invalidateLightSet), so an address in
+    // `light_key_` can only be compared while the list still holds that light - a light freed and replaced by one at
+    // the same address and revision (census 2026-11-28 `Z32`) never reaches this comparison.
     // The comparison walks the list on every ask - the copy it replaces walked and copied the same values.
     bool unchanged = light_set_ != nullptr && light_key_.size() == lights_.size();
     for (std::size_t index = 0; unchanged && index < lights_.size(); ++index) {

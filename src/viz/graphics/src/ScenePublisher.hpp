@@ -33,10 +33,10 @@ class DrawListMemo;
  *
  * @details
  * - WHAT IT IS. Everything a scene DERIVES from what the host wrote: the baked graph half (`SceneBake`: placements,
- *   world boxes, folded state), the per-view list memo, the content epoch the memo is keyed by, the edit batch's
- *   depth, and the publication (`Scene::publish`'s snapshot and the version pair it compares). `Scene` owns one of
- *   these and delegates every derived operation to it, so the authored tree and its derived state are two objects
- *   with one direction between them.
+ *   world boxes, folded state), the per-view list memo, the rows' version (which table, and the clocks that move under
+ *   it - see `RowsVersion`) the memo is keyed through, the edit batch's depth, and the publication (`Scene::publish`'s
+ *   snapshot). `Scene` owns one of these and delegates every derived operation to it, so the authored tree and its
+ *   derived state are two objects with one direction between them.
  * - WHY IT IS SEPARATE. `Scene` was one class living three lives: the authored tree, the derived cache and the
  *   publication value. A change to any one of them landed in the same class, and the authoring API had to carry the
  *   lifetime rules of caches and snapshots it does not own (`G1` / `G5`). Here the derived half has one owner and
@@ -121,11 +121,15 @@ class ScenePublisher final
      *
      * @details
      * - The one snapshot builder: it brings the rows up to date (boxes and material values included), shares unchanged
-     *   chunks with the previous publication, and returns the cached value when nothing moved (see
-     *   `detail::SceneRows`, its one caller).
+     *   chunks with the previous publication, and returns the cached value when its `RowsVersion` still equals the
+     *   published one (see `detail::SceneRows`, its one caller).
+     * - INSIDE AN EDIT BATCH it answers the PREVIOUS PUBLICATION - the very value `publish()` answers `InsideBatch`
+     *   with - so a query that lands mid-batch draws what a frame mid-batch draws, whatever the batch has edited so
+     *   far (review 22 `Z31`; building from the live rows there made the answer depend on whether a publication had
+     *   ever been cached).
      * - Const because a query (see collectDrawItems) reads it too: everything it maintains is a mutable cache.
      *
-     * @return The immutable publication; never null.
+     * @return The immutable publication; never null (an empty one before anything moved).
      */
     [[nodiscard]] SceneSnapshotPtr snapshot() const;
 
@@ -205,11 +209,20 @@ class ScenePublisher final
     // THE LAST PUBLICATION built from the rows (and the value a new one shares chunks with). It belongs HERE, not to
     // the table: a rebuild replaces the table and must not orphan the publication, and a query that reads the table
     // has no business owning the picture a frame draws (see `SceneBake`).
-    mutable SceneSnapshotPtr           publication_cache_;
-    mutable std::uint64_t              bake_epoch_            = 0;
-    mutable std::uint64_t              content_bake_count_    = 0;
-    mutable std::uint64_t              content_collect_count_ = 0;
-    mutable std::uint64_t              content_reuse_count_   = 0;
+    mutable SceneSnapshotPtr publication_cache_;
+    // WHICH ROOT THE TABLE DESCRIBES (review 22 `Z30`): the one fact that says "these rows are this scene's". A
+    // content epoch is a counter the described tree owns, and a tree built by the same builder reaches the same
+    // number - so an epoch alone would let a replaced or re-rooted scene be served from the previous tree's rows,
+    // through raw node pointers that tree no longer owns. Invalid until a table is built; cleared by resetToEmpty.
+    mutable NodeId        baked_root_{};
+    // The TABLE'S GENERATION: moves on every rebuild and every reset. The epoch above is the cheap "did a node
+    // announce" clock for the incremental path; this one is the identity a publication compares, so "a new table"
+    // and "the same table, edited" stay distinguishable even when the epoch repeats (see RowsVersion).
+    mutable std::uint64_t table_generation_ = 0;
+    mutable std::uint64_t bake_epoch_            = 0;
+    mutable std::uint64_t content_bake_count_    = 0;
+    mutable std::uint64_t content_collect_count_ = 0;
+    mutable std::uint64_t content_reuse_count_   = 0;
     // How many times a re-read box actually moved (see ensureRows): a byte edit announces itself on a buffer, not on
     // the graph, so it does not move `bake_epoch_` - and a reader that published these rows needs a version that does.
     mutable std::uint64_t box_generation_ = 0;
@@ -218,15 +231,14 @@ class ScenePublisher final
     // the values a command carries do change (DrawItem::material_description / program_description).
     mutable std::uint64_t value_generation_ = 0;
     // HOW DEEP THE EDIT BATCH IS (see Scene::beginEdit), and the version a publication compares (`publish`). Inside a
-    // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next
+    // batch the published version stays where it was, so a frame that lands mid-batch publishes nothing; the next
     // collection after the outermost endEdit() catches it up in one step - which is also the only moment the whole
     // batch is read.
-    int                   edit_depth_        = 0;
-    mutable std::uint64_t published_epoch_   = 0;
-    mutable std::uint64_t published_boxes_   = 0;
-    mutable std::uint64_t published_values_  = 0;
+    int                          edit_depth_       = 0;
+    mutable RowsVersion          published_version_{};
     // The publication `publish()` last answered `Posted` with: the handle is also the answer `Unchanged` and
-    // `InsideBatch` hand back, so a host always receives the picture a frame would draw.
+    // `InsideBatch` hand back, so a host always receives the picture a frame would draw - and inside a batch it is
+    // what the content query answers too (see snapshot()).
     vn::graphics::SceneSnapshotRef published_snapshot_;
 };
 

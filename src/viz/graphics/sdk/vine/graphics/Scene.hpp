@@ -151,6 +151,13 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Sets whether the whole scene is rendered.
      *
+     * @details
+     * - ONE SWITCH, and every reader of the scene obeys it: the collection, the bounding box and the ray walks answer
+     *   nothing while it is off, AND the publication a frame draws is empty (`publish` posts the empty picture on its
+     *   next call) - the query and the picture cannot disagree about it (review 22 `Z29`).
+     * - IT RELEASES NOTHING: the content keeps its GPU residency, so becoming visible again retransmits nothing
+     *   (graphics-content-lifecycle.md F27 / F28). Use `releaseContent` to give residency back.
+     *
      * @param visible false takes the whole scene out of the picture (see Node::setVisible for the gate).
      */
     void setVisible(bool visible);
@@ -194,6 +201,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * - The reverse move is not undone: a root attached to another tree AFTER this call (Group::addChild) is
      *   no longer a root, so the scene draws nothing - collection and bounding box answer empty without
      *   serving the list memoised while the node was still a root (see collectDrawItems).
+     * - A NEW ROOT IS A NEW PICTURE, and the derived state says so by IDENTITY: the rows, the list memo and the
+     *   publication describe the tree they were built from, and a replaced tree is never served from the previous
+     *   one's answer (review 22 `Z30`).
      *
      * @param root Root node to render; null empties the scene.
      */
@@ -208,7 +218,8 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
 
     /** @brief Removes the root node, leaving an empty scene.
      *
-     * Lights are unaffected; use clearLights() to drop them.
+     * Lights are unaffected; use clearLights() to drop them. The next publication is the EMPTY picture, and the content
+     * that left keeps its residency until nothing names it (the backend's frame-end probe - see `publish`).
      */
     void clear();
 
@@ -270,9 +281,11 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * - ONE SET PER SCENE, NOT ONE PER PASS (`G10`): the scene owns the copy, every pass a frame describes holds
      *   the same shared value, and a steady frame copies nothing at all.
      * - THE CACHE KEY IS (identity, revision) OF EVERY LIGHT, in order: a light's setters bump its revision (a light
-     *   announces nothing on the graph, see Light::revision) and a list edit moves the identities - so a `setColor`
-     *   reaches the next `describe` exactly like it reached the live vector before, without a rebuild when it did
-     *   not happen.
+     *   announces nothing on the graph, see Light::revision), and every list mutator DROPS the cached set because the
+     *   list is the key's identity. A removed light's address can be handed to the next one, and a fresh light's
+     *   revision starts at 1, so a key compared across a list edit could match two different lights (census 2026-11-28
+     *   `Z32`). Within one list the scene holds every light, so an address cannot be recycled while it is compared - a
+     *   `setColor` reaches the next `describe` without a rebuild when nothing moved.
      * - The value is what a draw packet announces (`DrawPacket::light_values`); it is NOT a publication, and a
      *   frame that was already described keeps the set it was lit with.
      *
@@ -356,6 +369,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *   mid-batch draws the state the batch started from, and the whole batch lands with the publication after the
      *   outermost `endEdit()`.
      * - A second call with nothing changed answers `Unchanged`; no new snapshot is built and the previous one stays.
+     * - A scene that draws nothing - no root, a root that is no longer a root, or `setVisible(false)` - publishes the
+     *   EMPTY picture: there is no "stale last picture" state, because the readers that answer "nothing to draw" are
+     *   the same flag the table is built under (review 22 `Z29`).
      * - The answer CARRIES the publication (see @ref ScenePublishResult::snapshot): a host that drives its own frames
      *   hands that value to the engine it draws through (`RenderEngine::bindSnapshot`), and a frame then draws exactly
      *   the picture that was published - not whatever the content happened to say when the frame ran.
@@ -399,10 +415,11 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Drops the memoised collected commands.
      *
      * @details
-     * - The scene invalidates itself when its own content changes (root, visibility, opacity) and every built-in node
-     *   mutator announces one too (see Node::announceContentChange). What this call reaches is the edit no setter
-     *   could see: bytes written through a buffer, a custom node's own state, a hand-built geometry change. Call it
-     *   after such an edit - it is the ONLY way the collection learns about it.
+     * - The scene invalidates itself when its own folded content changes (opacity) and every built-in node mutator
+     *   announces one too (see Node::announceContentChange) - while the ROOT and the scene's own VISIBILITY are read
+     *   where the derived table is built, so neither needs an announcement (review 22 `Z29` / `Z30`). What this call
+     *   reaches is the edit no setter could see: bytes written through a buffer, a custom node's own state, a
+     *   hand-built geometry change. Call it after such an edit - it is the ONLY way the collection learns about it.
      * - The CACHED BOUNDS (Node::invalidateBounds) are reset with it: the built-in setters announce
      *   themselves, and this call reaches the edits they could not see, so the next collection re-derives
      *   every box before it culls with one.
@@ -414,15 +431,17 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      * @details
      * - WHAT A BATCH IS FOR: work that is only meaningful as a whole. A robot's joint state is the case it exists for -
      *   seventy poses that describe one configuration - and a frame that rendered half of them would be a WRONG picture,
-     *   not an unfinished one. Inside a batch the scene's rows keep being as current as any query needs them to be, but
-     *   the version a MIRROR compares stays where it was: a frame that lands in the middle publishes nothing and draws
-     *   the state the batch started from, and the whole batch lands in the frame that follows endEdit() as ONE
-     *   publication (one `RowsReplaced`, not one per edit).
+     *   not an unfinished one. Inside a batch the derived table is not brought up to date - no reader asks for it, since
+     *   the collection answers the previous publication - and the version a MIRROR compares stays where it was: a frame
+     *   that lands in the middle publishes nothing and draws the state the batch started from, and the whole batch lands
+     *   in the frame that follows endEdit() as ONE publication (one `RowsReplaced`, not one per edit).
      * - NESTED BATCHES COUNT: only the outermost endEdit() releases the version, so a helper that opens its own batch
      *   composes with the caller's.
-     * - IT COVERS EXACTLY WHAT THE RENDER SIDE SEES. Queries stay live - collecting, picking, `boundingBox()`,
-     *   `fitToScreen()` answer about the content as it is now, batch or not - and the scene's own memo keeps working.
-     *   What is held back is the publication itself: the answer stays the one the batch started from.
+     * - IT COVERS EXACTLY WHAT THE RENDER SIDE SEES. WHAT A FRAME WOULD DRAW stays held back - `collectDrawItems`
+     *   answers the previous publication, the same value `publish()` reports mid-batch - while the GEOMETRIC queries
+     *   stay live: picking, `boundingBox()` and `fitToScreen()` answer about the content as it is now, batch or not,
+     *   and the scene's own memo keeps working. What is held back is the publication itself: the answer stays the one
+     *   the batch started from.
      * - Nothing here is a transaction: a batch cannot fail and it does not roll back. It bounds WHAT A FRAME CAN SEE,
      *   which is the guarantee a picture needs.
      *
@@ -497,6 +516,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     [[nodiscard]] bool hasRootedRoot() const;
 
+    /** @brief Ends the cached light set: the list it was built for is not the list any more (see lightSet). */
+    void invalidateLightSet() noexcept;
+
   private:
     friend class detail::ScenePublisher; // the derived side reads the authored tree and owns the publication state
     friend class detail::SceneRows;      // the engine side's publish: version + a copy of the rows (see SceneRows.hpp)
@@ -509,7 +531,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     NodePtr               root_;
     std::vector<LightPtr> lights_;
     /// The shared light value and the (identity, revision) pairs it was built for (see lightSet). Mutable: a describe,
-    /// a collect and a publish all read the same cached answer, and none of them edits the scene.
+    /// a collect and a publish all read the same cached answer, and none of them edits the scene. Every list mutator
+    /// drops it (`invalidateLightSet`): the key names each light by ADDRESS, so it may only be compared while the list
+    /// still holds the light it names (census 2026-11-28 `Z32`).
     mutable std::shared_ptr<const LightSet>                     light_set_{};
     mutable std::vector<std::pair<const Light*, std::uint64_t>> light_key_{};
 
