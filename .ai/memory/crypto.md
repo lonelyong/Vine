@@ -34,6 +34,16 @@
 - After a wolfSSL upgrade, check: `HAVE_GETPID` is misdetected on MSVC (otherwise `pid_t` inside
   `WC_RNG` does not compile), and CMake's preset `set(HAVE_GETPID OFF CACHE BOOL "" FORCE)` must come
   before `FetchContent_MakeAvailable`.
+- **A pinned tag is inert while `FETCHCONTENT_FULLY_DISCONNECTED=ON`** (`build/CMakeCache.txt` and
+  `build-asan/CMakeCache.txt` both carry it): FetchContent reuses `_deps/wolfssl-src` as-is and never
+  moves it to the declared tag. Measured 2026-11-28: the build dirs sat at `v5.9.2-stable` against a
+  `v5.9.4-stable` pin, so `src/base/crypto` had not compiled on Linux since the pin moved (2026-11-07) —
+  the symptom is exactly `argon2.h: No such file`, `LENGTH_ONLY_E` / `wc_ConstantCompare` not declared
+  and nothing else. The fix is to move the checkout by hand and rebuild:
+  `git -C build/_deps/wolfssl-src fetch --tags --depth 1 origin tag v5.9.4-stable` then
+  `git -C build/_deps/wolfssl-src checkout v5.9.4-stable` (same for `build-asan/`); verify with
+  `git -C build/_deps/wolfssl-src describe --tags` BEFORE blaming the sources. Bumping the pin again
+  owes the same step, or a configure with the disconnected flag turned off.
 - Constant-time comparison uses the backend's `wc_ConstantCompare()` (public since 5.9.4, in
   `wolfssl/wolfcrypt/memory.h`); we no longer hand-roll the loop.
 - **`options.h` `#undef`s every macro it knows**, so a macro a consumer adds through the command line
