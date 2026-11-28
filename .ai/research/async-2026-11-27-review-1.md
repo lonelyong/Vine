@@ -3,12 +3,17 @@
 > **Status**: draft, non-authoritative - a working record. §2 is what the tree states, §3 is the findings, §4 is how the
 > measurements were taken, §5 is the peer material, §6 proposes an order, §7 lists the verification commands. This round
 > changed no file outside this page and its index entry; every finding is a decision left to the owner.
-> **Last verified**: 2026-11-27, tree `8d96fbb2` on `dev`.
+> **Appended 2026-11-28**: §8 is an independent re-run on gcc 16 / Linux - every memory-safety finding reproduces on the
+> same source lines, and six evidence items are corrected there (the suite's result, Q2's cleared list, Q1's option 2,
+> Q3's in-tree exposure, four citations, and the design page's duplicated IDs). §2-§7 are unchanged.
+> **Last verified**: 2026-11-28 for §8, 2026-11-27 for §2-§7; tree `bc8d270a` on `dev`, whose `src/base/async` is
+> byte-identical to `8d96fbb2`.
 > **Scope**: all 28 headers of `src/base/async/sdk/vine/async/` read line by line, against the contracts
 > `.ai/design/async-design.md` states. Three questions: **does each contract hold on every path it is offered to** (the
 > compositions' `Destroy` policy against a child on another thread), **who keeps a primitive alive while it resumes its
 > waiters**, and **where does a continuation run after a wake**. `tests/test_async/AsyncTest.cpp` was read by its test
-> index (183 cases, all green on this tree) and not line by line; the probes in §4 are what the suite does not contain.
+> index (183 cases, all green on the toolchain §4 used - §8 V1 records what this tree reports instead) and not line by
+> line; the probes in §4 are what the suite does not contain.
 > **Sources**: `src/base/async/sdk/vine/async/{Task,When,WithTimeout,Sleep,AsyncQueue,TaskCompletionSource,AsyncLatch,
 > AsyncEvent,AsyncConditionVariable,ThreadPoolScheduler,Scheduler,Retry,Generator,Scope,SharedTask}.hpp`,
 > `src/base/core/sdk/vine/ThreadPool.hpp`, `src/base/core/src/ThreadPool.cpp`, `.ai/design/async-design.md`,
@@ -313,3 +318,233 @@ grep -n -B1 -A2 "count == 0" src/base/async/sdk/vine/async/When.hpp
 # Q1 exposure: no caller of the four entry points outside the module
 grep -rn -E "whenAny\(|withTimeout\(|scheduleOn\(|runOn\(" src --include=*.hpp --include=*.cpp | grep -v "src/base/async"
 ```
+
+## 8. Verification round (2026-11-28, gcc 16 on Linux)
+
+**What this round is.** §2-§7 are unchanged. This chapter is an independent re-run of their evidence on a second
+toolchain, plus a check of every `file:line` they cite: what reproduced (§8.1), and the six items whose evidence does not
+hold as written (§8.2).
+
+**Tree and scope.** `bc8d270a` on `dev`; `src/base/async`, `tests/test_async` and `async-design.md` are byte-identical to
+`8d96fbb2` (`git diff --stat 8d96fbb2..HEAD -- src/base/async tests/test_async .ai/design/async-design.md` is empty), so
+the findings were re-tested against exactly the code the page measured.
+
+**Toolchain.** gcc 16.0.1 (`Ubuntu 16-20260322-1ubuntu1`), `-std=c++20 -g -O1 -fsanitize=address`, probes outside the
+tree linked against `src/base/core/src/{Exception,String,ThreadPool}.cpp` (§8.3). This is a second, unrelated
+implementation of the coroutine lowering: the page's §4 used MSVC 19.52, ASan dynamic runtime.
+
+### 8.1 Reproduced
+
+| Finding | Result here | The line the sanitizer report lands on |
+|---|---|---|
+| Q1 (a) | heap-use-after-free, **READ** of size 1, pool worker | write into the freed frame at `Task.hpp:71` |
+| Q1 (b) | heap-use-after-free, READ of size 8, pool worker | `coroutine_handle::resume()` from the queued closure, `ThreadPoolScheduler.hpp:62` |
+| Q2 | heap-use-after-free, READ of size 8, same thread | `TaskCompletionSource.hpp:160`, after the resume at `:167` |
+| Q3 | the six-line table printed identically | `TimerService::run` resumes between `lock.unlock()` and `lock.lock()` |
+| Q4 | the same two lines | `When.hpp:476` vs `When.hpp:1157` |
+| Q5 | cancelled after **206 ms** with `attempts = 3, delay = 100 ms` | two swallowed cancellations and two delays |
+| Q6 (b) | compile error: `could not convert ... microseconds ... to ... milliseconds` | `Sleep.hpp:457`, `WithTimeout.hpp:80` |
+
+Q1 (a), the default `withTimeout(runOn(pool, f), d)`, 400 ms callable against a 50 ms timeout:
+
+```
+ERROR: AddressSanitizer: heap-use-after-free ... READ of size 1 at ... thread T1
+    #3 vn::async::detail::TaskPromiseReturn<int>::return_value(int)     Task.hpp:71
+    #4 vn::async::runOn                                                 ThreadPoolScheduler.hpp:120
+    #6 ...ScheduleAwaiter::await_suspend(...)::lambda                    ThreadPoolScheduler.hpp:62
+freed by thread T2 here:                                               (T2 = the timer thread)
+    #4 vn::async::Task<int>::Awaiter::destroy()                          Task.hpp:680
+    #5 vn::async::Task<int>::Awaiter::~Awaiter()                         Task.hpp:598
+    #6 vn::async::detail::composeAnyChild<int>                           When.hpp:894
+    #9 vn::async::detail::WhenAnyChild<int>::~WhenAnyChild()             When.hpp:858
+   #15 vn::async::whenAny                                                When.hpp:1195
+   #20 vn::async::detail::TimerService::run()                            Sleep.hpp:323
+```
+
+Same frame, same free site, same workers as the page's MSVC trace. The one difference is the access kind: the page
+recorded a **WRITE** of size 1 (MSVC's `optional::emplace` writes the engaged flag), libstdc++ faults first on the
+**READ** of that flag in `_Optional_payload_base::_M_reset`. Neither reading weakens the other - a freed frame is written
+or read either way.
+
+Q1 (b), the loser destroyed with its hop still queued:
+
+```
+ERROR: AddressSanitizer: heap-use-after-free ... READ of size 8 ... thread T1
+    #0 std::coroutine_handle<void>::resume() const
+    #1 ...ScheduleAwaiter::await_suspend(...)::lambda                    ThreadPoolScheduler.hpp:62
+freed by thread T0 here:
+    #4 vn::async::Task<void>::Awaiter::destroy()                         Task.hpp:680
+    #5 vn::async::Task<void>::Awaiter::~Awaiter()                        Task.hpp:598
+    #6 vn::async::detail::composeChild                                   When.hpp:453
+    #9 vn::async::detail::WhenChild::~WhenChild()                        When.hpp:420
+```
+
+Q2, the waiter deletes its source inside the resume. Every detail of the page's claim holds, and the report adds one:
+the freed block is the **16-byte `TaskCompletionSource` object itself** (the `impl_` member the reference parameter
+refers to), not the shared state - which is exactly "a reference into the object it is completing".
+
+Q3 printed the page's six lines verbatim, with the queue's push/pop replaced by an `AsyncQueue<int>` producer and
+consumer:
+
+```
+inside sleepFor, before the sleep         main thread
+inside sleepFor, after the sleep          TIMER THREAD
+before whenAny                            main thread
+after whenAny was cancelled               TIMER THREAD
+after queue->pop() returned               TIMER THREAD
+after queue->push() returned              TIMER THREAD
+```
+
+### 8.2 Six corrections
+
+**V1 - the suite is 182 of 183 here, and §7's command is not this tree's.**
+
+```
+$ cd build/bin && ./test_async --gtest_brief=1
+[  FAILED  ] AsyncDefectRegressionTest.YieldLoopStackIsConstant (21 ms)
+    Expected: (depth) < (64 * 1024), actual: 319936 vs 65536
+[==========] 183 tests from 30 test suites ran. (3413 ms total)
+[  PASSED  ] 182 tests.
+```
+
+The failing case is a stack-depth assertion, unrelated to every finding here, and the module's own memory note already
+records it (same numbers) as pre-existing. So the finding does not change - but "183 cases, all green on this tree" is not
+reproducible, and §7 states it as `./build/bin/Debug/test_async.exe` inside a ```bash``` block, a Windows path this tree
+does not have (there is no `Debug/` under `build/bin`). Replace the command with the one above and the claim with "182 of
+183, the failure being the recorded stack-depth case". The value of the page is that its evidence is repeatable; a command
+a reader cannot run costs it that.
+
+**V2 - Q2's cleared list applies the wrong criterion to two primitives.**
+
+Q2 judges an operation by whether it touches **the object it was called on** after a resume, and on that criterion it
+names `AsyncEvent::set()` (`AsyncEvent.hpp:201-224`), `notify_all()` (`AsyncConditionVariable.hpp:324-347`) and
+`AsyncLatch::countDown()` (`AsyncLatch.hpp:79-81`). It then clears the semaphore and the reader-writer lock with "they
+read their waiter before the resume only" - which is the *other* rule (§2.2: no waiter pointer held across a resume).
+Both shapes exist, and these two have the second one too:
+
+- `AsyncSemaphore::release()` resumes at `AsyncSemaphore.hpp:174` and the `for (;;)` then re-locks `mutex_` and reads
+  `head_` / `count_` (members) on the next iteration.
+- `AsyncReaderWriterLock::resume()` resumes at `AsyncReaderWriterLock.hpp:453`, and the loop re-locks `mutex_` at `:433`
+  and reads `readers_head_` at `:434`.
+
+`AsyncMutex::unlock()` really is fine, but for a third reason: its `h.resume()` (`AsyncMutex.hpp:306`) is the last
+statement of the function, so nothing of the mutex is touched afterwards. The honest list is therefore: `AsyncEvent::set`,
+`AsyncSemaphore::release` and `AsyncReaderWriterLock::resume` touch **the object** again after a resume;
+`notify_all()` touches its `state_` member; `countDown()` touches the shared `LatchState` whose last owner may be the
+waiter whose frame dies inside that very `set()`. The only guard in all five is the "must outlive every coroutine
+awaiting it" sentence. What makes `TaskCompletionSource` the finding and these five the contract is that
+the source **promises the opposite** (`TaskCompletionSource.hpp:23-27`: the state lives behind a `shared_ptr` so a task
+keeps it alive after the source is destroyed), so destroying it during a resume is a shape its own design invites. For the
+latch and the CV the fix is the local `shared_ptr` copy Q2 already states; for event, semaphore and rwlock the state IS
+the object, so no copy exists and the contract sentence is all there is - which is the same conclusion Q2 reaches for the
+event, and should say for all three.
+
+**V3 - Q2 does not cite the sentence the probe violates, and the fix has a second half.**
+
+`TaskCompletionSource.hpp:194-196` states: "Waiters are resumed on the thread that completes the source, and the source
+must outlive them." The probe destroys the source *from inside the resume*, i.e. the source does not outlive its waiter -
+a stated contract violation, and the page's probe reads as if nothing said so. The finding survives it for the reason in
+V2 (lines 23-27 promise the capability the sentence forbids, and the loop's own comment at `:146-153` handles the same
+hazard one step further out), but the fix is two halves, not one: take the state by value **and** rewrite that sentence,
+either as "the source must not be destroyed from inside a resumed waiter" (the honest reading today) or - better, once the
+loop holds its own reference - delete the clause, because the shared state then makes it unnecessary.
+
+**V4 - Q1's option 2 closes (b) but not (a) as written.**
+
+At the moment (a) frees the frame, the coroutine is inside `std::invoke` in `runOn`'s body: the `ScheduleAwaiter` was
+destroyed at its `await_resume` long before, so a flag it sets in `~ScheduleAwaiter` cannot be consulted by anyone. What
+does work is a keepalive that spans the whole `h.resume()` in the worker's closure - that closure is on the worker's stack
+for the entire body, so the frame cannot be freed under it - and the frame freed by that closure when `h.resume()`
+returns. `Task::Awaiter::destroy()` on such a frame must then mean "abandon", which needs the promise to know the frame
+is pool-owned; that is the real cost of option 2 and belongs in the statement of it. The hop (b) needs only the
+`abandoned` flag.
+
+**V5 - Q3's exposure is in-tree already, through `sleepFor`.**
+
+The page measured Q3 through `whenAny` / `withTimeout` / `runOn` / `scheduleOn` and found no caller outside the module.
+That is true of those four and false of the primitive underneath:
+
+```
+$ grep -rn "sleepFor(" src --include=*.hpp --include=*.cpp | grep -v src/base/async
+src/fw/appfw/src/CommandManager.cpp:766              co_await vn::async::sleepFor(kDrainPollInterval);
+src/fw/appfw/src/ConsoleProgressReporter.cpp:69      co_await vn::async::sleepFor(delay);
+src/plugins/test_plugin/src/commands/TestNested{Progress,Child}Command.cpp
+```
+
+So the rule the page asks for is owed by code that exists today, and the concrete failure to name is
+`Task::result()` (or any wait on something the timer thread must deliver) inside a continuation that follows a
+`sleepFor`: the timer thread is the thread running that continuation, so the wait blocks every timer in the process,
+including its own. `CommandManager::waitChainsDrained` is safe only because its continuation is a short loop over a
+`std::vector`; nothing states that, which is precisely the sentence Q3 proposes.
+
+**V6 - four citations, and the design page's IDs are not unique.**
+
+- `Scope.hpp:191` - `++state_->pending;` is at `:190`; `:196` (`runScopeChild`) is right.
+- `Sleep.hpp:239-243` is cited for "a cancellation" of a sleep, but that is `deferWake`, the composition/scope wake. A
+  cancelled `SleepAwaiter` goes `AbortRequest` -> `requestAbort` -> the `early_` queue, and its resume is
+  `Sleep.hpp:279-294`. Same effect (the timer thread), wrong site.
+- `Scope::join`'s `CancelPolicy::Destroy` destroys no child: it ends the wait and leaves them running (`Scope.hpp:238-241`).
+  Grouping it with `whenAny` / `withTimeout`, whose `Destroy` really frees frames, overstates the policy's reach. That the
+  four defaults exist is right (`C2`); the finding's reach is the two compositions.
+- `When.hpp:1191` is the `rethrow_exception`; the children are destroyed when the driver's frame goes, which the gcc
+  report attributes to `:1195`. Same act, and a reader comparing the two traces should not read the difference as one.
+- The design page uses the same ID set twice with different meanings, so `§2`'s "(§2.6, N5)" and `§3`'s "§3.1.4 R4" are
+  ambiguous in the page they point at: `R4` is the scheduler rule in `§3.1.4` and "an injected cancellation token is
+  visible only at the layer that was combined" in `§5.2`; `N5` is the `stop_callback` rule in `§3.1.5` and the `SharedTask`
+  rule in `§5.3`; `N1` is "a `Scope` destructor does not wait" in `§3.1.1` and the swap-then-resume invariant in `§5.3`;
+  `T4` is the scheduler cases in `§3.1.4` and the pumping drive in `§8`. Qualify every citation with its section. Whether
+  the design page should enumerate the per-feature set at all is its own decision; recording it here is so the next round
+  does not read `R4` as one rule.
+
+### 8.3 What does not change
+
+- The order in §6 stands. Q1 keeps first place, and V4 only widens its option 2.
+- Q2 keeps second place, with V2 adding the semaphore and the reader-writer lock to the same bucket and V3 adding the
+  contract sentence to the fix.
+- Q3 keeps its sentence-first order, with V5 supplying the two appfw call sites that make the sentence due now rather
+  than "when a host appears".
+- No backlog entry is added by this round either; §6 remains a proposal to the owner.
+
+### 8.4 Commands this round ran
+
+```bash
+# the tree the findings were re-tested against
+git rev-parse --short HEAD && git diff --stat 8d96fbb2..HEAD -- src/base/async tests/test_async .ai/design/async-design.md
+
+# build one probe (ASan, outside the tree)
+g++ -std=c++20 -g -O1 -fsanitize=address -fno-omit-frame-pointer -DVN_CORE_LIB -DVN_ROOT_NS=vn -pthread \
+    -I src/base/global/sdk -I src/base/core/sdk -I src/base/async/sdk \
+    q1a_timeout_pool.cpp src/base/core/src/{Exception,String,ThreadPool}.cpp -o q1a && ./q1a
+
+# the suite on this tree (V1)
+cd build/bin && ./test_async --gtest_brief=1
+
+# V2: the two loops that re-lock their own mutex after a resume
+grep -n "resume()" src/base/async/sdk/vine/async/AsyncSemaphore.hpp src/base/async/sdk/vine/async/AsyncReaderWriterLock.hpp
+awk 'NR>=430 && NR<=455' src/base/async/sdk/vine/async/AsyncReaderWriterLock.hpp
+
+# V5: the in-tree users of the primitive Q3 is about
+grep -rn "sleepFor(" src --include=*.hpp --include=*.cpp | grep -v src/base/async
+```
+
+## 9. What the redesign round landed (2026-11-28)
+
+The owner asked for the redesign rather than the patch list. What is in the tree now, and where the rule lives:
+
+| Finding | State | Where the rule is stated | Red before |
+|---|---|---|---|
+| Q1 (a) | **closed** - `runOn` / `run` queue the callable and park on a `TaskCompletionSource`; the frame a composition frees is never the one the worker executes | `async-design.md` 2.10, `ThreadPoolScheduler.hpp` | ASan heap-use-after-free on every run |
+| Q1 (b) | **closed** - a hop is a claim its awaiter withdraws | 2.10, `ScheduleAwaiter` | ASan heap-use-after-free from the queued closure |
+| Q1 (the rest) | **stated** - a child running its own code is not suspended, so `Destroy`'s precondition is written where the policy is chosen | `Cancellation.hpp`, caveat 6.8 | not reproducible without a user child |
+| Q2 | **closed** - the completing loop holds the state by value; latch and condition variable hold theirs for the call; `AsyncEvent` states its stricter contract | 2.2, `TaskCompletionSource.hpp`, `AsyncLatch.hpp`, `AsyncConditionVariable.hpp` | ASan heap-use-after-free at `:160` |
+| Q4 | **closed** - both spellings throw for an empty list | 2.7 | void list completed silently |
+| Q5 | **closed** - `retry` takes a token, forwards it to the delay, and never retries a cancellation | 3.1.2 R2, `Retry.hpp` | measured 206 ms of pointless work |
+| Q6 (c) | **closed** - a spawn that never made a child gives its pending tick back | `Scope.hpp` | by reading |
+| Q6 (d) | **closed by deletion** - registration failures are the language's to carry, `tryRegisterWaiter` / `failure_` / the header are gone | 2.2 | n/a (a false premise) |
+| Q3 | **stated, not redesigned** - `sleepFor` now says the continuation runs on the timer thread; a wake pool is `D13` | `Sleep.hpp`, `async-design.md` D13 | measured |
+| Q6 (a), (b) | **backlog** - a generator of move-only values, and a duration parameter that takes any period | `../backlog/async.md` A3 / A4 | compile error for `500us` |
+
+Gates: `test_async` 188 of 189 (the case §8 V1 names), `test_appfw` 65 passed with its three translation cases red for the
+released `lrelease`, which is the packaging gap the build log reports and not this module; ASan over the seven new cases is
+clean; `check_ai_docs --strict`, `check_design_docs`, `check_cross_refs`, `check_api_style`, `check_public_docs`,
+`check_include_hygiene` and `check_doc_symbols` all green.

@@ -20,7 +20,7 @@
 ## Structure
 
 - Pure header-only; `vn::Async` is an INTERFACE target (depending only on `vn::Global` + `vn::Core`).
-- 26 headers; all under `sdk/vine/async/`, classes in `namespace vn::async`.
+- 27 headers; all under `sdk/vine/async/`, classes in `namespace vn::async`.
 - Tasks: `Task<T>` (lazy, single consumer), `SharedTask<T>` (copyable, caches the result),
   `DetachedTask` (eager, self-destroying), `Scope`.
 - Combinators: `whenAll` / `whenAny` (vector and variadic, including all-void variadic), `withTimeout`,
@@ -40,6 +40,26 @@
    await level adds a frame and a `yield` loop overflows the stack).
 3. **Never hold a lock across a resume, and never resume on the canceller's stack** (the latter is why
    `Sleep.hpp::requestAbort` has its `early_` queue; the fourth `test_gui` full regression found this).
+
+## Composition lifetime (2026-11-28 redesign; design 2.10)
+
+- **`Destroy` frees only a suspended child.** `runOn` / `run` no longer hop: the callable is queued on the pool and the
+task parks on a `TaskCompletionSource`, so the frame a composition frees is never the one a worker is executing. Before
+this, `withTimeout(runOn(pool, f), d)` was a heap-use-after-free on every run (timer thread freed the frame under
+`std::invoke`).
+- **A pool hop is a claim.** `ScheduleAwaiter` publishes a `Claim`, `~ScheduleAwaiter` withdraws it, the worker resumes
+only what it still owns (`HandOff` in `AsyncQueue.hpp` is the same shape). A `Destroy` loser no longer leaves a resume
+of a freed frame in the pool queue.
+- Residual, stated and not fixable here: a caller's own coroutine that `co_await scheduleOn(...)` and then keeps working,
+and the window between `await_suspend` publishing a handle and returning (`async-design.md` 6.8).
+- **A completing loop holds its state**: `resumeWaitersOneByOne` takes the `shared_ptr` by value; latch and condition
+variable hold their state for the call, so the last waiter may destroy the primitive. `AsyncEvent` cannot (its list IS
+the object) and says so.
+- **A throw from `await_suspend` is the language's**: caught, coroutine resumed, exception rethrown at the `co_await`. The
+`tryRegisterWaiter` + `failure_` plumbing (and `WaiterList.hpp`) was deleted with the false premise that it had to be
+`noexcept`.
+- `whenAny` on an empty list throws in **both** spellings; `whenAll`'s empty list is satisfied. `retry` takes a token,
+never retries `TaskCancelledException`, and forwards the token to its delay.
 
 ## Contracts and boundaries
 
@@ -79,6 +99,6 @@
 
 ## Commands
 
-- Build and run: `cmake --build build --target test_async && ./build/bin/test_async` (140 cases today).
+- Build and run: `cmake --build build --target test_async && ./build/bin/test_async` (189 cases today).
 - The TSan/ASan recipes, and the trick that makes a stale-resume defect deterministic (padding inside the
   frame plus settling after `Task::result()`), are in the design doc §7.

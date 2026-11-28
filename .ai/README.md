@@ -545,17 +545,23 @@ the seventeenth and the eighteenth reviews compare against the peer engines at a
   which is why this round adds one backlog entry, `T72`, for that case.
 - `async-2026-11-27-review-1.md` — the first async pass: **what `Destroy` assumes, who owns a completion, and which thread
   the continuation runs on** (the 28 headers read line by line against the design page's contracts; the suite read by its
-  index, 183 green; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -
+  index; three standalone ASan probes outside the tree are the evidence the suite does not carry). Six findings -
   `CancelPolicy::Destroy` destroys a child that is not suspended on a withdrawable awaiter: the default
   `withTimeout(runOn(pool, f), d)` frees the frame from the timer thread while `f` still runs on the worker (measured:
-  heap-use-after-free write), a pool hop is the one awaiter that publishes its handle and cannot withdraw it (measured:
+  heap-use-after-free), a pool hop is the one awaiter that publishes its handle and cannot withdraw it (measured:
   the worker resumes a freed frame), and `StopAndWait` cannot bound a callable, so neither policy bounds pool work;
   `resumeWaitersOneByOne` loops on a reference to the `TaskCompletionSource`'s own member, so a waiter that closes its
   source inside the resume is a use-after-free (measured), with the latch and the condition variable of the same shape;
   the timer thread runs the caller's continuation after every sleep, cancelled composition and queue hand-off (measured),
   so thread affinity changes silently and one long continuation delays every timer in the process; `whenAny` on an empty
   list returns for the void overload and throws for the typed one (measured); `retry` retries cancellation and takes no
-  token; four small rows. Lists what was checked and cleared. Adds no backlog entry; §6 lists the order.
+  token; four small rows. Lists what was checked and cleared. Adds no backlog entry; §6 lists the order. §8 (2026-11-28)
+  is the gcc 16 / Linux re-run of the same probes: every memory-safety finding reproduces on the same source lines, six
+  evidence items are corrected there (the suite reads 182 of 183 here, the recorded stack-depth case), and the semaphore
+  and the reader-writer lock join Q2's scope. §9 records the redesign round that followed the same day: `runOn` parks on a
+  `TaskCompletionSource` instead of hopping (design 2.10), a hop is a claim its awaiter withdraws, the completion loops hold
+  their state, both `whenAny` spellings refuse an empty list, `retry` stops retrying a cancellation, and the registration-failure
+  plumbing is deleted with its false premise.
 
 ## backlog/ — open work (16)
 
@@ -569,7 +575,7 @@ decision is not to do them (the reason goes into an ADR).
 - `appfw-eventbus.md` — EventBus open items (the O(N²) drain on a large pending set, and the enum width that belongs to the next plugin-ABI batch).
 - `appfw-app-info.md` — app-info open items (build-time version, manifest and third-party acknowledgements).
 - `appfw-translation.md` — translation open items (runtime switching, the first English catalogue, plugin metadata, the lupdate gate, the deployment rule for the override file).
-- `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation).
+- `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation, a generator of move-only values, a duration parameter that takes any period).
 - `base-crash.md` — crash-report open items (last-crash prompt, terminate, stack guarantees, read-only directories, Linux, the upload trigger).
 - `base-progress.md` — progress open items (consumer-less scope accessors, stale-stage detection, the `max <= 0` policy, a non-throwing callback, the appfw plugin-ABI coupling).
 - `base-runtime.md` — persistent cache backends (file/database) when a consumer appears, real plugin unload, and Windows identity coverage.
